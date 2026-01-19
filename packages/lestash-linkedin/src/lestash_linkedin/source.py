@@ -525,8 +525,8 @@ class LinkedInSource(SourcePlugin):
                     if elements:
                         # Count event types
                         event_types: dict[str, int] = {}
-                        for e in elements:
-                            resource = e.get("resourceName", "unknown")
+                        for elem in elements:
+                            resource = elem.get("resourceName", "unknown")
                             event_types[resource] = event_types.get(resource, 0) + 1
 
                         console.print(f"  [green]✓ Accessible[/green] ({len(elements)}+ events)")

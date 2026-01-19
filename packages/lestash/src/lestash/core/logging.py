@@ -49,13 +49,15 @@ class LeStashRichHandler(RichHandler):
 
     def __init__(
         self,
-        *args: Any,
+        level: int | str = 0,
         show_time: bool = False,
         show_path: bool = False,
         **kwargs: Any,
     ) -> None:
+        # Remove console from kwargs if present to avoid duplicate argument
+        kwargs.pop("console", None)
         super().__init__(
-            *args,
+            level=level,
             console=get_console(),
             show_time=show_time,
             show_path=show_path,

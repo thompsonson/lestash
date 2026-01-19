@@ -71,8 +71,9 @@ def _extract_ugc_post(event: ChangelogEvent) -> ItemCreate:
     activity = UgcPostActivity.model_validate(event.activity or {})
 
     created_at = None
-    if activity.get_created_at():
-        created_at = datetime.fromtimestamp(activity.get_created_at() / 1000)
+    created_at_ms = activity.get_created_at()
+    if created_at_ms:
+        created_at = datetime.fromtimestamp(created_at_ms / 1000)
 
     return _create_item(
         event=event,
