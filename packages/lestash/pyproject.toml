@@ -1,0 +1,23 @@
+[project]
+name = "lestash"
+version = "0.1.0"
+description = "Personal knowledge base CLI - aggregate content from multiple sources"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.12.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "rich>=13.7.0",
+    "toml>=0.10.2",
+]
+
+[project.scripts]
+lestash = "lestash.cli.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lestash"]
