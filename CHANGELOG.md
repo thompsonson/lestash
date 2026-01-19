@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.0.2 (2026-01-19)
+
+### Bug Fixes
+
+- Removed non-existent yesys
+  ([`97366c2`](https://github.com/thompsonson/lestash/commit/97366c2affcdb4a65581b2bcde5fa37996eaf7cc))
+
+
 ## v0.0.1 (2026-01-19)
 
 ### Bug Fixes
