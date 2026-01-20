@@ -1,6 +1,11 @@
 # lestash
 
-Core CLI and plugin system for Le Stash - a personal knowledge base.
+[![PyPI version](https://badge.fury.io/py/lestash.svg)](https://pypi.org/project/lestash/)
+[![GitHub](https://img.shields.io/github/license/thompsonson/lestash)](https://github.com/thompsonson/lestash)
+
+Core CLI and plugin system for Le Stash - a personal knowledge base that aggregates content from multiple sources into a unified, searchable database.
+
+> **Note**: For project overview, features, and quick start guide, see the [GitHub repository](https://github.com/thompsonson/lestash).
 
 ## Installation
 
