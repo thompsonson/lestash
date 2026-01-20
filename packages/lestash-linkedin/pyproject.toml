@@ -1,6 +1,6 @@
 [project]
 name = "lestash-linkedin"
-version = "0.1.0"
+version = "1.0.1"
 description = "LinkedIn source plugin for Le Stash"
 readme = "README.md"
 requires-python = ">=3.12"
