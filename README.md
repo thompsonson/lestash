@@ -2,6 +2,8 @@
 
 A personal knowledge base CLI that aggregates content from multiple sources into a unified, searchable database.
 
+This is born from not having access to LinkedIn posts that are over a year old (info [more context](https://www.linkedin.com/posts/thompson-m_some-linkedin-skills-i-wanted-to-reference-activity-7418659433720930304-XUC7?utm_source=share&utm_medium=member_desktop&rcm=ACoAAABtQ-4BolpwOKeRo9vZaIfsjv32nWMFlBc))
+
 ## Features
 
 - **Multi-source aggregation** - Import content from LinkedIn, arXiv, and more
