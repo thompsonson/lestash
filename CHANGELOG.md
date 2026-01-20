@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.0.3 (2026-01-20)
+
+### Bug Fixes
+
+- Update project documentation
+  ([`0a60785`](https://github.com/thompsonson/lestash/commit/0a6078538f8a5a8eba4d47d2d1b8aaf630dd4ed9))
+
+
 ## v0.0.2 (2026-01-19)
 
 ### Bug Fixes
