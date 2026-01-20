@@ -41,3 +41,13 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 check_untyped_defs = true
 ignore_missing_imports = true
+
+[tool.semantic_release]
+version_toml = [
+    "pyproject.toml:project.version",
+    "packages/lestash/pyproject.toml:project.version",
+    "packages/lestash-arxiv/pyproject.toml:project.version",
+    "packages/lestash-linkedin/pyproject.toml:project.version",
+]
+branch = "main"
+commit_parser = "angular"

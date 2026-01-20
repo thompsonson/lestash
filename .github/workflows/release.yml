@@ -43,6 +43,7 @@ jobs:
       - name: Build packages
         if: steps.release.outputs.released == 'true'
         run: |
+          rm -rf dist/
           for pkg in packages/*/; do
             echo "Building $pkg"
             uv build --package "$(basename $pkg)"
@@ -53,6 +54,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           verbose: true
+          skip-existing: true
 
       - name: Publish to GitHub Releases
         if: steps.release.outputs.released == 'true'
