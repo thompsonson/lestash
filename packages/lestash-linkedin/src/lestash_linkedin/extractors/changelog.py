@@ -108,6 +108,22 @@ def _extract_comment(event: ChangelogEvent) -> ItemCreate:
     )
 
 
+# Emoji mapping for LinkedIn reaction types
+REACTION_EMOJIS = {
+    "LIKE": "👍",
+    "CELEBRATE": "🎉",
+    "SUPPORT": "🫂",
+    "LOVE": "❤️",
+    "INSIGHTFUL": "💡",
+    "FUNNY": "😄",
+    "INTEREST": "🤔",
+    "APPRECIATION": "👏",
+    "PRAISE": "👏",
+    "EMPATHY": "💜",
+    "ENTERTAINMENT": "😂",
+}
+
+
 def _extract_reaction(event: ChangelogEvent) -> ItemCreate:
     """Extract content from a socialActions/likes event."""
     activity = ReactionActivity.model_validate(event.activity or {})
@@ -116,9 +132,23 @@ def _extract_reaction(event: ChangelogEvent) -> ItemCreate:
     if activity.created and activity.created.get("time"):
         created_at = datetime.fromtimestamp(activity.created["time"] / 1000)
 
+    # Build reaction content with emoji
+    emoji = REACTION_EMOJIS.get(activity.reaction_type, "👍")
+    reaction_type = activity.reaction_type or "LIKE"
+
+    # Include target reference if available
+    target_ref = ""
+    if activity.object:
+        # Extract short ID from URN (e.g., "urn:li:activity:123" -> "activity:123")
+        parts = activity.object.split(":")
+        if len(parts) >= 3:
+            target_ref = f" on {parts[-2]}:{parts[-1]}"
+
+    content = f"{emoji} {reaction_type}{target_ref}"
+
     return _create_item(
         event=event,
-        content=f"Reacted with {activity.reaction_type}",
+        content=content,
         author=activity.actor,
         created_at=created_at,
         extra_metadata={
