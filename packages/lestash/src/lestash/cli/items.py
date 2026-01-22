@@ -1,6 +1,8 @@
 """Item commands for Le Stash CLI."""
 
 import json
+import re
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -10,6 +12,72 @@ from rich.table import Table
 from lestash.core.config import Config
 from lestash.core.database import get_connection, get_person_profile
 from lestash.models.item import Item
+
+
+def _slugify(text: str) -> str:
+    """Convert text to a URL-friendly slug."""
+    text = text.lower()
+    text = re.sub(r"[^\w\s-]", "", text)
+    text = re.sub(r"[\s_]+", "-", text)
+    text = re.sub(r"-+", "-", text)
+    return text.strip("-")[:50]
+
+
+def _format_microblog_draft(item: Item) -> str:
+    """Format an item as a Micro.blog draft markdown file.
+
+    Args:
+        item: The item to format
+
+    Returns:
+        Markdown string with YAML frontmatter
+    """
+    # Generate title
+    if item.title:
+        title = f"Notes on: {item.title}"
+    else:
+        preview = item.content[:50].replace("\n", " ")
+        title = f"Notes on: {preview}..."
+
+    # Build frontmatter
+    frontmatter = f"""---
+title: "{title}"
+status: "draft"
+type: "post"
+location: "drafts"
+---"""
+
+    # Build content with source reference
+    lines = [frontmatter, ""]
+
+    # Add source metadata as HTML comment
+    lines.append(f"<!-- Source: {item.source_type} item #{item.id} -->")
+    if item.url:
+        lines.append(f"<!-- Original: {item.url} -->")
+    lines.append("")
+
+    # Add placeholder for user's notes
+    lines.append("[Your notes here]")
+    lines.append("")
+
+    # Add reference section
+    lines.append("---")
+    lines.append("")
+
+    if item.title and item.url:
+        lines.append(f"*Reference: [{item.title}]({item.url})*")
+    elif item.title:
+        lines.append(f"*Reference: {item.title}*")
+    elif item.url:
+        lines.append(f"*Reference: {item.url}*")
+    else:
+        lines.append(f"*Source: {item.source_type} (lestash item #{item.id})*")
+
+    # Add creation date if available
+    if item.created_at:
+        lines.append(f"*Date: {item.created_at.strftime('%Y-%m-%d')}*")
+
+    return "\n".join(lines)
 
 
 def _resolve_author(conn, author: str | None) -> str:
@@ -225,3 +293,62 @@ def export_items(
         json.dump(items, f, indent=2, default=str)
 
     console.print(f"[green]Exported {len(items)} items to {output}[/green]")
+
+
+@app.command("draft")
+def create_draft(
+    item_id: Annotated[int, typer.Argument(help="Item ID to create draft from")],
+    output: Annotated[
+        str | None,
+        typer.Option("--output", "-o", help="Output directory (default: current dir)"),
+    ] = None,
+    filename: Annotated[
+        str | None,
+        typer.Option("--filename", "-f", help="Output filename (auto-generated if not provided)"),
+    ] = None,
+) -> None:
+    """Create a Micro.blog draft from an item.
+
+    Generates a markdown file with YAML frontmatter compatible with
+    the vscode.micro.blog extension's drafts folder structure.
+
+    Example:
+        lestash items draft 248 --output ~/blog/content/drafts/
+    """
+    config = Config.load()
+
+    with get_connection(config) as conn:
+        cursor = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,))
+        row = cursor.fetchone()
+
+        if not row:
+            console.print(f"[red]Item {item_id} not found.[/red]")
+            raise typer.Exit(1)
+
+        item = Item.from_row(row)
+
+    # Generate markdown content
+    content = _format_microblog_draft(item)
+
+    # Determine output path
+    if filename:
+        name = filename if filename.endswith(".md") else f"{filename}.md"
+    else:
+        # Auto-generate filename from title or content
+        base = item.title or item.content[:30]
+        slug = _slugify(base)
+        name = f"draft-{item.source_type}-{slug}.md"
+
+    if output:
+        output_path = Path(output).expanduser() / name
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        output_path = Path(name)
+
+    # Write the file
+    output_path.write_text(content)
+
+    console.print(f"[green]Created draft: {output_path}[/green]")
+    console.print(f"[dim]Source: {item.source_type} item #{item.id}[/dim]")
+    if item.url:
+        console.print(f"[dim]Reference: {item.url}[/dim]")
