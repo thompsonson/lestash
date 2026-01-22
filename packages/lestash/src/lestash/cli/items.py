@@ -23,6 +23,7 @@ def _resolve_author(conn, author: str | None) -> str:
     # Return full URN so user can copy it to add profiles
     return author
 
+
 app = typer.Typer(help="Manage items in your knowledge base.")
 console = Console()
 
