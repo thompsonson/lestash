@@ -67,9 +67,22 @@ def video_to_item(video: dict[str, Any], source_subtype: str = "liked") -> ItemC
     Returns:
         ItemCreate object for storage
     """
-    # Parse published date
+    # For liked videos, use liked_at as the item's created_at
+    # For history, use watched_at
+    # Fall back to published_at if neither is available
     created_at = None
-    if video.get("published_at"):
+    action_timestamp = video.get("liked_at") or video.get("watched_at")
+
+    if action_timestamp:
+        try:
+            created_at = datetime.fromisoformat(
+                action_timestamp.replace("Z", "+00:00")
+            )
+        except (ValueError, AttributeError):
+            pass
+
+    # Fall back to published_at if no action timestamp
+    if created_at is None and video.get("published_at"):
         try:
             created_at = datetime.fromisoformat(
                 video["published_at"].replace("Z", "+00:00")
@@ -106,6 +119,10 @@ def video_to_item(video: dict[str, Any], source_subtype: str = "liked") -> ItemC
         "category_id": video.get("category_id"),
     }
 
+    # Store original video publish date in metadata
+    if video.get("published_at"):
+        metadata["published_at"] = video["published_at"]
+
     # Add statistics if available
     if video.get("view_count"):
         metadata["view_count"] = int(video["view_count"])
@@ -114,7 +131,9 @@ def video_to_item(video: dict[str, Any], source_subtype: str = "liked") -> ItemC
     if video.get("comment_count"):
         metadata["comment_count"] = int(video["comment_count"])
 
-    # Add watch timestamp if available (for history)
+    # Store action timestamps in metadata
+    if video.get("liked_at"):
+        metadata["liked_at"] = video["liked_at"]
     if video.get("watched_at"):
         metadata["watched_at"] = video["watched_at"]
 

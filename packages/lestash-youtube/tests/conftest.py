@@ -20,6 +20,7 @@ def youtube_video_factory():
         channel_id: str = "UC_test_channel_123",
         channel_title: str = "Test Channel",
         published_at: str = "2025-01-15T10:30:00Z",
+        liked_at: str = "2026-01-20T14:00:00Z",
         duration: str = "PT4M35S",
         definition: str = "hd",
         view_count: str = "1000000",
@@ -37,7 +38,8 @@ def youtube_video_factory():
             description: Video description
             channel_id: Channel ID
             channel_title: Channel display name
-            published_at: ISO 8601 publish timestamp
+            published_at: ISO 8601 publish timestamp (when video was uploaded)
+            liked_at: ISO 8601 timestamp (when user liked the video)
             duration: ISO 8601 duration (e.g., PT4M35S)
             definition: Video definition (hd/sd)
             view_count: Number of views
@@ -61,6 +63,7 @@ def youtube_video_factory():
             "channel_id": channel_id,
             "channel_title": channel_title,
             "published_at": published_at,
+            "liked_at": liked_at,
             "duration": duration,
             "definition": definition,
             "view_count": view_count,

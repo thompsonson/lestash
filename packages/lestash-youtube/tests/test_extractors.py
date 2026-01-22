@@ -96,9 +96,38 @@ class TestVideoToItem:
 
         assert item.url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
-    def test_parses_published_timestamp(self, youtube_video_factory):
-        """Should parse ISO 8601 timestamp to datetime."""
+    def test_uses_liked_at_as_created_at(self, youtube_video_factory):
+        """Should use liked_at timestamp as item created_at for liked videos."""
+        video = youtube_video_factory(
+            published_at="2015-01-15T10:30:45Z",  # Video published 10 years ago
+            liked_at="2026-01-20T14:00:00Z",  # Liked today
+        )
+
+        item = video_to_item(video, "liked")
+
+        # created_at should be when user liked the video, not when it was published
+        assert item.created_at is not None
+        assert item.created_at.year == 2026
+        assert item.created_at.month == 1
+        assert item.created_at.day == 20
+        assert item.created_at.hour == 14
+
+    def test_stores_published_at_in_metadata(self, youtube_video_factory):
+        """Should store original video publish date in metadata."""
+        video = youtube_video_factory(
+            published_at="2015-06-15T12:00:00Z",
+            liked_at="2026-01-20T14:00:00Z",
+        )
+
+        item = video_to_item(video, "liked")
+
+        assert item.metadata["published_at"] == "2015-06-15T12:00:00Z"
+        assert item.metadata["liked_at"] == "2026-01-20T14:00:00Z"
+
+    def test_falls_back_to_published_at_if_no_liked_at(self, youtube_video_factory):
+        """Should fall back to published_at if liked_at is not available."""
         video = youtube_video_factory(published_at="2025-01-15T10:30:45Z")
+        video.pop("liked_at")  # Remove liked_at
 
         item = video_to_item(video, "liked")
 
@@ -106,8 +135,6 @@ class TestVideoToItem:
         assert item.created_at.year == 2025
         assert item.created_at.month == 1
         assert item.created_at.day == 15
-        assert item.created_at.hour == 10
-        assert item.created_at.minute == 30
 
     def test_sets_is_own_content_false(self, youtube_video_factory):
         """Should set is_own_content to False for liked/watched videos."""
@@ -287,7 +314,10 @@ class TestVideoToItemEdgeCases:
 
     def test_handles_invalid_timestamp(self, youtube_video_factory):
         """Should handle invalid timestamp gracefully."""
-        video = youtube_video_factory(published_at="invalid-date")
+        video = youtube_video_factory(
+            published_at="invalid-date",
+            liked_at="also-invalid",
+        )
 
         item = video_to_item(video, "liked")
 

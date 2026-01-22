@@ -147,50 +147,121 @@ def create_youtube_client():
 
 
 def get_liked_videos(youtube, max_results: int = 50) -> list[dict[str, Any]]:
-    """Fetch user's liked videos.
+    """Fetch user's liked videos with the timestamp of when they were liked.
+
+    Uses the likes playlist to get the "liked at" timestamp, then fetches
+    additional video details (duration, stats) for each video.
 
     Args:
         youtube: Authenticated YouTube API client.
         max_results: Maximum number of videos to fetch per page.
 
     Returns:
-        List of video data dictionaries.
+        List of video data dictionaries including 'liked_at' timestamp.
     """
     videos = []
+
+    # First, get the user's "likes" playlist ID
+    channels_response = youtube.channels().list(
+        part="contentDetails",
+        mine=True,
+    ).execute()
+
+    if not channels_response.get("items"):
+        return videos
+
+    likes_playlist_id = (
+        channels_response["items"][0]
+        .get("contentDetails", {})
+        .get("relatedPlaylists", {})
+        .get("likes")
+    )
+
+    if not likes_playlist_id:
+        return videos
+
+    # Fetch items from the likes playlist
+    # The snippet.publishedAt here is when the video was added to the playlist (liked)
     page_token = None
+    playlist_items = []
 
     while True:
-        # Get liked videos using videos.list with myRating=like
-        request = youtube.videos().list(
-            part="snippet,contentDetails,statistics",
-            myRating="like",
+        request = youtube.playlistItems().list(
+            part="snippet,contentDetails",
+            playlistId=likes_playlist_id,
             maxResults=min(max_results, 50),
             pageToken=page_token,
         )
         response = request.execute()
 
         for item in response.get("items", []):
-            video = {
-                "id": item["id"],
-                "title": item["snippet"]["title"],
-                "description": item["snippet"]["description"],
-                "channel_id": item["snippet"]["channelId"],
-                "channel_title": item["snippet"]["channelTitle"],
-                "published_at": item["snippet"]["publishedAt"],
-                "thumbnails": item["snippet"].get("thumbnails", {}),
-                "tags": item["snippet"].get("tags", []),
-                "category_id": item["snippet"].get("categoryId"),
-                "duration": item["contentDetails"].get("duration"),
-                "definition": item["contentDetails"].get("definition"),
-                "view_count": item.get("statistics", {}).get("viewCount"),
-                "like_count": item.get("statistics", {}).get("likeCount"),
-                "comment_count": item.get("statistics", {}).get("commentCount"),
-            }
-            videos.append(video)
+            snippet = item.get("snippet", {})
+            video_id = snippet.get("resourceId", {}).get("videoId")
+            if video_id:
+                playlist_items.append({
+                    "video_id": video_id,
+                    # This is when the video was LIKED (added to the likes playlist)
+                    "liked_at": snippet.get("publishedAt"),
+                    # Basic info from playlist (video publish date and channel)
+                    "title": snippet.get("title"),
+                    "description": snippet.get("description"),
+                    "channel_id": snippet.get("videoOwnerChannelId"),
+                    "channel_title": snippet.get("videoOwnerChannelTitle"),
+                    "thumbnails": snippet.get("thumbnails", {}),
+                    # Video publish date from contentDetails
+                    "published_at": item.get("contentDetails", {}).get("videoPublishedAt"),
+                })
 
         page_token = response.get("nextPageToken")
         if not page_token:
             break
+
+    # Fetch additional video details (duration, stats) in batches
+    video_ids = [item["video_id"] for item in playlist_items]
+    video_details = {}
+
+    # YouTube API allows up to 50 video IDs per request
+    for i in range(0, len(video_ids), 50):
+        batch_ids = video_ids[i : i + 50]
+        details_response = youtube.videos().list(
+            part="contentDetails,statistics,snippet",
+            id=",".join(batch_ids),
+        ).execute()
+
+        for item in details_response.get("items", []):
+            video_details[item["id"]] = {
+                "duration": item.get("contentDetails", {}).get("duration"),
+                "definition": item.get("contentDetails", {}).get("definition"),
+                "view_count": item.get("statistics", {}).get("viewCount"),
+                "like_count": item.get("statistics", {}).get("likeCount"),
+                "comment_count": item.get("statistics", {}).get("commentCount"),
+                "tags": item.get("snippet", {}).get("tags", []),
+                "category_id": item.get("snippet", {}).get("categoryId"),
+            }
+
+    # Combine playlist items with video details
+    for item in playlist_items:
+        video_id = item["video_id"]
+        details = video_details.get(video_id, {})
+
+        video = {
+            "id": video_id,
+            "title": item["title"],
+            "description": item["description"],
+            "channel_id": item["channel_id"],
+            "channel_title": item["channel_title"],
+            "published_at": item["published_at"],
+            "liked_at": item["liked_at"],  # When the user liked it
+            "thumbnails": item["thumbnails"],
+            "tags": details.get("tags", []),
+            "category_id": details.get("category_id"),
+            "duration": details.get("duration"),
+            "definition": details.get("definition"),
+            "view_count": details.get("view_count"),
+            "like_count": details.get("like_count"),
+            "comment_count": details.get("comment_count"),
+        }
+        videos.append(video)
 
     return videos
 
