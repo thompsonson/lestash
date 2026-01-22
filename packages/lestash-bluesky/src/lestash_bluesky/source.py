@@ -121,7 +121,15 @@ def post_to_item(post: "models.AppBskyFeedDefs.FeedViewPost", handle: str) -> It
         # Handle images
         if isinstance(record.embed, models.AppBskyEmbedImages.Main):
             metadata["images"] = [
-                {"alt": img.alt, "aspect_ratio": img.aspect_ratio}
+                {
+                    "alt": img.alt,
+                    "aspect_ratio": {
+                        "width": img.aspect_ratio.width,
+                        "height": img.aspect_ratio.height,
+                    }
+                    if img.aspect_ratio
+                    else None,
+                }
                 for img in record.embed.images
             ]
 

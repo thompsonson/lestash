@@ -188,7 +188,8 @@ class TestEmbeds:
         assert "images" in item.metadata
         assert len(item.metadata["images"]) == 1
         assert item.metadata["images"][0]["alt"] == "A sunset"
-        assert item.metadata["images"][0]["aspect_ratio"].width == 1200
+        assert item.metadata["images"][0]["aspect_ratio"]["width"] == 1200
+        assert item.metadata["images"][0]["aspect_ratio"]["height"] == 800
 
     def test_embed_external_stores_uri_title_description(
         self, bluesky_post_factory, mock_embed_external
