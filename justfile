@@ -60,38 +60,6 @@ clean:
     find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
     find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
 
-# Initialize lestash database and configuration
-init:
-    uv run lestash init
-
-# Authenticate with Bluesky
-bluesky-auth:
-    uv run lestash bluesky auth
-
-# Sync Bluesky posts
-bluesky-sync limit="100":
-    uv run lestash bluesky sync --limit {{limit}}
-
-# Show Bluesky account status
-bluesky-status:
-    uv run lestash bluesky status
-
-# Authenticate with LinkedIn
-linkedin-auth:
-    uv run lestash linkedin auth
-
-# Sync LinkedIn posts
-linkedin-sync:
-    uv run lestash linkedin sync
-
-# Search the knowledge base
-search query:
-    uv run lestash search "{{query}}"
-
-# List all items in the knowledge base
-list-items:
-    uv run lestash list
-
 # Show project statistics (lines of code, test count, etc.)
 stats:
     @echo "=== Project Statistics ==="
