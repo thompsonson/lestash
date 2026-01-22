@@ -1,6 +1,6 @@
 [project]
 name = "lestash-arxiv"
-version = "1.0.2"
+version = "1.1.0"
 description = "arXiv source plugin for Le Stash"
 readme = "README.md"
 requires-python = ">=3.12"
