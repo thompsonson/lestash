@@ -1,0 +1,25 @@
+[project]
+name = "lestash-youtube"
+version = "1.2.0"
+description = "YouTube source plugin for Le Stash"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "lestash",
+    "google-api-python-client>=2.0.0",
+    "google-auth-oauthlib>=1.0.0",
+    "google-auth-httplib2>=0.2.0",
+]
+
+[project.entry-points."lestash.sources"]
+youtube = "lestash_youtube:YouTubeSource"
+
+[tool.uv.sources]
+lestash = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lestash_youtube"]
