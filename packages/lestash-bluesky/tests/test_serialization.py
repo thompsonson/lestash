@@ -3,9 +3,8 @@
 import json
 from types import SimpleNamespace
 
-import pytest
-
 from lestash_bluesky.source import post_to_item
+
 from tests.conftest import MockLink, MockMention, MockTag
 
 

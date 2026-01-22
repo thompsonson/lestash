@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Iterator
+from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated
 
@@ -75,10 +76,8 @@ def post_to_item(post: "models.AppBskyFeedDefs.FeedViewPost", handle: str) -> It
     # Parse creation time
     created_at = None
     if hasattr(record, "created_at"):
-        try:
+        with suppress(ValueError, AttributeError):
             created_at = datetime.fromisoformat(record.created_at.replace("Z", "+00:00"))
-        except (ValueError, AttributeError):
-            pass
 
     # Extract facets (mentions, links, hashtags)
     facets_data = extract_text_from_facets(
@@ -346,7 +345,7 @@ class BlueskySource(SourcePlugin):
                 console.print("\n[dim]Checking connection...[/dim]")
                 client = create_client()
 
-                console.print(f"Connection: [green]✓ Connected[/green]")
+                console.print("Connection: [green]✓ Connected[/green]")
                 console.print(f"  Handle: {client.me.handle}")
                 console.print(f"  DID: {client.me.did}")
 
@@ -367,7 +366,7 @@ class BlueskySource(SourcePlugin):
 
             except Exception as e:
                 logger.error(f"Status check failed: {e}", exc_info=True)
-                console.print(f"Connection: [red]✗ Failed[/red]")
+                console.print("Connection: [red]✗ Failed[/red]")
                 console.print(f"[red]{e}[/red]")
                 console.print("\n[dim]Run 'lestash bluesky auth' to re-authenticate[/dim]")
                 raise typer.Exit(1) from None

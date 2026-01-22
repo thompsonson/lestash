@@ -1,13 +1,11 @@
 """Tests for Bluesky post extraction and transformation - Fixed version."""
 
-from datetime import datetime
 from types import SimpleNamespace
 
-import pytest
 from lestash.models.item import ItemCreate
-
 from lestash_bluesky.source import extract_text_from_facets, post_to_item
-from tests.conftest import MockMention, MockLink, MockTag
+
+from tests.conftest import MockLink, MockMention, MockTag
 
 
 class TestCorePostExtraction:

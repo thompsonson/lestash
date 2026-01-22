@@ -124,7 +124,9 @@ def create_client(handle: str | None = None, password: str | None = None) -> "Cl
         raise Exception(f"Authentication failed: {e}") from e
 
 
-def get_author_posts(client: "Client", actor: str, limit: int = 100) -> list["models.AppBskyFeedDefs.FeedViewPost"]:
+def get_author_posts(
+    client: "Client", actor: str, limit: int = 100
+) -> list["models.AppBskyFeedDefs.FeedViewPost"]:
     """Fetch all posts from an author.
 
     Args:

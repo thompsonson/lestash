@@ -1,15 +1,12 @@
 """Tests for Bluesky CLI commands - Sprint 3."""
 
 import json
-import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-import typer
-from typer.testing import CliRunner
-
 from lestash_bluesky.source import BlueskySource
+from typer.testing import CliRunner
 
 
 @pytest.fixture

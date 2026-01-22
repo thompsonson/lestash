@@ -1,6 +1,5 @@
 """Integration tests for Bluesky plugin - Sprint 4."""
 
-import pytest
 
 from lestash.plugins.loader import load_plugins
 

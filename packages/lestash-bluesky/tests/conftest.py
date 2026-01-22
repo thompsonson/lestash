@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 
-
 # Create mock atproto module for isinstance checks
 _mock_atproto = ModuleType("atproto")
 _mock_models = ModuleType("atproto.models")
