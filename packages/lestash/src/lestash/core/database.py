@@ -2,6 +2,11 @@
 
 Schema versioning uses PRAGMA user_version to track migrations.
 Each migration is applied once, incrementing the version number.
+
+For CRDT-based sync, see the crsqlite module which provides:
+- Extension loading for cr-sqlite
+- Change tracking and application
+- FTS index rebuilding after sync
 """
 
 import logging
@@ -327,3 +332,64 @@ def delete_person_profile(conn: sqlite3.Connection, urn: str) -> bool:
     cursor = conn.execute("DELETE FROM person_profiles WHERE urn = ?", (urn,))
     conn.commit()
     return cursor.rowcount > 0
+
+
+@contextmanager
+def get_crdt_connection(config: Config | None = None) -> Iterator[sqlite3.Connection]:
+    """Get a database connection with cr-sqlite extension loaded.
+
+    This connection supports CRDT-based sync operations. The cr-sqlite
+    extension MUST be loaded as the first operation, so this is a separate
+    context manager from get_connection().
+
+    Use this for sync operations. For regular database access, use get_connection().
+
+    Important: Call crsqlite.finalize_connection(conn) before the connection closes.
+    This is handled automatically by this context manager.
+    """
+    from lestash.core import crsqlite
+
+    db_path = get_db_path(config)
+    if not db_path.exists():
+        init_database(config)
+
+    conn = sqlite3.connect(db_path)
+
+    # Load cr-sqlite as FIRST operation (required by cr-sqlite)
+    if not crsqlite.load_extension(conn):
+        conn.close()
+        raise RuntimeError(
+            "Failed to load cr-sqlite extension. "
+            "Run 'lestash sync setup' to download it."
+        )
+
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+
+    # Apply any pending migrations
+    current_version = get_schema_version(conn)
+    if current_version < SCHEMA_VERSION:
+        apply_migrations(conn)
+
+    try:
+        yield conn
+    finally:
+        # Finalize cr-sqlite before closing
+        crsqlite.finalize_connection(conn)
+        conn.close()
+
+
+def is_crdt_enabled(conn: sqlite3.Connection) -> bool:
+    """Check if the database has CRDT sync enabled (tables upgraded to CRRs).
+
+    Returns:
+        True if the items table is a CRR.
+    """
+    try:
+        # Check if crsql_changes table exists (indicates cr-sqlite is active)
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='crsql_changes'"
+        )
+        return cursor.fetchone() is not None
+    except sqlite3.Error:
+        return False
