@@ -312,7 +312,8 @@ def list_person_profiles(conn: sqlite3.Connection) -> list[dict]:
         List of profile dicts with urn, profile_url, display_name, source
     """
     cursor = conn.execute(
-        "SELECT urn, profile_url, display_name, source FROM person_profiles ORDER BY display_name, urn"
+        """SELECT urn, profile_url, display_name, source
+        FROM person_profiles ORDER BY display_name, urn"""
     )
     return [dict(row) for row in cursor.fetchall()]
 
