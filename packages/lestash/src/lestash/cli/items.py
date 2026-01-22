@@ -8,8 +8,24 @@ from rich.console import Console
 from rich.table import Table
 
 from lestash.core.config import Config
-from lestash.core.database import get_connection
+from lestash.core.database import get_connection, get_person_profile
 from lestash.models.item import Item
+
+
+def _resolve_author(conn, author: str | None) -> str:
+    """Resolve author URN to display name if available."""
+    if not author:
+        return "-"
+    # Try to look up profile
+    profile = get_person_profile(conn, author)
+    if profile and profile.get("display_name"):
+        return profile["display_name"]
+    # Fall back to short URN for person URNs
+    if author.startswith("urn:li:person:"):
+        return author.split(":")[-1]
+    if author.startswith("urn:li:company:"):
+        return f"company:{author.split(':')[-1]}"
+    return author
 
 app = typer.Typer(help="Manage items in your knowledge base.")
 console = Console()
@@ -44,32 +60,33 @@ def list_items(
         cursor = conn.execute(query, params)
         rows = cursor.fetchall()
 
-    if not rows:
-        console.print("[dim]No items found.[/dim]")
-        return
+        if not rows:
+            console.print("[dim]No items found.[/dim]")
+            return
 
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("ID", style="dim")
-    table.add_column("Type")
-    table.add_column("Title / Content Preview")
-    table.add_column("Author")
-    table.add_column("Created")
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("ID", style="dim")
+        table.add_column("Type")
+        table.add_column("Title / Content Preview")
+        table.add_column("Author")
+        table.add_column("Created")
 
-    for row in rows:
-        item = Item.from_row(row)
-        preview = (
-            item.title or item.content[:50] + "..." if len(item.content) > 50 else item.content
-        )
-        created = item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "-"
-        table.add_row(
-            str(item.id),
-            item.source_type,
-            preview,
-            item.author or "-",
-            created,
-        )
+        for row in rows:
+            item = Item.from_row(row)
+            preview = (
+                item.title or item.content[:50] + "..." if len(item.content) > 50 else item.content
+            )
+            created = item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "-"
+            author_display = _resolve_author(conn, item.author)
+            table.add_row(
+                str(item.id),
+                item.source_type,
+                preview,
+                author_display,
+                created,
+            )
 
-    console.print(table)
+        console.print(table)
 
 
 @app.command("search")
@@ -93,32 +110,33 @@ def search_items(
         )
         rows = cursor.fetchall()
 
-    if not rows:
-        console.print(f"[dim]No items found matching '{query}'.[/dim]")
-        return
+        if not rows:
+            console.print(f"[dim]No items found matching '{query}'.[/dim]")
+            return
 
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("ID", style="dim")
-    table.add_column("Type")
-    table.add_column("Title / Content Preview")
-    table.add_column("Author")
-    table.add_column("Created")
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("ID", style="dim")
+        table.add_column("Type")
+        table.add_column("Title / Content Preview")
+        table.add_column("Author")
+        table.add_column("Created")
 
-    for row in rows:
-        item = Item.from_row(row)
-        preview = (
-            item.title or item.content[:50] + "..." if len(item.content) > 50 else item.content
-        )
-        created = item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "-"
-        table.add_row(
-            str(item.id),
-            item.source_type,
-            preview,
-            item.author or "-",
-            created,
-        )
+        for row in rows:
+            item = Item.from_row(row)
+            preview = (
+                item.title or item.content[:50] + "..." if len(item.content) > 50 else item.content
+            )
+            created = item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "-"
+            author_display = _resolve_author(conn, item.author)
+            table.add_row(
+                str(item.id),
+                item.source_type,
+                preview,
+                author_display,
+                created,
+            )
 
-    console.print(table)
+        console.print(table)
 
 
 @app.command("show")
@@ -132,11 +150,15 @@ def show_item(
         cursor = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,))
         row = cursor.fetchone()
 
-    if not row:
-        console.print(f"[red]Item {item_id} not found.[/red]")
-        raise typer.Exit(1)
+        if not row:
+            console.print(f"[red]Item {item_id} not found.[/red]")
+            raise typer.Exit(1)
 
-    item = Item.from_row(row)
+        item = Item.from_row(row)
+
+        # Resolve author profile
+        author_display = _resolve_author(conn, item.author)
+        author_profile = get_person_profile(conn, item.author) if item.author else None
 
     console.print(f"[bold]ID:[/bold] {item.id}")
     console.print(f"[bold]Source:[/bold] {item.source_type}")
@@ -146,7 +168,9 @@ def show_item(
         console.print(f"[bold]URL:[/bold] {item.url}")
     if item.title:
         console.print(f"[bold]Title:[/bold] {item.title}")
-    console.print(f"[bold]Author:[/bold] {item.author or '-'}")
+    console.print(f"[bold]Author:[/bold] {author_display}")
+    if author_profile and author_profile.get("profile_url"):
+        console.print(f"[bold]Author Profile:[/bold] {author_profile['profile_url']}")
     if item.created_at:
         console.print(f"[bold]Created:[/bold] {item.created_at}")
     console.print(f"[bold]Fetched:[/bold] {item.fetched_at}")

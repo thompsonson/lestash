@@ -15,7 +15,7 @@ from lestash.core.config import Config
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -155,6 +155,24 @@ MIGRATIONS = [
         END;
         """,
     ),
+    (
+        2,
+        "Add person_profiles table for URN to profile URL mapping",
+        """
+        -- Person profiles lookup table (maps URNs to profile URLs)
+        CREATE TABLE IF NOT EXISTS person_profiles (
+            id INTEGER PRIMARY KEY,
+            urn TEXT UNIQUE NOT NULL,
+            profile_url TEXT,
+            display_name TEXT,
+            source TEXT DEFAULT 'manual',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_person_profiles_urn ON person_profiles(urn);
+        """,
+    ),
 ]
 
 
@@ -234,3 +252,77 @@ def get_connection(config: Config | None = None) -> Iterator[sqlite3.Connection]
         yield conn
     finally:
         conn.close()
+
+
+def get_person_profile(conn: sqlite3.Connection, urn: str) -> dict | None:
+    """Look up a person profile by URN.
+
+    Args:
+        conn: Database connection
+        urn: LinkedIn person URN (e.g., "urn:li:person:xu59iSkkD6")
+
+    Returns:
+        Dict with profile_url, display_name, etc. or None if not found
+    """
+    cursor = conn.execute(
+        "SELECT urn, profile_url, display_name, source FROM person_profiles WHERE urn = ?",
+        (urn,),
+    )
+    row = cursor.fetchone()
+    if row:
+        return dict(row)
+    return None
+
+
+def upsert_person_profile(
+    conn: sqlite3.Connection,
+    urn: str,
+    profile_url: str | None = None,
+    display_name: str | None = None,
+    source: str = "manual",
+) -> None:
+    """Add or update a person profile mapping.
+
+    Args:
+        conn: Database connection
+        urn: LinkedIn person URN
+        profile_url: LinkedIn profile URL (e.g., "https://linkedin.com/in/john-doe")
+        display_name: Human-readable name
+        source: How the mapping was obtained (manual, api, etc.)
+    """
+    conn.execute(
+        """
+        INSERT INTO person_profiles (urn, profile_url, display_name, source, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(urn) DO UPDATE SET
+            profile_url = COALESCE(excluded.profile_url, profile_url),
+            display_name = COALESCE(excluded.display_name, display_name),
+            source = excluded.source,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (urn, profile_url, display_name, source),
+    )
+    conn.commit()
+
+
+def list_person_profiles(conn: sqlite3.Connection) -> list[dict]:
+    """List all person profile mappings.
+
+    Returns:
+        List of profile dicts with urn, profile_url, display_name, source
+    """
+    cursor = conn.execute(
+        "SELECT urn, profile_url, display_name, source FROM person_profiles ORDER BY display_name, urn"
+    )
+    return [dict(row) for row in cursor.fetchall()]
+
+
+def delete_person_profile(conn: sqlite3.Connection, urn: str) -> bool:
+    """Delete a person profile mapping.
+
+    Returns:
+        True if a profile was deleted, False if not found
+    """
+    cursor = conn.execute("DELETE FROM person_profiles WHERE urn = ?", (urn,))
+    conn.commit()
+    return cursor.rowcount > 0
