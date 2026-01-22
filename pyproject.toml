@@ -9,6 +9,7 @@ dependencies = [
     "lestash-linkedin",
     "lestash-arxiv",
     "lestash-bluesky",
+    "lestash-microblog",
 ]
 
 [tool.uv.workspace]
@@ -19,6 +20,7 @@ lestash = { workspace = true }
 lestash-linkedin = { workspace = true }
 lestash-arxiv = { workspace = true }
 lestash-bluesky = { workspace = true }
+lestash-microblog = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -53,6 +55,7 @@ version_toml = [
     "packages/lestash-arxiv/pyproject.toml:project.version",
     "packages/lestash-linkedin/pyproject.toml:project.version",
     "packages/lestash-bluesky/pyproject.toml:project.version",
+    "packages/lestash-microblog/pyproject.toml:project.version",
 ]
 branch = "main"
 commit_parser = "angular"
