@@ -86,6 +86,7 @@ jobs:
         run: |
           uv run pytest packages/lestash/tests
           uv run pytest packages/lestash-linkedin/tests
+          uv run pytest packages/lestash-bluesky/tests
 
   build:
     name: Build Package
