@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from atproto import Client, models
@@ -49,22 +49,22 @@ def load_credentials() -> dict[str, str] | None:
         return None
 
 
-def save_session(session_data: dict[str, Any]) -> None:
-    """Save AT Protocol session for reuse."""
+def save_session(session_string: str) -> None:
+    """Save AT Protocol session string for reuse."""
     path = get_session_path()
-    path.write_text(json.dumps(session_data, indent=2))
+    path.write_text(session_string)
     path.chmod(0o600)
 
 
-def load_session() -> dict[str, Any] | None:
-    """Load saved AT Protocol session."""
+def load_session() -> str | None:
+    """Load saved AT Protocol session string."""
     path = get_session_path()
     if not path.exists():
         return None
 
     try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+        return path.read_text()
+    except OSError:
         return None
 
 
@@ -98,28 +98,26 @@ def create_client(handle: str | None = None, password: str | None = None) -> "Cl
         password = password or creds["password"]
 
     # Try to restore session first (faster than full login)
-    session = load_session()
-    if session and session.get("handle") == handle:
+    session_string = load_session()
+    if session_string:
         try:
             # Attempt to use saved session
-            client.login(session_string=json.dumps(session))
-            return client
+            client.login(session_string=session_string)
+            # Verify it's the right handle
+            if client.me and (client.me.handle == handle or client.me.did == handle):
+                return client
+            # Wrong handle, fall through to full login
         except Exception:
             # Session expired or invalid, fall through to full login
             pass
 
     # Full login
     try:
-        profile = client.login(handle, password)
+        client.login(handle, password)
 
         # Save session for reuse
-        save_session({
-            "handle": profile.handle,
-            "did": profile.did,
-            "email": getattr(profile, "email", None),
-            "accessJwt": client.me.access_jwt,
-            "refreshJwt": client.me.refresh_jwt,
-        })
+        session_string = client.export_session_string()
+        save_session(session_string)
 
         return client
     except Exception as e:
