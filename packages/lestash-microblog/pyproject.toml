@@ -1,0 +1,23 @@
+[project]
+name = "lestash-microblog"
+version = "1.0.0"
+description = "Micro.blog source plugin for Le Stash"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "lestash",
+    "httpx>=0.27.0",
+]
+
+[project.entry-points."lestash.sources"]
+microblog = "lestash_microblog:MicroblogSource"
+
+[tool.uv.sources]
+lestash = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lestash_microblog"]
