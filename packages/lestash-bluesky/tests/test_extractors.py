@@ -258,8 +258,12 @@ class TestReplies:
         item = post_to_item(post, "user.bsky.social")
 
         assert "reply_to" in item.metadata
-        assert item.metadata["reply_to"]["parent"] == "at://did:plc:other/app.bsky.feed.post/parent123"
-        assert item.metadata["reply_to"]["root"] == "at://did:plc:original/app.bsky.feed.post/root123"
+        assert (
+            item.metadata["reply_to"]["parent"] == "at://did:plc:other/app.bsky.feed.post/parent123"
+        )
+        assert (
+            item.metadata["reply_to"]["root"] == "at://did:plc:original/app.bsky.feed.post/root123"
+        )
 
     def test_no_reply_metadata_for_standalone_post(self, bluesky_post_factory):
         """Should not include reply_to for standalone posts."""

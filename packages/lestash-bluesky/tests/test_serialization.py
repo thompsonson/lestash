@@ -11,9 +11,7 @@ from tests.conftest import MockLink, MockMention, MockTag
 class TestJSONSerialization:
     """Verify that all post data can be serialized to JSON."""
 
-    def test_post_with_images_is_json_serializable(
-        self, bluesky_post_factory, mock_embed_images
-    ):
+    def test_post_with_images_is_json_serializable(self, bluesky_post_factory, mock_embed_images):
         """Should serialize posts with image embeds to JSON."""
         # Use SimpleNamespace for aspect_ratio as expected by mock factory
         embed = mock_embed_images(
@@ -62,9 +60,7 @@ class TestJSONSerialization:
         restored = json.loads(metadata_json)
         assert restored["external"]["uri"] == "https://example.com/article"
 
-    def test_post_with_quote_is_json_serializable(
-        self, bluesky_post_factory, mock_embed_record
-    ):
+    def test_post_with_quote_is_json_serializable(self, bluesky_post_factory, mock_embed_record):
         """Should serialize posts with record embeds (quotes) to JSON."""
         embed = mock_embed_record(uri="at://did:plc:other/app.bsky.feed.post/quoted123")
 

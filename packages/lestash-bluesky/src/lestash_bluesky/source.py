@@ -39,7 +39,7 @@ def extract_text_from_facets(text: str, facets: list | None) -> dict[str, list[s
     """
     from atproto import models
 
-    result = {"mentions": [], "links": [], "hashtags": []}
+    result: dict[str, list[str]] = {"mentions": [], "links": [], "hashtags": []}
 
     if not facets:
         return result
@@ -206,6 +206,10 @@ class BlueskySource(SourcePlugin):
                 else:
                     password = typer.prompt("Password", hide_input=True)
 
+            # Ensure we have both handle and password
+            assert handle is not None, "Handle must be provided"
+            assert password is not None, "Password must be provided"
+
             # Authenticate
             try:
                 from lestash_bluesky.client import create_client
@@ -333,9 +337,7 @@ class BlueskySource(SourcePlugin):
                 console.print(f"  Handle: {handle}")
             else:
                 console.print(f"Credentials: [red]✗ Not found[/red] ({creds_path})")
-                console.print(
-                    "[dim]  Run 'lestash bluesky auth' to authenticate[/dim]"
-                )
+                console.print("[dim]  Run 'lestash bluesky auth' to authenticate[/dim]")
                 raise typer.Exit(1)
 
             # Try to authenticate

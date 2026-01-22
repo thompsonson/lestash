@@ -25,31 +25,19 @@ def bluesky_app():
 class TestAuthCommand:
     """Test the auth command."""
 
-    def test_saves_credentials_successfully(
-        self, cli_runner, bluesky_app, tmp_path, monkeypatch
-    ):
+    def test_saves_credentials_successfully(self, cli_runner, bluesky_app, tmp_path, monkeypatch):
         """Should save credentials when authentication succeeds."""
         # Mock paths
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
         # Mock client
         mock_client = MagicMock()
-        mock_client.me = SimpleNamespace(
-            handle="alice.bsky.social", did="did:plc:abc123"
-        )
+        mock_client.me = SimpleNamespace(handle="alice.bsky.social", did="did:plc:abc123")
         mock_client.export_session_string.return_value = "session-string"
 
         # Patch create_client directly instead of Client
@@ -66,29 +54,17 @@ class TestAuthCommand:
         creds_data = json.loads(creds_file.read_text())
         assert creds_data["handle"] == "alice.bsky.social"
 
-    def test_prompts_for_missing_handle(
-        self, cli_runner, bluesky_app, tmp_path, monkeypatch
-    ):
+    def test_prompts_for_missing_handle(self, cli_runner, bluesky_app, tmp_path, monkeypatch):
         """Should prompt for handle when not provided."""
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
         mock_client = MagicMock()
-        mock_client.me = SimpleNamespace(
-            handle="bob.bsky.social", did="did:plc:bob123"
-        )
+        mock_client.me = SimpleNamespace(handle="bob.bsky.social", did="did:plc:bob123")
         mock_client.export_session_string.return_value = "session"
 
         with patch("lestash_bluesky.client.create_client", return_value=mock_client):
@@ -101,29 +77,17 @@ class TestAuthCommand:
         assert result.exit_code == 0
         assert "Bluesky handle" in result.stdout
 
-    def test_prompts_for_missing_password(
-        self, cli_runner, bluesky_app, tmp_path, monkeypatch
-    ):
+    def test_prompts_for_missing_password(self, cli_runner, bluesky_app, tmp_path, monkeypatch):
         """Should prompt for password when not provided."""
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
         mock_client = MagicMock()
-        mock_client.me = SimpleNamespace(
-            handle="alice.bsky.social", did="did:plc:abc123"
-        )
+        mock_client.me = SimpleNamespace(handle="alice.bsky.social", did="did:plc:abc123")
         mock_client.export_session_string.return_value = "session"
 
         with patch("lestash_bluesky.client.create_client", return_value=mock_client):
@@ -136,29 +100,17 @@ class TestAuthCommand:
         assert result.exit_code == 0
         assert "Password" in result.stdout
 
-    def test_shows_success_message(
-        self, cli_runner, bluesky_app, tmp_path, monkeypatch
-    ):
+    def test_shows_success_message(self, cli_runner, bluesky_app, tmp_path, monkeypatch):
         """Should show success message with account info."""
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
         mock_client = MagicMock()
-        mock_client.me = SimpleNamespace(
-            handle="alice.bsky.social", did="did:plc:abc123"
-        )
+        mock_client.me = SimpleNamespace(handle="alice.bsky.social", did="did:plc:abc123")
         mock_client.export_session_string.return_value = "session"
 
         with patch("lestash_bluesky.client.create_client", return_value=mock_client):
@@ -171,24 +123,14 @@ class TestAuthCommand:
         assert "did:plc:abc123" in result.stdout
         assert "Credentials saved" in result.stdout
 
-    def test_handles_authentication_failure(
-        self, cli_runner, bluesky_app, tmp_path, monkeypatch
-    ):
+    def test_handles_authentication_failure(self, cli_runner, bluesky_app, tmp_path, monkeypatch):
         """Should show error message when authentication fails."""
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
         with patch(
             "lestash_bluesky.client.create_client",
@@ -213,21 +155,11 @@ class TestSyncCommand:
         # Setup credentials
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        creds_file.write_text(
-            json.dumps({"handle": "alice.bsky.social", "password": "pass"})
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        creds_file.write_text(json.dumps({"handle": "alice.bsky.social", "password": "pass"}))
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
         # Mock client and posts
         mock_client = MagicMock()
@@ -248,10 +180,11 @@ class TestSyncCommand:
 
         mock_config = MagicMock()
 
-        with patch("lestash_bluesky.client.create_client", return_value=mock_client), patch(
-            "lestash_bluesky.client.get_author_posts", return_value=mock_posts
-        ), patch("lestash.core.database.get_connection", return_value=mock_conn), patch(
-            "lestash.core.config.Config.load", return_value=mock_config
+        with (
+            patch("lestash_bluesky.client.create_client", return_value=mock_client),
+            patch("lestash_bluesky.client.get_author_posts", return_value=mock_posts),
+            patch("lestash.core.database.get_connection", return_value=mock_conn),
+            patch("lestash.core.config.Config.load", return_value=mock_config),
         ):
             result = cli_runner.invoke(bluesky_app, ["sync"])
 
@@ -265,21 +198,11 @@ class TestSyncCommand:
         """Should display progress information during sync."""
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        creds_file.write_text(
-            json.dumps({"handle": "alice.bsky.social", "password": "pass"})
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        creds_file.write_text(json.dumps({"handle": "alice.bsky.social", "password": "pass"}))
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
         mock_client = MagicMock()
         mock_posts = [bluesky_post_factory(text=f"Post {i}") for i in range(5)]
@@ -292,58 +215,39 @@ class TestSyncCommand:
         mock_conn.__exit__ = Mock(return_value=False)
         mock_config = MagicMock()
 
-        with patch("lestash_bluesky.client.create_client", return_value=mock_client), patch(
-            "lestash_bluesky.client.get_author_posts", return_value=mock_posts
-        ), patch("lestash.core.database.get_connection", return_value=mock_conn), patch(
-            "lestash.core.config.Config.load", return_value=mock_config
+        with (
+            patch("lestash_bluesky.client.create_client", return_value=mock_client),
+            patch("lestash_bluesky.client.get_author_posts", return_value=mock_posts),
+            patch("lestash.core.database.get_connection", return_value=mock_conn),
+            patch("lestash.core.config.Config.load", return_value=mock_config),
         ):
             result = cli_runner.invoke(bluesky_app, ["sync"])
 
         assert "Found 5 posts" in result.stdout
         assert "Synced" in result.stdout
 
-    def test_handles_authentication_error(
-        self, cli_runner, bluesky_app, tmp_path, monkeypatch
-    ):
+    def test_handles_authentication_error(self, cli_runner, bluesky_app, tmp_path, monkeypatch):
         """Should show error when not authenticated."""
         creds_file = tmp_path / "credentials.json"
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
 
         result = cli_runner.invoke(bluesky_app, ["sync"])
 
         assert result.exit_code == 1
         assert "Not authenticated" in result.stdout
 
-    def test_handles_network_error(
-        self, cli_runner, bluesky_app, tmp_path, monkeypatch
-    ):
+    def test_handles_network_error(self, cli_runner, bluesky_app, tmp_path, monkeypatch):
         """Should handle network errors gracefully."""
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        creds_file.write_text(
-            json.dumps({"handle": "alice.bsky.social", "password": "pass"})
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        creds_file.write_text(json.dumps({"handle": "alice.bsky.social", "password": "pass"}))
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
-        with patch(
-            "lestash_bluesky.client.create_client", side_effect=Exception("Network error")
-        ):
+        with patch("lestash_bluesky.client.create_client", side_effect=Exception("Network error")):
             result = cli_runner.invoke(bluesky_app, ["sync"])
 
         assert result.exit_code == 1
@@ -355,21 +259,11 @@ class TestSyncCommand:
         """Should pass limit parameter to get_author_posts."""
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        creds_file.write_text(
-            json.dumps({"handle": "alice.bsky.social", "password": "pass"})
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        creds_file.write_text(json.dumps({"handle": "alice.bsky.social", "password": "pass"}))
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
         mock_client = MagicMock()
         mock_posts = []
@@ -379,12 +273,13 @@ class TestSyncCommand:
         mock_conn.__exit__ = Mock(return_value=False)
         mock_config = MagicMock()
 
-        with patch("lestash_bluesky.client.create_client", return_value=mock_client), patch(
-            "lestash_bluesky.client.get_author_posts", return_value=mock_posts
-        ) as mock_get_posts, patch(
-            "lestash.core.database.get_connection", return_value=mock_conn
-        ), patch(
-            "lestash.core.config.Config.load", return_value=mock_config
+        with (
+            patch("lestash_bluesky.client.create_client", return_value=mock_client),
+            patch(
+                "lestash_bluesky.client.get_author_posts", return_value=mock_posts
+            ) as mock_get_posts,
+            patch("lestash.core.database.get_connection", return_value=mock_conn),
+            patch("lestash.core.config.Config.load", return_value=mock_config),
         ):
             result = cli_runner.invoke(bluesky_app, ["sync", "--limit", "50"])
 
@@ -392,27 +287,15 @@ class TestSyncCommand:
         mock_get_posts.assert_called_once()
         assert mock_get_posts.call_args[1]["limit"] == 50
 
-    def test_handles_empty_timeline(
-        self, cli_runner, bluesky_app, tmp_path, monkeypatch
-    ):
+    def test_handles_empty_timeline(self, cli_runner, bluesky_app, tmp_path, monkeypatch):
         """Should handle empty timeline gracefully."""
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        creds_file.write_text(
-            json.dumps({"handle": "alice.bsky.social", "password": "pass"})
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        creds_file.write_text(json.dumps({"handle": "alice.bsky.social", "password": "pass"}))
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
         mock_client = MagicMock()
         mock_posts = []
@@ -422,10 +305,11 @@ class TestSyncCommand:
         mock_conn.__exit__ = Mock(return_value=False)
         mock_config = MagicMock()
 
-        with patch("lestash_bluesky.client.create_client", return_value=mock_client), patch(
-            "lestash_bluesky.client.get_author_posts", return_value=mock_posts
-        ), patch("lestash.core.database.get_connection", return_value=mock_conn), patch(
-            "lestash.core.config.Config.load", return_value=mock_config
+        with (
+            patch("lestash_bluesky.client.create_client", return_value=mock_client),
+            patch("lestash_bluesky.client.get_author_posts", return_value=mock_posts),
+            patch("lestash.core.database.get_connection", return_value=mock_conn),
+            patch("lestash.core.config.Config.load", return_value=mock_config),
         ):
             result = cli_runner.invoke(bluesky_app, ["sync"])
 
@@ -438,21 +322,11 @@ class TestSyncCommand:
         """Should not duplicate posts that already exist."""
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        creds_file.write_text(
-            json.dumps({"handle": "alice.bsky.social", "password": "pass"})
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        creds_file.write_text(json.dumps({"handle": "alice.bsky.social", "password": "pass"}))
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
         mock_client = MagicMock()
         mock_posts = [bluesky_post_factory(text="Duplicate post")]
@@ -466,10 +340,11 @@ class TestSyncCommand:
         mock_conn.__exit__ = Mock(return_value=False)
         mock_config = MagicMock()
 
-        with patch("lestash_bluesky.client.create_client", return_value=mock_client), patch(
-            "lestash_bluesky.client.get_author_posts", return_value=mock_posts
-        ), patch("lestash.core.database.get_connection", return_value=mock_conn), patch(
-            "lestash.core.config.Config.load", return_value=mock_config
+        with (
+            patch("lestash_bluesky.client.create_client", return_value=mock_client),
+            patch("lestash_bluesky.client.get_author_posts", return_value=mock_posts),
+            patch("lestash.core.database.get_connection", return_value=mock_conn),
+            patch("lestash.core.config.Config.load", return_value=mock_config),
         ):
             result = cli_runner.invoke(bluesky_app, ["sync"])
 
@@ -480,32 +355,18 @@ class TestSyncCommand:
 class TestStatusCommand:
     """Test the status command."""
 
-    def test_shows_authenticated_user_info(
-        self, cli_runner, bluesky_app, tmp_path, monkeypatch
-    ):
+    def test_shows_authenticated_user_info(self, cli_runner, bluesky_app, tmp_path, monkeypatch):
         """Should display authenticated user information."""
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        creds_file.write_text(
-            json.dumps({"handle": "alice.bsky.social", "password": "pass"})
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        creds_file.write_text(json.dumps({"handle": "alice.bsky.social", "password": "pass"}))
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
         mock_client = MagicMock()
-        mock_client.me = SimpleNamespace(
-            handle="alice.bsky.social", did="did:plc:abc123"
-        )
+        mock_client.me = SimpleNamespace(handle="alice.bsky.social", did="did:plc:abc123")
         mock_profile = SimpleNamespace(
             posts_count=100, followers_count=50, follows_count=75, display_name="Alice"
         )
@@ -519,17 +380,11 @@ class TestStatusCommand:
         assert "alice.bsky.social" in result.stdout
         assert "did:plc:abc123" in result.stdout
 
-    def test_shows_unauthenticated_status(
-        self, cli_runner, bluesky_app, tmp_path, monkeypatch
-    ):
+    def test_shows_unauthenticated_status(self, cli_runner, bluesky_app, tmp_path, monkeypatch):
         """Should show unauthenticated message when no credentials."""
         creds_file = tmp_path / "credentials.json"
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
 
         result = cli_runner.invoke(bluesky_app, ["status"])
 
@@ -537,32 +392,18 @@ class TestStatusCommand:
         assert "Not found" in result.stdout
         assert "lestash bluesky auth" in result.stdout
 
-    def test_shows_sync_statistics(
-        self, cli_runner, bluesky_app, tmp_path, monkeypatch
-    ):
+    def test_shows_sync_statistics(self, cli_runner, bluesky_app, tmp_path, monkeypatch):
         """Should display sync statistics from database."""
         creds_file = tmp_path / "credentials.json"
         session_file = tmp_path / "session.json"
-        creds_file.write_text(
-            json.dumps({"handle": "alice.bsky.social", "password": "pass"})
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.source.get_session_path", lambda: session_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
-        )
-        monkeypatch.setattr(
-            "lestash_bluesky.client.get_session_path", lambda: session_file
-        )
+        creds_file.write_text(json.dumps({"handle": "alice.bsky.social", "password": "pass"}))
+        monkeypatch.setattr("lestash_bluesky.source.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.source.get_session_path", lambda: session_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_credentials_path", lambda: creds_file)
+        monkeypatch.setattr("lestash_bluesky.client.get_session_path", lambda: session_file)
 
         mock_client = MagicMock()
-        mock_client.me = SimpleNamespace(
-            handle="alice.bsky.social", did="did:plc:abc123"
-        )
+        mock_client.me = SimpleNamespace(handle="alice.bsky.social", did="did:plc:abc123")
         mock_profile = SimpleNamespace(
             posts_count=100, followers_count=50, follows_count=75, display_name="Alice"
         )

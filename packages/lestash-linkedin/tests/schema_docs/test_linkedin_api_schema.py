@@ -104,7 +104,7 @@ class TestSchemaRegistryIntegrity:
         """
         for resource_name, schema_class in RESOURCE_SCHEMAS.items():
             assert issubclass(schema_class, BaseModel), (
-                f"{resource_name} schema ({schema_class.__name__}) " "is not a Pydantic BaseModel"
+                f"{resource_name} schema ({schema_class.__name__}) is not a Pydantic BaseModel"
             )
 
     def test_expected_resource_types_are_all_present(self):
@@ -119,6 +119,6 @@ class TestSchemaRegistryIntegrity:
             "socialActions/likes",
             "invitations",
         }
-        assert expected_types.issubset(
-            RESOURCE_SCHEMAS.keys()
-        ), f"Missing resource types: {expected_types - RESOURCE_SCHEMAS.keys()}"
+        assert expected_types.issubset(RESOURCE_SCHEMAS.keys()), (
+            f"Missing resource types: {expected_types - RESOURCE_SCHEMAS.keys()}"
+        )

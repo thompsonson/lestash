@@ -143,9 +143,7 @@ class TestSessionManagement:
 class TestCreateClient:
     """Test create_client authentication logic."""
 
-    def test_creates_client_with_full_login(
-        self, mock_atproto_client, tmp_path, monkeypatch
-    ):
+    def test_creates_client_with_full_login(self, mock_atproto_client, tmp_path, monkeypatch):
         """Should perform full login when no session exists."""
         # Setup - no existing session
         monkeypatch.setattr(
@@ -225,9 +223,7 @@ class TestCreateClient:
         # Second call with credentials
         mock_client.login.assert_any_call("alice.bsky.social", "password123")
 
-    def test_rejects_session_for_different_user(
-        self, mock_atproto_client, tmp_path, monkeypatch
-    ):
+    def test_rejects_session_for_different_user(self, mock_atproto_client, tmp_path, monkeypatch):
         """Should not reuse session if handle doesn't match."""
         # Setup - session exists but for different user
         session_file = tmp_path / "session.json"
@@ -253,9 +249,7 @@ class TestCreateClient:
         # Second call should be with credentials
         mock_client.login.assert_any_call("alice.bsky.social", "password123")
 
-    def test_raises_on_authentication_failure(
-        self, mock_atproto_client, tmp_path, monkeypatch
-    ):
+    def test_raises_on_authentication_failure(self, mock_atproto_client, tmp_path, monkeypatch):
         """Should raise exception when authentication fails."""
         # Setup - no existing session
         monkeypatch.setattr(

@@ -44,6 +44,7 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 check_untyped_defs = true
 ignore_missing_imports = true
+exclude = ["tests/"]
 
 [tool.semantic_release]
 version_toml = [
