@@ -391,7 +391,7 @@ wheels = [
 
 [[package]]
 name = "le-stash-workspace"
-version = "1.0.2"
+version = "1.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "lestash" },
@@ -432,7 +432,7 @@ dev = [
 
 [[package]]
 name = "lestash"
-version = "1.0.2"
+version = "1.1.0"
 source = { editable = "packages/lestash" }
 dependencies = [
     { name = "pydantic" },
@@ -453,7 +453,7 @@ requires-dist = [
 
 [[package]]
 name = "lestash-arxiv"
-version = "1.0.2"
+version = "1.1.0"
 source = { editable = "packages/lestash-arxiv" }
 dependencies = [
     { name = "arxiv" },
@@ -468,7 +468,7 @@ requires-dist = [
 
 [[package]]
 name = "lestash-bluesky"
-version = "1.0.2"
+version = "1.1.0"
 source = { editable = "packages/lestash-bluesky" }
 dependencies = [
     { name = "atproto" },
@@ -483,7 +483,7 @@ requires-dist = [
 
 [[package]]
 name = "lestash-linkedin"
-version = "1.0.2"
+version = "1.1.0"
 source = { editable = "packages/lestash-linkedin" }
 dependencies = [
     { name = "authlib" },
