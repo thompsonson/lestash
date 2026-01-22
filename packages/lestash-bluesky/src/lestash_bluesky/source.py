@@ -3,10 +3,9 @@
 import json
 from collections.abc import Iterator
 from datetime import datetime
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
-from atproto import models
 from lestash.core.logging import get_plugin_logger
 from lestash.models.item import ItemCreate
 from lestash.plugins.base import SourcePlugin
@@ -14,13 +13,14 @@ from rich.console import Console
 from rich.table import Table
 
 from lestash_bluesky.client import (
-    create_client,
-    get_author_posts,
     get_credentials_path,
     get_session_path,
     load_credentials,
     save_credentials,
 )
+
+if TYPE_CHECKING:
+    from atproto import models
 
 console = Console()
 logger = get_plugin_logger("bluesky")
@@ -36,6 +36,8 @@ def extract_text_from_facets(text: str, facets: list | None) -> dict[str, list[s
     Returns:
         Dict with 'mentions', 'links', and 'hashtags' lists
     """
+    from atproto import models
+
     result = {"mentions": [], "links": [], "hashtags": []}
 
     if not facets:
@@ -55,7 +57,7 @@ def extract_text_from_facets(text: str, facets: list | None) -> dict[str, list[s
     return result
 
 
-def post_to_item(post: models.AppBskyFeedDefs.FeedViewPost, handle: str) -> ItemCreate:
+def post_to_item(post: "models.AppBskyFeedDefs.FeedViewPost", handle: str) -> ItemCreate:
     """Convert Bluesky post to ItemCreate.
 
     Args:
@@ -65,6 +67,8 @@ def post_to_item(post: models.AppBskyFeedDefs.FeedViewPost, handle: str) -> Item
     Returns:
         ItemCreate object for storage
     """
+    from atproto import models
+
     record = post.post.record
     author = post.post.author
 
@@ -197,6 +201,8 @@ class BlueskySource(SourcePlugin):
 
             # Authenticate
             try:
+                from lestash_bluesky.client import create_client
+
                 console.print(f"[dim]Authenticating as {handle}...[/dim]")
                 client = create_client(handle, password)
 
@@ -240,6 +246,8 @@ class BlueskySource(SourcePlugin):
             handle = creds["handle"]
 
             try:
+                from lestash_bluesky.client import create_client, get_author_posts
+
                 console.print(f"[dim]Syncing posts for {handle}...[/dim]")
                 client = create_client()
 
@@ -325,6 +333,8 @@ class BlueskySource(SourcePlugin):
 
             # Try to authenticate
             try:
+                from lestash_bluesky.client import create_client
+
                 console.print("\n[dim]Checking connection...[/dim]")
                 client = create_client()
 
@@ -365,6 +375,8 @@ class BlueskySource(SourcePlugin):
         Yields:
             ItemCreate objects for each post
         """
+        from lestash_bluesky.client import create_client, get_author_posts
+
         handle = config.get("handle")
         if not handle:
             logger.warning("No handle configured for Bluesky sync")

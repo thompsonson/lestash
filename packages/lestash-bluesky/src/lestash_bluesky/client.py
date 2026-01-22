@@ -2,9 +2,10 @@
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from atproto import Client, models
+if TYPE_CHECKING:
+    from atproto import Client, models
 
 
 def get_config_dir() -> Path:
@@ -67,7 +68,7 @@ def load_session() -> dict[str, Any] | None:
         return None
 
 
-def create_client(handle: str | None = None, password: str | None = None) -> Client:
+def create_client(handle: str | None = None, password: str | None = None) -> "Client":
     """Create and authenticate AT Protocol client.
 
     Args:
@@ -81,6 +82,8 @@ def create_client(handle: str | None = None, password: str | None = None) -> Cli
         ValueError: If credentials are not provided and not found in config.
         Exception: If authentication fails.
     """
+    from atproto import Client
+
     client = Client()
 
     # Load credentials if not provided
@@ -123,7 +126,7 @@ def create_client(handle: str | None = None, password: str | None = None) -> Cli
         raise Exception(f"Authentication failed: {e}") from e
 
 
-def get_author_posts(client: Client, actor: str, limit: int = 100) -> list[models.AppBskyFeedDefs.FeedViewPost]:
+def get_author_posts(client: "Client", actor: str, limit: int = 100) -> list["models.AppBskyFeedDefs.FeedViewPost"]:
     """Fetch all posts from an author.
 
     Args:
