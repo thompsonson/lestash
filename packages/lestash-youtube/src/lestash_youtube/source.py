@@ -123,7 +123,7 @@ def video_to_item(video: dict[str, Any], source_subtype: str = "liked") -> ItemC
         source_id=f"{source_subtype}:{video_id}",
         url=url,
         title=video.get("title"),
-        content=video.get("description", ""),
+        content=video.get("description") or "",
         author=video.get("channel_title"),
         created_at=created_at,
         is_own_content=False,  # Liked/watched videos are not own content
@@ -171,7 +171,7 @@ def subscription_to_item(subscription: dict[str, Any]) -> ItemCreate:
         source_id=f"subscription:{channel_id}",
         url=url,
         title=subscription.get("title"),
-        content=subscription.get("description", ""),
+        content=subscription.get("description") or "",
         author=subscription.get("title"),
         created_at=created_at,
         is_own_content=False,
