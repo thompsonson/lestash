@@ -131,9 +131,7 @@ def get_credentials() -> Credentials:
             # Refresh failed, need to re-authenticate
             pass
 
-    raise ValueError(
-        "No valid credentials. Run 'lestash youtube auth' to authenticate."
-    )
+    raise ValueError("No valid credentials. Run 'lestash youtube auth' to authenticate.")
 
 
 def create_youtube_client():
@@ -159,13 +157,17 @@ def get_liked_videos(youtube, max_results: int = 50) -> list[dict[str, Any]]:
     Returns:
         List of video data dictionaries including 'liked_at' timestamp.
     """
-    videos = []
+    videos: list[dict[str, Any]] = []
 
     # First, get the user's "likes" playlist ID
-    channels_response = youtube.channels().list(
-        part="contentDetails",
-        mine=True,
-    ).execute()
+    channels_response = (
+        youtube.channels()
+        .list(
+            part="contentDetails",
+            mine=True,
+        )
+        .execute()
+    )
 
     if not channels_response.get("items"):
         return videos
@@ -198,19 +200,21 @@ def get_liked_videos(youtube, max_results: int = 50) -> list[dict[str, Any]]:
             snippet = item.get("snippet", {})
             video_id = snippet.get("resourceId", {}).get("videoId")
             if video_id:
-                playlist_items.append({
-                    "video_id": video_id,
-                    # This is when the video was LIKED (added to the likes playlist)
-                    "liked_at": snippet.get("publishedAt"),
-                    # Basic info from playlist (video publish date and channel)
-                    "title": snippet.get("title"),
-                    "description": snippet.get("description"),
-                    "channel_id": snippet.get("videoOwnerChannelId"),
-                    "channel_title": snippet.get("videoOwnerChannelTitle"),
-                    "thumbnails": snippet.get("thumbnails", {}),
-                    # Video publish date from contentDetails
-                    "published_at": item.get("contentDetails", {}).get("videoPublishedAt"),
-                })
+                playlist_items.append(
+                    {
+                        "video_id": video_id,
+                        # This is when the video was LIKED (added to the likes playlist)
+                        "liked_at": snippet.get("publishedAt"),
+                        # Basic info from playlist (video publish date and channel)
+                        "title": snippet.get("title"),
+                        "description": snippet.get("description"),
+                        "channel_id": snippet.get("videoOwnerChannelId"),
+                        "channel_title": snippet.get("videoOwnerChannelTitle"),
+                        "thumbnails": snippet.get("thumbnails", {}),
+                        # Video publish date from contentDetails
+                        "published_at": item.get("contentDetails", {}).get("videoPublishedAt"),
+                    }
+                )
 
         page_token = response.get("nextPageToken")
         if not page_token:
@@ -223,10 +227,14 @@ def get_liked_videos(youtube, max_results: int = 50) -> list[dict[str, Any]]:
     # YouTube API allows up to 50 video IDs per request
     for i in range(0, len(video_ids), 50):
         batch_ids = video_ids[i : i + 50]
-        details_response = youtube.videos().list(
-            part="contentDetails,statistics,snippet",
-            id=",".join(batch_ids),
-        ).execute()
+        details_response = (
+            youtube.videos()
+            .list(
+                part="contentDetails,statistics,snippet",
+                id=",".join(batch_ids),
+            )
+            .execute()
+        )
 
         for item in details_response.get("items", []):
             video_details[item["id"]] = {
@@ -279,14 +287,18 @@ def get_watch_history(youtube, max_results: int = 50) -> list[dict[str, Any]]:
     Returns:
         List of video data dictionaries (may be empty).
     """
-    videos = []
+    videos: list[dict[str, Any]] = []
 
     try:
         # First, get the channel's watch history playlist ID
-        channels_response = youtube.channels().list(
-            part="contentDetails",
-            mine=True,
-        ).execute()
+        channels_response = (
+            youtube.channels()
+            .list(
+                part="contentDetails",
+                mine=True,
+            )
+            .execute()
+        )
 
         if not channels_response.get("items"):
             return videos
@@ -395,10 +407,14 @@ def get_channel_info(youtube) -> dict[str, Any] | None:
     Returns:
         Channel information dictionary or None if not found.
     """
-    response = youtube.channels().list(
-        part="snippet,statistics,contentDetails",
-        mine=True,
-    ).execute()
+    response = (
+        youtube.channels()
+        .list(
+            part="snippet,statistics,contentDetails",
+            mine=True,
+        )
+        .execute()
+    )
 
     if not response.get("items"):
         return None

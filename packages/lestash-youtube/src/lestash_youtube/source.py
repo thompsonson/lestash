@@ -3,7 +3,8 @@
 import json
 import re
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from contextlib import suppress
+from datetime import datetime
 from typing import Annotated, Any
 
 import typer
@@ -18,7 +19,6 @@ from lestash_youtube.client import (
     create_youtube_client,
     get_channel_info,
     get_client_secrets_path,
-    get_credentials,
     get_credentials_path,
     get_liked_videos,
     get_subscriptions,
@@ -74,21 +74,13 @@ def video_to_item(video: dict[str, Any], source_subtype: str = "liked") -> ItemC
     action_timestamp = video.get("liked_at") or video.get("watched_at")
 
     if action_timestamp:
-        try:
-            created_at = datetime.fromisoformat(
-                action_timestamp.replace("Z", "+00:00")
-            )
-        except (ValueError, AttributeError):
-            pass
+        with suppress(ValueError, AttributeError):
+            created_at = datetime.fromisoformat(action_timestamp.replace("Z", "+00:00"))
 
     # Fall back to published_at if no action timestamp
     if created_at is None and video.get("published_at"):
-        try:
-            created_at = datetime.fromisoformat(
-                video["published_at"].replace("Z", "+00:00")
-            )
-        except (ValueError, AttributeError):
-            pass
+        with suppress(ValueError, AttributeError):
+            created_at = datetime.fromisoformat(video["published_at"].replace("Z", "+00:00"))
 
     # Build YouTube URL
     video_id = video.get("id")
@@ -161,12 +153,8 @@ def subscription_to_item(subscription: dict[str, Any]) -> ItemCreate:
     """
     created_at = None
     if subscription.get("published_at"):
-        try:
-            created_at = datetime.fromisoformat(
-                subscription["published_at"].replace("Z", "+00:00")
-            )
-        except (ValueError, AttributeError):
-            pass
+        with suppress(ValueError, AttributeError):
+            created_at = datetime.fromisoformat(subscription["published_at"].replace("Z", "+00:00"))
 
     channel_id = subscription.get("channel_id")
     url = f"https://www.youtube.com/channel/{channel_id}" if channel_id else None
@@ -228,7 +216,9 @@ class YouTubeSource(SourcePlugin):
             if not check_client_secrets():
                 console.print("[red]OAuth client secrets not found.[/red]\n")
                 console.print("To authenticate with YouTube, you need OAuth credentials:\n")
-                console.print("1. Go to [link]https://console.cloud.google.com/apis/credentials[/link]")
+                console.print(
+                    "1. Go to [link]https://console.cloud.google.com/apis/credentials[/link]"
+                )
                 console.print("2. Create a project (or select existing one)")
                 console.print("3. Enable the [bold]YouTube Data API v3[/bold]")
                 console.print("4. Create [bold]OAuth 2.0 Client ID[/bold] (Desktop application)")
@@ -241,7 +231,7 @@ class YouTubeSource(SourcePlugin):
                 console.print("[dim]Starting OAuth flow...[/dim]")
                 console.print("[dim]A browser window will open for authentication.[/dim]\n")
 
-                credentials = run_oauth_flow()
+                run_oauth_flow()
 
                 console.print("[green]Authentication successful![/green]")
                 console.print(f"[dim]Credentials saved to {get_credentials_path()}[/dim]")
@@ -253,7 +243,8 @@ class YouTubeSource(SourcePlugin):
                 if channel:
                     console.print(f"\n[bold]Connected as:[/bold] {channel['title']}")
                     if channel.get("custom_url"):
-                        console.print(f"[dim]Channel URL: youtube.com/{channel['custom_url']}[/dim]")
+                        url = channel["custom_url"]
+                        console.print(f"[dim]Channel URL: youtube.com/{url}[/dim]")
 
             except FileNotFoundError as e:
                 console.print(f"[red]{e}[/red]")
@@ -319,7 +310,7 @@ class YouTubeSource(SourcePlugin):
 
             except Exception as e:
                 logger.error(f"Status check failed: {e}", exc_info=True)
-                console.print(f"Connection: [red]Failed[/red]")
+                console.print("Connection: [red]Failed[/red]")
                 console.print(f"[red]{e}[/red]")
                 console.print("\n[dim]Run 'lestash youtube auth' to re-authenticate[/dim]")
                 raise typer.Exit(1) from None
@@ -393,10 +384,12 @@ class YouTubeSource(SourcePlugin):
                                     item = video_to_item(video, "history")
                                     total_added += _store_item(conn, item)
                                 except Exception as e:
-                                    logger.warning(f"Failed to process video {video.get('id')}: {e}")
+                                    vid = video.get("id")
+                                    logger.warning(f"Failed to process video {vid}: {e}")
 
                             conn.commit()
-                            console.print(f"[green]Synced {len(history_videos)} history items[/green]")
+                            count = len(history_videos)
+                            console.print(f"[green]Synced {count} history items[/green]")
                         else:
                             console.print(
                                 "[yellow]Watch history is empty or restricted.[/yellow]\n"
@@ -515,8 +508,12 @@ class YouTubeSource(SourcePlugin):
                     console.print("YouTube restricts API access to watch history.")
                     console.print("For full history, use Google Takeout:")
                     console.print("  1. Go to [link]https://takeout.google.com[/link]")
-                    console.print("  2. Deselect all, then select [bold]YouTube and YouTube Music[/bold]")
-                    console.print("  3. Click 'Multiple formats' and set History to [bold]JSON[/bold]")
+                    console.print(
+                        "  2. Deselect all, then select [bold]YouTube and YouTube Music[/bold]"
+                    )
+                    console.print(
+                        "  3. Click 'Multiple formats' and set History to [bold]JSON[/bold]"
+                    )
                     console.print("  4. Export and download")
                     console.print("\n[dim]Takeout import coming in future update.[/dim]")
                     return

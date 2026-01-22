@@ -3,9 +3,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from typer.testing import CliRunner
-
 from lestash_youtube.source import YouTubeSource
+from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -37,7 +36,7 @@ class TestAuthCommand:
         with (
             patch("lestash_youtube.source.check_client_secrets", return_value=True),
             patch("lestash_youtube.source.run_oauth_flow", return_value=mock_creds),
-            patch("lestash_youtube.source.create_youtube_client") as mock_client,
+            patch("lestash_youtube.source.create_youtube_client"),
             patch("lestash_youtube.source.get_channel_info", return_value=mock_channel),
         ):
             result = runner.invoke(youtube_app, ["auth"])
@@ -187,7 +186,7 @@ class TestSyncCommand:
             mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
             mock_get_conn.return_value.__exit__ = MagicMock(return_value=None)
 
-            result = runner.invoke(youtube_app, ["sync", "--no-history"])
+            runner.invoke(youtube_app, ["sync", "--no-history"])
 
         # get_watch_history should not be called
         mock_history.assert_not_called()
