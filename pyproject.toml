@@ -28,6 +28,7 @@ dev = [
     "mypy>=1.8.0",
     "pre-commit>=3.6.0",
     "types-toml>=0.10.0",
+    "rust-just>=1.46.0",
 ]
 
 [tool.ruff]
