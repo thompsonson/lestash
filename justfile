@@ -17,6 +17,8 @@ test-all:
     uv run pytest packages/lestash-bluesky/tests
     @echo "\nRunning lestash-linkedin tests..."
     uv run pytest packages/lestash-linkedin/tests
+    @echo "\nRunning lestash-microblog tests..."
+    uv run pytest packages/lestash-microblog/tests
 
 # Run tests for a specific package (e.g., just test lestash-bluesky)
 test package:
