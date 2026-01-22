@@ -20,11 +20,7 @@ def _resolve_author(conn, author: str | None) -> str:
     profile = get_person_profile(conn, author)
     if profile and profile.get("display_name"):
         return profile["display_name"]
-    # Fall back to short URN for person URNs
-    if author.startswith("urn:li:person:"):
-        return author.split(":")[-1]
-    if author.startswith("urn:li:company:"):
-        return f"company:{author.split(':')[-1]}"
+    # Return full URN so user can copy it to add profiles
     return author
 
 app = typer.Typer(help="Manage items in your knowledge base.")
