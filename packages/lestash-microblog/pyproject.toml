@@ -1,6 +1,6 @@
 [project]
 name = "lestash-microblog"
-version = "1.0.0"
+version = "1.2.0"
 description = "Micro.blog source plugin for Le Stash"
 readme = "README.md"
 requires-python = ">=3.12"
