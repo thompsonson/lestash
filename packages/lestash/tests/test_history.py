@@ -118,8 +118,7 @@ class TestHistoryTrigger:
         """Updating author should create history record."""
         with get_connection(test_db) as conn:
             conn.execute(
-                "INSERT INTO items (source_type, source_id, content, author) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO items (source_type, source_id, content, author) VALUES (?, ?, ?, ?)",
                 ("test", "id1", "content", "old_author"),
             )
             conn.commit()
@@ -138,8 +137,7 @@ class TestHistoryTrigger:
         """Updating metadata should create history record."""
         with get_connection(test_db) as conn:
             conn.execute(
-                "INSERT INTO items (source_type, source_id, content, metadata) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO items (source_type, source_id, content, metadata) VALUES (?, ?, ?, ?)",
                 ("test", "id1", "content", '{"old": "data"}'),
             )
             conn.commit()
@@ -158,7 +156,7 @@ class TestHistoryTrigger:
         """No history record if content/author/metadata unchanged."""
         with get_connection(test_db) as conn:
             conn.execute(
-                "INSERT INTO items (source_type, source_id, content, url) " "VALUES (?, ?, ?, ?)",
+                "INSERT INTO items (source_type, source_id, content, url) VALUES (?, ?, ?, ?)",
                 ("test", "id1", "content", "http://old.url"),
             )
             conn.commit()

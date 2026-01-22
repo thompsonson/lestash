@@ -21,8 +21,8 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 git clone git@github.com:thompsonson/lestash.git
 cd lestash
 
-# Install dependencies
-uv sync --all-packages
+# Install dependencies (including dev tools like just)
+uv sync --dev
 
 # Verify installation
 uv run lestash --help
@@ -54,6 +54,7 @@ le-stash/
 ├── packages/
 │   ├── lestash/           # Core CLI and plugin system
 │   ├── lestash-arxiv/     # arXiv source plugin
+│   ├── lestash-bluesky/   # Bluesky source plugin
 │   └── lestash-linkedin/  # LinkedIn source plugin
 ├── pyproject.toml         # Workspace configuration
 └── uv.lock                # Locked dependencies
@@ -63,19 +64,48 @@ le-stash/
 |---------|-------------|
 | [lestash](packages/lestash/) | Core CLI, database, configuration, and plugin loader |
 | [lestash-arxiv](packages/lestash-arxiv/) | Search and save arXiv papers |
+| [lestash-bluesky](packages/lestash-bluesky/) | Sync and search Bluesky posts |
 | [lestash-linkedin](packages/lestash-linkedin/) | Import LinkedIn posts via DMA Portability API |
 
 ## Development
 
-```bash
-# Install with dev dependencies
-uv sync --all-packages
+This project uses [just](https://github.com/casey/just) as a command runner. After installing dependencies, you can use `just` to run common tasks:
 
+```bash
+# Install dependencies (including just)
+uv sync --dev
+
+# List all available commands
+uv run just
+
+# Run all tests
+uv run just test-all
+
+# Run tests for a specific package
+uv run just test lestash-bluesky
+
+# Run linting and fix issues
+uv run just lint-fix
+
+# Format code
+uv run just format
+
+# Run all quality checks (lint, format, typecheck, tests)
+uv run just check
+
+# Show project statistics
+uv run just stats
+```
+
+### Manual commands (without just)
+
+```bash
 # Run linting
-uv run ruff check packages/*/src
+uv run ruff check packages/
 
 # Run tests
 uv run pytest packages/lestash/tests
+uv run pytest packages/lestash-bluesky/tests
 uv run pytest packages/lestash-linkedin/tests
 
 # Run pre-commit hooks

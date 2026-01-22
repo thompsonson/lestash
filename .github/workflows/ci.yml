@@ -28,13 +28,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --all-packages
+        run: uv sync --dev
 
       - name: Run ruff linting
-        run: uv run ruff check packages/*/src
+        run: uv run ruff check packages/
 
       - name: Run ruff formatting check
-        run: uv run ruff format --check packages/*/src
+        run: uv run ruff format --check packages/
 
   type-check:
     name: Type Check
@@ -53,10 +53,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --all-packages
+        run: uv sync --dev
 
       - name: Run mypy
-        run: uv run mypy packages/*/src
+        run: uv run mypy packages/
 
   test:
     name: Test (Python ${{ matrix.python-version }})
@@ -80,12 +80,13 @@ jobs:
           allow-prereleases: true
 
       - name: Install dependencies
-        run: uv sync --all-packages
+        run: uv sync --dev
 
       - name: Run tests
         run: |
           uv run pytest packages/lestash/tests
           uv run pytest packages/lestash-linkedin/tests
+          uv run pytest packages/lestash-bluesky/tests
 
   build:
     name: Build Package
