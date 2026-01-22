@@ -72,6 +72,10 @@ class TestCommentExtraction:
         item = extract_changelog_item(comment_event)
         assert item.metadata["commented_on"] == "urn:li:activity:123456"
 
+    def test_generates_url_to_commented_post(self, comment_event):
+        item = extract_changelog_item(comment_event)
+        assert item.url == "https://www.linkedin.com/feed/update/urn:li:activity:123456"
+
 
 class TestReactionExtraction:
     """Test extraction of reactions to ItemCreate."""
@@ -91,6 +95,10 @@ class TestReactionExtraction:
     def test_includes_target_in_metadata(self, reaction_event):
         item = extract_changelog_item(reaction_event)
         assert item.metadata["reacted_to"] == "urn:li:activity:789012"
+
+    def test_generates_url_to_reacted_post(self, reaction_event):
+        item = extract_changelog_item(reaction_event)
+        assert item.url == "https://www.linkedin.com/feed/update/urn:li:activity:789012"
 
 
 class TestInvitationExtraction:

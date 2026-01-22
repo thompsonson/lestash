@@ -19,6 +19,23 @@ from lestash_linkedin.schemas.content_types import (
 
 logger = logging.getLogger(__name__)
 
+LINKEDIN_BASE_URL = "https://www.linkedin.com/feed/update"
+
+
+def _activity_urn_to_url(urn: str | None) -> str | None:
+    """Convert a LinkedIn activity URN to a feed URL.
+
+    Args:
+        urn: LinkedIn URN like "urn:li:activity:7420083185738424320"
+
+    Returns:
+        URL like "https://www.linkedin.com/feed/update/urn:li:activity:7420083185738424320"
+        or None if URN is invalid
+    """
+    if not urn or not urn.startswith("urn:li:activity:"):
+        return None
+    return f"{LINKEDIN_BASE_URL}/{urn}"
+
 
 def extract_changelog_item(event_data: dict) -> ItemCreate:
     """Extract an ItemCreate from a changelog event.
@@ -99,12 +116,16 @@ def _extract_comment(event: ChangelogEvent) -> ItemCreate:
     if activity.created and activity.created.get("time"):
         created_at = datetime.fromtimestamp(activity.created["time"] / 1000)
 
+    # Generate URL to the commented post
+    url = _activity_urn_to_url(activity.object)
+
     return _create_item(
         event=event,
         content=activity.get_text(),
         author=activity.actor or activity.author,
         created_at=created_at,
         extra_metadata={"commented_on": activity.object},
+        url=url,
     )
 
 
@@ -146,6 +167,9 @@ def _extract_reaction(event: ChangelogEvent) -> ItemCreate:
 
     content = f"{emoji} {reaction_type}{target_ref}"
 
+    # Generate URL to the reacted post
+    url = _activity_urn_to_url(activity.object)
+
     return _create_item(
         event=event,
         content=content,
@@ -155,6 +179,7 @@ def _extract_reaction(event: ChangelogEvent) -> ItemCreate:
             "reaction_type": activity.reaction_type,
             "reacted_to": activity.object,
         },
+        url=url,
     )
 
 
@@ -188,6 +213,7 @@ def _create_item(
     author: str | None,
     created_at: datetime | None,
     extra_metadata: dict,
+    url: str | None = None,
 ) -> ItemCreate:
     """Create an ItemCreate with standard fields.
 
@@ -197,6 +223,7 @@ def _create_item(
         author: Author URN if available
         created_at: Creation timestamp if available
         extra_metadata: Additional metadata specific to the resource type
+        url: Optional URL linking to the content on LinkedIn
 
     Returns:
         ItemCreate ready for database insertion
@@ -211,6 +238,7 @@ def _create_item(
     return ItemCreate(
         source_type="linkedin",
         source_id=event_id,
+        url=url,
         content=content or f"{event.method} {event.resource_name}",  # Ensure non-empty
         author=author,
         created_at=created_at,
