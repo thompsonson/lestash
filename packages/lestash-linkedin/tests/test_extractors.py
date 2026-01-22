@@ -72,17 +72,21 @@ class TestCommentExtraction:
         item = extract_changelog_item(comment_event)
         assert item.metadata["commented_on"] == "urn:li:activity:123456"
 
+    def test_generates_url_to_commented_post(self, comment_event):
+        item = extract_changelog_item(comment_event)
+        assert item.url == "https://www.linkedin.com/feed/update/urn:li:activity:123456"
+
 
 class TestReactionExtraction:
     """Test extraction of reactions to ItemCreate."""
 
     def test_creates_reaction_content(self, reaction_event):
         item = extract_changelog_item(reaction_event)
-        assert item.content == "Reacted with LIKE"
+        assert item.content == "👍 LIKE on activity:789012"
 
     def test_extracts_celebrate_reaction(self, reaction_celebrate_event):
         item = extract_changelog_item(reaction_celebrate_event)
-        assert item.content == "Reacted with CELEBRATE"
+        assert item.content == "🎉 CELEBRATE on activity:999888"
 
     def test_includes_reaction_type_in_metadata(self, reaction_event):
         item = extract_changelog_item(reaction_event)
@@ -91,6 +95,10 @@ class TestReactionExtraction:
     def test_includes_target_in_metadata(self, reaction_event):
         item = extract_changelog_item(reaction_event)
         assert item.metadata["reacted_to"] == "urn:li:activity:789012"
+
+    def test_generates_url_to_reacted_post(self, reaction_event):
+        item = extract_changelog_item(reaction_event)
+        assert item.url == "https://www.linkedin.com/feed/update/urn:li:activity:789012"
 
 
 class TestInvitationExtraction:
@@ -260,7 +268,7 @@ class TestContentExtractionBehavior:
         assert item.content == "COMMENT_CONTENT_XYZ"
 
     def test_reaction_builds_content_from_type(self):
-        """Verify reaction content is built from reactionType."""
+        """Verify reaction content is built from reactionType with emoji."""
         event = {
             "resourceName": "socialActions/likes",
             "method": "CREATE",
@@ -268,7 +276,7 @@ class TestContentExtractionBehavior:
             "activity": {"reactionType": "CELEBRATE"},
         }
         item = extract_changelog_item(event)
-        assert item.content == "Reacted with CELEBRATE"
+        assert item.content == "🎉 CELEBRATE"
 
 
 class TestEmptyContentFallback:

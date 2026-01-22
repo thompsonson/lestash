@@ -103,6 +103,53 @@ Use `--changelog` to fetch this data:
 lestash linkedin fetch --changelog
 ```
 
+## Display Enhancements
+
+### Reaction Emojis
+
+Reactions are displayed with emoji icons for quick visual recognition:
+
+| Reaction | Display |
+|----------|---------|
+| LIKE | 👍 LIKE |
+| CELEBRATE | 🎉 CELEBRATE |
+| SUPPORT | 🫂 SUPPORT |
+| LOVE | ❤️ LOVE |
+| INSIGHTFUL | 💡 INSIGHTFUL |
+| INTEREST | 🤔 INTEREST |
+| FUNNY | 😄 FUNNY |
+| PRAISE | 👏 PRAISE |
+| ENTERTAINMENT | 😂 ENTERTAINMENT |
+
+### Target URLs
+
+Reactions and comments include a URL to the original LinkedIn post:
+
+```bash
+lestash items show 42
+```
+
+Output includes:
+
+```
+Reacted To: urn:li:activity:7420023901394743296
+Reacted To URL: https://www.linkedin.com/feed/update/urn:li:activity:7420023901394743296
+```
+
+### Person Profiles
+
+Map LinkedIn person URNs to readable names using the profiles feature:
+
+```bash
+# Add your profile
+lestash profiles add "urn:li:person:xu59iSkkD6" \
+  --name "Matthew Thompson" \
+  --url "https://linkedin.com/in/thompson-m"
+
+# Now items show your name instead of the URN
+lestash items list
+```
+
 ## Rate Limits
 
 LinkedIn applies **per-user daily quotas** that reset at midnight UTC:

@@ -6,9 +6,11 @@ This is born from not having access to LinkedIn posts that are over a year old (
 
 ## Features
 
-- **Multi-source aggregation** - Import content from LinkedIn, arXiv, and more
+- **Multi-source aggregation** - Import content from LinkedIn, Bluesky, Micro.blog, arXiv, and more
 - **Plugin architecture** - Extensible design for adding new data sources
 - **Full-text search** - SQLite FTS5 for fast content search
+- **Person profiles** - Map URNs to names and profile URLs for better display
+- **Draft export** - Create Micro.blog drafts from saved items for the search→write workflow
 - **Audit history** - Track changes to items over time
 - **CLI-first** - Built with Typer for a modern command-line experience
 
@@ -38,11 +40,29 @@ uv run lestash config init
 uv run lestash arxiv search "transformer attention"
 uv run lestash arxiv save 1706.03762
 
-# List saved items
+# List saved items (with date/time and author info)
 uv run lestash items list
 
 # Search your knowledge base
 uv run lestash items search "attention mechanism"
+
+# Show item details (includes URLs for reactions/comments)
+uv run lestash items show 42
+
+# Create a Micro.blog draft from an item
+uv run lestash items draft 42 --output ~/blog/content/drafts/
+```
+
+### Person Profiles
+
+Map LinkedIn URNs to human-readable names:
+
+```bash
+# Add a profile mapping
+uv run lestash profiles add "urn:li:person:abc123" --name "John Doe" --url "https://linkedin.com/in/johndoe"
+
+# List configured profiles
+uv run lestash profiles list
 ```
 
 ## Project Structure
@@ -55,7 +75,8 @@ le-stash/
 │   ├── lestash/           # Core CLI and plugin system
 │   ├── lestash-arxiv/     # arXiv source plugin
 │   ├── lestash-bluesky/   # Bluesky source plugin
-│   └── lestash-linkedin/  # LinkedIn source plugin
+│   ├── lestash-linkedin/  # LinkedIn source plugin
+│   └── lestash-microblog/ # Micro.blog source plugin
 ├── pyproject.toml         # Workspace configuration
 └── uv.lock                # Locked dependencies
 ```
@@ -66,6 +87,7 @@ le-stash/
 | [lestash-arxiv](packages/lestash-arxiv/) | Search and save arXiv papers |
 | [lestash-bluesky](packages/lestash-bluesky/) | Sync and search Bluesky posts |
 | [lestash-linkedin](packages/lestash-linkedin/) | Import LinkedIn posts via DMA Portability API |
+| [lestash-microblog](packages/lestash-microblog/) | Sync posts from Micro.blog |
 
 ## Development
 

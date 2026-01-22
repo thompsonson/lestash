@@ -24,18 +24,44 @@ uv sync --all-packages
 ### Items
 
 ```bash
-# List all items
+# List all items (with date/time and resolved author names)
 lestash items list
+
+# Filter by source
+lestash items list --source linkedin
 
 # Search items
 lestash items search "query"
 
-# Show item details
+# Show item details (includes reaction/comment target URLs)
 lestash items show <id>
 
 # Export items to JSON
 lestash items export --output backup.json
+
+# Create a Micro.blog draft from an item
+lestash items draft <id> --output ~/blog/content/drafts/
 ```
+
+### Profiles
+
+Map person URNs (e.g., LinkedIn) to human-readable names and profile URLs:
+
+```bash
+# Add a profile mapping
+lestash profiles add "urn:li:person:abc123" --name "John Doe" --url "https://linkedin.com/in/johndoe"
+
+# List all profiles
+lestash profiles list
+
+# Show a specific profile
+lestash profiles show "urn:li:person:abc123"
+
+# Remove a profile
+lestash profiles remove "urn:li:person:abc123"
+```
+
+When profiles are configured, `items list` and `items search` display names instead of URNs, and `items show` includes the profile URL.
 
 ### Sources
 
@@ -123,6 +149,7 @@ SQLite database with:
 - **items** - Main content table with unique constraint on (source_type, source_id)
 - **items_fts** - Full-text search virtual table (FTS5)
 - **item_history** - Audit trail of content changes
+- **person_profiles** - URN to name/URL mapping for display
 - **tags** / **item_tags** - Tagging system
 - **sources** - Plugin configuration storage
 - **sync_log** - Sync operation history
