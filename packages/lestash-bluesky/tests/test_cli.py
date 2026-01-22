@@ -253,8 +253,8 @@ class TestSyncCommand:
 
         with patch("lestash_bluesky.client.create_client", return_value=mock_client), patch(
             "lestash_bluesky.client.get_author_posts", return_value=mock_posts
-        ), patch("lestash_bluesky.source.get_connection", return_value=mock_conn), patch(
-            "lestash_bluesky.source.Config.load", return_value=mock_config
+        ), patch("lestash.core.database.get_connection", return_value=mock_conn), patch(
+            "lestash.core.config.Config.load", return_value=mock_config
         ):
             result = cli_runner.invoke(bluesky_app, ["sync"])
 
@@ -297,8 +297,8 @@ class TestSyncCommand:
 
         with patch("lestash_bluesky.client.create_client", return_value=mock_client), patch(
             "lestash_bluesky.client.get_author_posts", return_value=mock_posts
-        ), patch("lestash_bluesky.source.get_connection", return_value=mock_conn), patch(
-            "lestash_bluesky.source.Config.load", return_value=mock_config
+        ), patch("lestash.core.database.get_connection", return_value=mock_conn), patch(
+            "lestash.core.config.Config.load", return_value=mock_config
         ):
             result = cli_runner.invoke(bluesky_app, ["sync"])
 
@@ -312,6 +312,9 @@ class TestSyncCommand:
         creds_file = tmp_path / "credentials.json"
         monkeypatch.setattr(
             "lestash_bluesky.source.get_credentials_path", lambda: creds_file
+        )
+        monkeypatch.setattr(
+            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
         )
 
         result = cli_runner.invoke(bluesky_app, ["sync"])
@@ -382,9 +385,9 @@ class TestSyncCommand:
         with patch("lestash_bluesky.client.create_client", return_value=mock_client), patch(
             "lestash_bluesky.client.get_author_posts", return_value=mock_posts
         ) as mock_get_posts, patch(
-            "lestash_bluesky.source.get_connection", return_value=mock_conn
+            "lestash.core.database.get_connection", return_value=mock_conn
         ), patch(
-            "lestash_bluesky.source.Config.load", return_value=mock_config
+            "lestash.core.config.Config.load", return_value=mock_config
         ):
             result = cli_runner.invoke(bluesky_app, ["sync", "--limit", "50"])
 
@@ -424,8 +427,8 @@ class TestSyncCommand:
 
         with patch("lestash_bluesky.client.create_client", return_value=mock_client), patch(
             "lestash_bluesky.client.get_author_posts", return_value=mock_posts
-        ), patch("lestash_bluesky.source.get_connection", return_value=mock_conn), patch(
-            "lestash_bluesky.source.Config.load", return_value=mock_config
+        ), patch("lestash.core.database.get_connection", return_value=mock_conn), patch(
+            "lestash.core.config.Config.load", return_value=mock_config
         ):
             result = cli_runner.invoke(bluesky_app, ["sync"])
 
@@ -468,8 +471,8 @@ class TestSyncCommand:
 
         with patch("lestash_bluesky.client.create_client", return_value=mock_client), patch(
             "lestash_bluesky.client.get_author_posts", return_value=mock_posts
-        ), patch("lestash_bluesky.source.get_connection", return_value=mock_conn), patch(
-            "lestash_bluesky.source.Config.load", return_value=mock_config
+        ), patch("lestash.core.database.get_connection", return_value=mock_conn), patch(
+            "lestash.core.config.Config.load", return_value=mock_config
         ):
             result = cli_runner.invoke(bluesky_app, ["sync"])
 
@@ -507,7 +510,7 @@ class TestStatusCommand:
             handle="alice.bsky.social", did="did:plc:abc123"
         )
         mock_profile = SimpleNamespace(
-            posts_count=100, followers_count=50, follows_count=75
+            posts_count=100, followers_count=50, follows_count=75, display_name="Alice"
         )
         mock_client.app.bsky.actor.get_profile.return_value = mock_profile
 
@@ -526,6 +529,9 @@ class TestStatusCommand:
         creds_file = tmp_path / "credentials.json"
         monkeypatch.setattr(
             "lestash_bluesky.source.get_credentials_path", lambda: creds_file
+        )
+        monkeypatch.setattr(
+            "lestash_bluesky.client.get_credentials_path", lambda: creds_file
         )
 
         result = cli_runner.invoke(bluesky_app, ["status"])
@@ -561,7 +567,7 @@ class TestStatusCommand:
             handle="alice.bsky.social", did="did:plc:abc123"
         )
         mock_profile = SimpleNamespace(
-            posts_count=100, followers_count=50, follows_count=75
+            posts_count=100, followers_count=50, follows_count=75, display_name="Alice"
         )
         mock_client.app.bsky.actor.get_profile.return_value = mock_profile
 
