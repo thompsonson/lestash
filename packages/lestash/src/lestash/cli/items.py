@@ -167,6 +167,18 @@ def show_item(
     console.print(f"[bold]Author:[/bold] {author_display}")
     if author_profile and author_profile.get("profile_url"):
         console.print(f"[bold]Author Profile:[/bold] {author_profile['profile_url']}")
+
+    # Show what this item is responding to (reaction or comment target)
+    if item.metadata:
+        target_urn = item.metadata.get("reacted_to") or item.metadata.get("commented_on")
+        if target_urn:
+            target_type = "Reacted To" if "reacted_to" in item.metadata else "Commented On"
+            console.print(f"[bold]{target_type}:[/bold] {target_urn}")
+            # Generate URL if it's an activity URN
+            if target_urn.startswith("urn:li:activity:"):
+                target_url = f"https://www.linkedin.com/feed/update/{target_urn}"
+                console.print(f"[bold]{target_type} URL:[/bold] {target_url}")
+
     if item.created_at:
         console.print(f"[bold]Created:[/bold] {item.created_at}")
     console.print(f"[bold]Fetched:[/bold] {item.fetched_at}")
