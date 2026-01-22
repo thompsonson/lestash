@@ -50,7 +50,7 @@ def list_items(
 
     table = Table(show_header=True, header_style="bold")
     table.add_column("ID", style="dim")
-    table.add_column("Source")
+    table.add_column("Type")
     table.add_column("Title / Content Preview")
     table.add_column("Author")
     table.add_column("Created")
@@ -60,7 +60,7 @@ def list_items(
         preview = (
             item.title or item.content[:50] + "..." if len(item.content) > 50 else item.content
         )
-        created = item.created_at.strftime("%Y-%m-%d") if item.created_at else "-"
+        created = item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "-"
         table.add_row(
             str(item.id),
             item.source_type,
@@ -99,20 +99,23 @@ def search_items(
 
     table = Table(show_header=True, header_style="bold")
     table.add_column("ID", style="dim")
-    table.add_column("Source")
+    table.add_column("Type")
     table.add_column("Title / Content Preview")
     table.add_column("Author")
+    table.add_column("Created")
 
     for row in rows:
         item = Item.from_row(row)
         preview = (
             item.title or item.content[:50] + "..." if len(item.content) > 50 else item.content
         )
+        created = item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "-"
         table.add_row(
             str(item.id),
             item.source_type,
             preview,
             item.author or "-",
+            created,
         )
 
     console.print(table)
