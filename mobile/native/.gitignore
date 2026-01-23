@@ -1,0 +1,9 @@
+# Ignore compiled native libraries (they're built by CI)
+*.so
+*.a
+*.dylib
+*.xcframework/
+
+# Keep the directory structure
+!.gitkeep
+!README.md
