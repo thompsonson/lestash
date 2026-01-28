@@ -553,10 +553,23 @@ class LinkedInSource(SourcePlugin):
     def sync(self, config: dict) -> Iterator[ItemCreate]:
         """Sync LinkedIn content.
 
-        Uses the DMA Portability API (self-serve or 3rd-party mode).
+        Uses the DMA Portability API Changelog endpoint to fetch recent activity
+        (posts, comments, reactions from the past 28 days).
         Requires prior authentication with 'lestash linkedin auth'.
         """
-        return iter([])
+        token = load_token()
+        if not token:
+            logger.warning("No token found for LinkedIn sync")
+            return
+
+        access_token = token.get("access_token")
+        if not access_token:
+            logger.warning("Invalid token for LinkedIn sync")
+            return
+
+        with LinkedInAPI(access_token) as api:
+            events = api.get_all_changelog()
+            yield from changelog_to_items(events)
 
     def configure(self) -> dict:
         """Interactive configuration."""
