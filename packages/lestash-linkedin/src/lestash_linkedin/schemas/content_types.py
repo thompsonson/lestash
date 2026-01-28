@@ -130,6 +130,90 @@ class InvitationActivity(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class MessageActivity(BaseModel):
+    """Activity data for messages resource.
+
+    Represents a LinkedIn direct message sent or received.
+    """
+
+    content: dict = Field(default_factory=dict)  # {"fallback": "text", "format": "TEXT"}
+    author: str | None = None  # URN of message sender
+    thread: str | None = None  # URN of messaging thread
+    created_at: int | None = Field(default=None, alias="createdAt")
+    delivered_at: int | None = Field(default=None, alias="deliveredAt")
+
+    model_config = {"populate_by_name": True}
+
+    def get_text(self) -> str:
+        """Extract message text from content.
+
+        Returns:
+            The message text, or empty string if not found.
+        """
+        return self.content.get("fallback", "")
+
+
+class ProfileActivity(BaseModel):
+    """Activity data for people resource (profile updates).
+
+    Represents updates to the user's LinkedIn profile.
+    """
+
+    headline: dict = Field(default_factory=dict)  # {"localized": {"en_US": "text"}}
+    summary: dict = Field(default_factory=dict)
+    last_modified: int | None = Field(default=None, alias="lastModified")
+
+    model_config = {"populate_by_name": True}
+
+    def get_headline(self) -> str:
+        """Extract headline text.
+
+        Returns:
+            The headline text, or empty string if not found.
+        """
+        localized = self.headline.get("localized", {})
+        return localized.get("en_US", "")
+
+    def get_summary(self) -> str:
+        """Extract summary text.
+
+        Returns:
+            The summary text, or empty string if not found.
+        """
+        localized = self.summary.get("localized", {})
+        return localized.get("en_US", "")
+
+
+class PositionActivity(BaseModel):
+    """Activity data for people/positions resource.
+
+    Represents updates to a job position on the user's profile.
+    """
+
+    title: dict = Field(default_factory=dict)  # {"localized": {"en_US": "Job Title"}}
+    company_name: dict = Field(default_factory=dict, alias="companyName")
+
+    model_config = {"populate_by_name": True}
+
+    def get_title(self) -> str:
+        """Extract position title.
+
+        Returns:
+            The position title, or empty string if not found.
+        """
+        localized = self.title.get("localized", {})
+        return localized.get("en_US", "")
+
+    def get_company(self) -> str:
+        """Extract company name.
+
+        Returns:
+            The company name, or empty string if not found.
+        """
+        localized = self.company_name.get("localized", {})
+        return localized.get("en_US", "")
+
+
 # Registry of known resource types and their activity schemas.
 # Used to validate that we have schemas for all supported resource types.
 RESOURCE_SCHEMAS: dict[str, type[BaseModel]] = {
@@ -137,4 +221,7 @@ RESOURCE_SCHEMAS: dict[str, type[BaseModel]] = {
     "socialActions/comments": CommentActivity,
     "socialActions/likes": ReactionActivity,
     "invitations": InvitationActivity,
+    "messages": MessageActivity,
+    "people": ProfileActivity,
+    "people/positions": PositionActivity,
 }

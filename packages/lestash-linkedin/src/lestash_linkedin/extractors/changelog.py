@@ -13,6 +13,9 @@ from lestash_linkedin.schemas.changelog import ChangelogEvent
 from lestash_linkedin.schemas.content_types import (
     CommentActivity,
     InvitationActivity,
+    MessageActivity,
+    PositionActivity,
+    ProfileActivity,
     ReactionActivity,
     UgcPostActivity,
 )
@@ -68,6 +71,12 @@ def extract_changelog_item(event_data: dict) -> ItemCreate:
         return _extract_reaction(event)
     elif event.resource_name == "invitations":
         return _extract_invitation(event)
+    elif event.resource_name == "messages":
+        return _extract_message(event)
+    elif event.resource_name == "people":
+        return _extract_profile_update(event)
+    elif event.resource_name == "people/positions":
+        return _extract_position_update(event)
     else:
         # Unknown resource type - log for awareness, preserve with generic content
         logger.warning(
@@ -203,6 +212,89 @@ def _extract_invitation(event: ChangelogEvent) -> ItemCreate:
         extra_metadata={
             "invitation_type": activity.invitation_type,
             "invitee": activity.invitee,
+        },
+    )
+
+
+def _extract_message(event: ChangelogEvent) -> ItemCreate:
+    """Extract content from a messages event."""
+    activity = MessageActivity.model_validate(event.activity or {})
+
+    created_at = None
+    if activity.created_at:
+        created_at = datetime.fromtimestamp(activity.created_at / 1000)
+    elif activity.delivered_at:
+        created_at = datetime.fromtimestamp(activity.delivered_at / 1000)
+
+    content = activity.get_text()
+    if not content:
+        content = f"{event.method} message"
+
+    return _create_item(
+        event=event,
+        content=content,
+        author=activity.author,
+        created_at=created_at,
+        extra_metadata={
+            "thread": activity.thread,
+        },
+    )
+
+
+def _extract_profile_update(event: ChangelogEvent) -> ItemCreate:
+    """Extract content from a people (profile update) event."""
+    activity = ProfileActivity.model_validate(event.activity or {})
+
+    created_at = None
+    if activity.last_modified:
+        created_at = datetime.fromtimestamp(activity.last_modified / 1000)
+
+    # Build content from available fields
+    parts = []
+    headline = activity.get_headline()
+    if headline:
+        parts.append(f"Headline: {headline}")
+
+    summary = activity.get_summary()
+    if summary:
+        parts.append(f"Summary: {summary}")
+
+    content = "\n".join(parts) if parts else f"{event.method} profile"
+
+    return _create_item(
+        event=event,
+        content=content,
+        author=event.actor,
+        created_at=created_at,
+        extra_metadata={},
+    )
+
+
+def _extract_position_update(event: ChangelogEvent) -> ItemCreate:
+    """Extract content from a people/positions event."""
+    activity = PositionActivity.model_validate(event.activity or {})
+
+    # Build content from available fields
+    title = activity.get_title()
+    company = activity.get_company()
+
+    if title and company:
+        content = f"{title} at {company}"
+    elif title:
+        content = f"Position: {title}"
+    elif company:
+        content = f"Company: {company}"
+    else:
+        content = f"{event.method} position"
+
+    return _create_item(
+        event=event,
+        content=content,
+        author=event.actor,
+        created_at=None,
+        extra_metadata={
+            "title": title,
+            "company": company,
         },
     )
 
