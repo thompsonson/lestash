@@ -39,9 +39,11 @@ class TestSchemaMigrations:
         db_path = get_db_path(test_db)
         with sqlite3.connect(db_path) as conn:
             conn.execute("PRAGMA user_version = 0")
-            # Drop the history table to simulate pre-migration state
+            # Drop all tables created by migrations to simulate pre-migration state
             conn.execute("DROP TABLE IF EXISTS item_history")
             conn.execute("DROP TRIGGER IF EXISTS capture_item_history")
+            conn.execute("DROP TABLE IF EXISTS person_profiles")
+            conn.execute("DROP TABLE IF EXISTS post_cache")
             conn.commit()
 
         # Now get_connection should apply migrations

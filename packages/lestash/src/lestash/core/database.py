@@ -15,7 +15,7 @@ from lestash.core.config import Config
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -173,6 +173,36 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_person_profiles_urn ON person_profiles(urn);
         """,
     ),
+    (
+        3,
+        "Add post_cache table for enriching reactions and comments",
+        """
+        -- Post cache for storing content of posts that reactions/comments reference
+        CREATE TABLE IF NOT EXISTS post_cache (
+            id INTEGER PRIMARY KEY,
+            urn TEXT UNIQUE NOT NULL,
+            author_urn TEXT,
+            author_name TEXT,
+            content_preview TEXT,
+            full_content TEXT,
+            image_path TEXT,
+            url TEXT,
+            created_at DATETIME,
+            fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            source TEXT DEFAULT 'manual'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_post_cache_urn ON post_cache(urn);
+        """,
+    ),
+    (
+        4,
+        "Add reactor_name column to post_cache for tracking who reacted to your content",
+        """
+        -- Add reactor_name to store who reacted to your content
+        ALTER TABLE post_cache ADD COLUMN reactor_name TEXT;
+        """,
+    ),
 ]
 
 
@@ -327,3 +357,99 @@ def delete_person_profile(conn: sqlite3.Connection, urn: str) -> bool:
     cursor = conn.execute("DELETE FROM person_profiles WHERE urn = ?", (urn,))
     conn.commit()
     return cursor.rowcount > 0
+
+
+def get_cache_dir(config: Config | None = None) -> Path:
+    """Get the cache directory for storing files like screenshots.
+
+    Creates the directory if it doesn't exist.
+
+    Returns:
+        Path to ~/.lestash/cache/posts/
+    """
+    if config is None:
+        config = Config.load()
+    # Use the database path's parent as the base for cache
+    db_path = Path(config.general.database_path).expanduser()
+    cache_dir = db_path.parent / "cache" / "posts"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def get_post_cache(conn: sqlite3.Connection, urn: str) -> dict | None:
+    """Look up cached post content by URN.
+
+    Args:
+        conn: Database connection
+        urn: LinkedIn activity URN (e.g., "urn:li:activity:7421941760257556482")
+
+    Returns:
+        Dict with content_preview, author_name, reactor_name, image_path, etc. or None if not found
+    """
+    cursor = conn.execute(
+        """SELECT urn, author_urn, author_name, content_preview, full_content,
+                  image_path, url, created_at, fetched_at, source, reactor_name
+           FROM post_cache WHERE urn = ?""",
+        (urn,),
+    )
+    row = cursor.fetchone()
+    if row:
+        return dict(row)
+    return None
+
+
+def upsert_post_cache(
+    conn: sqlite3.Connection,
+    urn: str,
+    content_preview: str | None = None,
+    full_content: str | None = None,
+    author_urn: str | None = None,
+    author_name: str | None = None,
+    image_path: str | None = None,
+    url: str | None = None,
+    source: str = "manual",
+    reactor_name: str | None = None,
+) -> None:
+    """Add or update cached post content.
+
+    Args:
+        conn: Database connection
+        urn: LinkedIn activity URN
+        content_preview: First ~500 chars of post content
+        full_content: Full post text if available
+        author_urn: Author's LinkedIn URN
+        author_name: Author's display name
+        image_path: Path to screenshot (relative to cache dir)
+        url: LinkedIn URL to the post
+        source: How the content was obtained (manual, own_post, image, api)
+        reactor_name: Name of the person who reacted (for reactions to your content)
+    """
+    conn.execute(
+        """
+        INSERT INTO post_cache (urn, author_urn, author_name, content_preview,
+                                full_content, image_path, url, source, reactor_name, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(urn) DO UPDATE SET
+            author_urn = COALESCE(excluded.author_urn, author_urn),
+            author_name = COALESCE(excluded.author_name, author_name),
+            content_preview = COALESCE(excluded.content_preview, content_preview),
+            full_content = COALESCE(excluded.full_content, full_content),
+            image_path = COALESCE(excluded.image_path, image_path),
+            url = COALESCE(excluded.url, url),
+            source = excluded.source,
+            reactor_name = COALESCE(excluded.reactor_name, reactor_name),
+            fetched_at = CURRENT_TIMESTAMP
+        """,
+        (
+            urn,
+            author_urn,
+            author_name,
+            content_preview,
+            full_content,
+            image_path,
+            url,
+            source,
+            reactor_name,
+        ),
+    )
+    conn.commit()
