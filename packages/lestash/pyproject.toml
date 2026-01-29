@@ -12,6 +12,12 @@ dependencies = [
     "toml>=0.10.2",
 ]
 
+[project.optional-dependencies]
+sync = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+]
+
 [project.scripts]
 lestash = "lestash.cli.main:app"
 

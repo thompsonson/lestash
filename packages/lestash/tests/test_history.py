@@ -8,6 +8,7 @@ from lestash.core.database import (
     get_connection,
     get_db_path,
     get_schema_version,
+    upsert_item,
 )
 
 
@@ -189,7 +190,7 @@ class TestHistoryTrigger:
 
 
 class TestHistoryWithUpsert:
-    """Test history works with ON CONFLICT upsert pattern."""
+    """Test history works with upsert_item helper."""
 
     def test_upsert_triggers_history_on_update(self, test_db):
         """Upsert that updates should create history."""
@@ -202,14 +203,13 @@ class TestHistoryWithUpsert:
             )
             conn.commit()
 
-            # Upsert with new content
-            conn.execute(
-                """INSERT INTO items (source_type, source_id, content, author)
-                   VALUES (?, ?, ?, ?)
-                   ON CONFLICT(source_type, source_id) DO UPDATE SET
-                       content = excluded.content,
-                       author = excluded.author""",
-                ("linkedin", "post-123", "Actual post content here", "urn:li:person:abc"),
+            # Upsert with new content (triggers UPDATE path)
+            upsert_item(
+                conn,
+                source_type="linkedin",
+                source_id="post-123",
+                content="Actual post content here",
+                author="urn:li:person:abc",
             )
             conn.commit()
 
@@ -220,14 +220,13 @@ class TestHistoryWithUpsert:
             assert history[1] is None
 
     def test_upsert_insert_does_not_create_history(self, test_db):
-        """Upsert that inserts (no conflict) should not create history."""
+        """Upsert that inserts (no existing row) should not create history."""
         with get_connection(test_db) as conn:
-            conn.execute(
-                """INSERT INTO items (source_type, source_id, content)
-                   VALUES (?, ?, ?)
-                   ON CONFLICT(source_type, source_id) DO UPDATE SET
-                       content = excluded.content""",
-                ("linkedin", "new-post", "Fresh content"),
+            upsert_item(
+                conn,
+                source_type="linkedin",
+                source_id="new-post",
+                content="Fresh content",
             )
             conn.commit()
 

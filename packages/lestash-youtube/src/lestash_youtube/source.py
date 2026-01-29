@@ -599,30 +599,19 @@ def _store_item(conn, item: ItemCreate) -> int:
     Returns:
         1 if item was added/updated, 0 otherwise
     """
+    from lestash.core.database import upsert_item
+
     metadata_json = json.dumps(item.metadata) if item.metadata else None
 
-    cursor = conn.execute(
-        """
-        INSERT INTO items (
-            source_type, source_id, url, title, content,
-            author, created_at, is_own_content, metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(source_type, source_id) DO UPDATE SET
-            content = excluded.content,
-            title = excluded.title,
-            author = excluded.author,
-            metadata = excluded.metadata
-        """,
-        (
-            item.source_type,
-            item.source_id,
-            item.url,
-            item.title,
-            item.content,
-            item.author,
-            item.created_at,
-            item.is_own_content,
-            metadata_json,
-        ),
+    return upsert_item(
+        conn,
+        source_type=item.source_type,
+        source_id=item.source_id,
+        url=item.url,
+        title=item.title,
+        content=item.content,
+        author=item.author,
+        created_at=item.created_at,
+        is_own_content=item.is_own_content,
+        metadata=metadata_json,
     )
-    return 1 if cursor.rowcount > 0 else 0

@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from lestash.core.config import Config
-from lestash.core.database import get_connection
+from lestash.core.database import get_connection, upsert_item, upsert_source
 from lestash.plugins.loader import load_plugins
 
 app = typer.Typer(help="Manage content sources.")
@@ -99,47 +99,29 @@ def sync_source(
 
             try:
                 for item in plugin.sync(plugin_config):
-                    # Try to insert, update on conflict
                     metadata_json = json.dumps(item.metadata) if item.metadata else None
-                    cursor = conn.execute(
-                        """
-                        INSERT INTO items (
-                            source_type, source_id, url, title, content,
-                            author, created_at, is_own_content, metadata
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(source_type, source_id) DO UPDATE SET
-                            url = excluded.url,
-                            title = excluded.title,
-                            content = excluded.content,
-                            author = excluded.author,
-                            is_own_content = excluded.is_own_content,
-                            metadata = excluded.metadata
-                        """,
-                        (
-                            item.source_type,
-                            item.source_id,
-                            item.url,
-                            item.title,
-                            item.content,
-                            item.author,
-                            item.created_at,
-                            item.is_own_content,
-                            metadata_json,
-                        ),
+                    result = upsert_item(
+                        conn,
+                        source_type=item.source_type,
+                        source_id=item.source_id,
+                        url=item.url,
+                        title=item.title,
+                        content=item.content,
+                        author=item.author,
+                        created_at=item.created_at,
+                        is_own_content=item.is_own_content,
+                        metadata=metadata_json,
                     )
-                    if cursor.rowcount > 0:
+                    if result > 0:
                         items_added += 1
 
                 conn.commit()
 
                 # Update source last_sync
-                conn.execute(
-                    """
-                    INSERT INTO sources (source_type, last_sync)
-                    VALUES (?, ?)
-                    ON CONFLICT(source_type) DO UPDATE SET last_sync = excluded.last_sync
-                    """,
-                    (name, datetime.now()),
+                upsert_source(
+                    conn,
+                    source_type=name,
+                    last_sync=datetime.now(),
                 )
                 conn.commit()
 

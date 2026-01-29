@@ -112,7 +112,7 @@ class ArxivSource(SourcePlugin):
         ) -> None:
             """Save an arXiv paper to the knowledge base."""
             from lestash.core.config import Config
-            from lestash.core.database import get_connection
+            from lestash.core.database import get_connection, upsert_item
 
             paper = get_paper(arxiv_id)
 
@@ -125,28 +125,17 @@ class ArxivSource(SourcePlugin):
 
             with get_connection(config) as conn:
                 metadata_json = json.dumps(item.metadata) if item.metadata else None
-                conn.execute(
-                    """
-                    INSERT INTO items (
-                        source_type, source_id, url, title, content,
-                        author, created_at, is_own_content, metadata
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(source_type, source_id) DO UPDATE SET
-                        title = excluded.title,
-                        content = excluded.content,
-                        metadata = excluded.metadata
-                    """,
-                    (
-                        item.source_type,
-                        item.source_id,
-                        item.url,
-                        item.title,
-                        item.content,
-                        item.author,
-                        item.created_at,
-                        item.is_own_content,
-                        metadata_json,
-                    ),
+                upsert_item(
+                    conn,
+                    source_type=item.source_type,
+                    source_id=item.source_id,
+                    url=item.url,
+                    title=item.title,
+                    content=item.content,
+                    author=item.author,
+                    created_at=item.created_at,
+                    is_own_content=item.is_own_content,
+                    metadata=metadata_json,
                 )
                 conn.commit()
 

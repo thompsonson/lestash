@@ -11,6 +11,7 @@ References:
 - https://vlcn.io/docs/cr-sqlite/intro
 """
 
+import contextlib
 import json
 import logging
 import platform
@@ -26,9 +27,7 @@ logger = logging.getLogger(__name__)
 CRSQLITE_VERSION = "0.16.3"
 
 # GitHub release URL pattern
-RELEASE_URL = (
-    f"https://github.com/vlcn-io/cr-sqlite/releases/download/v{CRSQLITE_VERSION}"
-)
+RELEASE_URL = f"https://github.com/vlcn-io/cr-sqlite/releases/download/v{CRSQLITE_VERSION}"
 
 # Platform-specific extension mappings
 PLATFORM_MAP = {
@@ -318,6 +317,13 @@ def apply_changes(conn: sqlite3.Connection, changes: list[dict]) -> int:
             # Convert hex site_id back to bytes
             site_id = bytes.fromhex(change["site_id"]) if change["site_id"] else None
 
+            # Convert hex pk back to bytes if it was serialized (e.g., from JSON import).
+            # cr-sqlite pk values are always bytes; hex strings come from JSON export.
+            pk = change["pk"]
+            if isinstance(pk, str):
+                with contextlib.suppress(ValueError):
+                    pk = bytes.fromhex(pk)
+
             conn.execute(
                 """
                 INSERT INTO crsql_changes
@@ -327,7 +333,7 @@ def apply_changes(conn: sqlite3.Connection, changes: list[dict]) -> int:
                 """,
                 (
                     change["table"],
-                    change["pk"],
+                    pk,
                     change["cid"],
                     change["val"],
                     change["col_version"],
@@ -368,13 +374,22 @@ def export_changes_to_file(
     db_version = get_db_version(conn)
     changes = get_changes_since(conn, since_version)
 
+    # Ensure all change values are JSON-serializable (pk can be bytes)
+    serialized_changes = []
+    for change in changes:
+        c = dict(change)
+        for key, value in c.items():
+            if isinstance(value, bytes):
+                c[key] = value.hex()
+        serialized_changes.append(c)
+
     export_data = {
         "format": "lestash-crsqlite-v1",
         "site_id": site_id.hex() if site_id else None,
         "db_version": db_version,
         "since_version": since_version,
         "change_count": len(changes),
-        "changes": changes,
+        "changes": serialized_changes,
     }
 
     output_path.write_text(json.dumps(export_data, indent=2))
@@ -428,20 +443,13 @@ def rebuild_fts_index(conn: sqlite3.Connection) -> int:
         Number of items re-indexed.
     """
     try:
-        # Delete all FTS entries
-        conn.execute("DELETE FROM items_fts")
-
-        # Rebuild from items table
-        conn.execute(
-            """
-            INSERT INTO items_fts(rowid, title, content, author)
-            SELECT id, title, content, author FROM items
-            """
-        )
+        # Use FTS5 'rebuild' command for external content tables.
+        # This re-reads all rows from the items table and rebuilds the index.
+        conn.execute("INSERT INTO items_fts(items_fts) VALUES('rebuild')")
         conn.commit()
 
-        # Get count
-        count_cursor = conn.execute("SELECT COUNT(*) FROM items_fts")
+        # Get count of indexed items
+        count_cursor = conn.execute("SELECT COUNT(*) FROM items")
         count = count_cursor.fetchone()[0]
 
         logger.info(f"Rebuilt FTS index with {count} items")

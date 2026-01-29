@@ -163,7 +163,7 @@ class LinkedInSource(SourcePlugin):
         ) -> None:
             """Import posts from LinkedIn data export ZIP."""
             from lestash.core.config import Config
-            from lestash.core.database import get_connection
+            from lestash.core.database import get_connection, upsert_item
 
             if not zip_path.exists():
                 console.print(f"[red]File not found: {zip_path}[/red]")
@@ -176,30 +176,19 @@ class LinkedInSource(SourcePlugin):
             with get_connection(config) as conn:
                 for item in import_from_zip(zip_path):
                     metadata_json = json.dumps(item.metadata) if item.metadata else None
-                    cursor = conn.execute(
-                        """
-                        INSERT INTO items (
-                            source_type, source_id, url, title, content,
-                            author, created_at, is_own_content, metadata
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(source_type, source_id) DO UPDATE SET
-                            content = excluded.content,
-                            author = excluded.author,
-                            metadata = excluded.metadata
-                        """,
-                        (
-                            item.source_type,
-                            item.source_id,
-                            item.url,
-                            item.title,
-                            item.content,
-                            item.author,
-                            item.created_at,
-                            item.is_own_content,
-                            metadata_json,
-                        ),
+                    result = upsert_item(
+                        conn,
+                        source_type=item.source_type,
+                        source_id=item.source_id,
+                        url=item.url,
+                        title=item.title,
+                        content=item.content,
+                        author=item.author,
+                        created_at=item.created_at,
+                        is_own_content=item.is_own_content,
+                        metadata=metadata_json,
                     )
-                    if cursor.rowcount > 0:
+                    if result > 0:
                         items_added += 1
 
                 conn.commit()
@@ -324,7 +313,7 @@ class LinkedInSource(SourcePlugin):
               Includes posts, comments, reactions, and other interactions.
             """
             from lestash.core.config import Config
-            from lestash.core.database import get_connection
+            from lestash.core.database import get_connection, upsert_item
 
             token = load_token()
             if not token:
@@ -352,30 +341,19 @@ class LinkedInSource(SourcePlugin):
                         with get_connection(config) as conn:
                             for item in changelog_to_items(events):
                                 metadata_json = json.dumps(item.metadata) if item.metadata else None
-                                cursor = conn.execute(
-                                    """
-                                    INSERT INTO items (
-                                        source_type, source_id, url, title, content,
-                                        author, created_at, is_own_content, metadata
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                    ON CONFLICT(source_type, source_id) DO UPDATE SET
-                                        content = excluded.content,
-                                        author = excluded.author,
-                                        metadata = excluded.metadata
-                                    """,
-                                    (
-                                        item.source_type,
-                                        item.source_id,
-                                        item.url,
-                                        item.title,
-                                        item.content,
-                                        item.author,
-                                        item.created_at,
-                                        item.is_own_content,
-                                        metadata_json,
-                                    ),
+                                result = upsert_item(
+                                    conn,
+                                    source_type=item.source_type,
+                                    source_id=item.source_id,
+                                    url=item.url,
+                                    title=item.title,
+                                    content=item.content,
+                                    author=item.author,
+                                    created_at=item.created_at,
+                                    is_own_content=item.is_own_content,
+                                    metadata=metadata_json,
                                 )
-                                if cursor.rowcount > 0:
+                                if result > 0:
                                     total_items += 1
                             conn.commit()
 
@@ -408,30 +386,19 @@ class LinkedInSource(SourcePlugin):
                                     metadata_json = (
                                         json.dumps(item.metadata) if item.metadata else None
                                     )
-                                    cursor = conn.execute(
-                                        """
-                                        INSERT INTO items (
-                                            source_type, source_id, url, title, content,
-                                            author, created_at, is_own_content, metadata
-                                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                        ON CONFLICT(source_type, source_id) DO UPDATE SET
-                                            content = excluded.content,
-                                            author = excluded.author,
-                                            metadata = excluded.metadata
-                                        """,
-                                        (
-                                            item.source_type,
-                                            item.source_id,
-                                            item.url,
-                                            item.title,
-                                            item.content,
-                                            item.author,
-                                            item.created_at,
-                                            item.is_own_content,
-                                            metadata_json,
-                                        ),
+                                    result = upsert_item(
+                                        conn,
+                                        source_type=item.source_type,
+                                        source_id=item.source_id,
+                                        url=item.url,
+                                        title=item.title,
+                                        content=item.content,
+                                        author=item.author,
+                                        created_at=item.created_at,
+                                        is_own_content=item.is_own_content,
+                                        metadata=metadata_json,
                                     )
-                                    if cursor.rowcount > 0:
+                                    if result > 0:
                                         total_items += 1
 
                                 conn.commit()

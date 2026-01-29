@@ -107,7 +107,7 @@ def sync_status() -> None:
                 try:
                     # Try to query changes for this table
                     cursor = conn.execute(
-                        "SELECT COUNT(*) FROM crsql_changes WHERE \"table\" = ?",
+                        'SELECT COUNT(*) FROM crsql_changes WHERE "table" = ?',
                         (table,),
                     )
                     count = cursor.fetchone()[0]
@@ -255,3 +255,60 @@ def sync_info() -> None:
     console.print("\n[bold]Learn more:[/bold]")
     console.print("  • https://vlcn.io/docs/cr-sqlite/intro")
     console.print("  • https://github.com/vlcn-io/cr-sqlite")
+
+
+@app.command("serve")
+def serve(
+    host: Annotated[
+        str,
+        typer.Option("--host", "-H", help="Host to bind to"),
+    ] = "0.0.0.0",
+    port: Annotated[
+        int,
+        typer.Option("--port", "-p", help="Port to listen on"),
+    ] = 8384,
+) -> None:
+    """Start the HTTP sync server for mobile app connectivity.
+
+    The server provides CRDT sync endpoints that the Le Stash mobile
+    app uses to pull and push changes over the network.
+
+    By default, binds to 0.0.0.0:8384 for LAN/Tailscale access.
+
+    Example:
+        lestash sync serve
+        lestash sync serve --port 9000
+        lestash sync serve --host 127.0.0.1 --port 8384
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        console.print(
+            "[red]Sync server requires extra dependencies.[/red]\n"
+            "[dim]Install with: pip install lestash[sync][/dim]"
+        )
+        raise typer.Exit(1) from None
+
+    if not crsqlite.is_extension_available():
+        console.print("[red]cr-sqlite not installed. Run 'lestash sync setup' first.[/red]")
+        raise typer.Exit(1)
+
+    config = Config.load()
+    try:
+        with get_crdt_connection(config) as conn:
+            site_id = crsqlite.get_site_id(conn)
+            db_version = crsqlite.get_db_version(conn)
+    except RuntimeError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+
+    console.print("[bold]Starting Le Stash sync server...[/bold]")
+    console.print(f"[dim]Site ID: {site_id.hex() if site_id else 'unknown'}[/dim]")
+    console.print(f"[dim]DB version: {db_version}[/dim]")
+    console.print(f"[dim]Listening on: http://{host}:{port}[/dim]")
+    console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+
+    from lestash.server.app import create_app
+
+    fastapi_app = create_app(config)
+    uvicorn.run(fastapi_app, host=host, port=port, log_level="info")

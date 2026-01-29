@@ -145,8 +145,9 @@ class TestExportFileFormat:
         bad_file = tmp_path / "bad.json"
         bad_file.write_text(json.dumps({"format": "wrong-format", "changes": []}))
 
-        with get_crdt_connection(crdt_db) as conn, pytest.raises(
-            ValueError, match="Unknown export format"
+        with (
+            get_crdt_connection(crdt_db) as conn,
+            pytest.raises(ValueError, match="Unknown export format"),
         ):
             crsqlite.import_changes_from_file(conn, bad_file)
 
@@ -203,22 +204,22 @@ class TestChangesetRoundtrip:
         """Items created on different DBs should both exist after bidirectional sync."""
         config_a, config_b = two_crdt_dbs
 
-        # Create item in DB A
+        # Create item in DB A with explicit ID to avoid auto-increment PK collision
         with get_crdt_connection(config_a) as conn_a:
             crsqlite.upgrade_to_crr(conn_a, "items")
             conn_a.execute(
-                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
-                ("test", "from-a", "Created on A"),
+                "INSERT INTO items (id, source_type, source_id, content) VALUES (?, ?, ?, ?)",
+                (1000, "test", "from-a", "Created on A"),
             )
             conn_a.commit()
             changes_a = crsqlite.get_changes_since(conn_a, since_version=0)
 
-        # Create different item in DB B
+        # Create different item in DB B with non-colliding explicit ID
         with get_crdt_connection(config_b) as conn_b:
             crsqlite.upgrade_to_crr(conn_b, "items")
             conn_b.execute(
-                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
-                ("test", "from-b", "Created on B"),
+                "INSERT INTO items (id, source_type, source_id, content) VALUES (?, ?, ?, ?)",
+                (2000, "test", "from-b", "Created on B"),
             )
             conn_b.commit()
             changes_b = crsqlite.get_changes_since(conn_b, since_version=0)
@@ -283,8 +284,7 @@ class TestChangesetRoundtrip:
 
             # Convert to dict for easier assertion
             items = {
-                r[1]: {"type": r[0], "content": r[2], "author": r[3], "title": r[4]}
-                for r in rows
+                r[1]: {"type": r[0], "content": r[2], "author": r[3], "title": r[4]} for r in rows
             }
 
             assert "post-123" in items
