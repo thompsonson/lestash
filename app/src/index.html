@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LeStash</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --border: #0f3460;
+      --text: #e0e0e0;
+      --muted: #888;
+      --accent: #e94560;
+      --ok: #4ecca3;
+      --error: #e94560;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+    .dot.ok { background: var(--ok); }
+    .dot.error { background: var(--error); }
+    .info {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem;
+      font-size: 0.85rem;
+      max-width: 500px;
+      width: 100%;
+    }
+    .info pre {
+      white-space: pre-wrap;
+      color: var(--muted);
+      margin-top: 0.5rem;
+    }
+    .mode {
+      color: var(--accent);
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>LeStash</h1>
+  <div class="status">
+    <div class="dot" id="dot"></div>
+    <span id="status-text">Connecting...</span>
+  </div>
+  <div class="info">
+    <div>Mode: <span class="mode" id="mode"></span></div>
+    <pre id="output"></pre>
+  </div>
+
+  <script>
+    const IS_TAURI = window.__TAURI_INTERNALS__ !== undefined;
+    const SETTINGS_KEY = 'lestash-settings';
+    const DEFAULT_SETTINGS = { host: 'pop-mini.monkey-ladon.ts.net', port: 8444 };
+
+    function loadSettings() {
+      try {
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+      } catch {}
+      return { ...DEFAULT_SETTINGS };
+    }
+
+    const settings = loadSettings();
+
+    function getApiBase() {
+      if (IS_TAURI) return `https://${settings.host}:${settings.port}`;
+      return '';
+    }
+
+    document.getElementById('mode').textContent = IS_TAURI ? 'Tauri' : 'Browser';
+
+    async function checkHealth() {
+      const dot = document.getElementById('dot');
+      const statusText = document.getElementById('status-text');
+      const output = document.getElementById('output');
+
+      try {
+        const res = await fetch(`${getApiBase()}/api/health`);
+        const data = await res.json();
+        dot.className = 'dot ok';
+        statusText.textContent = 'Connected';
+        output.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        dot.className = 'dot error';
+        statusText.textContent = 'Disconnected';
+        output.textContent = `Error: ${e.message}\nAPI: ${getApiBase()}/api/health`;
+      }
+    }
+
+    checkHealth();
+  </script>
+</body>
+</html>
