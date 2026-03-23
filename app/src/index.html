@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>LeStash</title>
   <style>
     :root {
@@ -14,70 +14,438 @@
       --accent: #e94560;
       --ok: #4ecca3;
       --error: #e94560;
+      --warn: #f0a500;
+      --src-linkedin: #0077b5;
+      --src-bluesky: #0085ff;
+      --src-youtube: #ff0000;
+      --src-arxiv: #b31b1b;
+      --src-microblog: #ff8800;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 14px;
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem;
     }
-    h1 { font-size: 1.5rem; margin-bottom: 1rem; }
-    .status {
+
+    /* ── Header ── */
+    header {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
-      margin-bottom: 1rem;
-      font-size: 0.9rem;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      gap: 0.75rem;
+      flex-shrink: 0;
     }
+    header h1 { font-size: 1.1rem; white-space: nowrap; }
     .dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--muted);
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--muted); flex-shrink: 0;
     }
     .dot.ok { background: var(--ok); }
     .dot.error { background: var(--error); }
-    .info {
+    .spacer { flex: 1; }
+    .gear-btn {
+      background: none; border: none; color: var(--muted);
+      cursor: pointer; font-size: 1.2rem; padding: 0.25rem;
+    }
+    .gear-btn:hover { color: var(--text); }
+
+    /* ── Tabs ── */
+    nav {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    nav button {
+      flex: 1;
+      background: none; border: none; color: var(--muted);
+      padding: 0.6rem 0; cursor: pointer; font-family: inherit;
+      font-size: 0.85rem; border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    nav button:hover { color: var(--text); }
+    nav button.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    /* ── Main content ── */
+    main {
+      flex: 1; overflow-y: auto;
+      padding: 1rem;
+    }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── Filters ── */
+    .filters {
+      display: flex; gap: 0.5rem; margin-bottom: 1rem;
+      flex-wrap: wrap; align-items: center;
+    }
+    .filters select, .filters input, .filters button {
+      font-family: inherit; font-size: 0.8rem;
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 0.4rem 0.6rem;
+    }
+    .filters select:focus, .filters input:focus {
+      outline: none; border-color: var(--accent);
+    }
+    .search-input {
+      flex: 1; min-width: 200px;
+    }
+
+    /* ── Item cards ── */
+    .item-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .item-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .item-card:hover { border-color: var(--accent); }
+    .item-card-header {
+      display: flex; align-items: center; gap: 0.5rem;
+      margin-bottom: 0.4rem;
+    }
+    .source-badge {
+      font-size: 0.7rem; padding: 0.15rem 0.4rem;
+      border-radius: 3px; color: #fff; white-space: nowrap;
+      font-weight: bold;
+    }
+    .source-badge.linkedin { background: var(--src-linkedin); }
+    .source-badge.bluesky { background: var(--src-bluesky); }
+    .source-badge.youtube { background: var(--src-youtube); }
+    .source-badge.arxiv { background: var(--src-arxiv); }
+    .source-badge.microblog { background: var(--src-microblog); }
+    .item-subtype {
+      font-size: 0.75rem; color: var(--muted);
+    }
+    .item-date {
+      margin-left: auto; font-size: 0.75rem; color: var(--muted);
+      white-space: nowrap;
+    }
+    .item-preview {
+      font-size: 0.85rem; color: var(--text);
+      line-height: 1.4;
+    }
+    .item-meta {
+      display: flex; gap: 1rem; margin-top: 0.3rem;
+      font-size: 0.75rem; color: var(--muted);
+    }
+
+    /* ── Item detail (expanded) ── */
+    .item-detail {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem;
+      margin-top: 0.5rem;
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+    .item-detail-field {
+      margin-bottom: 0.5rem;
+    }
+    .item-detail-field label {
+      color: var(--accent); font-weight: bold;
+      display: block; margin-bottom: 0.15rem;
+    }
+    .item-detail-content {
+      white-space: pre-wrap; word-break: break-word;
+      max-height: 400px; overflow-y: auto;
+    }
+    .item-detail a {
+      color: var(--accent); text-decoration: none;
+    }
+    .item-detail a:hover { text-decoration: underline; }
+    .item-detail-meta {
+      background: var(--surface);
+      border-radius: 4px;
+      padding: 0.5rem;
+      font-size: 0.75rem;
+      white-space: pre-wrap;
+      max-height: 200px;
+      overflow-y: auto;
+      color: var(--muted);
+    }
+
+    /* ── Load more ── */
+    .load-more {
+      display: block; margin: 1rem auto 0;
+      background: var(--surface); color: var(--accent);
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 0.5rem 1.5rem; cursor: pointer;
+      font-family: inherit; font-size: 0.85rem;
+    }
+    .load-more:hover { border-color: var(--accent); }
+    .load-more:disabled { opacity: 0.5; cursor: default; }
+
+    /* ── Sources table ── */
+    .source-table { width: 100%; border-collapse: collapse; }
+    .source-table th, .source-table td {
+      text-align: left; padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+    .source-table th {
+      color: var(--muted); font-weight: normal;
+      font-size: 0.75rem; text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .sync-btn {
+      background: var(--surface); color: var(--ok);
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 0.3rem 0.75rem; cursor: pointer;
+      font-family: inherit; font-size: 0.8rem;
+    }
+    .sync-btn:hover { border-color: var(--ok); }
+    .sync-btn:disabled { opacity: 0.5; cursor: default; }
+    .sync-status { font-size: 0.75rem; }
+    .sync-status.completed { color: var(--ok); }
+    .sync-status.failed { color: var(--error); }
+    .sync-status.running { color: var(--warn); }
+
+    /* ── Stats ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+    .stat-card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 1rem;
-      font-size: 0.85rem;
-      max-width: 500px;
-      width: 100%;
     }
-    .info pre {
-      white-space: pre-wrap;
-      color: var(--muted);
+    .stat-card .stat-value {
+      font-size: 1.5rem; font-weight: bold;
+      color: var(--accent);
+    }
+    .stat-card .stat-label {
+      font-size: 0.75rem; color: var(--muted);
+      margin-top: 0.25rem;
+    }
+    .bar-chart { display: flex; flex-direction: column; gap: 0.5rem; }
+    .bar-row {
+      display: flex; align-items: center; gap: 0.75rem;
+    }
+    .bar-label {
+      width: 90px; font-size: 0.8rem;
+      text-align: right; color: var(--muted);
+    }
+    .bar-track {
+      flex: 1; height: 22px;
+      background: var(--surface);
+      border-radius: 3px; overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%; border-radius: 3px;
+      display: flex; align-items: center;
+      padding-left: 0.5rem;
+      font-size: 0.7rem; color: #fff;
+      min-width: fit-content;
+      transition: width 0.3s ease;
+    }
+
+    /* ── Settings modal ── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.6); z-index: 100;
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+      width: 90%; max-width: 400px;
+    }
+    .modal h2 { font-size: 1rem; margin-bottom: 1rem; }
+    .modal label {
+      display: block; font-size: 0.8rem;
+      color: var(--muted); margin-bottom: 0.25rem;
+    }
+    .modal input {
+      width: 100%; font-family: inherit; font-size: 0.85rem;
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 0.4rem 0.6rem; margin-bottom: 0.75rem;
+    }
+    .modal input:focus { outline: none; border-color: var(--accent); }
+    .modal-actions {
+      display: flex; gap: 0.5rem; justify-content: flex-end;
       margin-top: 0.5rem;
     }
-    .mode {
-      color: var(--accent);
-      font-weight: bold;
+    .modal-actions button {
+      font-family: inherit; font-size: 0.85rem;
+      padding: 0.4rem 1rem; border-radius: 4px;
+      cursor: pointer; border: 1px solid var(--border);
+    }
+    .btn-save {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+    }
+    .btn-cancel {
+      background: var(--surface); color: var(--text);
+    }
+
+    /* ── Toasts ── */
+    .toast-container {
+      position: fixed;
+      top: calc(0.75rem + env(safe-area-inset-top, 0px));
+      right: calc(0.75rem + env(safe-area-inset-right, 0px));
+      z-index: 200;
+      display: flex; flex-direction: column; gap: 0.4rem;
+      pointer-events: none;
+    }
+    .toast {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--muted);
+      border-radius: 4px;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      max-width: 320px;
+      animation: toast-in-out 4s ease forwards;
+    }
+    .toast.ok { border-left-color: var(--ok); }
+    .toast.error { border-left-color: var(--error); }
+    @keyframes toast-in-out {
+      0% { opacity: 0; transform: translateX(20px); }
+      8% { opacity: 1; transform: translateX(0); }
+      85% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    /* ── Empty state ── */
+    .empty-state {
+      text-align: center; padding: 3rem 1rem;
+      color: var(--muted);
+    }
+    .empty-state .empty-icon { font-size: 2rem; margin-bottom: 0.5rem; }
+
+    /* ── Spinner ── */
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      header { padding: 0.5rem 0.75rem; }
+      main { padding: 0.75rem; }
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+      .bar-label { width: 70px; font-size: 0.75rem; }
+      .item-meta { flex-wrap: wrap; }
     }
   </style>
 </head>
 <body>
-  <h1>LeStash</h1>
-  <div class="status">
-    <div class="dot" id="dot"></div>
-    <span id="status-text">Connecting...</span>
-  </div>
-  <div class="info">
-    <div>Mode: <span class="mode" id="mode"></span></div>
-    <pre id="output"></pre>
+
+  <!-- Header -->
+  <header>
+    <h1>LeStash</h1>
+    <div class="dot" id="dot" title="Server connection"></div>
+    <span class="spacer"></span>
+    <button class="gear-btn" onclick="openSettings()" title="Settings">&#9881;</button>
+  </header>
+
+  <!-- Tabs -->
+  <nav id="tabs">
+    <button class="active" data-tab="feed">Feed</button>
+    <button data-tab="search">Search</button>
+    <button data-tab="sources">Sources</button>
+    <button data-tab="stats">Stats</button>
+  </nav>
+
+  <!-- Main content -->
+  <main>
+    <!-- Feed tab -->
+    <div class="tab-content active" id="tab-feed">
+      <div class="filters">
+        <select id="feed-source">
+          <option value="">All sources</option>
+        </select>
+        <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;color:var(--muted)">
+          <input type="checkbox" id="feed-own"> Own
+        </label>
+      </div>
+      <div class="item-list" id="feed-list"></div>
+      <button class="load-more" id="feed-more" onclick="loadMoreFeed()" style="display:none">Load more</button>
+    </div>
+
+    <!-- Search tab -->
+    <div class="tab-content" id="tab-search">
+      <div class="filters">
+        <input type="text" class="search-input" id="search-input"
+               placeholder="Search your knowledge base..." autocomplete="off">
+      </div>
+      <div class="item-list" id="search-list"></div>
+    </div>
+
+    <!-- Sources tab -->
+    <div class="tab-content" id="tab-sources">
+      <table class="source-table" id="sources-table">
+        <thead>
+          <tr><th>Source</th><th>Description</th><th>Last Sync</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <h3 style="margin-top:1.5rem;font-size:0.85rem;color:var(--muted)">Recent Syncs</h3>
+      <table class="source-table" id="sync-log-table" style="margin-top:0.5rem">
+        <thead>
+          <tr><th>Source</th><th>Started</th><th>Status</th><th>Items</th><th>Error</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <!-- Stats tab -->
+    <div class="tab-content" id="tab-stats">
+      <div class="stats-grid" id="stats-cards"></div>
+      <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.75rem">Items by source</h3>
+      <div class="bar-chart" id="stats-chart"></div>
+    </div>
+  </main>
+
+  <!-- Settings modal -->
+  <div class="modal-overlay" id="settings-modal">
+    <div class="modal">
+      <h2>Settings</h2>
+      <label for="s-host">Server host</label>
+      <input type="text" id="s-host">
+      <label for="s-port">Server port</label>
+      <input type="number" id="s-port">
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
+        <button class="btn-save" onclick="saveSettingsForm()">Save</button>
+      </div>
+    </div>
   </div>
 
+  <!-- Toasts -->
+  <div class="toast-container" id="toasts"></div>
+
   <script>
+    /* ── Settings ── */
     const IS_TAURI = window.__TAURI_INTERNALS__ !== undefined;
     const SETTINGS_KEY = 'lestash-settings';
     const DEFAULT_SETTINGS = { host: 'pop-mini.monkey-ladon.ts.net', port: 8444 };
+
+    let settings = loadSettings();
 
     function loadSettings() {
       try {
@@ -87,34 +455,375 @@
       return { ...DEFAULT_SETTINGS };
     }
 
-    const settings = loadSettings();
+    function saveSettings(s) {
+      settings = s;
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    }
 
     function getApiBase() {
       if (IS_TAURI) return `https://${settings.host}:${settings.port}`;
       return '';
     }
 
-    document.getElementById('mode').textContent = IS_TAURI ? 'Tauri' : 'Browser';
+    function openSettings() {
+      document.getElementById('s-host').value = settings.host;
+      document.getElementById('s-port').value = settings.port;
+      document.getElementById('settings-modal').classList.add('open');
+    }
 
-    async function checkHealth() {
-      const dot = document.getElementById('dot');
-      const statusText = document.getElementById('status-text');
-      const output = document.getElementById('output');
+    function closeSettings() {
+      document.getElementById('settings-modal').classList.remove('open');
+    }
+
+    function saveSettingsForm() {
+      saveSettings({
+        host: document.getElementById('s-host').value || DEFAULT_SETTINGS.host,
+        port: parseInt(document.getElementById('s-port').value) || DEFAULT_SETTINGS.port,
+      });
+      closeSettings();
+      showToast('Settings saved — reloading...', 'ok');
+      setTimeout(() => location.reload(), 500);
+    }
+
+    /* ── API helper ── */
+    async function api(path, opts) {
+      const res = await fetch(`${getApiBase()}${path}`, opts);
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`${res.status}: ${body}`);
+      }
+      return res.json();
+    }
+
+    /* ── Toasts ── */
+    function showToast(message, level) {
+      const el = document.createElement('div');
+      el.className = `toast ${level || ''}`;
+      el.textContent = message;
+      const container = document.getElementById('toasts');
+      while (container.children.length >= 5) container.removeChild(container.firstChild);
+      container.appendChild(el);
+      el.addEventListener('animationend', () => el.remove());
+    }
+
+    /* ── Tabs ── */
+    document.getElementById('tabs').addEventListener('click', e => {
+      if (e.target.tagName !== 'BUTTON') return;
+      document.querySelectorAll('#tabs button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      e.target.classList.add('active');
+      const tab = e.target.dataset.tab;
+      document.getElementById(`tab-${tab}`).classList.add('active');
+      if (tab === 'feed' && feedItems.length === 0) loadFeed();
+      if (tab === 'search') document.getElementById('search-input').focus();
+      if (tab === 'sources') loadSources();
+      if (tab === 'stats') loadStats();
+    });
+
+    /* ── Relative time ── */
+    function relTime(dateStr) {
+      if (!dateStr) return '-';
+      const d = new Date(dateStr);
+      const now = new Date();
+      const diff = (now - d) / 1000;
+      if (diff < 60) return 'just now';
+      if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+      if (diff < 604800) return `${Math.floor(diff/86400)}d ago`;
+      return d.toLocaleDateString();
+    }
+
+    /* ── Source badge ── */
+    function sourceClass(source) {
+      const s = (source || '').split('/')[0];
+      if (['linkedin','bluesky','youtube','arxiv','microblog'].includes(s)) return s;
+      return '';
+    }
+
+    function sourceName(subtype) {
+      return (subtype || '').split('/')[0];
+    }
+
+    /* ── Render item card ── */
+    function renderCard(item) {
+      const card = document.createElement('div');
+      card.className = 'item-card';
+      card.innerHTML = `
+        <div class="item-card-header">
+          <span class="source-badge ${sourceClass(item.subtype)}">${sourceName(item.subtype)}</span>
+          <span class="item-subtype">${item.subtype}</span>
+          <span class="item-date">${relTime(item.created_at)}</span>
+        </div>
+        <div class="item-preview">${escHtml(item.preview)}</div>
+        <div class="item-meta">
+          ${item.author_display !== '-' ? `<span>by ${escHtml(item.author_display)}</span>` : ''}
+          ${item.actor_display !== '-' ? `<span>actor: ${escHtml(item.actor_display)}</span>` : ''}
+          ${item.is_own_content ? '<span style="color:var(--ok)">own</span>' : ''}
+        </div>
+      `;
+      card.addEventListener('click', () => toggleDetail(card, item));
+      return card;
+    }
+
+    function toggleDetail(card, item) {
+      const existing = card.querySelector('.item-detail');
+      if (existing) { existing.remove(); return; }
+
+      const detail = document.createElement('div');
+      detail.className = 'item-detail';
+
+      let html = '';
+      html += `<div class="item-detail-field"><label>ID</label>${item.id}</div>`;
+      html += `<div class="item-detail-field"><label>Type</label>${escHtml(item.subtype)}</div>`;
+      if (item.title) html += `<div class="item-detail-field"><label>Title</label>${escHtml(item.title)}</div>`;
+      if (item.url) html += `<div class="item-detail-field"><label>URL</label><a href="${escHtml(item.url)}" target="_blank" rel="noopener">${escHtml(item.url)}</a></div>`;
+      html += `<div class="item-detail-field"><label>Author</label>${escHtml(item.author_display)}</div>`;
+      if (item.created_at) html += `<div class="item-detail-field"><label>Created</label>${new Date(item.created_at).toLocaleString()}</div>`;
+      html += `<div class="item-detail-field"><label>Content</label><div class="item-detail-content">${escHtml(item.content)}</div></div>`;
+      if (item.metadata) {
+        html += `<div class="item-detail-field"><label>Metadata</label><div class="item-detail-meta">${escHtml(JSON.stringify(item.metadata, null, 2))}</div></div>`;
+      }
+
+      detail.innerHTML = html;
+      card.appendChild(detail);
+    }
+
+    function escHtml(s) {
+      if (!s) return '';
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    /* ── Feed ── */
+    let feedItems = [];
+    let feedOffset = 0;
+    const FEED_LIMIT = 20;
+
+    async function loadFeed(append) {
+      if (!append) { feedOffset = 0; feedItems = []; }
+      const list = document.getElementById('feed-list');
+      const btn = document.getElementById('feed-more');
+
+      if (!append) list.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
 
       try {
-        const res = await fetch(`${getApiBase()}/api/health`);
-        const data = await res.json();
-        dot.className = 'dot ok';
-        statusText.textContent = 'Connected';
-        output.textContent = JSON.stringify(data, null, 2);
+        const source = document.getElementById('feed-source').value;
+        const own = document.getElementById('feed-own').checked;
+        let url = `/api/items?limit=${FEED_LIMIT}&offset=${feedOffset}`;
+        if (source) url += `&source=${encodeURIComponent(source)}`;
+        if (own) url += `&own=true`;
+
+        const data = await api(url);
+
+        if (!append) list.innerHTML = '';
+
+        if (data.items.length === 0 && feedItems.length === 0) {
+          list.innerHTML = '<div class="empty-state"><div class="empty-icon">&#128218;</div>No items yet. Sync a source to get started.</div>';
+          btn.style.display = 'none';
+          return;
+        }
+
+        data.items.forEach(item => {
+          feedItems.push(item);
+          list.appendChild(renderCard(item));
+        });
+
+        feedOffset += data.items.length;
+        btn.style.display = feedOffset < data.total ? '' : 'none';
       } catch (e) {
-        dot.className = 'dot error';
-        statusText.textContent = 'Disconnected';
-        output.textContent = `Error: ${e.message}\nAPI: ${getApiBase()}/api/health`;
+        if (!append) list.innerHTML = '';
+        showToast(`Failed to load items: ${e.message}`, 'error');
       }
     }
 
+    function loadMoreFeed() { loadFeed(true); }
+
+    document.getElementById('feed-source').addEventListener('change', () => loadFeed());
+    document.getElementById('feed-own').addEventListener('change', () => loadFeed());
+
+    /* ── Search ── */
+    let searchTimer = null;
+
+    document.getElementById('search-input').addEventListener('input', e => {
+      clearTimeout(searchTimer);
+      const q = e.target.value.trim();
+      if (!q) { document.getElementById('search-list').innerHTML = ''; return; }
+      searchTimer = setTimeout(() => doSearch(q), 300);
+    });
+
+    async function doSearch(q) {
+      const list = document.getElementById('search-list');
+      list.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      try {
+        const data = await api(`/api/items/search?q=${encodeURIComponent(q)}&limit=50`);
+        list.innerHTML = '';
+        if (data.items.length === 0) {
+          list.innerHTML = `<div class="empty-state">No results for "${escHtml(q)}"</div>`;
+          return;
+        }
+        data.items.forEach(item => list.appendChild(renderCard(item)));
+      } catch (e) {
+        list.innerHTML = '';
+        showToast(`Search failed: ${e.message}`, 'error');
+      }
+    }
+
+    /* ── Sources ── */
+    async function loadSources() {
+      try {
+        const [sources, status] = await Promise.all([
+          api('/api/sources'),
+          api('/api/sources/status'),
+        ]);
+
+        const tbody = document.querySelector('#sources-table tbody');
+        tbody.innerHTML = '';
+        sources.forEach(s => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td><span class="source-badge ${sourceClass(s.name)}">${escHtml(s.name)}</span></td>
+            <td>${escHtml(s.description)}</td>
+            <td style="font-size:0.8rem;color:var(--muted)">${s.last_sync ? relTime(s.last_sync) : 'never'}</td>
+            <td><button class="sync-btn" onclick="triggerSync('${escHtml(s.name)}', this)">Sync</button></td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        const logTbody = document.querySelector('#sync-log-table tbody');
+        logTbody.innerHTML = '';
+        if (status.length === 0) {
+          logTbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">No sync history</td></tr>';
+        } else {
+          status.forEach(s => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${escHtml(s.source_type)}</td>
+              <td style="font-size:0.8rem">${s.started_at ? relTime(s.started_at) : '-'}</td>
+              <td><span class="sync-status ${s.status}">${s.status}</span></td>
+              <td>${s.items_added ? `+${s.items_added}` : '-'}</td>
+              <td style="font-size:0.75rem;color:var(--muted)">${s.error_message ? escHtml(s.error_message.substring(0,60)) : '-'}</td>
+            `;
+            logTbody.appendChild(tr);
+          });
+        }
+      } catch (e) {
+        showToast(`Failed to load sources: ${e.message}`, 'error');
+      }
+    }
+
+    async function triggerSync(name, btn) {
+      btn.disabled = true;
+      btn.textContent = 'Syncing...';
+      try {
+        await api(`/api/sources/${encodeURIComponent(name)}/sync`, { method: 'POST' });
+        showToast(`Sync started for ${name}`, 'ok');
+        // Poll for completion
+        setTimeout(() => { loadSources(); btn.disabled = false; btn.textContent = 'Sync'; }, 3000);
+      } catch (e) {
+        showToast(`Sync failed: ${e.message}`, 'error');
+        btn.disabled = false;
+        btn.textContent = 'Sync';
+      }
+    }
+
+    /* ── Stats ── */
+    const SOURCE_COLORS = {
+      linkedin: 'var(--src-linkedin)',
+      bluesky: 'var(--src-bluesky)',
+      youtube: 'var(--src-youtube)',
+      arxiv: 'var(--src-arxiv)',
+      microblog: 'var(--src-microblog)',
+    };
+
+    async function loadStats() {
+      try {
+        const data = await api('/api/stats');
+        const cards = document.getElementById('stats-cards');
+        cards.innerHTML = `
+          <div class="stat-card">
+            <div class="stat-value">${data.total_items.toLocaleString()}</div>
+            <div class="stat-label">Total items</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${data.own_content.toLocaleString()}</div>
+            <div class="stat-label">Own content</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${Object.keys(data.sources).length}</div>
+            <div class="stat-label">Sources active</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${data.date_range.earliest ? new Date(data.date_range.earliest).toLocaleDateString() : '-'}</div>
+            <div class="stat-label">Earliest item</div>
+          </div>
+        `;
+
+        const chart = document.getElementById('stats-chart');
+        const entries = Object.entries(data.sources);
+        if (entries.length === 0) {
+          chart.innerHTML = '<div class="empty-state">No items to chart</div>';
+          return;
+        }
+        const max = Math.max(...entries.map(([,v]) => v));
+        chart.innerHTML = entries.map(([name, count]) => {
+          const pct = max > 0 ? (count / max * 100) : 0;
+          const color = SOURCE_COLORS[name] || 'var(--muted)';
+          return `
+            <div class="bar-row">
+              <span class="bar-label">${escHtml(name)}</span>
+              <div class="bar-track">
+                <div class="bar-fill" style="width:${pct}%;background:${color}">${count}</div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        showToast(`Failed to load stats: ${e.message}`, 'error');
+      }
+    }
+
+    /* ── Populate source filter ── */
+    async function populateSourceFilter() {
+      try {
+        const sources = await api('/api/sources');
+        const sel = document.getElementById('feed-source');
+        sources.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.name;
+          opt.textContent = s.name;
+          sel.appendChild(opt);
+        });
+      } catch {}
+    }
+
+    /* ── Health check ── */
+    async function checkHealth() {
+      const dot = document.getElementById('dot');
+      try {
+        await api('/api/health');
+        dot.className = 'dot ok';
+        dot.title = 'Connected';
+      } catch {
+        dot.className = 'dot error';
+        dot.title = 'Disconnected';
+      }
+    }
+
+    /* ── Keyboard shortcuts ── */
+    document.addEventListener('keydown', e => {
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT') {
+        e.preventDefault();
+        document.querySelectorAll('#tabs button')[1].click();
+      }
+      if (e.key === 'Escape') {
+        closeSettings();
+      }
+    });
+
+    /* ── Init ── */
     checkHealth();
+    setInterval(checkHealth, 30000);
+    populateSourceFilter();
+    loadFeed();
   </script>
 </body>
 </html>

@@ -30,9 +30,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Set static dir in env so the app factory can pick it up
-    if args.static_dir:
-        os.environ["LESTASH_STATIC_DIR"] = args.static_dir
+    # Auto-detect frontend directory if not specified
+    static_dir = args.static_dir
+    if not static_dir:
+        # Look for app/src/ relative to working directory
+        candidate = Path.cwd() / "app" / "src"
+        if candidate.is_dir() and (candidate / "index.html").exists():
+            static_dir = str(candidate)
+
+    if static_dir:
+        os.environ["LESTASH_STATIC_DIR"] = static_dir
 
     cert_path = Path(args.cert)
     key_path = Path(args.key)
