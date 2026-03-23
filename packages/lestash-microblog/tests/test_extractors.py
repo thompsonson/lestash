@@ -6,6 +6,7 @@ from lestash_microblog.source import (
     extract_content,
     extract_property,
     extract_property_list,
+    json_feed_item_to_item,
     parse_datetime,
     post_to_item,
 )
@@ -301,3 +302,109 @@ class TestPostToItem:
         item = post_to_item(entry)
 
         assert item.source_id == "urn:uuid:12345"
+
+
+class TestJsonFeedItemToItem:
+    """Test json_feed_item_to_item function."""
+
+    def test_basic_conversion(self, json_feed_item_factory):
+        """Should convert a JSON Feed item to ItemCreate."""
+        feed_item = json_feed_item_factory(
+            content_text="Nice post!",
+            url="https://other.micro.blog/2024/01/reply.html",
+            author_name="other_user",
+            date_published="2024-01-15T12:00:00+00:00",
+        )
+
+        item = json_feed_item_to_item(feed_item)
+
+        assert item.source_type == "microblog"
+        assert item.content == "Nice post!"
+        assert item.url == "https://other.micro.blog/2024/01/reply.html"
+        assert item.author == "other_user"
+        assert item.created_at is not None
+        assert item.is_own_content is False
+
+    def test_url_as_source_id(self, json_feed_item_factory):
+        """Should use URL as source_id for dedup with h-entry posts."""
+        feed_item = json_feed_item_factory(
+            url="https://user.micro.blog/2024/01/post.html",
+        )
+
+        item = json_feed_item_to_item(feed_item)
+
+        assert item.source_id == "https://user.micro.blog/2024/01/post.html"
+
+    def test_mention_metadata(self, json_feed_item_factory):
+        """Should store mention metadata."""
+        feed_item = json_feed_item_factory(
+            is_mention=True,
+            in_reply_to="https://user.micro.blog/2024/01/original.html",
+        )
+
+        item = json_feed_item_to_item(feed_item)
+
+        assert item.metadata["is_mention"] is True
+        assert item.metadata["in_reply_to"] == ["https://user.micro.blog/2024/01/original.html"]
+
+    def test_is_own_false_for_mentions(self, json_feed_item_factory):
+        """Should set is_own_content=False by default (for mentions)."""
+        feed_item = json_feed_item_factory()
+
+        item = json_feed_item_to_item(feed_item, is_own=False)
+
+        assert item.is_own_content is False
+
+    def test_is_own_true_for_own_replies(self, json_feed_item_factory):
+        """Should set is_own_content=True when specified."""
+        feed_item = json_feed_item_factory()
+
+        item = json_feed_item_to_item(feed_item, is_own=True)
+
+        assert item.is_own_content is True
+
+    def test_conversation_id(self, json_feed_item_factory):
+        """Should store conversation_id in metadata."""
+        feed_item = json_feed_item_factory()
+
+        item = json_feed_item_to_item(
+            feed_item,
+            conversation_id="https://user.micro.blog/2024/01/thread.html",
+        )
+
+        assert item.metadata["conversation_id"] == "https://user.micro.blog/2024/01/thread.html"
+
+    def test_falls_back_to_content_html(self, json_feed_item_factory):
+        """Should use content_html when content_text is missing."""
+        feed_item = json_feed_item_factory(content_text="", content_html="<p>HTML content</p>")
+
+        item = json_feed_item_to_item(feed_item)
+
+        assert item.content == "<p>HTML content</p>"
+
+    def test_handles_missing_fields(self):
+        """Should handle minimal JSON Feed item gracefully."""
+        feed_item = {"id": "999", "content_text": "Bare item"}
+
+        item = json_feed_item_to_item(feed_item)
+
+        assert item.content == "Bare item"
+        assert item.source_id is None
+        assert item.author is None
+        assert item.created_at is None
+
+    def test_author_username_in_metadata(self, json_feed_item_factory):
+        """Should store author username from _microblog extension."""
+        feed_item = json_feed_item_factory(author_username="testuser")
+
+        item = json_feed_item_to_item(feed_item)
+
+        assert item.metadata["author_username"] == "testuser"
+
+    def test_microblog_id_in_metadata(self, json_feed_item_factory):
+        """Should store microblog numeric ID."""
+        feed_item = json_feed_item_factory(id="42")
+
+        item = json_feed_item_to_item(feed_item)
+
+        assert item.metadata["microblog_id"] == 42
