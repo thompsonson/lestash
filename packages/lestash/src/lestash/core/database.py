@@ -272,6 +272,7 @@ def get_connection(config: Config | None = None) -> Iterator[sqlite3.Connection]
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
 
     # Apply any pending migrations
     current_version = get_schema_version(conn)
