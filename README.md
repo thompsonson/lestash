@@ -16,19 +16,36 @@ This is born from not having access to LinkedIn posts that are over a year old (
 - **API server** - HTTPS REST API for accessing your knowledge base from any device
 - **Desktop app** - Tauri v2 cross-platform app (macOS, Linux) with browser fallback
 
-## Installation
+## Install
+
+### Desktop App
+
+Download the latest build from [Releases](../../releases):
+
+| Platform | Format | Install |
+|----------|--------|---------|
+| **macOS** | `.dmg` | Open, drag to Applications |
+| **Linux** | `.deb` | `sudo dpkg -i lestash_*.deb` |
+| **Linux** | `.AppImage` | `chmod +x lestash_*.AppImage && ./lestash_*.AppImage` |
+
+Or use the install script (requires [gh CLI](https://cli.github.com/)):
+
+```bash
+bash <(curl -s https://raw.githubusercontent.com/thompsonson/lestash/main/scripts/install-desktop.sh)
+```
+
+### Browser
+
+No install needed — browse to your server URL (e.g., `https://pop-mini:8444/`).
+
+### CLI (from source)
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-# Clone the repository
 git clone git@github.com:thompsonson/lestash.git
 cd lestash
-
-# Install dependencies (including dev tools like just)
 uv sync --dev
-
-# Verify installation
 uv run lestash --help
 ```
 
