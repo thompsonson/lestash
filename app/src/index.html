@@ -372,6 +372,25 @@
     }
     .skeleton-line.short { width: 40%; }
     .skeleton-line.medium { width: 70%; }
+
+    /* ── Subtype filters ── */
+    .subtype-filters {
+      display: flex; gap: 0.5rem; flex-wrap: wrap;
+      width: 100%; margin-top: 0.25rem;
+    }
+    .subtype-filters label {
+      font-size: 0.75rem; color: var(--muted);
+      display: flex; align-items: center; gap: 0.2rem;
+      cursor: pointer;
+    }
+    .subtype-filters input[type="checkbox"] { accent-color: var(--accent); }
+
+    /* ── Recent summary ── */
+    .recent-summary {
+      font-size: 0.85rem; color: var(--muted);
+      margin-bottom: 0.75rem;
+    }
+    .recent-summary strong { color: var(--accent); }
     @keyframes shimmer {
       0% { background-position: 200% 0; }
       100% { background-position: -200% 0; }
@@ -392,6 +411,7 @@
       .modal { width: 95%; max-width: none; }
       .source-table th:nth-child(2),
       .source-table td:nth-child(2) { display: none; }
+      .subtype-filters label { min-height: 44px; }
     }
   </style>
 </head>
@@ -411,6 +431,7 @@
   <!-- Tabs -->
   <nav id="tabs">
     <button class="active" data-tab="feed">Feed</button>
+    <button data-tab="recent">Recent</button>
     <button data-tab="search">Search</button>
     <button data-tab="sources">Sources</button>
     <button data-tab="stats">Stats</button>
@@ -427,6 +448,13 @@
         <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;color:var(--muted)">
           <input type="checkbox" id="feed-own"> Own
         </label>
+        <div class="subtype-filters" id="subtype-filters">
+          <label><input type="checkbox" value="post" checked> Posts</label>
+          <label><input type="checkbox" value="comment" checked> Comments</label>
+          <label><input type="checkbox" value="reaction"> Reactions</label>
+          <label><input type="checkbox" value="invitation"> Invitations</label>
+          <label><input type="checkbox" value="message"> Messages</label>
+        </div>
       </div>
       <div class="item-list" id="feed-list"></div>
       <button class="load-more" id="feed-more" onclick="loadMoreFeed()" style="display:none">Load more</button>
@@ -439,6 +467,20 @@
                placeholder="Search your knowledge base..." autocomplete="off">
       </div>
       <div class="item-list" id="search-list"></div>
+    </div>
+
+    <!-- Recent tab -->
+    <div class="tab-content" id="tab-recent">
+      <div class="filters">
+        <select id="recent-period">
+          <option value="6">Last 6 hours</option>
+          <option value="24" selected>Last 24 hours</option>
+          <option value="168">Last 7 days</option>
+          <option value="720">Last 30 days</option>
+        </select>
+      </div>
+      <div class="recent-summary" id="recent-summary"></div>
+      <div class="item-list" id="recent-list"></div>
     </div>
 
     <!-- Sources tab -->
@@ -560,6 +602,7 @@
       const tab = e.target.dataset.tab;
       document.getElementById(`tab-${tab}`).classList.add('active');
       if (tab === 'feed' && feedItems.length === 0) loadFeed();
+      if (tab === 'recent') loadRecent();
       if (tab === 'search') document.getElementById('search-input').focus();
       if (tab === 'sources') loadSources();
       if (tab === 'stats') loadStats();
@@ -657,6 +700,10 @@
         if (source) url += `&source=${encodeURIComponent(source)}`;
         if (own) url += `&own=true`;
 
+        // Subtype exclusions
+        const excluded = getExcludedSubtypes();
+        if (excluded) url += `&exclude_subtype=${encodeURIComponent(excluded)}`;
+
         const data = await api(url);
 
         if (!append) list.innerHTML = '';
@@ -684,6 +731,79 @@
 
     document.getElementById('feed-source').addEventListener('change', () => loadFeed());
     document.getElementById('feed-own').addEventListener('change', () => loadFeed());
+
+    /* ── Subtype filters ── */
+    const SUBTYPE_STORAGE_KEY = 'lestash-subtype-filters';
+
+    function getExcludedSubtypes() {
+      const checks = document.querySelectorAll('#subtype-filters input[type="checkbox"]');
+      const excluded = [];
+      checks.forEach(cb => { if (!cb.checked) excluded.push(cb.value); });
+      return excluded.join(',');
+    }
+
+    function saveSubtypeFilters() {
+      const checks = document.querySelectorAll('#subtype-filters input[type="checkbox"]');
+      const state = {};
+      checks.forEach(cb => { state[cb.value] = cb.checked; });
+      localStorage.setItem(SUBTYPE_STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function loadSubtypeFilters() {
+      try {
+        const raw = localStorage.getItem(SUBTYPE_STORAGE_KEY);
+        if (!raw) return;
+        const state = JSON.parse(raw);
+        document.querySelectorAll('#subtype-filters input[type="checkbox"]').forEach(cb => {
+          if (cb.value in state) cb.checked = state[cb.value];
+        });
+      } catch {}
+    }
+
+    loadSubtypeFilters();
+    document.getElementById('subtype-filters').addEventListener('change', () => {
+      saveSubtypeFilters();
+      loadFeed();
+    });
+
+    /* ── Recent Activity ── */
+    async function loadRecent() {
+      const list = document.getElementById('recent-list');
+      const summary = document.getElementById('recent-summary');
+      const hours = parseInt(document.getElementById('recent-period').value);
+
+      list.innerHTML = renderSkeletons(5);
+      summary.textContent = '';
+
+      try {
+        const since = new Date(Date.now() - hours * 3600000).toISOString();
+        const data = await api(`/api/items?since=${encodeURIComponent(since)}&limit=100`);
+
+        list.innerHTML = '';
+
+        if (data.items.length === 0) {
+          list.innerHTML = '<div class="empty-state">No new items in this period</div>';
+          summary.textContent = '';
+          return;
+        }
+
+        // Count by source
+        const counts = {};
+        data.items.forEach(i => {
+          const s = i.source_type;
+          counts[s] = (counts[s] || 0) + 1;
+        });
+        const parts = Object.entries(counts).map(([k, v]) => `${k}: ${v}`);
+        summary.innerHTML = `<strong>${data.items.length}</strong> items synced — ${parts.join(', ')}`;
+
+        data.items.forEach(item => list.appendChild(renderCard(item)));
+      } catch (e) {
+        list.innerHTML = '';
+        showToast(`Failed to load recent items: ${e.message}`, 'error');
+      }
+    }
+
+    document.getElementById('recent-period').addEventListener('change', loadRecent);
 
     /* ── Search ── */
     let searchTimer = null;

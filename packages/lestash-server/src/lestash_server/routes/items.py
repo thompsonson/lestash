@@ -32,16 +32,24 @@ def _enrich_item(conn, item: Item) -> ItemResponse:
     )
 
 
+def _matches_exclude(subtype: str, excludes: set[str]) -> bool:
+    """Check if a subtype matches any exclude term."""
+    return any(ex in subtype for ex in excludes)
+
+
 @router.get("", response_model=ItemListResponse)
 def list_items(
     source: str | None = Query(None, description="Filter by source type"),
     own: bool | None = Query(None, description="Filter own content"),
+    exclude_subtype: str | None = Query(
+        None, description="Comma-separated subtypes to exclude (e.g., reaction,invitation,message)"
+    ),
+    since: str | None = Query(None, description="Only items fetched since this ISO datetime"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
     """List items with optional filters."""
     with get_db() as conn:
-        # Build count query
         count_query = "SELECT COUNT(*) FROM items WHERE 1=1"
         query = "SELECT * FROM items WHERE 1=1"
         params: list = []
@@ -56,13 +64,42 @@ def list_items(
             count_query += " AND is_own_content = ?"
             params.append(own)
 
+        if since:
+            query += " AND datetime(fetched_at) >= datetime(?)"
+            count_query += " AND datetime(fetched_at) >= datetime(?)"
+            params.append(since)
+
         total = conn.execute(count_query, params).fetchone()[0]
 
-        query += " ORDER BY datetime(created_at) DESC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
+        # Sort by fetched_at when filtering recent, otherwise by created_at
+        sort_col = "fetched_at" if since else "created_at"
+        query += f" ORDER BY datetime({sort_col}) DESC"
 
-        rows = conn.execute(query, params).fetchall()
-        items = [_enrich_item(conn, Item.from_row(row)) for row in rows]
+        excludes = set()
+        if exclude_subtype:
+            excludes = {s.strip() for s in exclude_subtype.split(",") if s.strip()}
+
+        if excludes:
+            # Fetch extra rows to account for filtered-out items
+            fetch_limit = limit * 4
+            query += " LIMIT ? OFFSET ?"
+            params.extend([fetch_limit, offset])
+
+            rows = conn.execute(query, params).fetchall()
+            all_enriched = [_enrich_item(conn, Item.from_row(row)) for row in rows]
+            items = [i for i in all_enriched if not _matches_exclude(i.subtype, excludes)]
+
+            # Adjust total to reflect filtering (approximate)
+            if all_enriched:
+                filter_ratio = len(items) / len(all_enriched)
+                total = int(total * filter_ratio)
+
+            items = items[:limit]
+        else:
+            query += " LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            rows = conn.execute(query, params).fetchall()
+            items = [_enrich_item(conn, Item.from_row(row)) for row in rows]
 
     return ItemListResponse(items=items, total=total, limit=limit, offset=offset)
 

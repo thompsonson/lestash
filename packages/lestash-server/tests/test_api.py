@@ -89,6 +89,39 @@ class TestItems:
         resp = client.get("/api/items/search")
         assert resp.status_code == 422  # validation error
 
+    def test_list_items_exclude_subtype(self, client):
+        """Excluding 'reaction' should filter out linkedin likes."""
+        resp = client.get("/api/items?exclude_subtype=reaction")
+        data = resp.json()
+        subtypes = [i["subtype"] for i in data["items"]]
+        assert all("reaction" not in s for s in subtypes)
+
+    def test_list_items_exclude_multiple_subtypes(self, client):
+        """Excluding multiple subtypes should filter all of them."""
+        resp = client.get("/api/items?exclude_subtype=reaction,post")
+        data = resp.json()
+        subtypes = [i["subtype"] for i in data["items"]]
+        assert all("reaction" not in s and "post" not in s for s in subtypes)
+
+    def test_list_items_exclude_subtype_default_returns_all(self, client):
+        """No exclude param should return all items."""
+        resp = client.get("/api/items")
+        assert resp.json()["total"] == 5
+
+    def test_list_items_since_filter(self, client):
+        """Since filter should only return recently fetched items."""
+        # All test items were just inserted, so a recent 'since' should find them
+        resp = client.get("/api/items?since=2020-01-01T00:00:00")
+        data = resp.json()
+        assert data["total"] == 5
+
+    def test_list_items_since_far_future(self, client):
+        """Since in the future should return no items."""
+        resp = client.get("/api/items?since=2099-01-01T00:00:00")
+        data = resp.json()
+        assert data["total"] == 0
+        assert len(data["items"]) == 0
+
 
 class TestSources:
     """Test /api/sources endpoints."""
