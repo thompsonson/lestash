@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from lestash_server import __version__
 from lestash_server.deps import get_db
 from lestash_server.models import HealthResponse
-from lestash_server.routes import items, profiles, sources, stats
+from lestash_server.routes import imports, items, profiles, sources, stats
 
 
 def create_app(static_dir: str | None = None) -> FastAPI:
@@ -49,6 +49,7 @@ def create_app(static_dir: str | None = None) -> FastAPI:
     app.include_router(sources.router)
     app.include_router(profiles.router)
     app.include_router(stats.router)
+    app.include_router(imports.router)
 
     @app.get("/api/health", response_model=HealthResponse)
     def health():

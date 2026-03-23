@@ -391,6 +391,21 @@
       margin-bottom: 0.75rem;
     }
     .recent-summary strong { color: var(--accent); }
+
+    /* ── Import dropzone ── */
+    .import-dropzone {
+      border: 2px dashed var(--border);
+      border-radius: 6px;
+      padding: 1.5rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .import-dropzone:hover,
+    .import-dropzone.dragover { border-color: var(--accent); color: var(--text); }
+    .import-dropzone a { color: var(--accent); }
     @keyframes shimmer {
       0% { background-position: 200% 0; }
       100% { background-position: -200% 0; }
@@ -485,6 +500,20 @@
 
     <!-- Sources tab -->
     <div class="tab-content" id="tab-sources">
+      <!-- Import section -->
+      <div style="margin-bottom:1.5rem">
+        <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Import</h3>
+        <input type="file" id="import-file" accept=".zip,.json" style="display:none">
+        <div class="import-dropzone" id="import-dropzone">
+          Drop a file here or <a href="#" onclick="document.getElementById('import-file').click();return false">browse</a>
+          <div style="font-size:0.75rem;margin-top:0.4rem">JSON, Google Takeout (Gemini, Keep)</div>
+        </div>
+        <div id="import-progress" style="display:none;padding:0.75rem;color:var(--muted)">
+          <span class="spinner"></span> Importing...
+        </div>
+        <div id="import-result" style="display:none;padding:0.75rem;background:var(--surface);border-radius:6px;margin-top:0.5rem;font-size:0.85rem"></div>
+      </div>
+
       <table class="source-table" id="sources-table">
         <thead>
           <tr><th>Source</th><th>Description</th><th>Last Sync</th><th></th></tr>
@@ -887,6 +916,60 @@
         showToast(`Sync failed: ${e.message}`, 'error');
         btn.disabled = false;
         btn.textContent = 'Sync';
+      }
+    }
+
+    /* ── Import ── */
+    const dropzone = document.getElementById('import-dropzone');
+    const importFile = document.getElementById('import-file');
+
+    dropzone.addEventListener('dragover', e => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    });
+    dropzone.addEventListener('dragleave', () => {
+      dropzone.classList.remove('dragover');
+    });
+    dropzone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      if (e.dataTransfer.files.length) uploadImport(e.dataTransfer.files[0]);
+    });
+    importFile.addEventListener('change', () => {
+      if (importFile.files.length) uploadImport(importFile.files[0]);
+      importFile.value = '';
+    });
+
+    async function uploadImport(file) {
+      const progress = document.getElementById('import-progress');
+      const result = document.getElementById('import-result');
+      progress.style.display = '';
+      result.style.display = 'none';
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch(`${getApiBase()}/api/import`, {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.status);
+
+        result.style.display = '';
+        let html = `Imported <strong>${data.items_added}</strong> items`;
+        html += ` from <strong>${data.source_type}</strong>`;
+        if (data.errors.length) {
+          html += `<br><span style="color:var(--error)">${data.errors.length} errors</span>`;
+        }
+        result.innerHTML = html;
+        showToast(`Imported ${data.items_added} items`, 'ok');
+      } catch (e) {
+        result.style.display = '';
+        result.innerHTML = `<span style="color:var(--error)">Import failed: ${escHtml(e.message)}</span>`;
+        showToast(`Import failed: ${e.message}`, 'error');
+      } finally {
+        progress.style.display = 'none';
       }
     }
 

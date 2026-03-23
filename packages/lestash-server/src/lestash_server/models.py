@@ -76,6 +76,30 @@ class StatsResponse(BaseModel):
     last_syncs: dict[str, str | None]
 
 
+class ItemCreateRequest(BaseModel):
+    """Request body for creating a single item."""
+
+    source_type: str
+    source_id: str | None = None
+    url: str | None = None
+    title: str | None = None
+    content: str
+    author: str | None = None
+    created_at: datetime | None = None
+    is_own_content: bool = True
+    metadata: dict[str, Any] | None = None
+
+
+class ImportResponse(BaseModel):
+    """Response from file import."""
+
+    status: str
+    source_type: str
+    items_added: int
+    items_updated: int
+    errors: list[str]
+
+
 class HealthResponse(BaseModel):
     """Server health check."""
 

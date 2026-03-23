@@ -1,5 +1,8 @@
 """Tests for the LeStash API server endpoints."""
 
+import io
+import json
+
 
 class TestHealth:
     """Test /api/health endpoint."""
@@ -181,6 +184,77 @@ class TestStats:
         assert data["sources"]["arxiv"] == 1
         assert data["date_range"]["earliest"] is not None
         assert data["date_range"]["latest"] is not None
+
+
+class TestCreateItem:
+    """Test POST /api/items endpoint."""
+
+    def test_create_item(self, client):
+        resp = client.post(
+            "/api/items",
+            json={"source_type": "test", "content": "Hello from API", "title": "Test Item"},
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["source_type"] == "test"
+        assert data["content"] == "Hello from API"
+        assert data["is_own_content"] is True
+
+    def test_create_item_missing_content(self, client):
+        resp = client.post("/api/items", json={"source_type": "test"})
+        assert resp.status_code == 422
+
+    def test_create_item_upsert(self, client):
+        """Creating same item twice should update, not duplicate."""
+        body = {"source_type": "test", "source_id": "upsert-1", "content": "v1"}
+        client.post("/api/items", json=body)
+        body["content"] = "v2"
+        resp = client.post("/api/items", json=body)
+        assert resp.status_code == 201
+        assert resp.json()["content"] == "v2"
+
+
+class TestImport:
+    """Test POST /api/import endpoint."""
+
+    def test_import_json_file(self, client):
+        items = [
+            {"source_type": "note", "content": "Note 1", "title": "First"},
+            {"source_type": "note", "content": "Note 2"},
+        ]
+        data = json.dumps(items).encode()
+        resp = client.post(
+            "/api/import",
+            files={"file": ("test.json", io.BytesIO(data), "application/json")},
+        )
+        assert resp.status_code == 200
+        result = resp.json()
+        assert result["status"] == "completed"
+        assert result["items_added"] == 2
+        assert result["source_type"] == "json"
+
+    def test_import_empty_json(self, client):
+        resp = client.post(
+            "/api/import",
+            files={"file": ("empty.json", io.BytesIO(b"[]"), "application/json")},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["items_added"] == 0
+
+    def test_import_invalid_json(self, client):
+        resp = client.post(
+            "/api/import",
+            files={"file": ("bad.json", io.BytesIO(b"not json"), "application/json")},
+        )
+        assert resp.status_code == 400
+
+    def test_import_missing_content(self, client):
+        data = json.dumps([{"source_type": "test"}]).encode()
+        resp = client.post(
+            "/api/import",
+            files={"file": ("bad.json", io.BytesIO(data), "application/json")},
+        )
+        assert resp.status_code == 400
 
 
 class TestCORS:
