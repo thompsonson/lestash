@@ -1,0 +1,63 @@
+"""FastAPI application factory."""
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from lestash_server import __version__
+from lestash_server.deps import get_db
+from lestash_server.models import HealthResponse
+from lestash_server.routes import items, profiles, sources, stats
+
+
+def create_app(static_dir: str | None = None) -> FastAPI:
+    """Create and configure the FastAPI application.
+
+    Args:
+        static_dir: Directory to serve frontend files from. Falls back to
+            LESTASH_STATIC_DIR env var if not provided.
+    """
+    import os
+
+    if static_dir is None:
+        static_dir = os.environ.get("LESTASH_STATIC_DIR") or None
+
+    app = FastAPI(
+        title="LeStash API",
+        version=__version__,
+        docs_url="/api/docs",
+        redoc_url=None,
+    )
+
+    # CORS for Tauri app and browser access
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "tauri://localhost",
+            "https://tauri.localhost",
+            "http://localhost:1420",  # Tauri dev
+            "http://localhost:5173",  # Vite dev
+        ],
+        allow_origin_regex=r"https://.*\.ts\.net(:\d+)?",  # Any Tailscale domain
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Register route modules
+    app.include_router(items.router)
+    app.include_router(sources.router)
+    app.include_router(profiles.router)
+    app.include_router(stats.router)
+
+    @app.get("/api/health", response_model=HealthResponse)
+    def health():
+        with get_db() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+        return HealthResponse(version=__version__, items=count)
+
+    # Serve static frontend files as fallback
+    if static_dir:
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+
+    return app
