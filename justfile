@@ -78,6 +78,26 @@ stats:
 watch-test package="lestash":
     find packages/{{package}} -name "*.py" | entr -c just test {{package}}
 
+# Start the API server (dev mode)
+server:
+    uv run lestash-server
+
+# Check server status (systemd)
+server-status:
+    systemctl --user status lestash-server
+
+# Follow server logs (systemd)
+server-logs:
+    journalctl --user -u lestash-server -f
+
+# Restart server (systemd)
+server-restart:
+    systemctl --user restart lestash-server
+
+# Deploy systemd service
+deploy:
+    bash deploy/install.sh
+
 # Setup pre-commit hooks
 setup-hooks:
     uv run pre-commit install
