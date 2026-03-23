@@ -13,6 +13,8 @@ This is born from not having access to LinkedIn posts that are over a year old (
 - **Draft export** - Create Micro.blog drafts from saved items for the search→write workflow
 - **Audit history** - Track changes to items over time
 - **CLI-first** - Built with Typer for a modern command-line experience
+- **API server** - HTTPS REST API for accessing your knowledge base from any device
+- **Desktop app** - Tauri v2 cross-platform app (macOS, Linux) with browser fallback
 
 ## Installation
 
@@ -76,7 +78,11 @@ le-stash/
 │   ├── lestash-arxiv/     # arXiv source plugin
 │   ├── lestash-bluesky/   # Bluesky source plugin
 │   ├── lestash-linkedin/  # LinkedIn source plugin
-│   └── lestash-microblog/ # Micro.blog source plugin
+│   ├── lestash-microblog/ # Micro.blog source plugin
+│   ├── lestash-youtube/   # YouTube source plugin
+│   └── lestash-server/    # HTTPS API server
+├── app/                   # Tauri v2 desktop app
+├── deploy/                # Systemd service files
 ├── pyproject.toml         # Workspace configuration
 └── uv.lock                # Locked dependencies
 ```
@@ -88,6 +94,8 @@ le-stash/
 | [lestash-bluesky](packages/lestash-bluesky/) | Sync and search Bluesky posts |
 | [lestash-linkedin](packages/lestash-linkedin/) | Import LinkedIn posts via DMA Portability API |
 | [lestash-microblog](packages/lestash-microblog/) | Sync posts from Micro.blog |
+| [lestash-youtube](packages/lestash-youtube/) | Sync liked videos and subscriptions from YouTube |
+| [lestash-server](packages/lestash-server/) | HTTPS REST API server (FastAPI) |
 
 ## Development
 
@@ -132,6 +140,46 @@ uv run pytest packages/lestash-linkedin/tests
 
 # Run pre-commit hooks
 uv run pre-commit run --all-files
+```
+
+## API Server
+
+The API server provides HTTPS access to your knowledge base from any device on your network.
+
+```bash
+# Start the server (uses Tailscale TLS certs if available, HTTP fallback otherwise)
+uv run lestash-server
+
+# Or with explicit options
+uv run lestash-server --port 8444 --cert /path/to/cert.crt --key /path/to/key.key
+```
+
+Endpoints: `/api/health`, `/api/items`, `/api/items/search`, `/api/items/{id}`, `/api/sources`, `/api/profiles`, `/api/stats`
+
+API docs available at `/api/docs` when the server is running.
+
+### Deployment
+
+```bash
+# Deploy as a systemd user service
+just deploy
+
+# Management
+just server-status
+just server-logs
+just server-restart
+```
+
+## Desktop App
+
+A Tauri v2 desktop app wraps the web UI for native access.
+
+```bash
+# Development
+cd app && npm install && npx tauri dev
+
+# Build
+cd app && npx tauri build
 ```
 
 ## Configuration
