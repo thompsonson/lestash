@@ -1,0 +1,7 @@
+[Unit]
+Description=LeStash sync all sources
+
+[Service]
+Type=oneshot
+ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash sources sync --all
+WorkingDirectory=%h/Projects/thompsonson/lestash
