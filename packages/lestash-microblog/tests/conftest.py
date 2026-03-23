@@ -97,6 +97,50 @@ def microblog_post_factory():
 
 
 @pytest.fixture
+def json_feed_item_factory():
+    """Factory to create mock Micro.blog JSON Feed items.
+
+    Returns a function that creates items matching the JSON Feed format
+    returned by /posts/mentions and /posts/conversation endpoints.
+    """
+
+    def _create_item(
+        id: str = "123456",
+        url: str = "https://user.micro.blog/2024/01/15/post.html",
+        content_text: str = "Hello world",
+        content_html: str | None = None,
+        date_published: str = "2024-01-15T10:30:00+00:00",
+        author_name: str = "username",
+        author_url: str = "https://micro.blog/username",
+        author_username: str = "username",
+        is_mention: bool = False,
+        in_reply_to: str | None = None,
+    ) -> dict[str, Any]:
+        item: dict[str, Any] = {
+            "id": id,
+            "url": url,
+            "date_published": date_published,
+            "author": {
+                "name": author_name,
+                "url": author_url,
+                "_microblog": {"username": author_username},
+            },
+            "_microblog": {"id": int(id)},
+        }
+        if content_text:
+            item["content_text"] = content_text
+        if content_html:
+            item["content_html"] = content_html
+        if is_mention:
+            item["_microblog"]["is_mention"] = True
+        if in_reply_to:
+            item["_microblog"]["in_reply_to"] = in_reply_to
+        return item
+
+    return _create_item
+
+
+@pytest.fixture
 def mock_micropub_config():
     """Create a mock Micropub config response."""
     return {

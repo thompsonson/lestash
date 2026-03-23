@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 from lestash_microblog.client import (
+    MICROBLOG_API_BASE,
     MICROPUB_ENDPOINT,
     MicropubClient,
     create_client,
@@ -339,6 +340,171 @@ class TestMicropubClientGetAllPosts:
             client.close()
 
         assert posts == []
+
+
+class TestMicropubClientGetMentions:
+    """Test MicropubClient.get_mentions()."""
+
+    def test_get_mentions_returns_items(self, tmp_path, monkeypatch):
+        """Should return list of JSON Feed mention items."""
+        monkeypatch.setattr(
+            "lestash_microblog.client.get_token_path",
+            lambda: tmp_path / "token.json",
+        )
+
+        mention_items = [
+            {
+                "id": "111",
+                "url": "https://other.micro.blog/2024/01/reply.html",
+                "content_text": "Nice post!",
+                "date_published": "2024-01-15T12:00:00+00:00",
+                "author": {"name": "other_user", "url": "https://micro.blog/other_user"},
+                "_microblog": {"id": 111, "is_mention": True},
+            }
+        ]
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"items": mention_items}
+
+        with patch.object(httpx.Client, "get", return_value=mock_response):
+            client = MicropubClient(token="test")
+            mentions = client.get_mentions()
+            client.close()
+
+        assert len(mentions) == 1
+        assert mentions[0]["content_text"] == "Nice post!"
+
+    def test_get_mentions_passes_pagination_params(self, tmp_path, monkeypatch):
+        """Should pass count and before_id parameters."""
+        monkeypatch.setattr(
+            "lestash_microblog.client.get_token_path",
+            lambda: tmp_path / "token.json",
+        )
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"items": []}
+
+        with patch.object(httpx.Client, "get", return_value=mock_response) as mock_get:
+            client = MicropubClient(token="test")
+            client.get_mentions(count=50, before_id=999)
+            client.close()
+
+        call_args = mock_get.call_args
+        assert call_args[1]["params"]["count"] == 50
+        assert call_args[1]["params"]["before_id"] == 999
+
+    def test_get_mentions_uses_api_base_url(self, tmp_path, monkeypatch):
+        """Should use MICROBLOG_API_BASE, not Micropub endpoint."""
+        monkeypatch.setattr(
+            "lestash_microblog.client.get_token_path",
+            lambda: tmp_path / "token.json",
+        )
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"items": []}
+
+        with patch.object(httpx.Client, "get", return_value=mock_response) as mock_get:
+            client = MicropubClient(token="test")
+            client.get_mentions()
+            client.close()
+
+        url = mock_get.call_args[0][0]
+        assert url.startswith(MICROBLOG_API_BASE)
+        assert "/posts/mentions" in url
+
+
+class TestMicropubClientGetAllMentions:
+    """Test MicropubClient.get_all_mentions()."""
+
+    def test_get_all_mentions_paginates(self, tmp_path, monkeypatch):
+        """Should paginate through mentions using before_id."""
+        monkeypatch.setattr(
+            "lestash_microblog.client.get_token_path",
+            lambda: tmp_path / "token.json",
+        )
+
+        page1 = [
+            {"id": str(i), "_microblog": {"id": i}, "content_text": f"M{i}"}
+            for i in range(5, 0, -1)
+        ]
+        page2 = [{"id": str(i), "_microblog": {"id": i}, "content_text": f"M{i}"} for i in range(3)]
+
+        mock_responses = [
+            MagicMock(json=MagicMock(return_value={"items": page1})),
+            MagicMock(json=MagicMock(return_value={"items": page2})),
+        ]
+
+        with patch.object(httpx.Client, "get", side_effect=mock_responses):
+            client = MicropubClient(token="test")
+            mentions = client.get_all_mentions(count=5)
+            client.close()
+
+        assert len(mentions) == 8
+
+    def test_get_all_mentions_respects_max_items(self, tmp_path, monkeypatch):
+        """Should stop at max_items."""
+        monkeypatch.setattr(
+            "lestash_microblog.client.get_token_path",
+            lambda: tmp_path / "token.json",
+        )
+
+        items = [
+            {"id": str(i), "_microblog": {"id": i}, "content_text": f"M{i}"} for i in range(10)
+        ]
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"items": items}
+
+        with patch.object(httpx.Client, "get", return_value=mock_response):
+            client = MicropubClient(token="test")
+            result = client.get_all_mentions(count=100, max_items=3)
+            client.close()
+
+        assert len(result) == 3
+
+
+class TestMicropubClientGetConversation:
+    """Test MicropubClient.get_conversation()."""
+
+    def test_get_conversation_passes_id(self, tmp_path, monkeypatch):
+        """Should pass post ID as query parameter."""
+        monkeypatch.setattr(
+            "lestash_microblog.client.get_token_path",
+            lambda: tmp_path / "token.json",
+        )
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"items": []}
+
+        with patch.object(httpx.Client, "get", return_value=mock_response) as mock_get:
+            client = MicropubClient(token="test")
+            client.get_conversation("12345")
+            client.close()
+
+        call_args = mock_get.call_args
+        assert call_args[1]["params"]["id"] == "12345"
+
+    def test_get_conversation_returns_thread(self, tmp_path, monkeypatch):
+        """Should return all items in the thread."""
+        monkeypatch.setattr(
+            "lestash_microblog.client.get_token_path",
+            lambda: tmp_path / "token.json",
+        )
+
+        thread = [
+            {"id": "100", "content_text": "Original post"},
+            {"id": "101", "content_text": "Reply to original"},
+            {"id": "102", "content_text": "Reply to reply"},
+        ]
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"items": thread}
+
+        with patch.object(httpx.Client, "get", return_value=mock_response):
+            client = MicropubClient(token="test")
+            result = client.get_conversation("100")
+            client.close()
+
+        assert len(result) == 3
 
 
 class TestCreateClient:
