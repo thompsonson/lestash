@@ -74,7 +74,7 @@ jobs:
   release:
     needs: build-desktop
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/download-artifact@v7
         with:
@@ -88,6 +88,42 @@ jobs:
           ls -la release-files/
 
       - name: Upload to tagged release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: release-files/*
+
+      - name: Set build timestamp
+        if: github.ref == 'refs/heads/main'
+        run: echo "BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_ENV"
+
+      - name: Delete old dev-desktop release
+        if: github.ref == 'refs/heads/main'
+        run: gh release delete dev-desktop --yes --cleanup-tag 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Create dev-desktop release
+        if: github.ref == 'refs/heads/main'
+        run: |
+          gh release create dev-desktop \
+            --title "Dev Desktop Build — ${{ env.BUILD_TIME }}" \
+            --prerelease \
+            --notes "$(cat <<'EOF'
+          Rolling desktop build from `main`.
+
+          **Built:** ${{ env.BUILD_TIME }}
+          **Commit:** [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+
+          ## Install
+
+          **macOS:** Download `.dmg`, open, drag to Applications
+          **Linux (Debian/Ubuntu):** `sudo dpkg -i lestash_*.deb`
+          **Linux (AppImage):** `chmod +x lestash_*.AppImage && ./lestash_*.AppImage`
+          EOF
+          )" \
+            release-files/*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
