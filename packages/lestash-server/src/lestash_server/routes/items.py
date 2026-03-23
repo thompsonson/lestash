@@ -58,7 +58,7 @@ def list_items(
 
         total = conn.execute(count_query, params).fetchone()[0]
 
-        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        query += " ORDER BY datetime(created_at) DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
 
         rows = conn.execute(query, params).fetchall()
