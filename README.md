@@ -27,6 +27,7 @@ Download the latest build from [Releases](../../releases):
 | **macOS** | `.dmg` | Open, drag to Applications |
 | **Linux** | `.deb` | `sudo dpkg -i lestash_*.deb` |
 | **Linux** | `.AppImage` | `chmod +x lestash_*.AppImage && ./lestash_*.AppImage` |
+| **Android** | `.apk` | Install directly or use [Obtainium](https://obtainium.imranr.dev/) for auto-updates |
 
 Or use the install script (requires [gh CLI](https://cli.github.com/)):
 
