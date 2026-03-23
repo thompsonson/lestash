@@ -98,6 +98,18 @@ server-logs:
 server-restart:
     systemctl --user restart lestash-server
 
+# Show sync timer status
+sync-status:
+    systemctl --user list-timers lestash-sync.timer --no-pager
+
+# View sync logs
+sync-logs:
+    journalctl --user -u lestash-sync -n 50 --no-pager
+
+# Trigger a sync now (without waiting for timer)
+sync-now:
+    systemctl --user start lestash-sync.service
+
 # Deploy systemd service
 deploy:
     bash deploy/install.sh
