@@ -343,17 +343,62 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* ── Disconnected banner ── */
+    .disconnect-banner {
+      display: none;
+      background: var(--error);
+      color: #fff;
+      text-align: center;
+      padding: 0.4rem;
+      font-size: 0.8rem;
+      flex-shrink: 0;
+    }
+    .disconnect-banner.visible { display: block; }
+
+    /* ── Skeleton loading ── */
+    .skeleton-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem;
+    }
+    .skeleton-line {
+      height: 0.85rem;
+      background: linear-gradient(90deg, var(--border) 25%, var(--surface) 50%, var(--border) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 3px;
+      margin-bottom: 0.4rem;
+    }
+    .skeleton-line.short { width: 40%; }
+    .skeleton-line.medium { width: 70%; }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
     /* ── Responsive ── */
     @media (max-width: 600px) {
       header { padding: 0.5rem 0.75rem; }
       main { padding: 0.75rem; }
+      nav button { padding: 0.75rem 0; min-height: 44px; }
       .stats-grid { grid-template-columns: 1fr 1fr; }
       .bar-label { width: 70px; font-size: 0.75rem; }
       .item-meta { flex-wrap: wrap; }
+      .sync-btn { min-height: 44px; min-width: 44px; }
+      .load-more { min-height: 44px; }
+      .gear-btn { min-width: 44px; min-height: 44px; font-size: 1.4rem; }
+      .filters select, .filters input { min-height: 44px; }
+      .modal { width: 95%; max-width: none; }
+      .source-table th:nth-child(2),
+      .source-table td:nth-child(2) { display: none; }
     }
   </style>
 </head>
 <body>
+
+  <!-- Disconnect banner -->
+  <div class="disconnect-banner" id="disconnect-banner">Server unreachable — check connection or settings</div>
 
   <!-- Header -->
   <header>
@@ -603,7 +648,7 @@
       const list = document.getElementById('feed-list');
       const btn = document.getElementById('feed-more');
 
-      if (!append) list.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      if (!append) list.innerHTML = renderSkeletons(5);
 
       try {
         const source = document.getElementById('feed-source').value;
@@ -795,16 +840,39 @@
       } catch {}
     }
 
+    /* ── Skeleton loading ── */
+    function renderSkeletons(count) {
+      let html = '';
+      for (let i = 0; i < count; i++) {
+        html += `<div class="skeleton-card">
+          <div class="skeleton-line short"></div>
+          <div class="skeleton-line medium"></div>
+          <div class="skeleton-line short"></div>
+        </div>`;
+      }
+      return html;
+    }
+
     /* ── Health check ── */
+    let wasDisconnected = false;
+
     async function checkHealth() {
       const dot = document.getElementById('dot');
+      const banner = document.getElementById('disconnect-banner');
       try {
         await api('/api/health');
         dot.className = 'dot ok';
         dot.title = 'Connected';
+        banner.classList.remove('visible');
+        if (wasDisconnected) {
+          showToast('Reconnected to server', 'ok');
+          wasDisconnected = false;
+        }
       } catch {
         dot.className = 'dot error';
         dot.title = 'Disconnected';
+        banner.classList.add('visible');
+        wasDisconnected = true;
       }
     }
 
