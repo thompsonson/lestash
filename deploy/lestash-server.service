@@ -1,0 +1,16 @@
+[Unit]
+Description=LeStash API Server (HTTPS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash-server
+Environment=LESTASH_TLS_CERT=%h/.config/tailscale-certs/pop-mini.monkey-ladon.ts.net.crt
+Environment=LESTASH_TLS_KEY=%h/.config/tailscale-certs/pop-mini.monkey-ladon.ts.net.key
+Environment=LESTASH_PORT=8444
+WorkingDirectory=%h/Projects/thompsonson/lestash
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
