@@ -486,7 +486,7 @@
     <h1>LeStash</h1>
     <div class="dot" id="dot" title="Server connection"></div>
     <span class="spacer"></span>
-    <button class="gear-btn" onclick="openSettings()" title="Settings">&#9881;</button>
+    <button class="gear-btn" id="settings-btn" title="Settings">&#9881;</button>
   </header>
 
   <!-- Tabs -->
@@ -630,8 +630,29 @@
   <div class="toast-container" id="toasts"></div>
 
   <script>
-    /* ── Settings ── */
+    /* ── Error visibility (Android WebView debugging) ── */
+    window.onerror = function(msg, url, line) {
+      document.title = 'ERR: ' + msg;
+      console.error('JS Error:', msg, 'at', url, ':', line);
+    };
+
+    /* ── Tauri interop ── */
     const IS_TAURI = window.__TAURI_INTERNALS__ !== undefined;
+    let tauriInvoke = null;
+    let tauriListen = null;
+
+    if (IS_TAURI) {
+      tauriInvoke = window.__TAURI_INTERNALS__.invoke;
+      tauriListen = async function(event, handler) {
+        return window.__TAURI_INTERNALS__.invoke('plugin:event|listen', {
+          event: event,
+          target: { kind: 'Any' },
+          handler: window.__TAURI_INTERNALS__.transformCallback(handler),
+        });
+      };
+    }
+
+    /* ── Settings ── */
     const SETTINGS_KEY = 'lestash-settings';
     const DEFAULT_SETTINGS = {
       host: 'pop-mini.monkey-ladon.ts.net', port: 8444,
@@ -1401,6 +1422,7 @@
     });
 
     /* ── Init ── */
+    document.getElementById('settings-btn').addEventListener('click', openSettings);
     checkHealth();
     setInterval(checkHealth, 30000);
     populateSourceFilter();
