@@ -711,7 +711,7 @@
       if (tab === 'feed' && feedItems.length === 0) loadFeed();
       if (tab === 'recent') loadRecent();
       if (tab === 'search') document.getElementById('search-input').focus();
-      if (tab === 'notes') loadSavedNotes();
+      if (tab === 'notes') { loadSavedNotes(); checkSttModel(); }
       if (tab === 'sources') loadSources();
       if (tab === 'stats') loadStats();
     });
@@ -1120,6 +1120,18 @@
         const status = document.getElementById('record-status');
         status.textContent = `${currentTranscript.split(' ').length} words`;
       });
+    }
+
+    function checkSttModel() {
+      if (IS_TAURI && tauriInvoke) {
+        tauriInvoke('get_stt_status').then(status => {
+          if (!status.model_exists) {
+            document.getElementById('record-status').innerHTML =
+              '<span style="color:var(--warn)">Whisper model not found. Download ggml-base.en.bin to ' +
+              escHtml(status.model_path) + '</span>';
+          }
+        }).catch(() => {});
+      }
     }
 
     async function refineWithLLM() {
