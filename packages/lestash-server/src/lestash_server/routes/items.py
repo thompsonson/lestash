@@ -1,11 +1,13 @@
 """Item API endpoints."""
 
+import json
+
 from fastapi import APIRouter, HTTPException, Query
 from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
 from lestash.models.item import Item
 
 from lestash_server.deps import get_db
-from lestash_server.models import ItemListResponse, ItemResponse
+from lestash_server.models import ItemCreateRequest, ItemListResponse, ItemResponse
 
 router = APIRouter(prefix="/api/items", tags=["items"])
 
@@ -125,6 +127,50 @@ def search_items(
         items = [_enrich_item(conn, Item.from_row(row)) for row in rows]
 
     return ItemListResponse(items=items, total=len(items), limit=limit, offset=0)
+
+
+@router.post("", response_model=ItemResponse, status_code=201)
+def create_item(body: ItemCreateRequest):
+    """Create a single item."""
+    metadata_json = json.dumps(body.metadata) if body.metadata else None
+    source_id = body.source_id or body.url
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO items (
+                source_type, source_id, url, title, content,
+                author, created_at, is_own_content, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_type, source_id) DO UPDATE SET
+                content = excluded.content,
+                title = excluded.title,
+                author = excluded.author,
+                metadata = excluded.metadata
+            """,
+            (
+                body.source_type,
+                source_id,
+                body.url,
+                body.title,
+                body.content,
+                body.author,
+                body.created_at,
+                body.is_own_content,
+                metadata_json,
+            ),
+        )
+        conn.commit()
+
+        item_id = cursor.lastrowid
+        row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        if not row:
+            # Fetch by source_type + source_id if lastrowid didn't work (upsert case)
+            row = conn.execute(
+                "SELECT * FROM items WHERE source_type = ? AND source_id = ?",
+                (body.source_type, source_id),
+            ).fetchone()
+        return _enrich_item(conn, Item.from_row(row))
 
 
 @router.get("/{item_id}", response_model=ItemResponse)
