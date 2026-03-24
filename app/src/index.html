@@ -27,9 +27,14 @@
       font-size: 14px;
       background: var(--bg);
       color: var(--text);
-      min-height: 100vh;
+      height: 100vh;
+      height: 100dvh;
       display: flex;
       flex-direction: column;
+      padding: calc(env(safe-area-inset-top, 0px))
+               calc(env(safe-area-inset-right, 0px))
+               calc(env(safe-area-inset-bottom, 0px))
+               calc(env(safe-area-inset-left, 0px));
     }
 
     /* ── Header ── */
@@ -258,7 +263,7 @@
 
     /* ── Settings modal ── */
     .modal-overlay {
-      display: none; position: fixed; inset: 0;
+      display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
       background: rgba(0,0,0,0.6); z-index: 100;
       align-items: center; justify-content: center;
     }

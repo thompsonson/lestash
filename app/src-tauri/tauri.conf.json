@@ -9,10 +9,10 @@
     "windows": [
       {
         "title": "LeStash",
-        "width": 900,
-        "height": 700,
+        "width": 800,
+        "height": 900,
         "minWidth": 400,
-        "minHeight": 500
+        "minHeight": 600
       }
     ],
     "security": {
