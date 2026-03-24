@@ -51,3 +51,9 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error running lestash");
 }
+
+#[cfg(mobile)]
+#[tauri::mobile_entry_point]
+pub fn mobile_entry() {
+    run();
+}
