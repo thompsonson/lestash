@@ -406,6 +406,47 @@
     .import-dropzone:hover,
     .import-dropzone.dragover { border-color: var(--accent); color: var(--text); }
     .import-dropzone a { color: var(--accent); }
+
+    /* ── Voice recorder + note editor ── */
+    .voice-recorder {
+      display: flex; align-items: center; gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .record-btn {
+      background: var(--surface); color: var(--accent);
+      border: 2px solid var(--accent); border-radius: 50%;
+      width: 56px; height: 56px; cursor: pointer;
+      font-family: inherit; font-size: 0.75rem; font-weight: bold;
+      transition: all 0.2s;
+    }
+    .record-btn:hover { background: var(--accent); color: #fff; }
+    .record-btn.recording {
+      background: var(--error); border-color: var(--error); color: #fff;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+    .record-status { font-size: 0.8rem; color: var(--muted); }
+    .transcript-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.75rem;
+      font-size: 0.85rem; color: var(--muted);
+      min-height: 3rem; white-space: pre-wrap;
+    }
+    .note-textarea {
+      width: 100%; min-height: 120px;
+      font-family: inherit; font-size: 0.85rem;
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 0.75rem; resize: vertical;
+    }
+    .note-textarea:focus { outline: none; border-color: var(--accent); }
+    .note-actions {
+      display: flex; gap: 0.5rem; margin-top: 0.75rem;
+      justify-content: flex-end;
+    }
     @keyframes shimmer {
       0% { background-position: 200% 0; }
       100% { background-position: -200% 0; }
@@ -447,6 +488,7 @@
   <nav id="tabs">
     <button class="active" data-tab="feed">Feed</button>
     <button data-tab="recent">Recent</button>
+    <button data-tab="notes">Notes</button>
     <button data-tab="search">Search</button>
     <button data-tab="sources">Sources</button>
     <button data-tab="stats">Stats</button>
@@ -482,6 +524,26 @@
                placeholder="Search your knowledge base..." autocomplete="off">
       </div>
       <div class="item-list" id="search-list"></div>
+    </div>
+
+    <!-- Notes tab -->
+    <div class="tab-content" id="tab-notes">
+      <div class="voice-recorder">
+        <button class="record-btn" id="record-btn" onclick="toggleRecording()">Record</button>
+        <span class="record-status" id="record-status"></span>
+      </div>
+      <div id="note-editor" style="display:none">
+        <label style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:0.25rem">Original Transcript</label>
+        <div class="transcript-box" id="original-transcript"></div>
+        <label style="font-size:0.8rem;color:var(--muted);display:block;margin:0.75rem 0 0.25rem">Edited Note</label>
+        <textarea class="note-textarea" id="edited-note" placeholder="Edit your note here..."></textarea>
+        <div class="note-actions">
+          <button class="sync-btn" onclick="refineWithLLM()" id="refine-btn">Refine with AI</button>
+          <button class="btn-save" onclick="saveVoiceNote()">Save</button>
+        </div>
+      </div>
+      <h3 style="margin-top:1.5rem;font-size:0.85rem;color:var(--muted)">Saved Notes</h3>
+      <div class="item-list" id="notes-list"></div>
     </div>
 
     <!-- Recent tab -->
@@ -545,6 +607,13 @@
       <input type="text" id="s-host">
       <label for="s-port">Server port</label>
       <input type="number" id="s-port">
+      <hr style="border-color:var(--border);margin:0.75rem 0">
+      <label for="s-llm-url">LLM proxy URL</label>
+      <input type="text" id="s-llm-url" placeholder="http://localhost:4000">
+      <label for="s-llm-model">LLM model</label>
+      <input type="text" id="s-llm-model" placeholder="claude-sonnet-4-20250514">
+      <label for="s-llm-prompt">Refine prompt</label>
+      <textarea id="s-llm-prompt" style="width:100%;min-height:60px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical" placeholder="Clean up this voice note..."></textarea>
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
         <button class="btn-save" onclick="saveSettingsForm()">Save</button>
@@ -559,7 +628,10 @@
     /* ── Settings ── */
     const IS_TAURI = window.__TAURI_INTERNALS__ !== undefined;
     const SETTINGS_KEY = 'lestash-settings';
-    const DEFAULT_SETTINGS = { host: 'pop-mini.monkey-ladon.ts.net', port: 8444 };
+    const DEFAULT_SETTINGS = {
+      host: 'pop-mini.monkey-ladon.ts.net', port: 8444,
+      llmUrl: '', llmModel: '', llmPrompt: '',
+    };
 
     let settings = loadSettings();
 
@@ -584,6 +656,9 @@
     function openSettings() {
       document.getElementById('s-host').value = settings.host;
       document.getElementById('s-port').value = settings.port;
+      document.getElementById('s-llm-url').value = settings.llmUrl || '';
+      document.getElementById('s-llm-model').value = settings.llmModel || '';
+      document.getElementById('s-llm-prompt').value = settings.llmPrompt || '';
       document.getElementById('settings-modal').classList.add('open');
     }
 
@@ -595,6 +670,9 @@
       saveSettings({
         host: document.getElementById('s-host').value || DEFAULT_SETTINGS.host,
         port: parseInt(document.getElementById('s-port').value) || DEFAULT_SETTINGS.port,
+        llmUrl: document.getElementById('s-llm-url').value,
+        llmModel: document.getElementById('s-llm-model').value,
+        llmPrompt: document.getElementById('s-llm-prompt').value,
       });
       closeSettings();
       showToast('Settings saved — reloading...', 'ok');
@@ -633,6 +711,7 @@
       if (tab === 'feed' && feedItems.length === 0) loadFeed();
       if (tab === 'recent') loadRecent();
       if (tab === 'search') document.getElementById('search-input').focus();
+      if (tab === 'notes') loadSavedNotes();
       if (tab === 'sources') loadSources();
       if (tab === 'stats') loadStats();
     });
@@ -916,6 +995,220 @@
         showToast(`Sync failed: ${e.message}`, 'error');
         btn.disabled = false;
         btn.textContent = 'Sync';
+      }
+    }
+
+    /* ── Voice Notes ── */
+    let isRecording = false;
+    let recognition = null;
+    let currentTranscript = '';
+    let refineResult = null;
+
+    function toggleRecording() {
+      if (isRecording) stopRecording();
+      else startRecording();
+    }
+
+    function startRecording() {
+      const btn = document.getElementById('record-btn');
+      const status = document.getElementById('record-status');
+      const editor = document.getElementById('note-editor');
+
+      if (IS_TAURI && tauriInvoke) {
+        // Tauri: use whisper-rs (Phase 3)
+        tauriInvoke('start_recording').then(() => {
+          isRecording = true;
+          btn.classList.add('recording');
+          btn.textContent = 'Stop';
+          status.textContent = 'Recording...';
+        }).catch(e => {
+          showToast('Recording not available: ' + e, 'error');
+          // Fall back to Web Speech API
+          startWebSpeech();
+        });
+      } else {
+        startWebSpeech();
+      }
+    }
+
+    function startWebSpeech() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        showToast('Speech recognition not supported in this browser', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('record-btn');
+      const status = document.getElementById('record-status');
+
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      currentTranscript = '';
+      let interimText = '';
+
+      recognition.onresult = (e) => {
+        let final = '';
+        let interim = '';
+        for (let i = 0; i < e.results.length; i++) {
+          if (e.results[i].isFinal) {
+            final += e.results[i][0].transcript + ' ';
+          } else {
+            interim += e.results[i][0].transcript;
+          }
+        }
+        currentTranscript = final.trim();
+        interimText = interim;
+        status.textContent = currentTranscript
+          ? `${currentTranscript.split(' ').length} words`
+          : (interim ? 'Listening...' : 'Speak now...');
+      };
+
+      recognition.onerror = (e) => {
+        if (e.error !== 'no-speech') {
+          showToast('Speech error: ' + e.error, 'error');
+        }
+      };
+
+      recognition.onend = () => {
+        if (isRecording) recognition.start(); // restart if still recording
+      };
+
+      recognition.start();
+      isRecording = true;
+      btn.classList.add('recording');
+      btn.textContent = 'Stop';
+      status.textContent = 'Speak now...';
+    }
+
+    function stopRecording() {
+      const btn = document.getElementById('record-btn');
+      const status = document.getElementById('record-status');
+      const editor = document.getElementById('note-editor');
+
+      isRecording = false;
+      btn.classList.remove('recording');
+      btn.textContent = 'Record';
+
+      if (recognition) {
+        recognition.onend = null; // prevent restart
+        recognition.stop();
+        recognition = null;
+      }
+
+      if (IS_TAURI && tauriInvoke) {
+        tauriInvoke('stop_recording');
+      }
+
+      if (currentTranscript) {
+        document.getElementById('original-transcript').textContent = currentTranscript;
+        document.getElementById('edited-note').value = currentTranscript;
+        editor.style.display = '';
+        status.textContent = `${currentTranscript.split(' ').length} words captured`;
+        refineResult = null;
+      } else {
+        status.textContent = 'No speech detected';
+      }
+    }
+
+    // Listen for Tauri STT events (Phase 3)
+    if (IS_TAURI && typeof tauriListen === 'function') {
+      tauriListen('stt-transcription', (event) => {
+        currentTranscript = event.payload;
+        const status = document.getElementById('record-status');
+        status.textContent = `${currentTranscript.split(' ').length} words`;
+      });
+    }
+
+    async function refineWithLLM() {
+      const text = document.getElementById('original-transcript').textContent;
+      if (!text) return;
+
+      const btn = document.getElementById('refine-btn');
+      btn.disabled = true;
+      btn.textContent = 'Refining...';
+
+      try {
+        const body = { text };
+        if (settings.llmPrompt) body.prompt = settings.llmPrompt;
+        if (settings.llmModel) body.model = settings.llmModel;
+
+        const data = await api('/api/voice/refine', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        document.getElementById('edited-note').value = data.refined_text;
+        refineResult = data;
+        showToast('Transcript refined', 'ok');
+      } catch (e) {
+        showToast('Refine failed: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Refine with AI';
+      }
+    }
+
+    async function saveVoiceNote() {
+      const original = document.getElementById('original-transcript').textContent;
+      const edited = document.getElementById('edited-note').value.trim();
+      if (!original && !edited) { showToast('Nothing to save', 'error'); return; }
+
+      const content = edited || original;
+      const metadata = { original_transcript: original };
+      if (edited && edited !== original) {
+        metadata.edited_text = edited;
+      }
+      if (refineResult) {
+        metadata.edit_prompt = refineResult.prompt_used;
+        metadata.edit_model = refineResult.model_used;
+      }
+      metadata.whisper_model = IS_TAURI ? 'whisper-rs' : 'web-speech-api';
+
+      try {
+        await api('/api/items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source_type: 'voice',
+            source_id: 'voice-' + Date.now(),
+            content: content,
+            is_own_content: true,
+            metadata: metadata,
+          }),
+        });
+        showToast('Voice note saved', 'ok');
+
+        // Reset editor
+        document.getElementById('note-editor').style.display = 'none';
+        document.getElementById('original-transcript').textContent = '';
+        document.getElementById('edited-note').value = '';
+        document.getElementById('record-status').textContent = '';
+        currentTranscript = '';
+        refineResult = null;
+        loadSavedNotes();
+      } catch (e) {
+        showToast('Save failed: ' + e.message, 'error');
+      }
+    }
+
+    async function loadSavedNotes() {
+      const list = document.getElementById('notes-list');
+      list.innerHTML = renderSkeletons(3);
+      try {
+        const data = await api('/api/items?source=voice&limit=20');
+        list.innerHTML = '';
+        if (data.items.length === 0) {
+          list.innerHTML = '<div class="empty-state">No voice notes yet. Hit Record to start.</div>';
+          return;
+        }
+        data.items.forEach(item => list.appendChild(renderCard(item)));
+      } catch (e) {
+        list.innerHTML = '';
+        showToast('Failed to load notes: ' + e.message, 'error');
       }
     }
 
