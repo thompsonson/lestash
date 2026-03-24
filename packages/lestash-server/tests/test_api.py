@@ -2,6 +2,7 @@
 
 import io
 import json
+from unittest.mock import MagicMock, patch
 
 
 class TestHealth:
@@ -255,6 +256,87 @@ class TestImport:
             files={"file": ("bad.json", io.BytesIO(data), "application/json")},
         )
         assert resp.status_code == 400
+
+
+class TestVoiceRefine:
+    """Test POST /api/voice/refine endpoint."""
+
+    def test_refine_success(self, client):
+        """Should return refined text from LLM."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "Cleaned up text."}}],
+            "model": "test-model",
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("lestash_server.routes.voice.httpx.post", return_value=mock_resp):
+            resp = client.post(
+                "/api/voice/refine",
+                json={"text": "um so I was thinking about uh the project"},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["refined_text"] == "Cleaned up text."
+        assert data["model_used"] == "test-model"
+        assert "prompt_used" in data
+
+    def test_refine_custom_prompt(self, client):
+        """Should use custom prompt when provided."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "Summarized."}}],
+            "model": "test-model",
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("lestash_server.routes.voice.httpx.post", return_value=mock_resp) as mock_post:
+            resp = client.post(
+                "/api/voice/refine",
+                json={"text": "some text", "prompt": "Summarize this."},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["prompt_used"] == "Summarize this."
+        call_body = mock_post.call_args[1]["json"]
+        assert call_body["messages"][0]["content"] == "Summarize this."
+
+    def test_refine_llm_unreachable(self, client):
+        """Should return 503 when LLM proxy is unreachable."""
+        with patch(
+            "lestash_server.routes.voice.httpx.post",
+            side_effect=__import__("httpx").ConnectError("Connection refused"),
+        ):
+            resp = client.post("/api/voice/refine", json={"text": "test"})
+
+        assert resp.status_code == 503
+        assert "not reachable" in resp.json()["detail"]
+
+    def test_refine_missing_text(self, client):
+        """Should return 422 when text is missing."""
+        resp = client.post("/api/voice/refine", json={})
+        assert resp.status_code == 422
+
+
+class TestVoiceUpload:
+    """Test POST /api/voice/upload endpoint."""
+
+    def test_upload_audio(self, client, tmp_path, monkeypatch):
+        """Should save audio file and return path."""
+        monkeypatch.setattr("lestash_server.routes.voice.Path.home", lambda: tmp_path)
+
+        resp = client.post(
+            "/api/voice/upload",
+            files={"file": ("test.wav", io.BytesIO(b"fake audio data"), "audio/wav")},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["path"].startswith("voice/")
+        assert data["size"] == len(b"fake audio data")
 
 
 class TestCORS:

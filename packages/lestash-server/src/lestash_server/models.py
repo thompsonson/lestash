@@ -100,6 +100,22 @@ class ImportResponse(BaseModel):
     errors: list[str]
 
 
+class RefineRequest(BaseModel):
+    """Request to refine a transcript via LLM."""
+
+    text: str
+    prompt: str | None = None
+    model: str | None = None
+
+
+class RefineResponse(BaseModel):
+    """Response from LLM refinement."""
+
+    refined_text: str
+    model_used: str
+    prompt_used: str
+
+
 class HealthResponse(BaseModel):
     """Server health check."""
 
