@@ -169,7 +169,7 @@ def _parse_google_keep_zip(zf, keep_files):
 
                 created_at = datetime.fromtimestamp(created_us / 1_000_000, tz=UTC)
 
-            metadata = {}
+            metadata: dict[str, object] = {}
             if note.get("labels"):
                 metadata["labels"] = [lbl["name"] for lbl in note["labels"]]
             if note.get("color") and note["color"] != "DEFAULT":
