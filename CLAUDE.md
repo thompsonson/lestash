@@ -1,0 +1,42 @@
+# Claude Code Instructions — LeStash
+
+## Project
+
+Personal knowledge base CLI + web UI. UV workspace monorepo (Python 3.12+). Aggregates content from LinkedIn, Bluesky, YouTube, arXiv, Micro.blog into SQLite with FTS5 search. FastAPI HTTPS server + Tauri v2 desktop/mobile app.
+
+## Structure
+
+```
+packages/lestash/          # Core: CLI (Typer), database, config, plugin loader
+packages/lestash-server/   # FastAPI server (port 8444, Tailscale TLS)
+packages/lestash-{source}/ # Source plugins (linkedin, bluesky, youtube, arxiv, microblog)
+app/                       # Tauri v2 app (single-file HTML frontend)
+deploy/                    # Systemd services + sync timer
+```
+
+## Commands
+
+```bash
+uv sync --dev              # Install deps
+uv run just check          # Lint + format + typecheck + tests
+uv run just test-all       # All package tests
+uv run just server         # Start API server
+just deploy                # Deploy systemd services
+cd app && npx tauri dev    # Run desktop app
+```
+
+## Key Patterns
+
+- Plugins register via `[project.entry-points."lestash.sources"]`
+- `sync()` yields `ItemCreate` objects; CLI/server does UPSERT
+- Display helpers in `core/enrichment.py` (shared by CLI + server)
+- SQLite WAL mode for concurrent access
+- `datetime(created_at)` in ORDER BY for timezone-safe sorting
+- Single `index.html` frontend — no framework, dual Tauri/browser mode
+
+## When Making Changes
+
+1. Run `uv run ruff check packages/` and `uv run ruff format --check packages/`
+2. Run `uv run mypy packages/`
+3. Run `uv run just test-all`
+4. Follow Angular commit convention: `feat(scope):`, `fix(scope):`, `chore:`
