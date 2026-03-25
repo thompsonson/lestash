@@ -757,17 +757,20 @@
 
     async function debugTestConnection() {
       const base = getApiBase();
-      addDebugLog('TEST', base + '/api/health', '...', null);
+      addDebugLog('INFO', 'Starting connection test', '---', null, `Base: ${base}`);
+
+      // Test 1: fetch health
       try {
         const start = performance.now();
         const res = await fetch(base + '/api/health');
         const time = Math.round(performance.now() - start);
         const data = await res.json();
-        addDebugLog('GET', base + '/api/health', res.status, time);
-        addDebugLog('INFO', 'Health response', data.status, null, JSON.stringify(data));
+        addDebugLog('GET', base + '/api/health', res.status, time, JSON.stringify(data));
       } catch (e) {
-        addDebugLog('GET', base + '/api/health', 'ERR', null, e.message);
+        addDebugLog('GET', base + '/api/health', 'ERR', null, `${e.name}: ${e.message}`);
       }
+
+      // Test 2: fetch items
       try {
         const start = performance.now();
         const res = await fetch(base + '/api/items?limit=1');
@@ -775,7 +778,28 @@
         const data = await res.json();
         addDebugLog('GET', base + '/api/items?limit=1', res.status, time, `${data.total} total items`);
       } catch (e) {
-        addDebugLog('GET', base + '/api/items?limit=1', 'ERR', null, e.message);
+        addDebugLog('GET', base + '/api/items?limit=1', 'ERR', null, `${e.name}: ${e.message}`);
+      }
+
+      // Test 3: XMLHttpRequest (sometimes gives different error info)
+      await new Promise(resolve => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', base + '/api/health');
+        xhr.timeout = 10000;
+        xhr.onload = () => addDebugLog('XHR', base + '/api/health', xhr.status, null, xhr.responseText.substring(0, 200)) || resolve();
+        xhr.onerror = () => addDebugLog('XHR', base + '/api/health', 'ERR', null, `readyState=${xhr.readyState} status=${xhr.status} statusText="${xhr.statusText}"`) || resolve();
+        xhr.ontimeout = () => addDebugLog('XHR', base + '/api/health', 'TIMEOUT', null, '10s timeout exceeded') || resolve();
+        xhr.send();
+      });
+
+      // Test 4: check if we can reach any HTTPS at all (Google)
+      try {
+        const start = performance.now();
+        const res = await fetch('https://www.google.com/generate_204', { mode: 'no-cors' });
+        const time = Math.round(performance.now() - start);
+        addDebugLog('NET', 'https://www.google.com/generate_204', res.type === 'opaque' ? 'OK(opaque)' : res.status, time, 'Internet connectivity check');
+      } catch (e) {
+        addDebugLog('NET', 'https://www.google.com/generate_204', 'ERR', null, `No internet: ${e.message}`);
       }
     }
 
@@ -794,9 +818,11 @@
         return res.json();
       } catch (e) {
         const time = Math.round(performance.now() - start);
-        if (!e.message.startsWith('4') && !e.message.startsWith('5')) {
-          addDebugLog(opts?.method || 'GET', fullUrl, 'ERR', time, e.message);
+        let detail = `${e.name}: ${e.message}`;
+        if (e.message === 'Failed to fetch' || e.message === 'NetworkError when attempting to fetch resource.') {
+          detail += ' [network-level failure — possible causes: DNS resolution failed, TLS certificate not trusted by Android WebView, CORS blocked, or device not connected to Tailscale]';
         }
+        addDebugLog(opts?.method || 'GET', fullUrl, 'ERR', time, detail);
         throw e;
       }
     }
