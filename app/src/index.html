@@ -479,7 +479,7 @@
 <body>
 
   <!-- Disconnect banner -->
-  <div class="disconnect-banner" id="disconnect-banner">Server unreachable — check connection or settings</div>
+  <div class="disconnect-banner" id="disconnect-banner">Server unreachable — check connection or settings <button onclick="reconnect()" style="margin-left:0.5rem;background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);color:#fff;border-radius:4px;padding:0.2rem 0.6rem;cursor:pointer;font-family:inherit;font-size:0.8rem">Retry</button></div>
 
   <!-- Header -->
   <header>
@@ -497,6 +497,7 @@
     <button data-tab="search">Search</button>
     <button data-tab="sources">Sources</button>
     <button data-tab="stats">Stats</button>
+    <button data-tab="debug">Debug</button>
   </nav>
 
   <!-- Main content -->
@@ -602,6 +603,17 @@
       <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.75rem">Items by source</h3>
       <div class="bar-chart" id="stats-chart"></div>
     </div>
+
+    <!-- Debug tab -->
+    <div class="tab-content" id="tab-debug">
+      <div id="debug-info" style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.75rem;margin-bottom:1rem;font-size:0.8rem;line-height:1.6"></div>
+      <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
+        <button class="sync-btn" onclick="debugTestConnection()">Test Connection</button>
+        <button class="sync-btn" onclick="reconnect()">Reconnect</button>
+      </div>
+      <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">API Log</h3>
+      <div id="debug-log" style="max-height:60vh;overflow-y:auto;font-size:0.75rem"></div>
+    </div>
   </main>
 
   <!-- Settings modal -->
@@ -705,14 +717,88 @@
       setTimeout(() => location.reload(), 500);
     }
 
+    /* ── Debug logging ── */
+    const debugLog = [];
+    function addDebugLog(method, url, status, time, error) {
+      debugLog.unshift({ ts: new Date().toISOString(), method, url, status, time, error });
+      if (debugLog.length > 50) debugLog.pop();
+      renderDebugLog();
+    }
+
+    function renderDebugLog() {
+      const el = document.getElementById('debug-log');
+      if (!el) return;
+      el.innerHTML = debugLog.map(e => {
+        const color = e.error ? 'var(--error)' : (e.status === 200 ? 'var(--ok)' : 'var(--warn)');
+        const ts = e.ts.split('T')[1].split('.')[0];
+        return `<div style="padding:0.3rem 0;border-bottom:1px solid var(--border)">
+          <span style="color:var(--muted)">${ts}</span>
+          <span style="color:${color}">${e.status}</span>
+          <span>${e.method}</span>
+          <span style="color:var(--muted);word-break:break-all">${e.url}</span>
+          ${e.time ? `<span style="color:var(--muted)">${e.time}ms</span>` : ''}
+          ${e.error ? `<div style="color:var(--error);margin-top:0.2rem">${e.error}</div>` : ''}
+        </div>`;
+      }).join('');
+    }
+
+    function renderDebugInfo() {
+      const el = document.getElementById('debug-info');
+      if (!el) return;
+      el.innerHTML = `
+        <div><strong>API Base:</strong> ${getApiBase() || '(relative)'}</div>
+        <div><strong>Host:</strong> ${settings.host}</div>
+        <div><strong>Port:</strong> ${settings.port}</div>
+        <div><strong>IS_TAURI:</strong> ${IS_TAURI}</div>
+        <div><strong>tauriInvoke:</strong> ${tauriInvoke ? 'available' : 'null'}</div>
+        <div><strong>User Agent:</strong> ${navigator.userAgent.substring(0, 80)}...</div>
+      `;
+    }
+
+    async function debugTestConnection() {
+      const base = getApiBase();
+      addDebugLog('TEST', base + '/api/health', '...', null);
+      try {
+        const start = performance.now();
+        const res = await fetch(base + '/api/health');
+        const time = Math.round(performance.now() - start);
+        const data = await res.json();
+        addDebugLog('GET', base + '/api/health', res.status, time);
+        addDebugLog('INFO', 'Health response', data.status, null, JSON.stringify(data));
+      } catch (e) {
+        addDebugLog('GET', base + '/api/health', 'ERR', null, e.message);
+      }
+      try {
+        const start = performance.now();
+        const res = await fetch(base + '/api/items?limit=1');
+        const time = Math.round(performance.now() - start);
+        const data = await res.json();
+        addDebugLog('GET', base + '/api/items?limit=1', res.status, time, `${data.total} total items`);
+      } catch (e) {
+        addDebugLog('GET', base + '/api/items?limit=1', 'ERR', null, e.message);
+      }
+    }
+
     /* ── API helper ── */
     async function api(path, opts) {
-      const res = await fetch(`${getApiBase()}${path}`, opts);
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`${res.status}: ${body}`);
+      const fullUrl = `${getApiBase()}${path}`;
+      const start = performance.now();
+      try {
+        const res = await fetch(fullUrl, opts);
+        const time = Math.round(performance.now() - start);
+        addDebugLog(opts?.method || 'GET', fullUrl, res.status, time);
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(`${res.status}: ${body}`);
+        }
+        return res.json();
+      } catch (e) {
+        const time = Math.round(performance.now() - start);
+        if (!e.message.startsWith('4') && !e.message.startsWith('5')) {
+          addDebugLog(opts?.method || 'GET', fullUrl, 'ERR', time, e.message);
+        }
+        throw e;
       }
-      return res.json();
     }
 
     /* ── Toasts ── */
@@ -740,6 +826,7 @@
       if (tab === 'notes') { loadSavedNotes(); checkSttModel(); }
       if (tab === 'sources') loadSources();
       if (tab === 'stats') loadStats();
+      if (tab === 'debug') { renderDebugInfo(); renderDebugLog(); }
     });
 
     /* ── Relative time ── */
@@ -1421,12 +1508,23 @@
       }
     });
 
+    /* ── Reconnect ── */
+    async function reconnect() {
+      showToast('Reconnecting...', '');
+      await checkHealth();
+      populateSourceFilter();
+      loadFeed();
+    }
+
     /* ── Init ── */
     document.getElementById('settings-btn').addEventListener('click', openSettings);
-    checkHealth();
+    renderDebugInfo();
+    // Wait for health check before loading data (Android WebView may not be ready immediately)
+    checkHealth().then(() => {
+      populateSourceFilter();
+      loadFeed();
+    });
     setInterval(checkHealth, 30000);
-    populateSourceFilter();
-    loadFeed();
   </script>
 </body>
 </html>
