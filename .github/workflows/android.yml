@@ -57,7 +57,7 @@ jobs:
       - name: Add Android permissions
         run: |
           MANIFEST=app/src-tauri/gen/android/app/src/main/AndroidManifest.xml
-          sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET" />' "$MANIFEST"
+          sed -i '/<manifest/a\    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' "$MANIFEST"
 
       - name: Decode keystore
         run: echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > /tmp/lestash-release.jks
@@ -91,23 +91,26 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: echo "BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_ENV"
 
-      - name: Upload APK to dev-android release
+      - name: Delete old dev release
+        if: github.ref == 'refs/heads/main'
+        run: gh release delete dev --yes --cleanup-tag 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create dev release
         if: github.ref == 'refs/heads/main'
         run: |
-          gh release delete dev-android --yes --cleanup-tag 2>/dev/null || true
-          APK=$(find app/src-tauri/gen/android/app/build/outputs/apk -name '*-release.apk' | head -1)
-          gh release create dev-android \
-            --title "Dev Android Build — ${{ env.BUILD_TIME }}" \
+          gh release create dev \
+            --title "Dev Build — ${{ env.BUILD_TIME }} (${{ github.sha }})" \
             --prerelease \
             --notes "$(cat <<'EOF'
-          Rolling Android build from `main`.
-          Install via [Obtainium](https://obtainium.imranr.dev/) or download the APK directly.
+          Rolling development build from `main`.
+          Updated on every push — install via [Obtainium](https://obtainium.imranr.dev/).
 
           **Built:** ${{ env.BUILD_TIME }}
           **Commit:** [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
           EOF
           )" \
-            "$APK"
+            app/src-tauri/gen/android/app/build/outputs/apk/universal/release/*-release.apk
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
