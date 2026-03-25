@@ -35,10 +35,11 @@ def create_app(static_dir: str | None = None) -> FastAPI:
         allow_origins=[
             "tauri://localhost",
             "https://tauri.localhost",
+            "http://tauri.localhost",  # Tauri Android WebView
             "http://localhost:1420",  # Tauri dev
             "http://localhost:5173",  # Vite dev
         ],
-        allow_origin_regex=r"https://.*\.ts\.net(:\d+)?",  # Any Tailscale domain
+        allow_origin_regex=r"https?://.*\.ts\.net(:\d+)?",  # Any Tailscale domain
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
