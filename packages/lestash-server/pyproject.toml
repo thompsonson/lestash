@@ -1,6 +1,6 @@
 [project]
 name = "lestash-server"
-version = "1.20.2"
+version = "1.21.0"
 description = "HTTPS API server for Le Stash"
 readme = "README.md"
 requires-python = ">=3.12"
