@@ -1405,15 +1405,10 @@
       try {
         const formData = new FormData();
         formData.append('file', file);
-        const res = await fetch(`${getApiBase()}/api/voice/transcribe`, {
+        const data = await api('/api/voice/transcribe', {
           method: 'POST',
           body: formData,
         });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ detail: res.statusText }));
-          throw new Error(err.detail || res.statusText);
-        }
-        const data = await res.json();
 
         currentTranscript = data.text;
         document.getElementById('original-transcript').textContent = data.text;
