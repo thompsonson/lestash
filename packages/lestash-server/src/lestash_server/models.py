@@ -116,6 +116,24 @@ class RefineResponse(BaseModel):
     prompt_used: str
 
 
+class TranscribeRequest(BaseModel):
+    """Request options for audio transcription."""
+
+    model: str = "base.en"
+    title: str | None = None
+
+
+class TranscribeResponse(BaseModel):
+    """Response from audio transcription."""
+
+    text: str
+    language: str
+    duration_seconds: float
+    model: str
+    item_id: int
+    title: str
+
+
 class HealthResponse(BaseModel):
     """Server health check."""
 

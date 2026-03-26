@@ -4,13 +4,19 @@ Schema versioning uses PRAGMA user_version to track migrations.
 Each migration is applied once, incrementing the version number.
 """
 
+from __future__ import annotations
+
 import logging
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from lestash.core.config import Config
+
+if TYPE_CHECKING:
+    from lestash.models.item import ItemCreate
 
 logger = logging.getLogger(__name__)
 
@@ -358,6 +364,55 @@ def delete_person_profile(conn: sqlite3.Connection, urn: str) -> bool:
     cursor = conn.execute("DELETE FROM person_profiles WHERE urn = ?", (urn,))
     conn.commit()
     return cursor.rowcount > 0
+
+
+def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
+    """Insert or update an item in the database.
+
+    Args:
+        conn: Database connection.
+        item: ItemCreate instance to persist.
+
+    Returns:
+        The item ID of the inserted or updated row.
+    """
+    import json
+
+    metadata_json = json.dumps(item.metadata) if item.metadata else None
+    cursor = conn.execute(
+        """
+        INSERT INTO items (
+            source_type, source_id, url, title, content,
+            author, created_at, is_own_content, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_type, source_id) DO UPDATE SET
+            title = excluded.title,
+            content = excluded.content,
+            author = excluded.author,
+            metadata = excluded.metadata
+        """,
+        (
+            item.source_type,
+            item.source_id,
+            item.url,
+            item.title,
+            item.content,
+            item.author,
+            item.created_at,
+            item.is_own_content,
+            metadata_json,
+        ),
+    )
+    conn.commit()
+
+    item_id = cursor.lastrowid
+    if not item_id:
+        row = conn.execute(
+            "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+            (item.source_type, item.source_id),
+        ).fetchone()
+        item_id = row[0]
+    return item_id
 
 
 def get_cache_dir(config: Config | None = None) -> Path:
