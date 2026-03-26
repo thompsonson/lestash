@@ -546,7 +546,7 @@
     <div class="tab-content" id="tab-notes">
       <div class="voice-recorder">
         <button class="record-btn" id="record-btn" onclick="toggleRecording()">Record</button>
-        <button class="upload-btn" id="upload-btn" onclick="document.getElementById('audio-file-input').click()">Upload File</button>
+        <label class="upload-btn" id="upload-btn" for="audio-file-input">Upload File</label>
         <input type="file" id="audio-file-input" accept=".m4a,.mp3,.wav,.ogg,.flac,.webm,audio/*" style="display:none">
         <span class="record-status" id="record-status"></span>
       </div>
@@ -1398,8 +1398,9 @@
       const btn = document.getElementById('upload-btn');
       const status = document.getElementById('record-status');
       const editor = document.getElementById('note-editor');
-      btn.disabled = true;
-      btn.textContent = 'Transcribing...';
+      btn.style.pointerEvents = 'none';
+      btn.style.opacity = '0.5';
+      btn.innerText = 'Transcribing...';
       status.textContent = `Uploading ${file.name}...`;
 
       try {
@@ -1422,8 +1423,9 @@
         showToast('Transcription failed: ' + e.message, 'error');
         status.textContent = '';
       } finally {
-        btn.disabled = false;
-        btn.textContent = 'Upload File';
+        btn.style.pointerEvents = '';
+        btn.style.opacity = '';
+        btn.innerText = 'Upload File';
       }
     }
 
