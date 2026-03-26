@@ -452,6 +452,15 @@
       display: flex; gap: 0.5rem; margin-top: 0.75rem;
       justify-content: flex-end;
     }
+    .upload-btn {
+      background: var(--surface); color: var(--text);
+      border: 2px solid var(--border); border-radius: 6px;
+      padding: 0.5rem 1rem; cursor: pointer;
+      font-family: inherit; font-size: 0.75rem; font-weight: bold;
+      transition: all 0.2s;
+    }
+    .upload-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .upload-btn:disabled { opacity: 0.5; cursor: default; }
     @keyframes shimmer {
       0% { background-position: 200% 0; }
       100% { background-position: -200% 0; }
@@ -466,6 +475,7 @@
       .bar-label { width: 70px; font-size: 0.75rem; }
       .item-meta { flex-wrap: wrap; }
       .sync-btn { min-height: 44px; min-width: 44px; }
+      .upload-btn { min-height: 44px; }
       .load-more { min-height: 44px; }
       .gear-btn { min-width: 44px; min-height: 44px; font-size: 1.4rem; }
       .filters select, .filters input { min-height: 44px; }
@@ -536,6 +546,8 @@
     <div class="tab-content" id="tab-notes">
       <div class="voice-recorder">
         <button class="record-btn" id="record-btn" onclick="toggleRecording()">Record</button>
+        <button class="upload-btn" id="upload-btn" onclick="document.getElementById('audio-file-input').click()">Upload File</button>
+        <input type="file" id="audio-file-input" accept=".m4a,.mp3,.wav,.ogg,.flac,.webm,audio/*" style="display:none">
         <span class="record-status" id="record-status"></span>
       </div>
       <div id="note-editor" style="display:none">
@@ -1360,6 +1372,63 @@
       } catch (e) {
         list.innerHTML = '';
         showToast('Failed to load notes: ' + e.message, 'error');
+      }
+    }
+
+    /* ── File Transcription ── */
+    const SUPPORTED_AUDIO = new Set(['.m4a', '.mp3', '.wav', '.ogg', '.flac', '.webm']);
+    const audioFileInput = document.getElementById('audio-file-input');
+
+    audioFileInput.addEventListener('change', () => {
+      if (audioFileInput.files.length) transcribeAudioFile(audioFileInput.files[0]);
+      audioFileInput.value = '';
+    });
+
+    async function transcribeAudioFile(file) {
+      const ext = '.' + file.name.split('.').pop().toLowerCase();
+      if (!SUPPORTED_AUDIO.has(ext)) {
+        showToast(`Unsupported format: ${ext}. Use m4a, mp3, wav, ogg, flac, or webm.`, 'error');
+        return;
+      }
+      if (file.size > 50 * 1024 * 1024) {
+        showToast('File too large (max 50MB)', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('upload-btn');
+      const status = document.getElementById('record-status');
+      const editor = document.getElementById('note-editor');
+      btn.disabled = true;
+      btn.textContent = 'Transcribing...';
+      status.textContent = `Uploading ${file.name}...`;
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch(`${getApiBase()}/api/voice/transcribe`, {
+          method: 'POST',
+          body: formData,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          throw new Error(err.detail || res.statusText);
+        }
+        const data = await res.json();
+
+        currentTranscript = data.text;
+        document.getElementById('original-transcript').textContent = data.text;
+        document.getElementById('edited-note').value = data.text;
+        editor.style.display = '';
+        status.textContent = `${data.text.split(' ').length} words transcribed from ${file.name}`;
+        refineResult = null;
+        showToast('Transcription complete', 'ok');
+        loadSavedNotes();
+      } catch (e) {
+        showToast('Transcription failed: ' + e.message, 'error');
+        status.textContent = '';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Upload File';
       }
     }
 
