@@ -1,9 +1,11 @@
 """Voice note endpoints — LLM refinement, audio upload, and transcription."""
 
-import json
+import asyncio
 import logging
 import os
 import time
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -106,6 +108,8 @@ async def transcribe_audio(
 
     Accepts m4a, mp3, wav, ogg, flac, or webm files (max 50MB).
     """
+    from lestash.core.database import upsert_item
+    from lestash.models.item import ItemCreate
     from lestash_voice.transcribe import transcribe_file
 
     from lestash_server.deps import get_db
@@ -125,7 +129,7 @@ async def transcribe_audio(
     if len(data) > 50 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large (max 50MB)")
 
-    # Save to cache for transcription
+    # Save to temp file for transcription
     cache_dir = Path.home() / ".config" / "lestash" / "cache" / "voice"
     cache_dir.mkdir(parents=True, exist_ok=True)
     temp_filename = f"voice-{int(time.time())}-{original_filename}"
@@ -133,57 +137,37 @@ async def transcribe_audio(
     temp_path.write_bytes(data)
 
     try:
-        result = transcribe_file(str(temp_path), model_name=model)
+        result = await asyncio.to_thread(transcribe_file, str(temp_path), model_name=model)
     except Exception as e:
         logger.exception("Transcription failed for %s", original_filename)
         raise HTTPException(status_code=500, detail=f"Transcription failed: {e}") from None
+    finally:
+        temp_path.unlink(missing_ok=True)
 
     if not result.text:
         raise HTTPException(status_code=422, detail="No speech detected in audio")
 
     # Save as item
-    source_id = f"voice-file-{int(time.time())}-{Path(original_filename).stem}"
+    source_id = f"voice-file-{uuid.uuid4().hex[:8]}-{Path(original_filename).stem}"
     note_title = title or f"Voice note: {original_filename}"
-    metadata = {
-        "duration_seconds": result.duration_seconds,
-        "model": result.model,
-        "language": result.language,
-        "original_filename": original_filename,
-        "input_type": "file",
-    }
+    item = ItemCreate(
+        source_type="voice",
+        source_id=source_id,
+        title=note_title,
+        content=result.text,
+        created_at=datetime.now(UTC),
+        is_own_content=True,
+        metadata={
+            "duration_seconds": result.duration_seconds,
+            "model": result.model,
+            "language": result.language,
+            "original_filename": original_filename,
+            "input_type": "file",
+        },
+    )
 
     with get_db() as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO items (
-                source_type, source_id, url, title, content,
-                author, created_at, is_own_content, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source_type, source_id) DO UPDATE SET
-                title = excluded.title,
-                content = excluded.content,
-                metadata = excluded.metadata
-            """,
-            (
-                "voice",
-                source_id,
-                None,
-                note_title,
-                result.text,
-                None,
-                None,
-                True,
-                json.dumps(metadata),
-            ),
-        )
-        conn.commit()
-        item_id = cursor.lastrowid
-        if not item_id:
-            row = conn.execute(
-                "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
-                ("voice", source_id),
-            ).fetchone()
-            item_id = row[0]
+        item_id = upsert_item(conn, item)
 
     return TranscribeResponse(
         text=result.text,

@@ -1,8 +1,8 @@
 """Voice note source plugin implementation."""
 
-import json
-import time
+import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -23,7 +23,7 @@ def _transcribe_and_save(
 ) -> None:
     """Transcribe an audio file and save the result to the database."""
     from lestash.core.config import Config
-    from lestash.core.database import get_connection
+    from lestash.core.database import get_connection, upsert_item
 
     from lestash_voice.transcribe import transcribe_file
 
@@ -42,12 +42,13 @@ def _transcribe_and_save(
         console.print("[yellow]No speech detected in audio.[/yellow]")
         raise typer.Exit(1)
 
-    source_id = f"voice-file-{int(time.time())}-{file_path.stem}"
+    source_id = f"voice-file-{uuid.uuid4().hex[:8]}-{file_path.stem}"
     item = ItemCreate(
         source_type="voice",
         source_id=source_id,
         title=title or f"Voice note: {file_path.name}",
         content=result.text,
+        created_at=datetime.now(UTC),
         is_own_content=True,
         metadata={
             "duration_seconds": result.duration_seconds,
@@ -60,31 +61,7 @@ def _transcribe_and_save(
 
     config = Config.load()
     with get_connection(config) as conn:
-        metadata_json = json.dumps(item.metadata) if item.metadata else None
-        conn.execute(
-            """
-            INSERT INTO items (
-                source_type, source_id, url, title, content,
-                author, created_at, is_own_content, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source_type, source_id) DO UPDATE SET
-                title = excluded.title,
-                content = excluded.content,
-                metadata = excluded.metadata
-            """,
-            (
-                item.source_type,
-                item.source_id,
-                item.url,
-                item.title,
-                item.content,
-                item.author,
-                item.created_at,
-                item.is_own_content,
-                metadata_json,
-            ),
-        )
-        conn.commit()
+        upsert_item(conn, item)
 
     console.print(f"[green]Saved voice note: {item.title}[/green]")
     console.print(f"[dim]Duration: {result.duration_seconds}s | Language: {result.language}[/dim]")

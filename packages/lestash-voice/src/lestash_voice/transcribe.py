@@ -1,5 +1,6 @@
 """Whisper transcription using faster-whisper."""
 
+import functools
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,17 @@ def get_model_path() -> Path:
     return MODEL_DIR
 
 
+@functools.lru_cache(maxsize=4)
+def _get_model(model_name: str, device: str) -> WhisperModel:
+    """Load and cache a WhisperModel instance."""
+    logger.info("Loading whisper model '%s' (device=%s)", model_name, device)
+    return WhisperModel(
+        model_name,
+        device=device,
+        download_root=str(get_model_path()),
+    )
+
+
 def transcribe_file(
     file_path: str | Path,
     model_name: str = DEFAULT_MODEL,
@@ -48,12 +60,7 @@ def transcribe_file(
         msg = f"Audio file not found: {file_path}"
         raise FileNotFoundError(msg)
 
-    logger.info("Loading whisper model '%s' (device=%s)", model_name, device)
-    model = WhisperModel(
-        model_name,
-        device=device,
-        download_root=str(get_model_path()),
-    )
+    model = _get_model(model_name, device)
 
     logger.info("Transcribing %s", file_path.name)
     segments, info = model.transcribe(str(file_path))
