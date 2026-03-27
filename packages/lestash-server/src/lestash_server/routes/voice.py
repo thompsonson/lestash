@@ -149,7 +149,7 @@ async def transcribe_audio(
 
     # Save as item
     source_id = f"voice-file-{uuid.uuid4().hex[:8]}-{Path(original_filename).stem}"
-    note_title = title or f"Voice note: {original_filename}"
+    note_title = title or Path(original_filename).stem
     item = ItemCreate(
         source_type="voice",
         source_id=source_id,

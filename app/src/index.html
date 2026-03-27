@@ -551,6 +551,8 @@
         <span class="record-status" id="record-status"></span>
       </div>
       <div id="note-editor" style="display:none">
+        <label style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:0.25rem">Title</label>
+        <input type="text" id="note-title" class="note-textarea" style="min-height:auto;padding:0.5rem 0.75rem;margin-bottom:0.75rem" placeholder="Note title...">
         <label style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:0.25rem">Original Transcript</label>
         <div class="transcript-box" id="original-transcript"></div>
         <label style="font-size:0.8rem;color:var(--muted);display:block;margin:0.75rem 0 0.25rem">Edited Note</label>
@@ -646,6 +648,29 @@
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
         <button class="btn-save" onclick="saveSettingsForm()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Process dialog -->
+  <div class="modal-overlay" id="process-modal">
+    <div class="modal" style="max-width:500px">
+      <h2>Process Voice Note</h2>
+      <label for="process-system-prompt">System Prompt</label>
+      <textarea id="process-system-prompt" style="width:100%;min-height:80px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical;margin-bottom:0.75rem"></textarea>
+      <label for="process-user-prompt">User Prompt</label>
+      <textarea id="process-user-prompt" style="width:100%;min-height:60px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical;margin-bottom:0.75rem" placeholder="Additional instructions (optional)..."></textarea>
+      <label for="process-model">Model</label>
+      <select id="process-model" style="width:100%;font-family:inherit;font-size:0.85rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;margin-bottom:0.75rem">
+        <option value="claude-sonnet-4-20250514">claude-sonnet-4-20250514</option>
+        <option value="claude-haiku-4-5-20251001">claude-haiku-4-5-20251001</option>
+        <option value="gpt-4o">gpt-4o</option>
+        <option value="gpt-4o-mini">gpt-4o-mini</option>
+        <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+      </select>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeProcessDialog()">Cancel</button>
+        <button class="btn-save" id="process-run-btn" disabled title="LLM processing not yet implemented">Process</button>
       </div>
     </div>
   </div>
@@ -901,6 +926,7 @@
           <span class="item-subtype">${item.subtype}</span>
           <span class="item-date">${relTime(item.created_at)}</span>
         </div>
+        ${item.title ? `<div style="font-size:0.85rem;font-weight:bold;margin:0.25rem 0">${escHtml(item.title)}</div>` : ''}
         <div class="item-preview">${escHtml(item.preview)}</div>
         <div class="item-meta">
           ${item.author_display !== '-' ? `<span>by ${escHtml(item.author_display)}</span>` : ''}
@@ -927,6 +953,12 @@
       html += `<div class="item-detail-field"><label>Author</label>${escHtml(item.author_display)}</div>`;
       if (item.created_at) html += `<div class="item-detail-field"><label>Created</label>${new Date(item.created_at).toLocaleString()}</div>`;
       html += `<div class="item-detail-field"><label>Content</label><div class="item-detail-content">${escHtml(item.content)}</div></div>`;
+      if (item.metadata && item.metadata.processed_text) {
+        html += `<div class="item-detail-field"><label>Processed Note</label><div class="item-detail-content">${escHtml(item.metadata.processed_text)}</div></div>`;
+      }
+      if (item.source_type === 'voice') {
+        html += `<div style="margin-top:0.5rem"><button class="sync-btn" onclick="event.stopPropagation();openProcessDialog(${item.id})">Process</button></div>`;
+      }
       if (item.metadata) {
         html += `<div class="item-detail-field"><label>Metadata</label><div class="item-detail-meta">${escHtml(JSON.stringify(item.metadata, null, 2))}</div></div>`;
       }
@@ -1254,6 +1286,7 @@
       }
 
       if (currentTranscript) {
+        document.getElementById('note-title').value = '';
         document.getElementById('original-transcript').textContent = currentTranscript;
         document.getElementById('edited-note').value = currentTranscript;
         editor.style.display = '';
@@ -1338,6 +1371,7 @@
           body: JSON.stringify({
             source_type: 'voice',
             source_id: 'voice-' + Date.now(),
+            title: document.getElementById('note-title').value.trim() || null,
             content: content,
             is_own_content: true,
             metadata: metadata,
@@ -1347,6 +1381,7 @@
 
         // Reset editor
         document.getElementById('note-editor').style.display = 'none';
+        document.getElementById('note-title').value = '';
         document.getElementById('original-transcript').textContent = '';
         document.getElementById('edited-note').value = '';
         document.getElementById('record-status').textContent = '';
@@ -1373,6 +1408,25 @@
         list.innerHTML = '';
         showToast('Failed to load notes: ' + e.message, 'error');
       }
+    }
+
+    /* ── Process Dialog ── */
+    let processItemId = null;
+    const DEFAULT_PROCESS_PROMPT = 'Clean up this voice note transcript. Fix grammar, remove filler words (um, uh, like, you know), improve punctuation, and organize into clear paragraphs. Maintain the original meaning and tone. Return only the cleaned text, no commentary.';
+
+    function openProcessDialog(itemId) {
+      processItemId = itemId;
+      document.getElementById('process-system-prompt').value = settings.llmPrompt || DEFAULT_PROCESS_PROMPT;
+      document.getElementById('process-user-prompt').value = '';
+      if (settings.llmModel) {
+        document.getElementById('process-model').value = settings.llmModel;
+      }
+      document.getElementById('process-modal').classList.add('open');
+    }
+
+    function closeProcessDialog() {
+      document.getElementById('process-modal').classList.remove('open');
+      processItemId = null;
     }
 
     /* ── File Transcription ── */
@@ -1406,12 +1460,14 @@
       try {
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('title', file.name.replace(/\.[^.]+$/, ''));
         const data = await api('/api/voice/transcribe', {
           method: 'POST',
           body: formData,
         });
 
         currentTranscript = data.text;
+        document.getElementById('note-title').value = data.title;
         document.getElementById('original-transcript').textContent = data.text;
         document.getElementById('edited-note').value = data.text;
         editor.style.display = '';

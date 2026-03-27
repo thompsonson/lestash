@@ -366,7 +366,7 @@ class TestVoiceTranscribe:
         assert data["duration_seconds"] == 3.5
         assert data["model"] == "base.en"
         assert data["item_id"] > 0
-        assert data["title"] == "Voice note: recording.mp3"
+        assert data["title"] == "recording"
 
     def test_transcribe_custom_title(self, client, monkeypatch, tmp_path):
         """Should use custom title when provided."""
