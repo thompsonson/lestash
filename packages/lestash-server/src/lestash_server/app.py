@@ -63,20 +63,18 @@ def create_app(static_dir: str | None = None) -> FastAPI:
     if static_dir:
         from pathlib import Path
 
-        from fastapi.responses import HTMLResponse
+        from fastapi.responses import FileResponse, HTMLResponse
 
         index_path = Path(static_dir) / "index.html"
 
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-        @app.get("/{path:path}", response_class=HTMLResponse, include_in_schema=False)
+        @app.get("/{path:path}", include_in_schema=False)
         def spa_fallback(path: str):
-            """Serve index.html for all non-API paths (SPA routing)."""
-            # Try to serve the exact file first
+            """Serve static files or index.html for SPA routing."""
             file_path = Path(static_dir) / path
             if file_path.is_file():
-                return HTMLResponse(file_path.read_text())
-            # Fall back to index.html for client-side routing
+                return FileResponse(file_path)
             return HTMLResponse(index_path.read_text())
 
     return app

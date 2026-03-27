@@ -1474,14 +1474,9 @@
           body: formData,
         });
 
-        currentTranscript = data.text;
-        document.getElementById('note-title').value = data.title;
-        document.getElementById('original-transcript').textContent = data.text;
-        document.getElementById('edited-note').value = data.text;
-        editor.style.display = '';
+        // Item already saved by the server — just refresh the list
         status.textContent = `${data.text.split(' ').length} words transcribed from ${file.name}`;
-        refineResult = null;
-        showToast('Transcription complete', 'ok');
+        showToast(`Saved: ${data.title}`, 'ok');
         loadSavedNotes();
       } catch (e) {
         showToast('Transcription failed: ' + e.message, 'error');
