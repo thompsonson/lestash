@@ -547,7 +547,11 @@ wheels = [
 
 [[package]]
 name = "le-stash-workspace"
+<<<<<<< claude/code-review-documentation-IG2mn
+version = "1.18.3"
+=======
 version = "1.19.1"
+>>>>>>> main
 source = { virtual = "." }
 dependencies = [
     { name = "lestash" },
@@ -594,7 +598,11 @@ dev = [
 
 [[package]]
 name = "lestash"
+<<<<<<< claude/code-review-documentation-IG2mn
+version = "1.18.3"
+=======
 version = "1.19.1"
+>>>>>>> main
 source = { editable = "packages/lestash" }
 dependencies = [
     { name = "pydantic" },
@@ -615,7 +623,11 @@ requires-dist = [
 
 [[package]]
 name = "lestash-arxiv"
+<<<<<<< claude/code-review-documentation-IG2mn
+version = "1.18.3"
+=======
 version = "1.19.1"
+>>>>>>> main
 source = { editable = "packages/lestash-arxiv" }
 dependencies = [
     { name = "arxiv" },
@@ -630,7 +642,11 @@ requires-dist = [
 
 [[package]]
 name = "lestash-bluesky"
+<<<<<<< claude/code-review-documentation-IG2mn
+version = "1.18.3"
+=======
 version = "1.19.1"
+>>>>>>> main
 source = { editable = "packages/lestash-bluesky" }
 dependencies = [
     { name = "atproto" },
@@ -645,7 +661,11 @@ requires-dist = [
 
 [[package]]
 name = "lestash-linkedin"
+<<<<<<< claude/code-review-documentation-IG2mn
+version = "1.18.3"
+=======
 version = "1.19.1"
+>>>>>>> main
 source = { editable = "packages/lestash-linkedin" }
 dependencies = [
     { name = "authlib" },
@@ -662,7 +682,11 @@ requires-dist = [
 
 [[package]]
 name = "lestash-microblog"
+<<<<<<< claude/code-review-documentation-IG2mn
+version = "1.18.3"
+=======
 version = "1.19.1"
+>>>>>>> main
 source = { editable = "packages/lestash-microblog" }
 dependencies = [
     { name = "httpx" },
@@ -677,7 +701,11 @@ requires-dist = [
 
 [[package]]
 name = "lestash-server"
+<<<<<<< claude/code-review-documentation-IG2mn
+version = "1.18.3"
+=======
 version = "1.19.1"
+>>>>>>> main
 source = { editable = "packages/lestash-server" }
 dependencies = [
     { name = "fastapi" },
@@ -696,7 +724,11 @@ requires-dist = [
 
 [[package]]
 name = "lestash-youtube"
+<<<<<<< claude/code-review-documentation-IG2mn
+version = "1.18.3"
+=======
 version = "1.19.1"
+>>>>>>> main
 source = { editable = "packages/lestash-youtube" }
 dependencies = [
     { name = "google-api-python-client" },
