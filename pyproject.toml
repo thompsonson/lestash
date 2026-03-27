@@ -1,6 +1,6 @@
 [project]
 name = "le-stash-workspace"
-version = "1.18.3"
+version = "1.23.0"
 description = "Le Stash monorepo workspace - personal knowledge base CLI"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,6 +11,7 @@ dependencies = [
     "lestash-bluesky",
     "lestash-microblog",
     "lestash-youtube",
+    "lestash-voice",
     "lestash-server",
 ]
 
@@ -24,6 +25,7 @@ lestash-arxiv = { workspace = true }
 lestash-bluesky = { workspace = true }
 lestash-microblog = { workspace = true }
 lestash-youtube = { workspace = true }
+lestash-voice = { workspace = true }
 lestash-server = { workspace = true }
 
 [dependency-groups]
@@ -61,6 +63,7 @@ version_toml = [
     "packages/lestash-bluesky/pyproject.toml:project.version",
     "packages/lestash-microblog/pyproject.toml:project.version",
     "packages/lestash-youtube/pyproject.toml:project.version",
+    "packages/lestash-voice/pyproject.toml:project.version",
     "packages/lestash-server/pyproject.toml:project.version",
 ]
 branch = "main"

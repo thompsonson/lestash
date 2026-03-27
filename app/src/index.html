@@ -182,6 +182,19 @@
       color: var(--muted);
     }
 
+    .item-detail-actions {
+      display: flex; gap: 0.5rem; margin-top: 0.75rem;
+    }
+    .item-detail-actions .sync-btn { font-size: 0.75rem; padding: 0.3rem 0.6rem; }
+
+    /* ── Single item view ── */
+    .single-item-view { padding: 0.5rem 0; }
+    .single-item-back {
+      display: inline-block; margin-bottom: 1rem;
+      color: var(--accent); text-decoration: none; font-size: 0.85rem;
+    }
+    .single-item-back:hover { text-decoration: underline; }
+
     /* ── Load more ── */
     .load-more {
       display: block; margin: 1rem auto 0;
@@ -452,6 +465,15 @@
       display: flex; gap: 0.5rem; margin-top: 0.75rem;
       justify-content: flex-end;
     }
+    .upload-btn {
+      background: var(--surface); color: var(--text);
+      border: 2px solid var(--border); border-radius: 6px;
+      padding: 0.5rem 1rem; cursor: pointer;
+      font-family: inherit; font-size: 0.75rem; font-weight: bold;
+      transition: all 0.2s;
+    }
+    .upload-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .upload-btn:disabled { opacity: 0.5; cursor: default; }
     @keyframes shimmer {
       0% { background-position: 200% 0; }
       100% { background-position: -200% 0; }
@@ -466,6 +488,7 @@
       .bar-label { width: 70px; font-size: 0.75rem; }
       .item-meta { flex-wrap: wrap; }
       .sync-btn { min-height: 44px; min-width: 44px; }
+      .upload-btn { min-height: 44px; }
       .load-more { min-height: 44px; }
       .gear-btn { min-width: 44px; min-height: 44px; font-size: 1.4rem; }
       .filters select, .filters input { min-height: 44px; }
@@ -479,7 +502,7 @@
 <body>
 
   <!-- Disconnect banner -->
-  <div class="disconnect-banner" id="disconnect-banner">Server unreachable — check connection or settings</div>
+  <div class="disconnect-banner" id="disconnect-banner">Server unreachable — check connection or settings <button onclick="reconnect()" style="margin-left:0.5rem;background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);color:#fff;border-radius:4px;padding:0.2rem 0.6rem;cursor:pointer;font-family:inherit;font-size:0.8rem">Retry</button></div>
 
   <!-- Header -->
   <header>
@@ -497,6 +520,7 @@
     <button data-tab="search">Search</button>
     <button data-tab="sources">Sources</button>
     <button data-tab="stats">Stats</button>
+    <button data-tab="debug">Debug</button>
   </nav>
 
   <!-- Main content -->
@@ -535,15 +559,19 @@
     <div class="tab-content" id="tab-notes">
       <div class="voice-recorder">
         <button class="record-btn" id="record-btn" onclick="toggleRecording()">Record</button>
+        <label class="upload-btn" id="upload-btn" for="audio-file-input">Upload File</label>
+        <input type="file" id="audio-file-input" accept=".m4a,.mp3,.wav,.ogg,.flac,.webm,audio/*" style="display:none">
         <span class="record-status" id="record-status"></span>
       </div>
       <div id="note-editor" style="display:none">
+        <label style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:0.25rem">Title</label>
+        <input type="text" id="note-title" class="note-textarea" style="min-height:auto;padding:0.5rem 0.75rem;margin-bottom:0.75rem" placeholder="Note title...">
         <label style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:0.25rem">Original Transcript</label>
         <div class="transcript-box" id="original-transcript"></div>
         <label style="font-size:0.8rem;color:var(--muted);display:block;margin:0.75rem 0 0.25rem">Edited Note</label>
         <textarea class="note-textarea" id="edited-note" placeholder="Edit your note here..."></textarea>
         <div class="note-actions">
-          <button class="sync-btn" onclick="refineWithLLM()" id="refine-btn">Refine with AI</button>
+          <button class="sync-btn" onclick="openProcessDialog(null)" id="refine-btn">Process with AI</button>
           <button class="btn-save" onclick="saveVoiceNote()">Save</button>
         </div>
       </div>
@@ -602,6 +630,17 @@
       <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.75rem">Items by source</h3>
       <div class="bar-chart" id="stats-chart"></div>
     </div>
+
+    <!-- Debug tab -->
+    <div class="tab-content" id="tab-debug">
+      <div id="debug-info" style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.75rem;margin-bottom:1rem;font-size:0.8rem;line-height:1.6"></div>
+      <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
+        <button class="sync-btn" onclick="debugTestConnection()">Test Connection</button>
+        <button class="sync-btn" onclick="reconnect()">Reconnect</button>
+      </div>
+      <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">API Log</h3>
+      <div id="debug-log" style="max-height:60vh;overflow-y:auto;font-size:0.75rem"></div>
+    </div>
   </main>
 
   <!-- Settings modal -->
@@ -622,6 +661,31 @@
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
         <button class="btn-save" onclick="saveSettingsForm()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Process dialog -->
+  <div class="modal-overlay" id="process-modal">
+    <div class="modal" style="max-width:500px">
+      <h2>Process Voice Note</h2>
+      <label>Text to process</label>
+      <div id="process-text-preview" class="transcript-box" style="max-height:120px;overflow-y:auto;margin-bottom:0.75rem;font-size:0.8rem"></div>
+      <label for="process-system-prompt">System Prompt</label>
+      <textarea id="process-system-prompt" style="width:100%;min-height:80px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical;margin-bottom:0.75rem"></textarea>
+      <label for="process-user-prompt">User Prompt</label>
+      <textarea id="process-user-prompt" style="width:100%;min-height:60px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical;margin-bottom:0.75rem" placeholder="Additional instructions (optional)..."></textarea>
+      <label for="process-model">Model</label>
+      <select id="process-model" style="width:100%;font-family:inherit;font-size:0.85rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;margin-bottom:0.75rem">
+        <option value="claude-sonnet-4-20250514">claude-sonnet-4-20250514</option>
+        <option value="claude-haiku-4-5-20251001">claude-haiku-4-5-20251001</option>
+        <option value="gpt-4o">gpt-4o</option>
+        <option value="gpt-4o-mini">gpt-4o-mini</option>
+        <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+      </select>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeProcessDialog()">Cancel</button>
+        <button class="btn-save" id="process-run-btn" disabled title="LLM processing not yet implemented">Process</button>
       </div>
     </div>
   </div>
@@ -705,14 +769,114 @@
       setTimeout(() => location.reload(), 500);
     }
 
+    /* ── Debug logging ── */
+    const debugLog = [];
+    function addDebugLog(method, url, status, time, error) {
+      debugLog.unshift({ ts: new Date().toISOString(), method, url, status, time, error });
+      if (debugLog.length > 50) debugLog.pop();
+      renderDebugLog();
+    }
+
+    function renderDebugLog() {
+      const el = document.getElementById('debug-log');
+      if (!el) return;
+      el.innerHTML = debugLog.map(e => {
+        const color = e.error ? 'var(--error)' : (e.status === 200 ? 'var(--ok)' : 'var(--warn)');
+        const ts = e.ts.split('T')[1].split('.')[0];
+        return `<div style="padding:0.3rem 0;border-bottom:1px solid var(--border)">
+          <span style="color:var(--muted)">${ts}</span>
+          <span style="color:${color}">${e.status}</span>
+          <span>${e.method}</span>
+          <span style="color:var(--muted);word-break:break-all">${e.url}</span>
+          ${e.time ? `<span style="color:var(--muted)">${e.time}ms</span>` : ''}
+          ${e.error ? `<div style="color:var(--error);margin-top:0.2rem">${e.error}</div>` : ''}
+        </div>`;
+      }).join('');
+    }
+
+    function renderDebugInfo() {
+      const el = document.getElementById('debug-info');
+      if (!el) return;
+      el.innerHTML = `
+        <div><strong>API Base:</strong> ${getApiBase() || '(relative)'}</div>
+        <div><strong>Host:</strong> ${settings.host}</div>
+        <div><strong>Port:</strong> ${settings.port}</div>
+        <div><strong>IS_TAURI:</strong> ${IS_TAURI}</div>
+        <div><strong>tauriInvoke:</strong> ${tauriInvoke ? 'available' : 'null'}</div>
+        <div><strong>User Agent:</strong> ${navigator.userAgent.substring(0, 80)}...</div>
+      `;
+    }
+
+    async function debugTestConnection() {
+      const base = getApiBase();
+      addDebugLog('INFO', 'Starting connection test', '---', null, `Base: ${base}`);
+
+      // Test 1: fetch health
+      try {
+        const start = performance.now();
+        const res = await fetch(base + '/api/health');
+        const time = Math.round(performance.now() - start);
+        const data = await res.json();
+        addDebugLog('GET', base + '/api/health', res.status, time, JSON.stringify(data));
+      } catch (e) {
+        addDebugLog('GET', base + '/api/health', 'ERR', null, `${e.name}: ${e.message}`);
+      }
+
+      // Test 2: fetch items
+      try {
+        const start = performance.now();
+        const res = await fetch(base + '/api/items?limit=1');
+        const time = Math.round(performance.now() - start);
+        const data = await res.json();
+        addDebugLog('GET', base + '/api/items?limit=1', res.status, time, `${data.total} total items`);
+      } catch (e) {
+        addDebugLog('GET', base + '/api/items?limit=1', 'ERR', null, `${e.name}: ${e.message}`);
+      }
+
+      // Test 3: XMLHttpRequest (sometimes gives different error info)
+      await new Promise(resolve => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', base + '/api/health');
+        xhr.timeout = 10000;
+        xhr.onload = () => addDebugLog('XHR', base + '/api/health', xhr.status, null, xhr.responseText.substring(0, 200)) || resolve();
+        xhr.onerror = () => addDebugLog('XHR', base + '/api/health', 'ERR', null, `readyState=${xhr.readyState} status=${xhr.status} statusText="${xhr.statusText}"`) || resolve();
+        xhr.ontimeout = () => addDebugLog('XHR', base + '/api/health', 'TIMEOUT', null, '10s timeout exceeded') || resolve();
+        xhr.send();
+      });
+
+      // Test 4: check if we can reach any HTTPS at all (Google)
+      try {
+        const start = performance.now();
+        const res = await fetch('https://www.google.com/generate_204', { mode: 'no-cors' });
+        const time = Math.round(performance.now() - start);
+        addDebugLog('NET', 'https://www.google.com/generate_204', res.type === 'opaque' ? 'OK(opaque)' : res.status, time, 'Internet connectivity check');
+      } catch (e) {
+        addDebugLog('NET', 'https://www.google.com/generate_204', 'ERR', null, `No internet: ${e.message}`);
+      }
+    }
+
     /* ── API helper ── */
     async function api(path, opts) {
-      const res = await fetch(`${getApiBase()}${path}`, opts);
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`${res.status}: ${body}`);
+      const fullUrl = `${getApiBase()}${path}`;
+      const start = performance.now();
+      try {
+        const res = await fetch(fullUrl, opts);
+        const time = Math.round(performance.now() - start);
+        addDebugLog(opts?.method || 'GET', fullUrl, res.status, time);
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(`${res.status}: ${body}`);
+        }
+        return res.json();
+      } catch (e) {
+        const time = Math.round(performance.now() - start);
+        let detail = `${e.name}: ${e.message}`;
+        if (e.message === 'Failed to fetch' || e.message === 'NetworkError when attempting to fetch resource.') {
+          detail += ' [network-level failure — possible causes: DNS resolution failed, TLS certificate not trusted by Android WebView, CORS blocked, or device not connected to Tailscale]';
+        }
+        addDebugLog(opts?.method || 'GET', fullUrl, 'ERR', time, detail);
+        throw e;
       }
-      return res.json();
     }
 
     /* ── Toasts ── */
@@ -740,6 +904,7 @@
       if (tab === 'notes') { loadSavedNotes(); checkSttModel(); }
       if (tab === 'sources') loadSources();
       if (tab === 'stats') loadStats();
+      if (tab === 'debug') { renderDebugInfo(); renderDebugLog(); }
     });
 
     /* ── Relative time ── */
@@ -776,6 +941,7 @@
           <span class="item-subtype">${item.subtype}</span>
           <span class="item-date">${relTime(item.created_at)}</span>
         </div>
+        ${item.title ? `<div style="font-size:0.85rem;font-weight:bold;margin:0.25rem 0">${escHtml(item.title)}</div>` : ''}
         <div class="item-preview">${escHtml(item.preview)}</div>
         <div class="item-meta">
           ${item.author_display !== '-' ? `<span>by ${escHtml(item.author_display)}</span>` : ''}
@@ -802,11 +968,28 @@
       html += `<div class="item-detail-field"><label>Author</label>${escHtml(item.author_display)}</div>`;
       if (item.created_at) html += `<div class="item-detail-field"><label>Created</label>${new Date(item.created_at).toLocaleString()}</div>`;
       html += `<div class="item-detail-field"><label>Content</label><div class="item-detail-content">${escHtml(item.content)}</div></div>`;
+      if (item.metadata && item.metadata.processed_text) {
+        html += `<div class="item-detail-field"><label>Processed Note</label><div class="item-detail-content">${escHtml(item.metadata.processed_text)}</div></div>`;
+      }
+      if (item.source_type === 'voice') {
+        html += `<div style="margin-top:0.5rem"><button class="sync-btn" onclick="event.stopPropagation();openProcessDialog(${item.id})">Process</button></div>`;
+      }
       if (item.metadata) {
         html += `<div class="item-detail-field"><label>Metadata</label><div class="item-detail-meta">${escHtml(JSON.stringify(item.metadata, null, 2))}</div></div>`;
       }
+      html += `<div class="item-detail-actions">
+        <button class="sync-btn" data-action="copy" data-id="${item.id}">Copy</button>
+        <button class="sync-btn" data-action="copy-link" data-id="${item.id}">Copy Link</button>
+      </div>`;
 
       detail.innerHTML = html;
+      detail.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        e.stopPropagation();
+        if (btn.dataset.action === 'copy') copyToClipboard(item.content, 'Copied to clipboard');
+        if (btn.dataset.action === 'copy-link') copyToClipboard(`${getApiBase()}/items/${item.id}`, 'Link copied');
+      });
       card.appendChild(detail);
     }
 
@@ -1129,6 +1312,7 @@
       }
 
       if (currentTranscript) {
+        document.getElementById('note-title').value = '';
         document.getElementById('original-transcript').textContent = currentTranscript;
         document.getElementById('edited-note').value = currentTranscript;
         editor.style.display = '';
@@ -1160,35 +1344,7 @@
       }
     }
 
-    async function refineWithLLM() {
-      const text = document.getElementById('original-transcript').textContent;
-      if (!text) return;
 
-      const btn = document.getElementById('refine-btn');
-      btn.disabled = true;
-      btn.textContent = 'Refining...';
-
-      try {
-        const body = { text };
-        if (settings.llmPrompt) body.prompt = settings.llmPrompt;
-        if (settings.llmModel) body.model = settings.llmModel;
-
-        const data = await api('/api/voice/refine', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-
-        document.getElementById('edited-note').value = data.refined_text;
-        refineResult = data;
-        showToast('Transcript refined', 'ok');
-      } catch (e) {
-        showToast('Refine failed: ' + e.message, 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Refine with AI';
-      }
-    }
 
     async function saveVoiceNote() {
       const original = document.getElementById('original-transcript').textContent;
@@ -1213,6 +1369,7 @@
           body: JSON.stringify({
             source_type: 'voice',
             source_id: 'voice-' + Date.now(),
+            title: document.getElementById('note-title').value.trim() || null,
             content: content,
             is_own_content: true,
             metadata: metadata,
@@ -1222,6 +1379,7 @@
 
         // Reset editor
         document.getElementById('note-editor').style.display = 'none';
+        document.getElementById('note-title').value = '';
         document.getElementById('original-transcript').textContent = '';
         document.getElementById('edited-note').value = '';
         document.getElementById('record-status').textContent = '';
@@ -1247,6 +1405,91 @@
       } catch (e) {
         list.innerHTML = '';
         showToast('Failed to load notes: ' + e.message, 'error');
+      }
+    }
+
+    /* ── Process Dialog ── */
+    let processItemId = null;
+    const DEFAULT_PROCESS_PROMPT = 'Clean up this voice note transcript. Fix grammar, remove filler words (um, uh, like, you know), improve punctuation, and organize into clear paragraphs. Maintain the original meaning and tone. Return only the cleaned text, no commentary.';
+
+    function openProcessDialog(itemId) {
+      processItemId = itemId;
+      // Show preview text from editor (null) or from the card's content
+      let previewText = '';
+      if (itemId === null) {
+        previewText = document.getElementById('original-transcript').textContent ||
+                      document.getElementById('edited-note').value;
+      } else {
+        const card = document.querySelector(`.item-detail-content`);
+        previewText = card ? card.textContent : '(loading...)';
+      }
+      document.getElementById('process-text-preview').textContent = previewText;
+      document.getElementById('process-system-prompt').value = settings.llmPrompt || DEFAULT_PROCESS_PROMPT;
+      document.getElementById('process-user-prompt').value = '';
+      if (settings.llmModel) {
+        document.getElementById('process-model').value = settings.llmModel;
+      }
+      document.getElementById('process-modal').classList.add('open');
+    }
+
+    function closeProcessDialog() {
+      document.getElementById('process-modal').classList.remove('open');
+      processItemId = null;
+    }
+
+    /* ── File Transcription ── */
+    const SUPPORTED_AUDIO = new Set(['.m4a', '.mp3', '.wav', '.ogg', '.flac', '.webm']);
+    const audioFileInput = document.getElementById('audio-file-input');
+
+    audioFileInput.addEventListener('change', () => {
+      if (audioFileInput.files.length) transcribeAudioFile(audioFileInput.files[0]);
+      audioFileInput.value = '';
+    });
+
+    async function transcribeAudioFile(file) {
+      const ext = '.' + file.name.split('.').pop().toLowerCase();
+      if (!SUPPORTED_AUDIO.has(ext)) {
+        showToast(`Unsupported format: ${ext}. Use m4a, mp3, wav, ogg, flac, or webm.`, 'error');
+        return;
+      }
+      if (file.size > 50 * 1024 * 1024) {
+        showToast('File too large (max 50MB)', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('upload-btn');
+      const status = document.getElementById('record-status');
+      const editor = document.getElementById('note-editor');
+      btn.style.pointerEvents = 'none';
+      btn.style.opacity = '0.5';
+      btn.innerText = 'Transcribing...';
+      status.textContent = `Uploading ${file.name}...`;
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('title', file.name.replace(/\.[^.]+$/, ''));
+        const data = await api('/api/voice/transcribe', {
+          method: 'POST',
+          body: formData,
+        });
+
+        currentTranscript = data.text;
+        document.getElementById('note-title').value = data.title;
+        document.getElementById('original-transcript').textContent = data.text;
+        document.getElementById('edited-note').value = data.text;
+        editor.style.display = '';
+        status.textContent = `${data.text.split(' ').length} words transcribed from ${file.name}`;
+        refineResult = null;
+        showToast('Transcription complete', 'ok');
+        loadSavedNotes();
+      } catch (e) {
+        showToast('Transcription failed: ' + e.message, 'error');
+        status.textContent = '';
+      } finally {
+        btn.style.pointerEvents = '';
+        btn.style.opacity = '';
+        btn.innerText = 'Upload File';
       }
     }
 
@@ -1421,12 +1664,80 @@
       }
     });
 
+    /* ── Reconnect ── */
+    async function reconnect() {
+      showToast('Reconnecting...', '');
+      await checkHealth();
+      populateSourceFilter();
+      loadFeed();
+    }
+
+    /* ── Clipboard ── */
+    function copyToClipboard(text, message) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(
+          () => showToast(message || 'Copied', 'ok'),
+          () => copyFallback(text, message)
+        );
+      } else {
+        copyFallback(text, message);
+      }
+    }
+
+    function copyFallback(text, message) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;left:-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast(message || 'Copied', 'ok');
+    }
+
+    /* ── Single Item View (URL routing) ── */
+    function checkSingleItemRoute() {
+      if (IS_TAURI) return false;
+      const match = window.location.pathname.match(/^\/items\/(\d+)$/);
+      if (!match) return false;
+      const itemId = match[1];
+      // Hide normal UI, show single item
+      document.querySelector('nav').style.display = 'none';
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      const container = document.createElement('div');
+      container.className = 'single-item-view';
+      container.innerHTML = '<a class="single-item-back" href="/">← Back to LeStash</a><div id="single-item-content">Loading...</div>';
+      document.querySelector('main').appendChild(container);
+      checkHealth().then(() => loadSingleItem(itemId));
+      return true;
+    }
+
+    async function loadSingleItem(itemId) {
+      const el = document.getElementById('single-item-content');
+      try {
+        const item = await api(`/api/items/${itemId}`);
+        const card = renderCard(item);
+        el.innerHTML = '';
+        el.appendChild(card);
+        // Auto-expand detail
+        toggleDetail(card, item);
+      } catch (e) {
+        el.innerHTML = `<div class="empty-state">Item not found: ${escHtml(e.message)}</div>`;
+      }
+    }
+
     /* ── Init ── */
     document.getElementById('settings-btn').addEventListener('click', openSettings);
-    checkHealth();
+    renderDebugInfo();
+
+    if (!checkSingleItemRoute()) {
+      // Normal app flow
+      checkHealth().then(() => {
+        populateSourceFilter();
+        loadFeed();
+      });
+    }
     setInterval(checkHealth, 30000);
-    populateSourceFilter();
-    loadFeed();
   </script>
 </body>
 </html>

@@ -1,14 +1,17 @@
-"""Voice note endpoints — LLM refinement and audio upload."""
+"""Voice note endpoints — LLM refinement, audio upload, and transcription."""
 
+import asyncio
 import logging
 import os
 import time
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, Form, HTTPException, UploadFile
 
-from lestash_server.models import RefineRequest, RefineResponse
+from lestash_server.models import RefineRequest, RefineResponse, TranscribeResponse
 
 logger = logging.getLogger(__name__)
 
@@ -90,3 +93,87 @@ async def upload_audio(file: UploadFile):
     filepath.write_bytes(data)
 
     return {"path": f"voice/{filename}", "size": len(data)}
+
+
+SUPPORTED_EXTENSIONS = {".m4a", ".mp3", ".wav", ".ogg", ".flac", ".webm"}
+
+
+@router.post("/transcribe", response_model=TranscribeResponse, status_code=201)
+async def transcribe_audio(
+    file: UploadFile,
+    model: str = Form("base.en"),
+    title: str | None = Form(None),
+):
+    """Upload an audio file, transcribe via Whisper, and save as a voice note.
+
+    Accepts m4a, mp3, wav, ogg, flac, or webm files (max 50MB).
+    """
+    from lestash.core.database import upsert_item
+    from lestash.models.item import ItemCreate
+    from lestash_voice.transcribe import transcribe_file
+
+    from lestash_server.deps import get_db
+
+    # Validate file extension
+    original_filename = file.filename or "recording.wav"
+    ext = Path(original_filename).suffix.lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported format: {ext}. "
+            f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
+        )
+
+    # Read and size-check
+    data = await file.read()
+    if len(data) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 50MB)")
+
+    # Save to temp file for transcription
+    cache_dir = Path.home() / ".config" / "lestash" / "cache" / "voice"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    temp_filename = f"voice-{int(time.time())}-{original_filename}"
+    temp_path = cache_dir / temp_filename
+    temp_path.write_bytes(data)
+
+    try:
+        result = await asyncio.to_thread(transcribe_file, str(temp_path), model_name=model)
+    except Exception as e:
+        logger.exception("Transcription failed for %s", original_filename)
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {e}") from None
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    if not result.text:
+        raise HTTPException(status_code=422, detail="No speech detected in audio")
+
+    # Save as item
+    source_id = f"voice-file-{uuid.uuid4().hex[:8]}-{Path(original_filename).stem}"
+    note_title = title or Path(original_filename).stem
+    item = ItemCreate(
+        source_type="voice",
+        source_id=source_id,
+        title=note_title,
+        content=result.text,
+        created_at=datetime.now(UTC),
+        is_own_content=True,
+        metadata={
+            "duration_seconds": result.duration_seconds,
+            "model": result.model,
+            "language": result.language,
+            "original_filename": original_filename,
+            "input_type": "file",
+        },
+    )
+
+    with get_db() as conn:
+        item_id = upsert_item(conn, item)
+
+    return TranscribeResponse(
+        text=result.text,
+        language=result.language,
+        duration_seconds=result.duration_seconds,
+        model=result.model,
+        item_id=item_id,
+        title=note_title,
+    )

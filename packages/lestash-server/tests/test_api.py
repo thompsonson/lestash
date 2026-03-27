@@ -339,6 +339,93 @@ class TestVoiceUpload:
         assert data["size"] == len(b"fake audio data")
 
 
+class TestVoiceTranscribe:
+    """Test POST /api/voice/transcribe endpoint."""
+
+    def test_transcribe_success(self, client, monkeypatch, tmp_path):
+        """Should transcribe audio file and save as item."""
+        monkeypatch.setattr("lestash_server.routes.voice.Path.home", lambda: tmp_path)
+
+        mock_result = MagicMock()
+        mock_result.text = "Hello, this is a test transcription."
+        mock_result.language = "en"
+        mock_result.duration_seconds = 3.5
+        mock_result.model = "base.en"
+
+        with patch("lestash_voice.transcribe.transcribe_file", return_value=mock_result):
+            resp = client.post(
+                "/api/voice/transcribe",
+                files={"file": ("recording.mp3", io.BytesIO(b"fake mp3 data"), "audio/mpeg")},
+                data={"model": "base.en"},
+            )
+
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["text"] == "Hello, this is a test transcription."
+        assert data["language"] == "en"
+        assert data["duration_seconds"] == 3.5
+        assert data["model"] == "base.en"
+        assert data["item_id"] > 0
+        assert data["title"] == "recording"
+
+    def test_transcribe_custom_title(self, client, monkeypatch, tmp_path):
+        """Should use custom title when provided."""
+        monkeypatch.setattr("lestash_server.routes.voice.Path.home", lambda: tmp_path)
+
+        mock_result = MagicMock()
+        mock_result.text = "Meeting notes."
+        mock_result.language = "en"
+        mock_result.duration_seconds = 60.0
+        mock_result.model = "base.en"
+
+        with patch("lestash_voice.transcribe.transcribe_file", return_value=mock_result):
+            resp = client.post(
+                "/api/voice/transcribe",
+                files={"file": ("meeting.m4a", io.BytesIO(b"fake m4a"), "audio/mp4")},
+                data={"title": "Team standup 2026-03-26"},
+            )
+
+        assert resp.status_code == 201
+        assert resp.json()["title"] == "Team standup 2026-03-26"
+
+    def test_transcribe_unsupported_format(self, client):
+        """Should reject unsupported file formats."""
+        resp = client.post(
+            "/api/voice/transcribe",
+            files={"file": ("video.avi", io.BytesIO(b"fake video"), "video/avi")},
+        )
+        assert resp.status_code == 400
+        assert "Unsupported format" in resp.json()["detail"]
+
+    def test_transcribe_no_speech(self, client, monkeypatch, tmp_path):
+        """Should return 422 when no speech is detected."""
+        monkeypatch.setattr("lestash_server.routes.voice.Path.home", lambda: tmp_path)
+
+        mock_result = MagicMock()
+        mock_result.text = ""
+        mock_result.language = "en"
+        mock_result.duration_seconds = 2.0
+        mock_result.model = "base.en"
+
+        with patch("lestash_voice.transcribe.transcribe_file", return_value=mock_result):
+            resp = client.post(
+                "/api/voice/transcribe",
+                files={"file": ("silence.wav", io.BytesIO(b"silence"), "audio/wav")},
+            )
+
+        assert resp.status_code == 422
+        assert "No speech" in resp.json()["detail"]
+
+    def test_transcribe_file_too_large(self, client):
+        """Should reject files over 50MB."""
+        big_data = b"x" * (51 * 1024 * 1024)
+        resp = client.post(
+            "/api/voice/transcribe",
+            files={"file": ("huge.mp3", io.BytesIO(big_data), "audio/mpeg")},
+        )
+        assert resp.status_code == 413
+
+
 class TestCORS:
     """Test CORS headers."""
 
