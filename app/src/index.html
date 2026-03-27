@@ -558,7 +558,7 @@
         <label style="font-size:0.8rem;color:var(--muted);display:block;margin:0.75rem 0 0.25rem">Edited Note</label>
         <textarea class="note-textarea" id="edited-note" placeholder="Edit your note here..."></textarea>
         <div class="note-actions">
-          <button class="sync-btn" onclick="refineWithLLM()" id="refine-btn">Refine with AI</button>
+          <button class="sync-btn" onclick="openProcessDialog(null)" id="refine-btn">Process with AI</button>
           <button class="btn-save" onclick="saveVoiceNote()">Save</button>
         </div>
       </div>
@@ -656,6 +656,8 @@
   <div class="modal-overlay" id="process-modal">
     <div class="modal" style="max-width:500px">
       <h2>Process Voice Note</h2>
+      <label>Text to process</label>
+      <div id="process-text-preview" class="transcript-box" style="max-height:120px;overflow-y:auto;margin-bottom:0.75rem;font-size:0.8rem"></div>
       <label for="process-system-prompt">System Prompt</label>
       <textarea id="process-system-prompt" style="width:100%;min-height:80px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical;margin-bottom:0.75rem"></textarea>
       <label for="process-user-prompt">User Prompt</label>
@@ -1318,35 +1320,7 @@
       }
     }
 
-    async function refineWithLLM() {
-      const text = document.getElementById('original-transcript').textContent;
-      if (!text) return;
 
-      const btn = document.getElementById('refine-btn');
-      btn.disabled = true;
-      btn.textContent = 'Refining...';
-
-      try {
-        const body = { text };
-        if (settings.llmPrompt) body.prompt = settings.llmPrompt;
-        if (settings.llmModel) body.model = settings.llmModel;
-
-        const data = await api('/api/voice/refine', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-
-        document.getElementById('edited-note').value = data.refined_text;
-        refineResult = data;
-        showToast('Transcript refined', 'ok');
-      } catch (e) {
-        showToast('Refine failed: ' + e.message, 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Refine with AI';
-      }
-    }
 
     async function saveVoiceNote() {
       const original = document.getElementById('original-transcript').textContent;
@@ -1416,6 +1390,16 @@
 
     function openProcessDialog(itemId) {
       processItemId = itemId;
+      // Show preview text from editor (null) or from the card's content
+      let previewText = '';
+      if (itemId === null) {
+        previewText = document.getElementById('original-transcript').textContent ||
+                      document.getElementById('edited-note').value;
+      } else {
+        const card = document.querySelector(`.item-detail-content`);
+        previewText = card ? card.textContent : '(loading...)';
+      }
+      document.getElementById('process-text-preview').textContent = previewText;
       document.getElementById('process-system-prompt').value = settings.llmPrompt || DEFAULT_PROCESS_PROMPT;
       document.getElementById('process-user-prompt').value = '';
       if (settings.llmModel) {
