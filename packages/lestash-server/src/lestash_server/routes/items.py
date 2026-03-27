@@ -3,11 +3,18 @@
 import json
 
 from fastapi import APIRouter, HTTPException, Query
+from lestash.core.database import add_tag, get_tags, list_tags, remove_tag
 from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
 from lestash.models.item import Item
 
 from lestash_server.deps import get_db
-from lestash_server.models import ItemCreateRequest, ItemListResponse, ItemResponse
+from lestash_server.models import (
+    ItemCreateRequest,
+    ItemListResponse,
+    ItemResponse,
+    TagAddRequest,
+    TagListResponse,
+)
 
 router = APIRouter(prefix="/api/items", tags=["items"])
 
@@ -31,6 +38,7 @@ def _enrich_item(conn, item: Item) -> ItemResponse:
         author_display=author_display,
         actor_display=actor_display,
         preview=get_preview(conn, item, max_length=120),
+        tags=get_tags(conn, item.id),
     )
 
 
@@ -47,6 +55,7 @@ def list_items(
         None, description="Comma-separated subtypes to exclude (e.g., reaction,invitation,message)"
     ),
     since: str | None = Query(None, description="Only items fetched since this ISO datetime"),
+    tag: str | None = Query(None, description="Filter by tag name"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
@@ -55,6 +64,21 @@ def list_items(
         count_query = "SELECT COUNT(*) FROM items WHERE 1=1"
         query = "SELECT * FROM items WHERE 1=1"
         params: list = []
+
+        if tag:
+            query = (
+                "SELECT items.* FROM items "
+                "JOIN item_tags ON items.id = item_tags.item_id "
+                "JOIN tags ON item_tags.tag_id = tags.id "
+                "WHERE tags.name = ?"
+            )
+            count_query = (
+                "SELECT COUNT(*) FROM items "
+                "JOIN item_tags ON items.id = item_tags.item_id "
+                "JOIN tags ON item_tags.tag_id = tags.id "
+                "WHERE tags.name = ?"
+            )
+            params.append(tag.strip().lower())
 
         if source:
             query += " AND source_type = ?"
@@ -173,6 +197,17 @@ def create_item(body: ItemCreateRequest):
         return _enrich_item(conn, Item.from_row(row))
 
 
+@router.get("/tags", response_model=TagListResponse)
+def get_all_tags():
+    """List all tags with item counts."""
+    from lestash_server.models import TagInfo
+
+    with get_db() as conn:
+        return TagListResponse(
+            tags=[TagInfo(**t) for t in list_tags(conn)],
+        )
+
+
 @router.get("/{item_id}", response_model=ItemResponse)
 def get_item(item_id: int):
     """Get a single item by ID."""
@@ -180,4 +215,26 @@ def get_item(item_id: int):
         row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        return _enrich_item(conn, Item.from_row(row))
+
+
+@router.post("/{item_id}/tags", response_model=ItemResponse, status_code=201)
+def add_item_tag(item_id: int, body: TagAddRequest):
+    """Add a tag to an item."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        add_tag(conn, item_id, body.name)
+        return _enrich_item(conn, Item.from_row(row))
+
+
+@router.delete("/{item_id}/tags/{tag_name}", response_model=ItemResponse)
+def remove_item_tag(item_id: int, tag_name: str):
+    """Remove a tag from an item."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        remove_tag(conn, item_id, tag_name)
         return _enrich_item(conn, Item.from_row(row))

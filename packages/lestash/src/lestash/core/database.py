@@ -415,6 +415,70 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
     return item_id
 
 
+def add_tag(conn: sqlite3.Connection, item_id: int, tag_name: str) -> int:
+    """Add a tag to an item. Creates the tag if it doesn't exist.
+
+    Returns:
+        The tag ID.
+    """
+    tag_name = tag_name.strip().lower()
+    conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (tag_name,))
+    row = conn.execute("SELECT id FROM tags WHERE name = ?", (tag_name,)).fetchone()
+    tag_id = row[0]
+    conn.execute(
+        "INSERT OR IGNORE INTO item_tags (item_id, tag_id) VALUES (?, ?)",
+        (item_id, tag_id),
+    )
+    conn.commit()
+    return tag_id
+
+
+def remove_tag(conn: sqlite3.Connection, item_id: int, tag_name: str) -> bool:
+    """Remove a tag from an item.
+
+    Returns:
+        True if the tag was removed, False if it wasn't present.
+    """
+    tag_name = tag_name.strip().lower()
+    row = conn.execute("SELECT id FROM tags WHERE name = ?", (tag_name,)).fetchone()
+    if not row:
+        return False
+    cursor = conn.execute(
+        "DELETE FROM item_tags WHERE item_id = ? AND tag_id = ?",
+        (item_id, row[0]),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def get_tags(conn: sqlite3.Connection, item_id: int) -> list[str]:
+    """Get all tag names for an item."""
+    rows = conn.execute(
+        """
+        SELECT t.name FROM tags t
+        JOIN item_tags it ON t.id = it.tag_id
+        WHERE it.item_id = ?
+        ORDER BY t.name
+        """,
+        (item_id,),
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def list_tags(conn: sqlite3.Connection) -> list[dict]:
+    """List all tags with their item counts."""
+    rows = conn.execute(
+        """
+        SELECT t.name, COUNT(it.item_id) as count
+        FROM tags t
+        LEFT JOIN item_tags it ON t.id = it.tag_id
+        GROUP BY t.id, t.name
+        ORDER BY count DESC, t.name
+        """,
+    ).fetchall()
+    return [{"name": row[0], "count": row[1]} for row in rows]
+
+
 def get_cache_dir(config: Config | None = None) -> Path:
     """Get the cache directory for storing files like screenshots.
 

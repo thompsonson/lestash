@@ -25,6 +25,7 @@ class ItemResponse(BaseModel):
     author_display: str
     actor_display: str
     preview: str
+    tags: list[str] = []
 
 
 class ItemListResponse(BaseModel):
@@ -132,6 +133,25 @@ class TranscribeResponse(BaseModel):
     model: str
     item_id: int
     title: str
+
+
+class TagInfo(BaseModel):
+    """A tag with its usage count."""
+
+    name: str
+    count: int
+
+
+class TagListResponse(BaseModel):
+    """List of all tags."""
+
+    tags: list[TagInfo]
+
+
+class TagAddRequest(BaseModel):
+    """Request to add a tag to an item."""
+
+    name: str
 
 
 class HealthResponse(BaseModel):

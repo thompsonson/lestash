@@ -145,6 +145,25 @@
       display: flex; gap: 1rem; margin-top: 0.3rem;
       font-size: 0.75rem; color: var(--muted);
     }
+    .item-tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.25rem; }
+    .tag-chip {
+      display: inline-block; font-size: 0.7rem;
+      background: var(--surface); color: var(--accent);
+      border: 1px solid var(--accent); border-radius: 10px;
+      padding: 0.1rem 0.5rem; cursor: default;
+    }
+    .tag-chip .tag-remove {
+      cursor: pointer; margin-left: 0.25rem; opacity: 0.6;
+    }
+    .tag-chip .tag-remove:hover { opacity: 1; }
+    .tag-input-row {
+      display: flex; gap: 0.3rem; margin-top: 0.4rem; align-items: center;
+    }
+    .tag-input-row input {
+      flex: 1; font-size: 0.8rem; padding: 0.25rem 0.5rem;
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 4px;
+    }
 
     /* ── Item detail (expanded) ── */
     .item-detail {
@@ -530,6 +549,9 @@
       <div class="filters">
         <select id="feed-source">
           <option value="">All sources</option>
+        </select>
+        <select id="feed-tag">
+          <option value="">All tags</option>
         </select>
         <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;color:var(--muted)">
           <input type="checkbox" id="feed-own"> Own
@@ -943,6 +965,7 @@
         </div>
         ${item.title ? `<div style="font-size:0.85rem;font-weight:bold;margin:0.25rem 0">${escHtml(item.title)}</div>` : ''}
         <div class="item-preview">${escHtml(item.preview)}</div>
+        ${item.tags && item.tags.length ? `<div class="item-tags">${item.tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>` : ''}
         <div class="item-meta">
           ${item.author_display !== '-' ? `<span>by ${escHtml(item.author_display)}</span>` : ''}
           ${item.actor_display !== '-' ? `<span>actor: ${escHtml(item.actor_display)}</span>` : ''}
@@ -977,18 +1000,64 @@
       if (item.metadata) {
         html += `<div class="item-detail-field"><label>Metadata</label><div class="item-detail-meta">${escHtml(JSON.stringify(item.metadata, null, 2))}</div></div>`;
       }
+      // Tags section
+      const currentTags = (item.tags || []).map(t =>
+        `<span class="tag-chip">${escHtml(t)}<span class="tag-remove" data-action="remove-tag" data-tag="${escHtml(t)}" data-id="${item.id}">&times;</span></span>`
+      ).join('');
+      html += `<div class="item-detail-field"><label>Tags</label>
+        <div class="item-tags">${currentTags || '<span style="color:var(--muted);font-size:0.75rem">No tags</span>'}</div>
+        <div class="tag-input-row">
+          <input type="text" placeholder="Add tag..." data-tag-input="${item.id}">
+          <button class="sync-btn" data-action="add-tag" data-id="${item.id}" style="font-size:0.75rem;padding:0.25rem 0.5rem">Add</button>
+        </div>
+      </div>`;
+
       html += `<div class="item-detail-actions">
         <button class="sync-btn" data-action="copy" data-id="${item.id}">Copy</button>
         <button class="sync-btn" data-action="copy-link" data-id="${item.id}">Copy Link</button>
       </div>`;
 
       detail.innerHTML = html;
-      detail.addEventListener('click', (e) => {
+      detail.addEventListener('click', async (e) => {
         const btn = e.target.closest('[data-action]');
         if (!btn) return;
         e.stopPropagation();
         if (btn.dataset.action === 'copy') copyToClipboard(item.content, 'Copied to clipboard');
         if (btn.dataset.action === 'copy-link') copyToClipboard(`${getApiBase()}/items/${item.id}`, 'Link copied');
+        if (btn.dataset.action === 'remove-tag') {
+          await api(`/api/items/${btn.dataset.id}/tags/${encodeURIComponent(btn.dataset.tag)}`, { method: 'DELETE' });
+          const updated = await api(`/api/items/${btn.dataset.id}`);
+          item.tags = updated.tags;
+          card.querySelector('.item-detail').remove();
+          toggleDetail(card, item);
+        }
+        if (btn.dataset.action === 'add-tag') {
+          const input = detail.querySelector(`[data-tag-input="${btn.dataset.id}"]`);
+          const name = input.value.trim();
+          if (!name) return;
+          await api(`/api/items/${btn.dataset.id}/tags`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+          });
+          input.value = '';
+          const updated = await api(`/api/items/${btn.dataset.id}`);
+          item.tags = updated.tags;
+          card.querySelector('.item-detail').remove();
+          toggleDetail(card, item);
+          // Also update tag chips in the card
+          const tagsDiv = card.querySelector('.item-tags');
+          if (tagsDiv && !card.querySelector('.item-detail .item-tags') === tagsDiv) {
+            tagsDiv.innerHTML = item.tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('');
+          }
+        }
+      });
+      // Allow Enter key in tag input
+      detail.querySelector(`[data-tag-input="${item.id}"]`)?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.stopPropagation();
+          detail.querySelector(`[data-action="add-tag"][data-id="${item.id}"]`).click();
+        }
       });
       card.appendChild(detail);
     }
@@ -1013,9 +1082,11 @@
       try {
         const source = document.getElementById('feed-source').value;
         const own = document.getElementById('feed-own').checked;
+        const tag = document.getElementById('feed-tag').value;
         let url = `/api/items?limit=${FEED_LIMIT}&offset=${feedOffset}`;
         if (source) url += `&source=${encodeURIComponent(source)}`;
         if (own) url += `&own=true`;
+        if (tag) url += `&tag=${encodeURIComponent(tag)}`;
 
         // Subtype exclusions
         const excluded = getExcludedSubtypes();
@@ -1048,6 +1119,7 @@
 
     document.getElementById('feed-source').addEventListener('change', () => loadFeed());
     document.getElementById('feed-own').addEventListener('change', () => loadFeed());
+    document.getElementById('feed-tag').addEventListener('change', () => loadFeed());
 
     /* ── Subtype filters ── */
     const SUBTYPE_STORAGE_KEY = 'lestash-subtype-filters';
@@ -1617,6 +1689,22 @@
       } catch {}
     }
 
+    async function populateTagFilter() {
+      try {
+        const data = await api('/api/items/tags');
+        const sel = document.getElementById('feed-tag');
+        const current = sel.value;
+        sel.innerHTML = '<option value="">All tags</option>';
+        data.tags.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t.name;
+          opt.textContent = `${t.name} (${t.count})`;
+          sel.appendChild(opt);
+        });
+        sel.value = current;
+      } catch {}
+    }
+
     /* ── Skeleton loading ── */
     function renderSkeletons(count) {
       let html = '';
@@ -1669,6 +1757,7 @@
       showToast('Reconnecting...', '');
       await checkHealth();
       populateSourceFilter();
+      populateTagFilter();
       loadFeed();
     }
 
@@ -1734,6 +1823,7 @@
       // Normal app flow
       checkHealth().then(() => {
         populateSourceFilter();
+        populateTagFilter();
         loadFeed();
       });
     }

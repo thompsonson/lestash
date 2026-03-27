@@ -426,6 +426,71 @@ class TestVoiceTranscribe:
         assert resp.status_code == 413
 
 
+class TestTags:
+    """Test tag endpoints."""
+
+    def _create_item(self, client):
+        resp = client.post(
+            "/api/items",
+            json={
+                "source_type": "test",
+                "source_id": "tag-test-1",
+                "content": "Tag test item",
+            },
+        )
+        return resp.json()["id"]
+
+    def test_add_tag(self, client):
+        """Should add a tag to an item."""
+        item_id = self._create_item(client)
+        resp = client.post(f"/api/items/{item_id}/tags", json={"name": "important"})
+        assert resp.status_code == 201
+        assert "important" in resp.json()["tags"]
+
+    def test_add_duplicate_tag(self, client):
+        """Adding the same tag twice should be idempotent."""
+        item_id = self._create_item(client)
+        client.post(f"/api/items/{item_id}/tags", json={"name": "dup"})
+        resp = client.post(f"/api/items/{item_id}/tags", json={"name": "dup"})
+        assert resp.status_code == 201
+        assert resp.json()["tags"].count("dup") == 1
+
+    def test_remove_tag(self, client):
+        """Should remove a tag from an item."""
+        item_id = self._create_item(client)
+        client.post(f"/api/items/{item_id}/tags", json={"name": "remove-me"})
+        resp = client.delete(f"/api/items/{item_id}/tags/remove-me")
+        assert resp.status_code == 200
+        assert "remove-me" not in resp.json()["tags"]
+
+    def test_list_tags(self, client):
+        """Should list all tags with counts."""
+        item_id = self._create_item(client)
+        client.post(f"/api/items/{item_id}/tags", json={"name": "alpha"})
+        client.post(f"/api/items/{item_id}/tags", json={"name": "beta"})
+        resp = client.get("/api/items/tags")
+        assert resp.status_code == 200
+        tags = {t["name"]: t["count"] for t in resp.json()["tags"]}
+        assert "alpha" in tags
+        assert "beta" in tags
+
+    def test_filter_by_tag(self, client):
+        """Should filter items by tag."""
+        id1 = self._create_item(client)
+        self._create_item(client)  # untagged
+        client.post(f"/api/items/{id1}/tags", json={"name": "filtered"})
+        resp = client.get("/api/items?tag=filtered")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) >= 1
+        assert all("filtered" in i["tags"] for i in items)
+
+    def test_tag_on_nonexistent_item(self, client):
+        """Should return 404 for missing item."""
+        resp = client.post("/api/items/99999/tags", json={"name": "nope"})
+        assert resp.status_code == 404
+
+
 class TestCORS:
     """Test CORS headers."""
 
