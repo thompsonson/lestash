@@ -59,8 +59,24 @@ def create_app(static_dir: str | None = None) -> FastAPI:
             count = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
         return HealthResponse(version=__version__, items=count)
 
-    # Serve static frontend files as fallback
+    # Serve static frontend files with SPA fallback
     if static_dir:
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+        from pathlib import Path
+
+        from fastapi.responses import HTMLResponse
+
+        index_path = Path(static_dir) / "index.html"
+
+        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+        @app.get("/{path:path}", response_class=HTMLResponse, include_in_schema=False)
+        def spa_fallback(path: str):
+            """Serve index.html for all non-API paths (SPA routing)."""
+            # Try to serve the exact file first
+            file_path = Path(static_dir) / path
+            if file_path.is_file():
+                return HTMLResponse(file_path.read_text())
+            # Fall back to index.html for client-side routing
+            return HTMLResponse(index_path.read_text())
 
     return app

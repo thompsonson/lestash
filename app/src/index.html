@@ -182,6 +182,19 @@
       color: var(--muted);
     }
 
+    .item-detail-actions {
+      display: flex; gap: 0.5rem; margin-top: 0.75rem;
+    }
+    .item-detail-actions .sync-btn { font-size: 0.75rem; padding: 0.3rem 0.6rem; }
+
+    /* ── Single item view ── */
+    .single-item-view { padding: 0.5rem 0; }
+    .single-item-back {
+      display: inline-block; margin-bottom: 1rem;
+      color: var(--accent); text-decoration: none; font-size: 0.85rem;
+    }
+    .single-item-back:hover { text-decoration: underline; }
+
     /* ── Load more ── */
     .load-more {
       display: block; margin: 1rem auto 0;
@@ -964,8 +977,19 @@
       if (item.metadata) {
         html += `<div class="item-detail-field"><label>Metadata</label><div class="item-detail-meta">${escHtml(JSON.stringify(item.metadata, null, 2))}</div></div>`;
       }
+      html += `<div class="item-detail-actions">
+        <button class="sync-btn" data-action="copy" data-id="${item.id}">Copy</button>
+        <button class="sync-btn" data-action="copy-link" data-id="${item.id}">Copy Link</button>
+      </div>`;
 
       detail.innerHTML = html;
+      detail.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        e.stopPropagation();
+        if (btn.dataset.action === 'copy') copyToClipboard(item.content, 'Copied to clipboard');
+        if (btn.dataset.action === 'copy-link') copyToClipboard(`${getApiBase()}/items/${item.id}`, 'Link copied');
+      });
       card.appendChild(detail);
     }
 
@@ -1648,14 +1672,71 @@
       loadFeed();
     }
 
+    /* ── Clipboard ── */
+    function copyToClipboard(text, message) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(
+          () => showToast(message || 'Copied', 'ok'),
+          () => copyFallback(text, message)
+        );
+      } else {
+        copyFallback(text, message);
+      }
+    }
+
+    function copyFallback(text, message) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;left:-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast(message || 'Copied', 'ok');
+    }
+
+    /* ── Single Item View (URL routing) ── */
+    function checkSingleItemRoute() {
+      if (IS_TAURI) return false;
+      const match = window.location.pathname.match(/^\/items\/(\d+)$/);
+      if (!match) return false;
+      const itemId = match[1];
+      // Hide normal UI, show single item
+      document.querySelector('nav').style.display = 'none';
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      const container = document.createElement('div');
+      container.className = 'single-item-view';
+      container.innerHTML = '<a class="single-item-back" href="/">← Back to LeStash</a><div id="single-item-content">Loading...</div>';
+      document.querySelector('main').appendChild(container);
+      checkHealth().then(() => loadSingleItem(itemId));
+      return true;
+    }
+
+    async function loadSingleItem(itemId) {
+      const el = document.getElementById('single-item-content');
+      try {
+        const item = await api(`/api/items/${itemId}`);
+        const card = renderCard(item);
+        el.innerHTML = '';
+        el.appendChild(card);
+        // Auto-expand detail
+        toggleDetail(card, item);
+      } catch (e) {
+        el.innerHTML = `<div class="empty-state">Item not found: ${escHtml(e.message)}</div>`;
+      }
+    }
+
     /* ── Init ── */
     document.getElementById('settings-btn').addEventListener('click', openSettings);
     renderDebugInfo();
-    // Wait for health check before loading data (Android WebView may not be ready immediately)
-    checkHealth().then(() => {
-      populateSourceFilter();
-      loadFeed();
-    });
+
+    if (!checkSingleItemRoute()) {
+      // Normal app flow
+      checkHealth().then(() => {
+        populateSourceFilter();
+        loadFeed();
+      });
+    }
     setInterval(checkHealth, 30000);
   </script>
 </body>
