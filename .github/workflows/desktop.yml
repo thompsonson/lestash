@@ -50,7 +50,11 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install cmake
 
-      - name: Patch whisper.cpp for macOS ARM CI
+      - name: Add x86_64 Rust target (macOS universal)
+        if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin
+
+      - name: Patch whisper.cpp for macOS CI
         if: runner.os == 'macOS'
         run: |
           echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
@@ -63,7 +67,13 @@ jobs:
         run: npm ci
         working-directory: app
 
-      - name: Build Tauri app
+      - name: Build Tauri app (macOS universal)
+        if: runner.os == 'macOS'
+        run: npx tauri build --target universal-apple-darwin
+        working-directory: app
+
+      - name: Build Tauri app (Linux)
+        if: runner.os == 'Linux'
         run: npx tauri build
         working-directory: app
 
@@ -73,8 +83,8 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: |
-            app/src-tauri/target/release/bundle/dmg/*.dmg
-            app/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            app/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            app/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
           if-no-files-found: error
 
       - name: Upload artifacts (Linux)
