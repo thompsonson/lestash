@@ -1554,6 +1554,50 @@
       processItemId = null;
     }
 
+    /* ── Share Intent Handling (Android) ── */
+    async function handlePendingShare() {
+      if (!IS_TAURI || !tauriInvoke) return;
+      try {
+        const share = await tauriInvoke('check_pending_share');
+        if (!share) return;
+
+        if (share.mimeType && share.mimeType.startsWith('audio/') && share.filePath) {
+          // Switch to Notes tab
+          document.querySelector('[data-tab="notes"]')?.click();
+          const status = document.getElementById('record-status');
+          const btn = document.getElementById('upload-btn');
+          if (status) status.textContent = `Transcribing shared file: ${share.fileName || 'audio'}...`;
+          if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.5'; btn.innerText = 'Transcribing...'; }
+
+          const result = await tauriInvoke('upload_shared_audio', {
+            filePath: share.filePath,
+            fileName: share.fileName || 'shared_audio.m4a',
+            host: settings.host,
+            port: settings.port,
+          });
+
+          if (status) status.textContent = `${result.text.split(' ').length} words transcribed from ${share.fileName || 'shared audio'}`;
+          showToast(`Saved: ${result.title}`, 'ok');
+          loadSavedNotes();
+          if (btn) { btn.style.pointerEvents = ''; btn.style.opacity = ''; btn.innerText = 'Upload File'; }
+        } else if (share.text) {
+          // Text/URL sharing — future enhancement (issue #60)
+          showToast('Text sharing received (not yet implemented)', 'info');
+        }
+      } catch (e) {
+        showToast('Share failed: ' + e, 'error');
+        const btn = document.getElementById('upload-btn');
+        if (btn) { btn.style.pointerEvents = ''; btn.style.opacity = ''; btn.innerText = 'Upload File'; }
+      }
+    }
+
+    if (IS_TAURI && tauriInvoke) {
+      setTimeout(handlePendingShare, 500);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') handlePendingShare();
+      });
+    }
+
     /* ── File Transcription ── */
     const SUPPORTED_AUDIO = new Set(['.m4a', '.mp3', '.wav', '.ogg', '.flac', '.webm']);
     const audioFileInput = document.getElementById('audio-file-input');

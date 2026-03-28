@@ -59,6 +59,26 @@ jobs:
           MANIFEST=app/src-tauri/gen/android/app/src/main/AndroidManifest.xml
           sed -i '/<manifest/a\    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' "$MANIFEST"
 
+      - name: Add share intent filters
+        run: |
+          MANIFEST=app/src-tauri/gen/android/app/src/main/AndroidManifest.xml
+          sed -i '/<\/activity>/i\
+                      <intent-filter>\
+                          <action android:name="android.intent.action.SEND" />\
+                          <category android:name="android.intent.category.DEFAULT" />\
+                          <data android:mimeType="audio/*" />\
+                      </intent-filter>\
+                      <intent-filter>\
+                          <action android:name="android.intent.action.SEND" />\
+                          <category android:name="android.intent.category.DEFAULT" />\
+                          <data android:mimeType="text/plain" />\
+                      </intent-filter>' "$MANIFEST"
+
+      - name: Install custom MainActivity for share intent
+        run: |
+          MAIN_DIR=app/src-tauri/gen/android/app/src/main/java/dev/lestash/app
+          cp app/android-src/MainActivity.kt "$MAIN_DIR/MainActivity.kt"
+
       - name: Decode keystore
         run: echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > /tmp/lestash-release.jks
 

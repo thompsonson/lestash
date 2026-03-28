@@ -19,7 +19,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 anyhow = "1"
 dirs-next = "2"
-reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "multipart", "json"] }
 futures-util = "0.3"
 
 [build-dependencies]

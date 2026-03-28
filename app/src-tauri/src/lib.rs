@@ -1,3 +1,4 @@
+mod share;
 mod stt;
 
 use std::sync::Arc;
@@ -53,6 +54,8 @@ pub fn run() {
             stop_recording,
             get_stt_status,
             download_model,
+            share::check_pending_share,
+            share::upload_shared_audio,
         ])
         .run(tauri::generate_context!())
         .expect("error running lestash");
