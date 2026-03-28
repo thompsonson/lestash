@@ -1,6 +1,6 @@
 [project]
 name = "lestash-youtube"
-version = "1.25.1"
+version = "1.25.2"
 description = "YouTube source plugin for Le Stash"
 readme = "README.md"
 requires-python = ">=3.12"
