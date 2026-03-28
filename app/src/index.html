@@ -1558,7 +1558,11 @@
     async function handlePendingShare() {
       if (!IS_TAURI || !tauriInvoke) return;
       try {
-        const share = await tauriInvoke('check_pending_share');
+        const result = await tauriInvoke('check_pending_share');
+        addDebugLog('SHARE', 'check_pending_share', result.share ? 'FOUND' : 'NONE', null,
+          `checked: ${result.checkedPaths.join(', ')}` + (result.foundAt ? ` | found at: ${result.foundAt}` : ''));
+
+        const share = result.share;
         if (!share) return;
 
         if (share.mimeType && share.mimeType.startsWith('audio/') && share.filePath) {
@@ -1569,15 +1573,17 @@
           if (status) status.textContent = `Transcribing shared file: ${share.fileName || 'audio'}...`;
           if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.5'; btn.innerText = 'Transcribing...'; }
 
-          const result = await tauriInvoke('upload_shared_audio', {
+          addDebugLog('SHARE', 'upload_shared_audio', 'START', null, `file: ${share.filePath}, host: ${settings.host}:${settings.port}`);
+          const data = await tauriInvoke('upload_shared_audio', {
             filePath: share.filePath,
             fileName: share.fileName || 'shared_audio.m4a',
             host: settings.host,
             port: settings.port,
           });
 
-          if (status) status.textContent = `${result.text.split(' ').length} words transcribed from ${share.fileName || 'shared audio'}`;
-          showToast(`Saved: ${result.title}`, 'ok');
+          addDebugLog('SHARE', 'upload_shared_audio', 'OK', null, `title: ${data.title}, words: ${data.text.split(' ').length}`);
+          if (status) status.textContent = `${data.text.split(' ').length} words transcribed from ${share.fileName || 'shared audio'}`;
+          showToast(`Saved: ${data.title}`, 'ok');
           loadSavedNotes();
           if (btn) { btn.style.pointerEvents = ''; btn.style.opacity = ''; btn.innerText = 'Upload File'; }
         } else if (share.text) {
@@ -1585,6 +1591,7 @@
           showToast('Text sharing received (not yet implemented)', 'info');
         }
       } catch (e) {
+        addDebugLog('SHARE', 'handlePendingShare', 'ERR', null, String(e));
         showToast('Share failed: ' + e, 'error');
         const btn = document.getElementById('upload-btn');
         if (btn) { btn.style.pointerEvents = ''; btn.style.opacity = ''; btn.innerText = 'Upload File'; }

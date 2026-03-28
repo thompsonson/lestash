@@ -24,27 +24,67 @@ pub struct TranscribeResult {
     pub duration_seconds: f64,
 }
 
-fn pending_share_path(app: &tauri::AppHandle) -> PathBuf {
-    app.path()
-        .cache_dir()
-        .unwrap_or_else(|_| std::env::temp_dir())
-        .join("pending_share.json")
+/// Return candidate paths where Kotlin's `cacheDir` might have written
+/// `pending_share.json`. Tauri's `cache_dir()` may differ from Android's
+/// `Context.getCacheDir()`, so we check multiple locations.
+fn pending_share_candidates(app: &tauri::AppHandle) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    // Tauri's cache_dir (may include app identifier subdirectory)
+    if let Ok(p) = app.path().cache_dir() {
+        candidates.push(p.join("pending_share.json"));
+    }
+
+    // Tauri's app_cache_dir
+    if let Ok(p) = app.path().app_cache_dir() {
+        candidates.push(p.join("pending_share.json"));
+    }
+
+    // Android's typical Context.getCacheDir() path
+    candidates.push(PathBuf::from("/data/data/dev.lestash.app/cache/pending_share.json"));
+    candidates.push(PathBuf::from("/data/user/0/dev.lestash.app/cache/pending_share.json"));
+
+    // Fallback to temp dir
+    candidates.push(std::env::temp_dir().join("pending_share.json"));
+
+    candidates
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareCheckDebug {
+    pub share: Option<PendingShare>,
+    pub checked_paths: Vec<String>,
+    pub found_at: Option<String>,
 }
 
 #[tauri::command]
 pub async fn check_pending_share(
     app: tauri::AppHandle,
-) -> Result<Option<PendingShare>, String> {
-    let path = pending_share_path(&app);
-    if !path.exists() {
-        return Ok(None);
+) -> Result<ShareCheckDebug, String> {
+    let candidates = pending_share_candidates(&app);
+    let checked: Vec<String> = candidates.iter().map(|p| p.display().to_string()).collect();
+
+    for path in &candidates {
+        if path.exists() {
+            let found = path.display().to_string();
+            let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(path);
+            let share: PendingShare =
+                serde_json::from_str(&content).map_err(|e| e.to_string())?;
+            return Ok(ShareCheckDebug {
+                share: Some(share),
+                checked_paths: checked,
+                found_at: Some(found),
+            });
+        }
     }
 
-    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(&path);
-
-    let share: PendingShare = serde_json::from_str(&content).map_err(|e| e.to_string())?;
-    Ok(Some(share))
+    Ok(ShareCheckDebug {
+        share: None,
+        checked_paths: checked,
+        found_at: None,
+    })
 }
 
 #[tauri::command]
