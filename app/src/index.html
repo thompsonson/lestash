@@ -1291,13 +1291,14 @@
     }
 
     async function ensureMicPermission() {
+      // Try getUserMedia to trigger Android system permission dialog.
+      // The WebView may reject this even after the system grants it,
+      // so we don't gate on success — cpal accesses audio natively.
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach(t => t.stop());
-        return true;
       } catch (e) {
-        showToast('Microphone permission denied', 'error');
-        return false;
+        // Expected on Android WebView — cpal will still work if system permission was granted
       }
     }
 
@@ -1306,8 +1307,8 @@
       const status = document.getElementById('record-status');
       const editor = document.getElementById('note-editor');
 
-      // Request mic permission first (required on Android)
-      if (!(await ensureMicPermission())) return;
+      // Request mic permission (triggers Android system dialog if needed)
+      await ensureMicPermission();
 
       if (IS_TAURI && tauriInvoke) {
         // Tauri: use whisper-rs (Phase 3)
