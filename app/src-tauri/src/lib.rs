@@ -35,6 +35,11 @@ fn get_stt_status(state: tauri::State<'_, AppState>) -> serde_json::Value {
     })
 }
 
+#[tauri::command]
+async fn download_model(app: tauri::AppHandle) -> Result<String, String> {
+    stt::download_model(app).await.map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tracing_subscriber::fmt::init();
 
@@ -47,6 +52,7 @@ pub fn run() {
             start_recording,
             stop_recording,
             get_stt_status,
+            download_model,
         ])
         .run(tauri::generate_context!())
         .expect("error running lestash");

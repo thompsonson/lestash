@@ -1408,11 +1408,41 @@
       if (IS_TAURI && tauriInvoke) {
         tauriInvoke('get_stt_status').then(status => {
           if (!status.model_exists) {
-            document.getElementById('record-status').innerHTML =
-              '<span style="color:var(--warn)">Whisper model not found. Download ggml-base.en.bin to ' +
-              escHtml(status.model_path) + '</span>';
+            const el = document.getElementById('record-status');
+            el.innerHTML = '<button class="sync-btn" id="download-model-btn" style="font-size:0.75rem">Download Model (~142MB)</button>';
+            document.getElementById('download-model-btn').addEventListener('click', startModelDownload);
           }
         }).catch(() => {});
+      }
+    }
+
+    async function startModelDownload() {
+      const btn = document.getElementById('download-model-btn');
+      const status = document.getElementById('record-status');
+      if (!btn) return;
+      btn.disabled = true;
+      btn.textContent = 'Downloading...';
+
+      // Listen for progress
+      if (tauriListen) {
+        tauriListen('model-download-progress', (event) => {
+          const { downloaded, total } = event.payload;
+          if (total > 0) {
+            const pct = Math.round((downloaded / total) * 100);
+            const mb = (downloaded / 1024 / 1024).toFixed(1);
+            const totalMb = (total / 1024 / 1024).toFixed(0);
+            status.innerHTML = `<span style="font-size:0.75rem">Downloading: ${mb}/${totalMb} MB (${pct}%)</span>`;
+          }
+        });
+      }
+
+      try {
+        await tauriInvoke('download_model');
+        status.innerHTML = '<span style="color:var(--ok);font-size:0.8rem">Model ready — hit Record</span>';
+        showToast('Whisper model downloaded', 'ok');
+      } catch (e) {
+        status.innerHTML = '<span style="color:var(--error);font-size:0.8rem">Download failed: ' + escHtml(e) + '</span>';
+        showToast('Model download failed: ' + e, 'error');
       }
     }
 

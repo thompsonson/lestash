@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use futures_util::StreamExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -78,6 +79,76 @@ pub fn model_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("lestash");
     data_dir.join(WHISPER_MODEL)
+}
+
+const MODEL_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
+
+pub async fn download_model(app: AppHandle) -> Result<String> {
+    let dest = model_path();
+    if dest.exists() {
+        info!("Model already exists at {}", dest.display());
+        return Ok(dest.display().to_string());
+    }
+
+    // Ensure parent directory exists
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).context("Failed to create model directory")?;
+    }
+
+    info!("Downloading whisper model to {}", dest.display());
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(MODEL_URL)
+        .send()
+        .await
+        .context("Failed to start model download")?;
+
+    let total = resp.content_length().unwrap_or(0);
+    let mut downloaded: u64 = 0;
+
+    // Download to temp file, then rename
+    let tmp_path = dest.with_extension("bin.tmp");
+    let mut file =
+        tokio::fs::File::create(&tmp_path)
+            .await
+            .context("Failed to create temp file")?;
+
+    let mut stream = resp.bytes_stream();
+    let mut last_emit = Instant::now();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("Download stream error")?;
+        downloaded += chunk.len() as u64;
+
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+            .await
+            .context("Failed to write chunk")?;
+
+        // Emit progress at most every 200ms
+        if last_emit.elapsed() > Duration::from_millis(200) {
+            let _ = app.emit(
+                "model-download-progress",
+                serde_json::json!({ "downloaded": downloaded, "total": total }),
+            );
+            last_emit = Instant::now();
+        }
+    }
+
+    // Final progress emit
+    let _ = app.emit(
+        "model-download-progress",
+        serde_json::json!({ "downloaded": downloaded, "total": total }),
+    );
+
+    // Rename temp to final
+    tokio::fs::rename(&tmp_path, &dest)
+        .await
+        .context("Failed to rename downloaded model")?;
+
+    info!("Model download complete: {}", dest.display());
+    Ok(dest.display().to_string())
 }
 
 fn run_stt_loop(
