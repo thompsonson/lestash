@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -42,7 +42,7 @@ impl SttEngine {
             return Ok(());
         }
 
-        let path = model_path();
+        let path = model_path_for_app(&app);
         if !path.exists() {
             return Err(anyhow::anyhow!(
                 "Whisper model not found at {}. Download ggml-base.en.bin to this location.",
@@ -81,11 +81,25 @@ pub fn model_path() -> PathBuf {
     data_dir.join(WHISPER_MODEL)
 }
 
+/// Resolve the model path using Tauri's app data dir (works on Android).
+/// Falls back to dirs_next for desktop.
+pub fn model_path_for_app(app: &AppHandle) -> PathBuf {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| {
+            dirs_next::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("lestash")
+        });
+    data_dir.join(WHISPER_MODEL)
+}
+
 const MODEL_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
 
 pub async fn download_model(app: AppHandle) -> Result<String> {
-    let dest = model_path();
+    let dest = model_path_for_app(&app);
     if dest.exists() {
         info!("Model already exists at {}", dest.display());
         return Ok(dest.display().to_string());

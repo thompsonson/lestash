@@ -26,8 +26,8 @@ async fn stop_recording(state: tauri::State<'_, AppState>) -> Result<String, Str
 }
 
 #[tauri::command]
-fn get_stt_status(state: tauri::State<'_, AppState>) -> serde_json::Value {
-    let path = stt::model_path();
+fn get_stt_status(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> serde_json::Value {
+    let path = stt::model_path_for_app(&app);
     serde_json::json!({
         "listening": state.stt.is_listening(),
         "model_exists": path.exists(),
