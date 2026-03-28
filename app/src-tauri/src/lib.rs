@@ -55,7 +55,7 @@ pub fn run() {
             get_stt_status,
             download_model,
             share::check_pending_share,
-            share::upload_shared_audio,
+            share::read_shared_file,
         ])
         .run(tauri::generate_context!())
         .expect("error running lestash");

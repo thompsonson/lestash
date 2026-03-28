@@ -1566,26 +1566,25 @@
         if (!share) return;
 
         if (share.mimeType && share.mimeType.startsWith('audio/') && share.filePath) {
-          // Switch to Notes tab
-          document.querySelector('[data-tab="notes"]')?.click();
-          const status = document.getElementById('record-status');
-          const btn = document.getElementById('upload-btn');
-          if (status) status.textContent = `Transcribing shared file: ${share.fileName || 'audio'}...`;
-          if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.5'; btn.innerText = 'Transcribing...'; }
-
-          addDebugLog('SHARE', 'upload_shared_audio', 'START', null, `file: ${share.filePath}, host: ${settings.host}:${settings.port}`);
-          const data = await tauriInvoke('upload_shared_audio', {
+          // Read the shared file via Rust, then upload via fetch (which uses
+          // Android's native network stack and works through Tailscale VPN)
+          const fileName = share.fileName || 'shared_audio.m4a';
+          addDebugLog('SHARE', 'read_shared_file', 'START', null, `file: ${share.filePath}`);
+          const fileData = await tauriInvoke('read_shared_file', {
             filePath: share.filePath,
-            fileName: share.fileName || 'shared_audio.m4a',
-            host: settings.host,
-            port: settings.port,
+            fileName: fileName,
           });
 
-          addDebugLog('SHARE', 'upload_shared_audio', 'OK', null, `title: ${data.title}, words: ${data.text.split(' ').length}`);
-          if (status) status.textContent = `${data.text.split(' ').length} words transcribed from ${share.fileName || 'shared audio'}`;
-          showToast(`Saved: ${data.title}`, 'ok');
-          loadSavedNotes();
-          if (btn) { btn.style.pointerEvents = ''; btn.style.opacity = ''; btn.innerText = 'Upload File'; }
+          // Convert base64 to File object
+          const byteStr = atob(fileData.base64);
+          const bytes = new Uint8Array(byteStr.length);
+          for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
+          const file = new File([bytes], fileData.fileName, { type: fileData.mimeType });
+          addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
+
+          // Switch to Notes tab and use existing upload function
+          document.querySelector('[data-tab="notes"]')?.click();
+          transcribeAudioFile(file);
         } else if (share.text) {
           // Text/URL sharing — future enhancement (issue #60)
           showToast('Text sharing received (not yet implemented)', 'info');
