@@ -63,6 +63,13 @@ jobs:
         run: npx tauri android init
         working-directory: app
 
+      - name: Copy custom Android icons
+        run: |
+          RES_DIR=app/src-tauri/gen/android/app/src/main/res
+          cp -r app/src-tauri/icons/android/* "$RES_DIR/"
+          echo "Copied icons to $RES_DIR"
+          ls -la "$RES_DIR"/mipmap-*/ic_launcher*.png
+
       - name: Add Android permissions
         run: |
           MANIFEST=app/src-tauri/gen/android/app/src/main/AndroidManifest.xml
