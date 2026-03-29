@@ -13,6 +13,8 @@ pub struct PendingShare {
     pub file_name: Option<String>,
     #[serde(default)]
     pub text: Option<String>,
+    #[serde(default)]
+    pub subject: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

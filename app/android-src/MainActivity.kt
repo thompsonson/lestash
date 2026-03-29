@@ -45,6 +45,8 @@ class MainActivity : TauriActivity() {
         } else if (mimeType.startsWith("text/")) {
             val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
             json.put("text", text)
+            val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+            if (subject != null) json.put("subject", subject)
         } else {
             return
         }
