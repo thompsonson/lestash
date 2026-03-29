@@ -41,6 +41,11 @@ async fn download_model(app: tauri::AppHandle) -> Result<String, String> {
     stt::download_model(app).await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_app_version(app: tauri::AppHandle) -> String {
+    app.config().version.clone().unwrap_or_else(|| "unknown".into())
+}
+
 pub fn run() {
     tracing_subscriber::fmt::init();
 
@@ -54,6 +59,7 @@ pub fn run() {
             stop_recording,
             get_stt_status,
             download_model,
+            get_app_version,
             share::check_pending_share,
             share::read_shared_file,
         ])

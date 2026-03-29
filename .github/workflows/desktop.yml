@@ -67,6 +67,13 @@ jobs:
         run: npm ci
         working-directory: app
 
+      - name: Inject build version
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          VERSION="0.1.0+${SHORT_SHA}"
+          jq --arg v "$VERSION" '.version = $v' app/src-tauri/tauri.conf.json > tmp.json && mv tmp.json app/src-tauri/tauri.conf.json
+          echo "App version: ${VERSION}"
+
       - name: Build Tauri app (macOS universal)
         if: runner.os == 'macOS'
         run: npx tauri build --target universal-apple-darwin

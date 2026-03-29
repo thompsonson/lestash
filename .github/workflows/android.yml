@@ -50,6 +50,15 @@ jobs:
         run: npm ci
         working-directory: app
 
+      - name: Inject build version
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          VERSION="0.1.0+${SHORT_SHA}"
+          VERSION_CODE=$(( $(date -u +%s) / 60 ))
+          jq --arg v "$VERSION" '.version = $v' app/src-tauri/tauri.conf.json > tmp.json && mv tmp.json app/src-tauri/tauri.conf.json
+          echo "TAURI_ANDROID_VERSION_CODE=${VERSION_CODE}" >> "$GITHUB_ENV"
+          echo "App version: ${VERSION}, versionCode: ${VERSION_CODE}"
+
       - name: Initialize Tauri Android
         run: npx tauri android init
         working-directory: app

@@ -680,6 +680,7 @@
       <input type="text" id="s-llm-model" placeholder="claude-sonnet-4-20250514">
       <label for="s-llm-prompt">Refine prompt</label>
       <textarea id="s-llm-prompt" style="width:100%;min-height:60px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical" placeholder="Clean up this voice note..."></textarea>
+      <div id="app-version" style="text-align:center;font-size:0.7rem;color:var(--muted);margin-top:0.75rem"></div>
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
         <button class="btn-save" onclick="saveSettingsForm()">Save</button>
@@ -816,10 +817,22 @@
       }).join('');
     }
 
+    let appVersion = 'unknown';
+    async function loadAppVersion() {
+      if (IS_TAURI && tauriInvoke) {
+        try { appVersion = await tauriInvoke('get_app_version'); } catch {}
+      } else {
+        appVersion = '0.1.0 (web)';
+      }
+      const el = document.getElementById('app-version');
+      if (el) el.textContent = `v${appVersion}`;
+    }
+
     function renderDebugInfo() {
       const el = document.getElementById('debug-info');
       if (!el) return;
       el.innerHTML = `
+        <div><strong>Version:</strong> ${appVersion}</div>
         <div><strong>API Base:</strong> ${getApiBase() || '(relative)'}</div>
         <div><strong>Host:</strong> ${settings.host}</div>
         <div><strong>Port:</strong> ${settings.port}</div>
@@ -1907,6 +1920,7 @@
 
     /* ── Init ── */
     document.getElementById('settings-btn').addEventListener('click', openSettings);
+    loadAppVersion().then(renderDebugInfo);
     renderDebugInfo();
 
     if (!checkSingleItemRoute()) {
