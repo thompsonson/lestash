@@ -1,6 +1,6 @@
 [project]
 name = "lestash-bluesky"
-version = "1.27.0"
+version = "1.27.1"
 description = "Bluesky source plugin for Le Stash"
 readme = "README.md"
 requires-python = ">=3.12"
