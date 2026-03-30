@@ -619,6 +619,7 @@
         <input type="text" class="search-input" id="search-input"
                placeholder="Search your knowledge base..." autocomplete="off">
       </div>
+      <div id="search-status" style="font-size:0.75rem;color:var(--muted);margin-bottom:0.5rem"></div>
       <div class="item-list" id="search-list"></div>
     </div>
 
@@ -1417,23 +1418,44 @@
     document.getElementById('search-input').addEventListener('input', e => {
       clearTimeout(searchTimer);
       const q = e.target.value.trim();
-      if (!q) { document.getElementById('search-list').innerHTML = ''; return; }
+      const status = document.getElementById('search-status');
+      if (!q) {
+        document.getElementById('search-list').innerHTML = '';
+        status.textContent = 'Tip: use "quotes" for exact phrases, word* for prefix, AND/OR/NOT for boolean';
+        return;
+      }
       searchTimer = setTimeout(() => doSearch(q), 300);
     });
 
     async function doSearch(q) {
       const list = document.getElementById('search-list');
+      const status = document.getElementById('search-status');
       list.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      status.textContent = 'Searching...';
       try {
         const data = await api(`/api/items/search?q=${encodeURIComponent(q)}&limit=50`);
         list.innerHTML = '';
         if (data.items.length === 0) {
-          list.innerHTML = `<div class="empty-state">No results for "${escHtml(q)}"</div>`;
+          status.textContent = `No results for "${q}"`;
+          list.innerHTML = `<div class="empty-state">Try different keywords or use prefix matching (e.g. "learn*")</div>`;
           return;
         }
-        data.items.forEach(item => list.appendChild(renderCard(item)));
+        status.textContent = `${data.total} result${data.total !== 1 ? 's' : ''}`;
+        data.items.forEach(item => {
+          const card = renderCard(item);
+          // Replace preview with highlighted snippet if it contains markers
+          const preview = card.querySelector('.item-preview');
+          if (preview && item.preview && item.preview.includes('<<')) {
+            preview.innerHTML = item.preview
+              .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+              .replace(/&lt;&lt;/g, '<mark style="background:var(--accent);color:#fff;padding:0 2px;border-radius:2px">')
+              .replace(/&gt;&gt;/g, '</mark>');
+          }
+          list.appendChild(card);
+        });
       } catch (e) {
         list.innerHTML = '';
+        status.textContent = '';
         showToast(`Search failed: ${e.message}`, 'error');
       }
     }

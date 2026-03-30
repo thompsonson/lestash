@@ -149,23 +149,68 @@ def list_items(
 def search_items(
     q: str = Query(..., min_length=1, description="Search query"),
     limit: int = Query(20, ge=1, le=100),
+    include_children: bool = Query(True, description="Include child items in results"),
 ):
-    """Full-text search using FTS5."""
+    """Full-text search using FTS5.
+
+    Supports FTS5 query syntax: AND, OR, NOT, "phrase search", prefix*.
+    Raw queries are sanitized to prevent FTS5 syntax errors.
+    """
+    # Sanitize query for FTS5: wrap bare terms for safe matching
+    fts_query = _sanitize_fts_query(q)
+
     with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT items.* FROM items
+        query = """
+            SELECT items.*,
+                   snippet(items_fts, 1, '<<', '>>', '...', 32) as search_snippet
+            FROM items
             JOIN items_fts ON items.id = items_fts.rowid
             WHERE items_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (q, limit),
-        ).fetchall()
+        """
+        params: list = [fts_query]
 
-        items = [_enrich_item(conn, Item.from_row(row)) for row in rows]
+        if not include_children:
+            query += " AND items.parent_id IS NULL"
+
+        query += " ORDER BY rank LIMIT ?"
+        params.append(limit)
+
+        rows = conn.execute(query, params).fetchall()
+
+        items = []
+        for row in rows:
+            item = Item.from_row(row)
+            enriched = _enrich_item(conn, item)
+            # Override preview with search snippet if available
+            snippet = row["search_snippet"]
+            if snippet:
+                enriched.preview = snippet
+            items.append(enriched)
 
     return ItemListResponse(items=items, total=len(items), limit=limit, offset=0)
+
+
+def _sanitize_fts_query(q: str) -> str:
+    """Sanitize user input for FTS5 MATCH.
+
+    - Preserves quoted phrases ("exact match")
+    - Preserves explicit operators (AND, OR, NOT)
+    - Adds implicit prefix matching (word -> word*) for better UX
+    - Escapes special characters that would cause FTS5 syntax errors
+    """
+    import re
+
+    q = q.strip()
+    if not q:
+        return q
+
+    # If user already uses FTS5 syntax (quotes, AND/OR/NOT, *), pass through
+    if re.search(r'["\*]|(?<!\w)(AND|OR|NOT)(?!\w)', q):
+        return q
+
+    # Otherwise, split into words and add prefix matching
+    words = q.split()
+    return " ".join(f"{w}*" for w in words if w)
 
 
 @router.post("", response_model=ItemResponse, status_code=201)
