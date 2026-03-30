@@ -1,6 +1,6 @@
 # Vector Search Design
 
-*Designed 2026-03-30*
+*Designed 2026-03-30 — Implemented 2026-03-30*
 
 ## Overview
 
@@ -143,27 +143,42 @@ This finds both exact keyword matches AND semantically similar items that use di
 
 ## API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/items/search?q=...` | Enhanced: hybrid FTS5 + vector search |
-| POST | `/api/embeddings/rebuild` | Trigger full backfill |
-| GET | `/api/embeddings/status` | Coverage stats |
-| GET | `/api/items/{id}/similar` | Find items similar to a specific item |
+| Method | Endpoint | Description | Status |
+|--------|----------|-------------|--------|
+| GET | `/api/items/search?q=...&mode=hybrid` | Hybrid FTS5 + vector search | **Done** |
+| POST | `/api/embeddings/rebuild` | Trigger background backfill | **Done** |
+| GET | `/api/embeddings/status` | Coverage stats | **Done** |
+| GET | `/api/embeddings/similar/{id}` | Find similar items | **Done** |
+
+## CLI Commands
+
+| Command | Description | Status |
+|---------|-------------|--------|
+| `lestash embeddings status` | Show model, dimensions, coverage | **Done** |
+| `lestash embeddings rebuild` | Batch embed with progress bar | **Done** |
+
+## UI Features
+
+- Search mode dropdown: Hybrid / Keyword / Semantic
+- "Similar items" section in item detail view (5 semantically related items)
+- Similar items rendered as clickable cards with full drill-down navigation
 
 ## Dependencies
 
 ```toml
-sqlite-vec = "..."         # SQLite vector extension
-sentence-transformers = "..." # Embedding model
+sqlite-vec = ">=0.1.6"
+sentence-transformers = ">=3.0.0"
 ```
 
 ## Implementation Files
 
 | File | Change |
 |------|--------|
-| `packages/lestash/pyproject.toml` | Add sqlite-vec, sentence-transformers deps |
-| `packages/lestash/src/lestash/core/database.py` | Load sqlite-vec extension, migration v7 |
-| `packages/lestash/src/lestash/core/embeddings.py` | **Create** — model loading, embed text, batch embed |
-| `packages/lestash/src/lestash/cli/embeddings.py` | **Create** — rebuild, status commands |
-| `packages/lestash-server/src/lestash_server/routes/items.py` | Hybrid search endpoint |
-| `packages/lestash-server/src/lestash_server/routes/embeddings.py` | **Create** — rebuild, status, similar endpoints |
+| `packages/lestash/pyproject.toml` | Added sqlite-vec, sentence-transformers deps |
+| `packages/lestash/src/lestash/core/embeddings.py` | Model loading, embed, vec table, search, rebuild |
+| `packages/lestash/src/lestash/cli/embeddings.py` | CLI: rebuild, status commands |
+| `packages/lestash/src/lestash/cli/main.py` | Registered embeddings subcommand |
+| `packages/lestash-server/src/lestash_server/routes/items.py` | Hybrid search with RRF merge |
+| `packages/lestash-server/src/lestash_server/routes/embeddings.py` | Status, rebuild, similar endpoints |
+| `packages/lestash-server/src/lestash_server/app.py` | Registered embeddings router |
+| `app/src/index.html` | Search mode toggle, similar items in detail view |
