@@ -582,6 +582,7 @@
     <button data-tab="notes">Notes</button>
     <button data-tab="search">Search</button>
     <button data-tab="sources">Sources</button>
+    <button data-tab="collections">Collections</button>
     <button data-tab="stats">Stats</button>
     <button data-tab="debug">Debug</button>
   </nav>
@@ -618,6 +619,7 @@
         <input type="text" class="search-input" id="search-input"
                placeholder="Search your knowledge base..." autocomplete="off">
       </div>
+      <div id="search-status" style="font-size:0.75rem;color:var(--muted);margin-bottom:0.5rem"></div>
       <div class="item-list" id="search-list"></div>
     </div>
 
@@ -688,6 +690,15 @@
         </thead>
         <tbody></tbody>
       </table>
+    </div>
+
+    <!-- Collections tab -->
+    <div class="tab-content" id="tab-collections">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
+        <h3 style="font-size:0.85rem;color:var(--muted);margin:0">Collections</h3>
+        <button class="sync-btn" onclick="openNewCollectionDialog()">+ New</button>
+      </div>
+      <div class="item-list" id="collections-list"></div>
     </div>
 
     <!-- Stats tab -->
@@ -777,6 +788,21 @@
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeCaptureDialog()">Cancel</button>
         <button class="btn-save" onclick="saveCaptureItem()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New collection modal -->
+  <div class="modal-overlay" id="new-collection-modal">
+    <div class="modal">
+      <h2>New Collection</h2>
+      <label for="coll-name">Name</label>
+      <input type="text" id="coll-name" placeholder="e.g. Hebbian Learning Research">
+      <label for="coll-desc">Description</label>
+      <textarea id="coll-desc" style="width:100%;min-height:60px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical" placeholder="What this collection is about..."></textarea>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="document.getElementById('new-collection-modal').classList.remove('open')">Cancel</button>
+        <button class="btn-save" onclick="saveNewCollection()">Create</button>
       </div>
     </div>
   </div>
@@ -1007,6 +1033,7 @@
       if (tab === 'notes') { loadSavedNotes(); checkSttModel(); }
       if (tab === 'sources') loadSources();
       if (tab === 'stats') loadStats();
+      if (tab === 'collections') loadCollections();
       if (tab === 'debug') { renderDebugInfo(); renderDebugLog(); }
       if (!IS_TAURI && !skipHistory) {
         history.pushState({ tab }, '', '/#' + tab);
@@ -1113,8 +1140,15 @@
       const view = document.getElementById('item-view');
 
       if (viewStack.length > 0) {
-        // Go back to parent item view
-        renderItemView(viewStack[viewStack.length - 1].item);
+        const prev = viewStack[viewStack.length - 1];
+        if (prev.item) {
+          renderItemView(prev.item);
+        } else if (prev.collection) {
+          // Re-render the collection view
+          viewStack.pop(); // Remove it so openCollectionView can push it again
+          openCollectionView(prev.collection);
+          return;
+        }
         document.querySelector('main').scrollTop = 0;
       } else {
         // Back to list
@@ -1162,6 +1196,8 @@
       html += `<div class="item-detail-actions">
         <button class="sync-btn" data-action="copy" data-id="${item.id}">Copy</button>
         <button class="sync-btn" data-action="copy-link" data-id="${item.id}">Copy Link</button>
+        <button class="sync-btn" onclick="addToCollection(${item.id})">+ Collection</button>
+        <select id="add-to-coll-select" style="display:none;font-size:0.75rem;padding:0.25rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px" onchange="confirmAddToCollection(this)"></select>
       </div>`;
 
       // Children placeholder
@@ -1212,7 +1248,7 @@
           item.tags = updated.tags;
           renderItemView(item);
         }
-      }, { once: true });
+      });
 
       // Enter key in tag input
       container.querySelector(`[data-tag-input="${item.id}"]`)?.addEventListener('keydown', (e) => {
@@ -1382,23 +1418,44 @@
     document.getElementById('search-input').addEventListener('input', e => {
       clearTimeout(searchTimer);
       const q = e.target.value.trim();
-      if (!q) { document.getElementById('search-list').innerHTML = ''; return; }
+      const status = document.getElementById('search-status');
+      if (!q) {
+        document.getElementById('search-list').innerHTML = '';
+        status.textContent = 'Tip: use "quotes" for exact phrases, word* for prefix, AND/OR/NOT for boolean';
+        return;
+      }
       searchTimer = setTimeout(() => doSearch(q), 300);
     });
 
     async function doSearch(q) {
       const list = document.getElementById('search-list');
+      const status = document.getElementById('search-status');
       list.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      status.textContent = 'Searching...';
       try {
         const data = await api(`/api/items/search?q=${encodeURIComponent(q)}&limit=50`);
         list.innerHTML = '';
         if (data.items.length === 0) {
-          list.innerHTML = `<div class="empty-state">No results for "${escHtml(q)}"</div>`;
+          status.textContent = `No results for "${q}"`;
+          list.innerHTML = `<div class="empty-state">Try different keywords or use prefix matching (e.g. "learn*")</div>`;
           return;
         }
-        data.items.forEach(item => list.appendChild(renderCard(item)));
+        status.textContent = `${data.total} result${data.total !== 1 ? 's' : ''}`;
+        data.items.forEach(item => {
+          const card = renderCard(item);
+          // Replace preview with highlighted snippet if it contains markers
+          const preview = card.querySelector('.item-preview');
+          if (preview && item.preview && item.preview.includes('<<')) {
+            preview.innerHTML = item.preview
+              .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+              .replace(/&lt;&lt;/g, '<mark style="background:var(--accent);color:#fff;padding:0 2px;border-radius:2px">')
+              .replace(/&gt;&gt;/g, '</mark>');
+          }
+          list.appendChild(card);
+        });
       } catch (e) {
         list.innerHTML = '';
+        status.textContent = '';
         showToast(`Search failed: ${e.message}`, 'error');
       }
     }
@@ -2067,6 +2124,130 @@
         closeSettings();
       }
     });
+
+    /* ── Collections ── */
+    async function loadCollections() {
+      const list = document.getElementById('collections-list');
+      if (!list) return;
+      try {
+        const colls = await api('/api/collections');
+        if (!colls.length) {
+          list.innerHTML = '<div class="empty-state" style="padding:1rem;text-align:center;color:var(--muted)">No collections yet. Create one to group related items across sources.</div>';
+          return;
+        }
+        list.innerHTML = '';
+        colls.forEach(c => {
+          const card = document.createElement('div');
+          card.className = 'item-card';
+          card.innerHTML = `
+            <div class="item-card-header">
+              <span class="item-title">${escHtml(c.name)}</span>
+              <span class="item-date">${relTime(c.created_at)}</span>
+            </div>
+            ${c.description ? `<div class="item-preview">${escHtml(c.description)}</div>` : ''}
+            <div class="item-footer">
+              <span>${c.item_count} item${c.item_count !== 1 ? 's' : ''}</span>
+            </div>
+          `;
+          card.addEventListener('click', () => openCollectionView(c));
+          list.appendChild(card);
+        });
+      } catch (e) {
+        list.innerHTML = `<div class="empty-state" style="color:var(--error)">${escHtml(e.message)}</div>`;
+      }
+    }
+
+    async function openCollectionView(coll) {
+      try {
+        const detail = await api(`/api/collections/${coll.id}`);
+        const mainEl = document.querySelector('main');
+        // Push a collection entry (not an item) onto the view stack
+        viewStack.push({ scrollY: mainEl.scrollTop, collection: coll });
+
+        document.querySelector('nav').style.display = 'none';
+        document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
+        document.getElementById('item-view').style.display = 'block';
+
+        const container = document.getElementById('item-view-content');
+        let html = `<button class="item-view-back" onclick="closeItemView()">&larr; Back</button>`;
+        html += `<div class="item-view-title">${escHtml(detail.name)}</div>`;
+        if (detail.description) html += `<div class="item-view-meta">${escHtml(detail.description)}</div>`;
+        html += `<div class="item-view-children-title">${detail.items.length} items</div>`;
+        html += '<div class="item-list" id="collection-items-list"></div>';
+        container.innerHTML = html;
+
+        const itemList = document.getElementById('collection-items-list');
+        detail.items.forEach(item => {
+          const card = renderCard(item);
+          itemList.appendChild(card);
+        });
+
+        mainEl.scrollTop = 0;
+        if (!IS_TAURI) history.pushState({ collectionId: coll.id }, '', '/#collection/' + coll.id);
+      } catch (e) {
+        showToast('Failed to load collection: ' + e.message, 'error');
+      }
+    }
+
+    function openNewCollectionDialog() {
+      document.getElementById('coll-name').value = '';
+      document.getElementById('coll-desc').value = '';
+      document.getElementById('new-collection-modal').classList.add('open');
+      document.getElementById('coll-name').focus();
+    }
+
+    async function saveNewCollection() {
+      const name = document.getElementById('coll-name').value.trim();
+      if (!name) { showToast('Name required', 'error'); return; }
+      try {
+        await api('/api/collections', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            description: document.getElementById('coll-desc').value.trim() || null,
+          }),
+        });
+        document.getElementById('new-collection-modal').classList.remove('open');
+        showToast('Collection created', 'ok');
+        loadCollections();
+      } catch (e) {
+        showToast('Failed: ' + e.message, 'error');
+      }
+    }
+
+    async function addToCollection(itemId) {
+      try {
+        const colls = await api('/api/collections');
+        const options = colls.map(c => `<option value="${c.id}">${escHtml(c.name)} (${c.item_count})</option>`).join('');
+        const select = document.getElementById('add-to-coll-select');
+        if (select) {
+          select.innerHTML = '<option value="">Select collection...</option>' + options;
+          select.dataset.itemId = itemId;
+          select.style.display = '';
+          select.focus();
+        }
+      } catch (e) {
+        showToast('Failed to load collections: ' + e.message, 'error');
+      }
+    }
+
+    async function confirmAddToCollection(selectEl) {
+      const collId = selectEl.value;
+      const itemId = selectEl.dataset.itemId;
+      if (!collId) return;
+      try {
+        await api(`/api/collections/${collId}/items`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ item_id: parseInt(itemId) }),
+        });
+        showToast('Added to collection', 'ok');
+        selectEl.style.display = 'none';
+      } catch (e) {
+        showToast('Failed: ' + e.message, 'error');
+      }
+    }
 
     /* ── Reconnect ── */
     async function reconnect() {

@@ -94,6 +94,40 @@ class ItemCreateRequest(BaseModel):
     parent_id: int | None = None
 
 
+class CollectionCreate(BaseModel):
+    """Request to create a collection."""
+
+    name: str
+    description: str | None = None
+
+
+class CollectionResponse(BaseModel):
+    """Collection summary."""
+
+    id: int
+    name: str
+    description: str | None = None
+    item_count: int = 0
+    created_at: datetime | None = None
+
+
+class CollectionDetailResponse(BaseModel):
+    """Collection with its items."""
+
+    id: int
+    name: str
+    description: str | None = None
+    items: list[ItemResponse]
+    created_at: datetime | None = None
+
+
+class CollectionItemAdd(BaseModel):
+    """Request to add an item to a collection."""
+
+    item_id: int
+    note: str | None = None
+
+
 class ImportResponse(BaseModel):
     """Response from file import."""
 

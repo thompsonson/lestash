@@ -149,23 +149,88 @@ def list_items(
 def search_items(
     q: str = Query(..., min_length=1, description="Search query"),
     limit: int = Query(20, ge=1, le=100),
+    include_children: bool = Query(True, description="Include child items in results"),
 ):
-    """Full-text search using FTS5."""
+    """Full-text search using FTS5.
+
+    Supports FTS5 query syntax: AND, OR, NOT, "phrase search", prefix*.
+    Raw queries are sanitized to prevent FTS5 syntax errors.
+    """
+    # Sanitize query for FTS5: wrap bare terms for safe matching
+    fts_query = _sanitize_fts_query(q)
+
     with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT items.* FROM items
+        query = """
+            SELECT items.*,
+                   snippet(items_fts, 1, '<<', '>>', '...', 32) as search_snippet
+            FROM items
             JOIN items_fts ON items.id = items_fts.rowid
             WHERE items_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (q, limit),
-        ).fetchall()
+        """
+        params: list = [fts_query]
 
-        items = [_enrich_item(conn, Item.from_row(row)) for row in rows]
+        if not include_children:
+            query += " AND items.parent_id IS NULL"
+
+        query += " ORDER BY rank LIMIT ?"
+        params.append(limit)
+
+        try:
+            rows = conn.execute(query, params).fetchall()
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid search query: {q}") from None
+
+        items = []
+        for row in rows:
+            item = Item.from_row(row)
+            enriched = _enrich_item(conn, item)
+            # Override preview with search snippet if available
+            snippet = row["search_snippet"]
+            if snippet:
+                enriched.preview = snippet
+            items.append(enriched)
 
     return ItemListResponse(items=items, total=len(items), limit=limit, offset=0)
+
+
+def _sanitize_fts_query(q: str) -> str:
+    """Sanitize user input for FTS5 MATCH.
+
+    - Preserves quoted phrases ("exact match")
+    - Preserves explicit operators (AND, OR, NOT) when valid
+    - Adds implicit prefix matching (word -> word*) for better UX
+    - Strips dangling operators that would cause FTS5 syntax errors
+    """
+    q = q.strip()
+    if not q:
+        return q
+
+    # Strip unbalanced quotes
+    if q.count('"') % 2 != 0:
+        q = q.replace('"', "")
+
+    # Split into tokens, process each
+    words = q.split()
+    operators = {"AND", "OR", "NOT"}
+
+    # Remove leading/trailing operators
+    while words and words[0] in operators:
+        words.pop(0)
+    while words and words[-1] in operators:
+        words.pop()
+
+    if not words:
+        return q.replace('"', "").strip() + "*" if q.strip() else ""
+
+    # Add prefix matching to non-operator, non-quoted terms
+    result = []
+    for w in words:
+        if w in operators or w.endswith("*") or w.startswith('"'):
+            result.append(w)
+        else:
+            result.append(f"{w}*")
+
+    return " ".join(result)
 
 
 @router.post("", response_model=ItemResponse, status_code=201)
