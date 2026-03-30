@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -218,6 +218,30 @@ MIGRATIONS = [
         # in apply_migrations().
         """
         CREATE INDEX IF NOT EXISTS idx_items_parent ON items(parent_id);
+        """,
+    ),
+    (
+        6,
+        "Add collections tables for cross-source item grouping",
+        """
+        CREATE TABLE IF NOT EXISTS collections (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            metadata TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS collection_items (
+            collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE,
+            item_id INTEGER REFERENCES items(id) ON DELETE CASCADE,
+            added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            note TEXT,
+            PRIMARY KEY (collection_id, item_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_collection_items_item ON collection_items(item_id);
         """,
     ),
 ]
