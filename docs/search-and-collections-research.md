@@ -123,11 +123,12 @@ With vector embeddings, collections could be **auto-suggested**: "These 5 items 
 - Add search result highlighting
 - No schema changes needed
 
-### Phase 2: Collections (medium, high value)
-- Migration v6: collections + collection_items tables
-- API: CRUD for collections, add/remove items
-- UI: collection list view, add-to-collection action on items
-- ~200 lines of code
+### Phase 2: Collections — DONE (2026-03-30)
+- Migration v6: `collections` + `collection_items` tables
+- API: full CRUD at `/api/collections`, add/remove items
+- UI: Collections tab with list view, collection detail view (master-detail navigation)
+- "Add to Collection" action in item detail view with dropdown selector
+- ~420 lines of code (routes, models, UI)
 
 ### Phase 3: Vector search (medium-large)
 - Install sqlite-vec extension
@@ -145,9 +146,9 @@ With vector embeddings, collections could be **auto-suggested**: "These 5 items 
 
 ## Summary
 
-| Feature | Effort | Value | Dependencies |
-|---------|--------|-------|--------------|
-| Better FTS5 UI | Small | Medium | None |
-| Collections | Medium | High | Migration v6 |
-| sqlite-vec search | Medium-Large | High | sqlite-vec extension, embedding model |
-| Auto-suggestions | Large | Medium | Requires vector search |
+| Feature | Effort | Value | Status |
+|---------|--------|-------|--------|
+| Better FTS5 UI | Small | Medium | Planned |
+| Collections | Medium | High | **Done** |
+| sqlite-vec search | Medium-Large | High | Planned |
+| Auto-suggestions | Large | Medium | Future |
