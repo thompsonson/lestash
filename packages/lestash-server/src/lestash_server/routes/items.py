@@ -175,7 +175,10 @@ def search_items(
         query += " ORDER BY rank LIMIT ?"
         params.append(limit)
 
-        rows = conn.execute(query, params).fetchall()
+        try:
+            rows = conn.execute(query, params).fetchall()
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid search query: {q}") from None
 
         items = []
         for row in rows:
@@ -194,23 +197,40 @@ def _sanitize_fts_query(q: str) -> str:
     """Sanitize user input for FTS5 MATCH.
 
     - Preserves quoted phrases ("exact match")
-    - Preserves explicit operators (AND, OR, NOT)
+    - Preserves explicit operators (AND, OR, NOT) when valid
     - Adds implicit prefix matching (word -> word*) for better UX
-    - Escapes special characters that would cause FTS5 syntax errors
+    - Strips dangling operators that would cause FTS5 syntax errors
     """
-    import re
-
     q = q.strip()
     if not q:
         return q
 
-    # If user already uses FTS5 syntax (quotes, AND/OR/NOT, *), pass through
-    if re.search(r'["\*]|(?<!\w)(AND|OR|NOT)(?!\w)', q):
-        return q
+    # Strip unbalanced quotes
+    if q.count('"') % 2 != 0:
+        q = q.replace('"', "")
 
-    # Otherwise, split into words and add prefix matching
+    # Split into tokens, process each
     words = q.split()
-    return " ".join(f"{w}*" for w in words if w)
+    operators = {"AND", "OR", "NOT"}
+
+    # Remove leading/trailing operators
+    while words and words[0] in operators:
+        words.pop(0)
+    while words and words[-1] in operators:
+        words.pop()
+
+    if not words:
+        return q.replace('"', "").strip() + "*" if q.strip() else ""
+
+    # Add prefix matching to non-operator, non-quoted terms
+    result = []
+    for w in words:
+        if w in operators or w.endswith("*") or w.startswith('"'):
+            result.append(w)
+        else:
+            result.append(f"{w}*")
+
+    return " ".join(result)
 
 
 @router.post("", response_model=ItemResponse, status_code=201)
