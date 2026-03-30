@@ -618,6 +618,11 @@
       <div class="filters">
         <input type="text" class="search-input" id="search-input"
                placeholder="Search your knowledge base..." autocomplete="off">
+        <select id="search-mode" style="font-size:0.8rem">
+          <option value="hybrid">Hybrid</option>
+          <option value="keyword">Keyword</option>
+          <option value="semantic">Semantic</option>
+        </select>
       </div>
       <div id="search-status" style="font-size:0.75rem;color:var(--muted);margin-bottom:0.5rem"></div>
       <div class="item-list" id="search-list"></div>
@@ -1430,10 +1435,11 @@
     async function doSearch(q) {
       const list = document.getElementById('search-list');
       const status = document.getElementById('search-status');
+      const mode = document.getElementById('search-mode').value;
       list.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
-      status.textContent = 'Searching...';
+      status.textContent = `Searching (${mode})...`;
       try {
-        const data = await api(`/api/items/search?q=${encodeURIComponent(q)}&limit=50`);
+        const data = await api(`/api/items/search?q=${encodeURIComponent(q)}&limit=50&mode=${mode}`);
         list.innerHTML = '';
         if (data.items.length === 0) {
           status.textContent = `No results for "${q}"`;
