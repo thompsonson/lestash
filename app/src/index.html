@@ -618,6 +618,11 @@
       <div class="filters">
         <input type="text" class="search-input" id="search-input"
                placeholder="Search your knowledge base..." autocomplete="off">
+        <select id="search-mode" style="font-size:0.8rem">
+          <option value="hybrid">Hybrid</option>
+          <option value="keyword">Keyword</option>
+          <option value="semantic">Semantic</option>
+        </select>
       </div>
       <div id="search-status" style="font-size:0.75rem;color:var(--muted);margin-bottom:0.5rem"></div>
       <div class="item-list" id="search-list"></div>
@@ -1208,6 +1213,14 @@
         </div>`;
       }
 
+      // Similar items (parent items only)
+      if (!item.parent_id) {
+        html += `<div class="item-view-children" style="margin-top:1rem">
+          <div class="item-view-children-title">Similar items</div>
+          <div class="item-list" id="similar-list"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
+        </div>`;
+      }
+
       // Debug section
       html += `<div class="debug-only" style="margin-top:0.75rem">
         <hr style="border-color:var(--border);margin-bottom:0.75rem">
@@ -1266,6 +1279,26 @@
             list.appendChild(childCard);
           });
         }).catch(() => {});
+      }
+
+      // Load similar items (parent items only)
+      if (!item.parent_id) {
+        api(`/api/embeddings/similar/${item.id}?limit=5`).then(data => {
+          const list = document.getElementById('similar-list');
+          if (!list) return;
+          if (!data.length) {
+            list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">No embeddings yet — run rebuild</span>';
+            return;
+          }
+          list.innerHTML = '';
+          data.forEach(sim => {
+            const card = renderCard(sim);
+            list.appendChild(card);
+          });
+        }).catch(() => {
+          const list = document.getElementById('similar-list');
+          if (list) list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Unavailable</span>';
+        });
       }
     }
 
@@ -1430,10 +1463,11 @@
     async function doSearch(q) {
       const list = document.getElementById('search-list');
       const status = document.getElementById('search-status');
+      const mode = document.getElementById('search-mode').value;
       list.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
-      status.textContent = 'Searching...';
+      status.textContent = `Searching (${mode})...`;
       try {
-        const data = await api(`/api/items/search?q=${encodeURIComponent(q)}&limit=50`);
+        const data = await api(`/api/items/search?q=${encodeURIComponent(q)}&limit=50&mode=${mode}`);
         list.innerHTML = '';
         if (data.items.length === 0) {
           status.textContent = `No results for "${q}"`;

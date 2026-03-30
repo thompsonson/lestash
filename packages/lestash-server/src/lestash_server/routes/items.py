@@ -1,6 +1,7 @@
 """Item API endpoints."""
 
 import json
+import logging
 
 from fastapi import APIRouter, HTTPException, Query
 from lestash.core.database import add_tag, get_tags, list_tags, remove_tag
@@ -15,6 +16,8 @@ from lestash_server.models import (
     TagAddRequest,
     TagListResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/items", tags=["items"])
 
@@ -150,44 +153,102 @@ def search_items(
     q: str = Query(..., min_length=1, description="Search query"),
     limit: int = Query(20, ge=1, le=100),
     include_children: bool = Query(True, description="Include child items in results"),
+    mode: str = Query("hybrid", description="Search mode: keyword, semantic, hybrid"),
 ):
-    """Full-text search using FTS5.
+    """Search items using keyword (FTS5), semantic (vector), or hybrid mode.
 
     Supports FTS5 query syntax: AND, OR, NOT, "phrase search", prefix*.
-    Raw queries are sanitized to prevent FTS5 syntax errors.
     """
-    # Sanitize query for FTS5: wrap bare terms for safe matching
     fts_query = _sanitize_fts_query(q)
 
     with get_db() as conn:
-        query = """
-            SELECT items.*,
-                   snippet(items_fts, 1, '<<', '>>', '...', 32) as search_snippet
-            FROM items
-            JOIN items_fts ON items.id = items_fts.rowid
-            WHERE items_fts MATCH ?
-        """
-        params: list = [fts_query]
+        fts_results: dict[int, dict] = {}
+        vec_results: dict[int, float] = {}
 
-        if not include_children:
-            query += " AND items.parent_id IS NULL"
+        # FTS5 keyword search
+        if mode in ("keyword", "hybrid"):
+            query = """
+                SELECT items.*,
+                       snippet(items_fts, 1, '<<', '>>', '...', 32) as search_snippet
+                FROM items
+                JOIN items_fts ON items.id = items_fts.rowid
+                WHERE items_fts MATCH ?
+            """
+            params: list = [fts_query]
+            if not include_children:
+                query += " AND items.parent_id IS NULL"
+            query += " ORDER BY rank LIMIT ?"
+            params.append(limit * 2)
 
-        query += " ORDER BY rank LIMIT ?"
-        params.append(limit)
+            try:
+                rows = conn.execute(query, params).fetchall()
+                for rank, row in enumerate(rows):
+                    snippet = row["search_snippet"]
+                    fts_results[row["id"]] = {
+                        "row": row,
+                        "rank": rank,
+                        "snippet": snippet,
+                    }
+            except Exception:
+                if mode == "keyword":
+                    raise HTTPException(
+                        status_code=400, detail=f"Invalid search query: {q}"
+                    ) from None
 
-        try:
-            rows = conn.execute(query, params).fetchall()
-        except Exception:
-            raise HTTPException(status_code=400, detail=f"Invalid search query: {q}") from None
+        # Vector semantic search
+        if mode in ("semantic", "hybrid"):
+            try:
+                from lestash.core.embeddings import (
+                    embed_text,
+                    ensure_vec_table,
+                    load_vec_extension,
+                    search_similar,
+                )
 
+                load_vec_extension(conn)
+                ensure_vec_table(conn)
+                query_emb = embed_text(q)
+                similar = search_similar(conn, query_emb, limit=limit * 2)
+                for rank, (item_id, _distance) in enumerate(similar):
+                    vec_results[item_id] = rank
+            except Exception:
+                logger.warning("Vector search failed, falling back to keyword", exc_info=True)
+                if mode == "semantic" and not fts_results:
+                    raise HTTPException(
+                        status_code=500, detail="Vector search unavailable"
+                    ) from None
+
+        # Merge results via RRF (Reciprocal Rank Fusion)
+        k = 60  # RRF constant
+        scores: dict[int, float] = {}
+        all_ids = set(fts_results.keys()) | set(vec_results.keys())
+
+        for item_id in all_ids:
+            score = 0.0
+            if item_id in fts_results:
+                score += 1.0 / (k + fts_results[item_id]["rank"])
+            if item_id in vec_results:
+                score += 1.0 / (k + vec_results[item_id])
+            scores[item_id] = score
+
+        ranked_ids = sorted(scores, key=lambda x: scores[x], reverse=True)[:limit]
+
+        # Build response
         items = []
-        for row in rows:
-            item = Item.from_row(row)
-            enriched = _enrich_item(conn, item)
-            # Override preview with search snippet if available
-            snippet = row["search_snippet"]
-            if snippet:
-                enriched.preview = snippet
+        for item_id in ranked_ids:
+            if item_id in fts_results:
+                row = fts_results[item_id]["row"]
+                item = Item.from_row(row)
+                enriched = _enrich_item(conn, item)
+                snippet = fts_results[item_id]["snippet"]
+                if snippet:
+                    enriched.preview = snippet
+            else:
+                row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+                if not row:
+                    continue
+                item = Item.from_row(row)
+                enriched = _enrich_item(conn, item)
             items.append(enriched)
 
     return ItemListResponse(items=items, total=len(items), limit=limit, offset=0)

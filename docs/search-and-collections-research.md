@@ -134,17 +134,19 @@ With vector embeddings, collections could be **auto-suggested**: "These 5 items 
 - "Add to Collection" action in item detail view with dropdown selector
 - ~420 lines of code (routes, models, UI)
 
-### Phase 3: Vector search (medium-large)
-- Install sqlite-vec extension
-- Add embedding generation (sentence-transformers or API)
-- Migration v7: add embedding column or vec table
-- Hybrid search endpoint (FTS5 + vector, merged ranking)
-- Background job to embed existing items
-- ~400 lines of code + model download
+### Phase 3: Vector search — DONE (2026-03-30)
+- sqlite-vec extension for vector storage (vec0 virtual table)
+- sentence-transformers `all-MiniLM-L6-v2` (384 dims) for embeddings
+- Hybrid search: FTS5 + vector similarity merged via Reciprocal Rank Fusion (RRF)
+- Search mode dropdown in UI: Hybrid / Keyword / Semantic
+- "Similar items" section in item detail view (5 semantically related items)
+- CLI: `lestash embeddings status` and `rebuild` with progress bar
+- Server: `/api/embeddings/status`, `/api/embeddings/rebuild`, `/api/embeddings/similar/{id}`
+- 2,598 parent items embedded in ~10 seconds on CPU
+- See `docs/vector-search-design.md` for full design
 
 ### Phase 4: Smart features (future)
 - Auto-suggest collections based on vector similarity
-- "Related items" sidebar in detail view
 - Cluster visualization
 - Semantic deduplication
 
@@ -154,5 +156,5 @@ With vector embeddings, collections could be **auto-suggested**: "These 5 items 
 |---------|--------|-------|--------|
 | Better FTS5 UI | Small | Medium | **Done** |
 | Collections | Medium | High | **Done** |
-| sqlite-vec search | Medium-Large | High | Planned |
+| sqlite-vec search | Medium-Large | High | **Done** |
 | Auto-suggestions | Large | Medium | Future |
