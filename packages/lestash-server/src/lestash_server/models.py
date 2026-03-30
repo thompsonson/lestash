@@ -20,12 +20,14 @@ class ItemResponse(BaseModel):
     fetched_at: datetime
     is_own_content: bool = False
     metadata: dict[str, Any] | None = None
+    parent_id: int | None = None
     # Enriched fields
     subtype: str
     author_display: str
     actor_display: str
     preview: str
     tags: list[str] = []
+    child_count: int = 0
 
 
 class ItemListResponse(BaseModel):
@@ -89,6 +91,7 @@ class ItemCreateRequest(BaseModel):
     created_at: datetime | None = None
     is_own_content: bool = True
     metadata: dict[str, Any] | None = None
+    parent_id: int | None = None
 
 
 class ImportResponse(BaseModel):
@@ -99,6 +102,12 @@ class ImportResponse(BaseModel):
     items_added: int
     items_updated: int
     errors: list[str]
+
+
+class DriveImportRequest(BaseModel):
+    """Request to import files from Google Drive."""
+
+    file_ids: list[str]
 
 
 class RefineRequest(BaseModel):

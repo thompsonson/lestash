@@ -105,6 +105,11 @@
       flex: 1; min-width: 200px;
     }
 
+    /* ── Debug mode toggle ── */
+    .debug-only { display: none; }
+    body.debug-mode .debug-only { display: block; }
+    body.debug-mode #debug-toggle { color: var(--accent); }
+
     /* ── Item cards ── */
     .item-list { display: flex; flex-direction: column; gap: 0.5rem; }
     .item-card {
@@ -118,20 +123,23 @@
     .item-card:hover { border-color: var(--accent); }
     .item-card-header {
       display: flex; align-items: center; gap: 0.5rem;
-      margin-bottom: 0.4rem;
+      margin-bottom: 0.3rem;
     }
-    .source-badge {
-      font-size: 0.7rem; padding: 0.15rem 0.4rem;
-      border-radius: 3px; color: #fff; white-space: nowrap;
-      font-weight: bold;
+    .source-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
     }
-    .source-badge.linkedin { background: var(--src-linkedin); }
-    .source-badge.bluesky { background: var(--src-bluesky); }
-    .source-badge.youtube { background: var(--src-youtube); }
-    .source-badge.arxiv { background: var(--src-arxiv); }
-    .source-badge.microblog { background: var(--src-microblog); }
-    .item-subtype {
-      font-size: 0.75rem; color: var(--muted);
+    .source-dot.linkedin { background: var(--src-linkedin); }
+    .source-dot.bluesky { background: var(--src-bluesky); }
+    .source-dot.youtube { background: var(--src-youtube); }
+    .source-dot.arxiv { background: var(--src-arxiv); }
+    .source-dot.microblog { background: var(--src-microblog); }
+    .source-dot.voice { background: var(--ok); }
+    .source-dot.notebooklm { background: #f9ab00; }
+    .source-dot.gemini { background: #8e44ef; }
+    .source-dot.share { background: var(--muted); }
+    .item-title {
+      font-weight: 600; font-size: 0.9rem; flex: 1;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .item-date {
       margin-left: auto; font-size: 0.75rem; color: var(--muted);
@@ -141,6 +149,11 @@
       font-size: 0.85rem; color: var(--text);
       line-height: 1.4;
     }
+    .item-footer {
+      display: flex; gap: 0.75rem; margin-top: 0.3rem;
+      font-size: 0.75rem; color: var(--muted);
+    }
+    .child-count { color: var(--accent); }
     .item-meta {
       display: flex; gap: 1rem; margin-top: 0.3rem;
       font-size: 0.75rem; color: var(--muted);
@@ -164,6 +177,18 @@
       background: var(--bg); color: var(--text);
       border: 1px solid var(--border); border-radius: 4px;
     }
+    /* Legacy source-badge (used in debug mode) */
+    .source-badge {
+      font-size: 0.7rem; padding: 0.15rem 0.4rem;
+      border-radius: 3px; color: #fff; white-space: nowrap;
+      font-weight: bold;
+    }
+    .source-badge.linkedin { background: var(--src-linkedin); }
+    .source-badge.bluesky { background: var(--src-bluesky); }
+    .source-badge.youtube { background: var(--src-youtube); }
+    .source-badge.arxiv { background: var(--src-arxiv); }
+    .source-badge.microblog { background: var(--src-microblog); }
+    .item-subtype { font-size: 0.75rem; color: var(--muted); }
 
     /* ── Item detail (expanded) ── */
     .item-detail {
@@ -173,7 +198,7 @@
       padding: 1rem;
       margin-top: 0.5rem;
       font-size: 0.85rem;
-      line-height: 1.5;
+      line-height: 1.6;
     }
     .item-detail-field {
       margin-bottom: 0.5rem;
@@ -184,7 +209,6 @@
     }
     .item-detail-content {
       white-space: pre-wrap; word-break: break-word;
-      max-height: 400px; overflow-y: auto;
     }
     .item-detail a {
       color: var(--accent); text-decoration: none;
@@ -200,11 +224,30 @@
       overflow-y: auto;
       color: var(--muted);
     }
-
     .item-detail-actions {
       display: flex; gap: 0.5rem; margin-top: 0.75rem;
     }
     .item-detail-actions .sync-btn { font-size: 0.75rem; padding: 0.3rem 0.6rem; }
+
+    /* ── Item detail view (full screen) ── */
+    #item-view { padding: 0.25rem 0; }
+    .item-view-back {
+      display: inline-block; color: var(--accent); background: none; border: none;
+      cursor: pointer; font-size: 0.85rem; padding: 0.4rem 0;
+      font-family: inherit; min-height: 44px;
+    }
+    .item-view-back:hover { text-decoration: underline; }
+    .item-view-title { font-size: 1.1rem; font-weight: bold; margin-bottom: 0.3rem; }
+    .item-view-meta { font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem; }
+    .item-view-content {
+      white-space: pre-wrap; word-break: break-word;
+      line-height: 1.6; font-size: 0.9rem;
+    }
+    .item-view-children { margin-top: 1rem; }
+    .item-view-children-title {
+      font-size: 0.85rem; color: var(--muted);
+      margin-bottom: 0.5rem; font-weight: bold;
+    }
 
     /* ── Single item view ── */
     .single-item-view { padding: 0.5rem 0; }
@@ -528,6 +571,7 @@
     <h1>LeStash</h1>
     <div class="dot" id="dot" title="Server connection"></div>
     <span class="spacer"></span>
+    <button class="gear-btn" id="debug-toggle" title="Toggle debug mode">&#128295;</button>
     <button class="gear-btn" id="settings-btn" title="Settings">&#9881;</button>
   </header>
 
@@ -662,6 +706,11 @@
       </div>
       <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">API Log</h3>
       <div id="debug-log" style="max-height:60vh;overflow-y:auto;font-size:0.75rem"></div>
+    </div>
+
+    <!-- Item detail view (replaces list when an item is clicked) -->
+    <div id="item-view" style="display:none">
+      <div id="item-view-content"></div>
     </div>
   </main>
 
@@ -945,13 +994,13 @@
     }
 
     /* ── Tabs ── */
-    document.getElementById('tabs').addEventListener('click', e => {
-      if (e.target.tagName !== 'BUTTON') return;
+    function switchTab(tab, skipHistory) {
       document.querySelectorAll('#tabs button').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-      e.target.classList.add('active');
-      const tab = e.target.dataset.tab;
-      document.getElementById(`tab-${tab}`).classList.add('active');
+      const btn = document.querySelector(`#tabs [data-tab="${tab}"]`);
+      if (btn) btn.classList.add('active');
+      const content = document.getElementById(`tab-${tab}`);
+      if (content) content.classList.add('active');
       if (tab === 'feed' && feedItems.length === 0) loadFeed();
       if (tab === 'recent') loadRecent();
       if (tab === 'search') document.getElementById('search-input').focus();
@@ -959,6 +1008,14 @@
       if (tab === 'sources') loadSources();
       if (tab === 'stats') loadStats();
       if (tab === 'debug') { renderDebugInfo(); renderDebugLog(); }
+      if (!IS_TAURI && !skipHistory) {
+        history.pushState({ tab }, '', '/#' + tab);
+      }
+    }
+
+    document.getElementById('tabs').addEventListener('click', e => {
+      if (e.target.tagName !== 'BUTTON') return;
+      switchTab(e.target.dataset.tab);
     });
 
     /* ── Relative time ── */
@@ -989,54 +1046,111 @@
     function renderCard(item) {
       const card = document.createElement('div');
       card.className = 'item-card';
+      const emoji = item.metadata && item.metadata.emoji ? item.metadata.emoji + ' ' : '';
+      const displayTitle = item.title || item.preview || '(untitled)';
       card.innerHTML = `
         <div class="item-card-header">
-          <span class="source-badge ${sourceClass(item.subtype)}">${sourceName(item.subtype)}</span>
-          <span class="item-subtype">${item.subtype}</span>
+          <span class="source-dot ${sourceClass(item.subtype)}"></span>
+          <span class="item-title">${emoji}${escHtml(displayTitle)}</span>
           <span class="item-date">${relTime(item.created_at)}</span>
         </div>
-        ${item.title ? `<div style="font-size:0.85rem;font-weight:bold;margin:0.25rem 0">${escHtml(item.title)}</div>` : ''}
-        <div class="item-preview">${escHtml(item.preview)}</div>
-        ${item.tags && item.tags.length ? `<div class="item-tags">${item.tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>` : ''}
-        <div class="item-meta">
-          ${item.author_display !== '-' ? `<span>by ${escHtml(item.author_display)}</span>` : ''}
-          ${item.actor_display !== '-' ? `<span>actor: ${escHtml(item.actor_display)}</span>` : ''}
-          ${item.is_own_content ? '<span style="color:var(--ok)">own</span>' : ''}
+        ${item.title && item.preview ? `<div class="item-preview">${escHtml(item.preview)}</div>` : ''}
+        <div class="item-footer">
+          <span>${sourceName(item.subtype)}</span>
+          ${item.child_count ? `<span class="child-count">${item.child_count} children</span>` : ''}
+        </div>
+        <div class="debug-only">
+          <div style="margin-top:0.3rem">
+            <span class="source-badge ${sourceClass(item.subtype)}">${sourceName(item.subtype)}</span>
+            <span class="item-subtype">${item.subtype}</span>
+          </div>
+          <div class="item-meta">
+            ${item.author_display !== '-' ? `<span>by ${escHtml(item.author_display)}</span>` : ''}
+            ${item.actor_display !== '-' ? `<span>actor: ${escHtml(item.actor_display)}</span>` : ''}
+            ${item.is_own_content ? '<span style="color:var(--ok)">own</span>' : ''}
+            <span>id:${item.id}</span>
+          </div>
         </div>
       `;
-      card.addEventListener('click', () => toggleDetail(card, item));
+      card.addEventListener('click', () => openItemView(item));
       return card;
     }
 
-    function toggleDetail(card, item) {
-      const existing = card.querySelector('.item-detail');
-      if (existing) { existing.remove(); return; }
+    /* ── Master-detail navigation ── */
+    const viewStack = [];
 
-      const detail = document.createElement('div');
-      detail.className = 'item-detail';
+    function openItemView(item, skipHistory) {
+      const mainEl = document.querySelector('main');
+      viewStack.push({ scrollY: mainEl.scrollTop, item });
 
-      let html = '';
-      html += `<div class="item-detail-field"><label>ID</label>${item.id}</div>`;
-      html += `<div class="item-detail-field"><label>Type</label>${escHtml(item.subtype)}</div>`;
-      if (item.title) html += `<div class="item-detail-field"><label>Title</label>${escHtml(item.title)}</div>`;
-      if (item.url) html += `<div class="item-detail-field"><label>URL</label><a href="${escHtml(item.url)}" target="_blank" rel="noopener">${escHtml(item.url)}</a></div>`;
-      html += `<div class="item-detail-field"><label>Author</label>${escHtml(item.author_display)}</div>`;
-      if (item.created_at) html += `<div class="item-detail-field"><label>Created</label>${new Date(item.created_at).toLocaleString()}</div>`;
-      html += `<div class="item-detail-field"><label>Content</label><div class="item-detail-content">${escHtml(item.content)}</div></div>`;
+      // Hide tabs and tab content
+      document.querySelector('nav').style.display = 'none';
+      document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
+
+      // Show item view
+      const view = document.getElementById('item-view');
+      view.style.display = 'block';
+      renderItemView(item);
+      mainEl.scrollTop = 0;
+
+      // Push browser history (web only)
+      if (!IS_TAURI && !skipHistory) {
+        history.pushState({ itemId: item.id }, '', '/items/' + item.id);
+      }
+    }
+
+    function closeItemView() {
+      // In browser, let history.back() trigger popstate which handles the DOM update
+      if (!IS_TAURI && viewStack.length > 0) {
+        history.back();
+        return;
+      }
+      _doCloseItemView();
+    }
+
+    function _doCloseItemView() {
+      viewStack.pop();
+      const view = document.getElementById('item-view');
+
+      if (viewStack.length > 0) {
+        // Go back to parent item view
+        renderItemView(viewStack[viewStack.length - 1].item);
+        document.querySelector('main').scrollTop = 0;
+      } else {
+        // Back to list
+        view.style.display = 'none';
+        document.querySelector('nav').style.display = '';
+        document.querySelectorAll('.tab-content').forEach(t => t.style.display = '');
+        const active = document.querySelector('.tab-content.active');
+        if (active) active.style.display = 'block';
+      }
+    }
+
+    function renderItemView(item) {
+      const container = document.getElementById('item-view-content');
+      const emoji = item.metadata && item.metadata.emoji ? item.metadata.emoji + ' ' : '';
+      const dateFmt = item.created_at
+        ? new Date(item.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+        : '';
+
+      let html = `<button class="item-view-back" onclick="closeItemView()">&larr; Back</button>`;
+      html += `<div class="item-view-title">${emoji}${escHtml(item.title || item.preview || '(untitled)')}</div>`;
+      html += `<div class="item-view-meta">${sourceName(item.subtype)}${dateFmt ? ' &middot; ' + dateFmt : ''}${item.url ? ' &middot; <a href="' + escHtml(item.url) + '" target="_blank" rel="noopener" style="color:var(--accent)">link</a>' : ''}</div>`;
+      html += `<div class="item-view-content">${escHtml(item.content)}</div>`;
+
       if (item.metadata && item.metadata.processed_text) {
-        html += `<div class="item-detail-field"><label>Processed Note</label><div class="item-detail-content">${escHtml(item.metadata.processed_text)}</div></div>`;
+        html += `<div class="item-detail-field" style="margin-top:0.75rem"><label>Processed Note</label><div class="item-view-content">${escHtml(item.metadata.processed_text)}</div></div>`;
       }
       if (item.source_type === 'voice') {
-        html += `<div style="margin-top:0.5rem"><button class="sync-btn" onclick="event.stopPropagation();openProcessDialog(${item.id})">Process</button></div>`;
+        html += `<div style="margin-top:0.5rem"><button class="sync-btn" onclick="openProcessDialog(${item.id})">Process</button></div>`;
       }
-      if (item.metadata) {
-        html += `<div class="item-detail-field"><label>Metadata</label><div class="item-detail-meta">${escHtml(JSON.stringify(item.metadata, null, 2))}</div></div>`;
-      }
-      // Tags section
+
+      // Tags
+      html += '<hr style="border-color:var(--border);margin:0.75rem 0">';
       const currentTags = (item.tags || []).map(t =>
         `<span class="tag-chip">${escHtml(t)}<span class="tag-remove" data-action="remove-tag" data-tag="${escHtml(t)}" data-id="${item.id}">&times;</span></span>`
       ).join('');
-      html += `<div class="item-detail-field"><label>Tags</label>
+      html += `<div class="item-detail-field">
         <div class="item-tags">${currentTags || '<span style="color:var(--muted);font-size:0.75rem">No tags</span>'}</div>
         <div class="tag-input-row">
           <input type="text" placeholder="Add tag..." data-tag-input="${item.id}">
@@ -1044,27 +1158,49 @@
         </div>
       </div>`;
 
+      // Actions
       html += `<div class="item-detail-actions">
         <button class="sync-btn" data-action="copy" data-id="${item.id}">Copy</button>
         <button class="sync-btn" data-action="copy-link" data-id="${item.id}">Copy Link</button>
       </div>`;
 
-      detail.innerHTML = html;
-      detail.addEventListener('click', async (e) => {
+      // Children placeholder
+      if (item.child_count > 0) {
+        html += `<div class="item-view-children">
+          <div class="item-view-children-title">${item.child_count} items</div>
+          <div class="item-list" id="children-list"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
+        </div>`;
+      }
+
+      // Debug section
+      html += `<div class="debug-only" style="margin-top:0.75rem">
+        <hr style="border-color:var(--border);margin-bottom:0.75rem">
+        <div class="item-detail-field"><label>ID</label>${item.id}</div>
+        <div class="item-detail-field"><label>Source ID</label>${escHtml(item.source_id || '-')}</div>
+        <div class="item-detail-field"><label>Type</label>${escHtml(item.subtype)}</div>
+        <div class="item-detail-field"><label>Author</label>${escHtml(item.author_display)}</div>
+        <div class="item-detail-field"><label>Actor</label>${escHtml(item.actor_display)}</div>
+        <div class="item-detail-field"><label>Fetched</label>${item.fetched_at ? new Date(item.fetched_at).toLocaleString() : '-'}</div>
+        <div class="item-detail-field"><label>Parent ID</label>${item.parent_id || '-'}</div>
+        ${item.metadata ? `<div class="item-detail-field"><label>Metadata</label><div class="item-detail-meta">${escHtml(JSON.stringify(item.metadata, null, 2))}</div></div>` : ''}
+      </div>`;
+
+      container.innerHTML = html;
+
+      // Event delegation for actions
+      container.addEventListener('click', async (e) => {
         const btn = e.target.closest('[data-action]');
         if (!btn) return;
-        e.stopPropagation();
         if (btn.dataset.action === 'copy') copyToClipboard(item.content, 'Copied to clipboard');
         if (btn.dataset.action === 'copy-link') copyToClipboard(`${getApiBase()}/items/${item.id}`, 'Link copied');
         if (btn.dataset.action === 'remove-tag') {
           await api(`/api/items/${btn.dataset.id}/tags/${encodeURIComponent(btn.dataset.tag)}`, { method: 'DELETE' });
           const updated = await api(`/api/items/${btn.dataset.id}`);
           item.tags = updated.tags;
-          card.querySelector('.item-detail').remove();
-          toggleDetail(card, item);
+          renderItemView(item);
         }
         if (btn.dataset.action === 'add-tag') {
-          const input = detail.querySelector(`[data-tag-input="${btn.dataset.id}"]`);
+          const input = container.querySelector(`[data-tag-input="${btn.dataset.id}"]`);
           const name = input.value.trim();
           if (!name) return;
           await api(`/api/items/${btn.dataset.id}/tags`, {
@@ -1072,26 +1208,29 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name }),
           });
-          input.value = '';
           const updated = await api(`/api/items/${btn.dataset.id}`);
           item.tags = updated.tags;
-          card.querySelector('.item-detail').remove();
-          toggleDetail(card, item);
-          // Also update tag chips in the card
-          const tagsDiv = card.querySelector('.item-tags');
-          if (tagsDiv && !card.querySelector('.item-detail .item-tags') === tagsDiv) {
-            tagsDiv.innerHTML = item.tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('');
-          }
+          renderItemView(item);
         }
+      }, { once: true });
+
+      // Enter key in tag input
+      container.querySelector(`[data-tag-input="${item.id}"]`)?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') container.querySelector(`[data-action="add-tag"][data-id="${item.id}"]`).click();
       });
-      // Allow Enter key in tag input
-      detail.querySelector(`[data-tag-input="${item.id}"]`)?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.stopPropagation();
-          detail.querySelector(`[data-action="add-tag"][data-id="${item.id}"]`).click();
-        }
-      });
-      card.appendChild(detail);
+
+      // Load children
+      if (item.child_count > 0) {
+        api(`/api/items?parent_id=${item.id}&limit=50`).then(data => {
+          const list = document.getElementById('children-list');
+          if (!list) return;
+          list.innerHTML = '';
+          data.items.forEach(child => {
+            const childCard = renderCard(child);
+            list.appendChild(childCard);
+          });
+        }).catch(() => {});
+      }
     }
 
     function escHtml(s) {
@@ -1149,9 +1288,20 @@
 
     function loadMoreFeed() { loadFeed(true); }
 
-    document.getElementById('feed-source').addEventListener('change', () => loadFeed());
+    function pushFilterState() {
+      if (IS_TAURI) return;
+      const source = document.getElementById('feed-source').value;
+      const tag = document.getElementById('feed-tag').value;
+      const params = new URLSearchParams();
+      if (source) params.set('source', source);
+      if (tag) params.set('tag', tag);
+      const qs = params.toString();
+      history.pushState({ filters: true }, '', qs ? '/?' + qs : '/');
+    }
+
+    document.getElementById('feed-source').addEventListener('change', () => { pushFilterState(); loadFeed(); });
     document.getElementById('feed-own').addEventListener('change', () => loadFeed());
-    document.getElementById('feed-tag').addEventListener('change', () => loadFeed());
+    document.getElementById('feed-tag').addEventListener('change', () => { pushFilterState(); loadFeed(); });
 
     /* ── Subtype filters ── */
     const SUBTYPE_STORAGE_KEY = 'lestash-subtype-filters';
@@ -1841,14 +1991,17 @@
     /* ── Populate source filter ── */
     async function populateSourceFilter() {
       try {
-        const sources = await api('/api/sources');
         const sel = document.getElementById('feed-source');
-        sources.forEach(s => {
-          const opt = document.createElement('option');
-          opt.value = s.name;
-          opt.textContent = s.name;
-          sel.appendChild(opt);
-        });
+        // Use stats endpoint to get all source types with counts
+        const stats = await api('/api/stats');
+        if (stats.sources) {
+          Object.entries(stats.sources).sort().forEach(([src, count]) => {
+            const opt = document.createElement('option');
+            opt.value = src;
+            opt.textContent = `${src} (${count})`;
+            sel.appendChild(opt);
+          });
+        }
       } catch {}
     }
 
@@ -1953,42 +2106,66 @@
       const match = window.location.pathname.match(/^\/items\/(\d+)$/);
       if (!match) return false;
       const itemId = match[1];
-      // Hide normal UI, show single item
-      document.querySelector('nav').style.display = 'none';
-      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-      const container = document.createElement('div');
-      container.className = 'single-item-view';
-      container.innerHTML = '<a class="single-item-back" href="/">← Back to LeStash</a><div id="single-item-content">Loading...</div>';
-      document.querySelector('main').appendChild(container);
-      checkHealth().then(() => loadSingleItem(itemId));
+      checkHealth().then(async () => {
+        try {
+          const item = await api(`/api/items/${itemId}?include_children=true`);
+          openItemView(item);
+        } catch (e) {
+          document.querySelector('main').innerHTML = `<div class="empty-state" style="padding:2rem">Item not found: ${escHtml(e.message)}</div>`;
+        }
+      });
       return true;
     }
 
-    async function loadSingleItem(itemId) {
-      const el = document.getElementById('single-item-content');
-      try {
-        const item = await api(`/api/items/${itemId}`);
-        const card = renderCard(item);
-        el.innerHTML = '';
-        el.appendChild(card);
-        // Auto-expand detail
-        toggleDetail(card, item);
-      } catch (e) {
-        el.innerHTML = `<div class="empty-state">Item not found: ${escHtml(e.message)}</div>`;
-      }
-    }
-
     /* ── Init ── */
+    // Debug mode toggle
+    if (localStorage.getItem('lestash-debug-mode') === 'true') document.body.classList.add('debug-mode');
+    document.getElementById('debug-toggle').addEventListener('click', () => {
+      document.body.classList.toggle('debug-mode');
+      localStorage.setItem('lestash-debug-mode', document.body.classList.contains('debug-mode'));
+    });
     document.getElementById('settings-btn').addEventListener('click', openSettings);
     loadAppVersion().then(renderDebugInfo);
     renderDebugInfo();
 
+    // Browser back/forward button support
+    if (!IS_TAURI) {
+      window.addEventListener('popstate', (e) => {
+        if (e.state && e.state.itemId) {
+          api(`/api/items/${e.state.itemId}`).then(item => openItemView(item, true)).catch(() => {});
+        } else if (viewStack.length > 0) {
+          _doCloseItemView();
+        } else if (e.state && e.state.tab) {
+          switchTab(e.state.tab, true);
+        } else {
+          // Restore filter state from URL params
+          applyUrlFilters();
+          loadFeed();
+        }
+      });
+    }
+
+    function applyUrlFilters() {
+      const params = new URLSearchParams(window.location.search);
+      const source = params.get('source') || '';
+      const tag = params.get('tag') || '';
+      document.getElementById('feed-source').value = source;
+      document.getElementById('feed-tag').value = tag;
+    }
+
     if (!checkSingleItemRoute()) {
       // Normal app flow
-      checkHealth().then(() => {
-        populateSourceFilter();
-        populateTagFilter();
-        loadFeed();
+      checkHealth().then(async () => {
+        await populateSourceFilter();
+        await populateTagFilter();
+        if (!IS_TAURI) applyUrlFilters();
+        // Apply tab from URL hash (e.g. /#notes)
+        const hashTab = window.location.hash.replace('#', '');
+        if (hashTab && document.getElementById(`tab-${hashTab}`)) {
+          switchTab(hashTab, true);
+        } else {
+          loadFeed();
+        }
       });
     }
     setInterval(checkHealth, 30000);

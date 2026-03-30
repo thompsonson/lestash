@@ -1,5 +1,6 @@
 """File import endpoint."""
 
+import contextlib
 import json
 import logging
 import zipfile
@@ -9,7 +10,7 @@ from io import BytesIO
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from lestash_server.deps import get_db
-from lestash_server.models import ImportResponse
+from lestash_server.models import DriveImportRequest, ImportResponse
 from lestash_server.parsers.json_items import parse_json_items
 
 logger = logging.getLogger(__name__)
@@ -55,53 +56,169 @@ async def import_file(file: UploadFile):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
 
-    # Insert items
-    items_added = 0
-    items_updated = 0
-
     with get_db() as conn:
-        for item in items:
-            try:
-                metadata_json = json.dumps(item.metadata) if item.metadata else None
-                source_id = item.source_id or item.url
-                cursor = conn.execute(
-                    """
-                    INSERT INTO items (
-                        source_type, source_id, url, title, content,
-                        author, created_at, is_own_content, metadata
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(source_type, source_id) DO UPDATE SET
-                        content = excluded.content,
-                        title = excluded.title,
-                        author = excluded.author,
-                        metadata = excluded.metadata
-                    """,
-                    (
-                        item.source_type,
-                        source_id,
-                        item.url,
-                        item.title,
-                        item.content,
-                        item.author,
-                        item.created_at,
-                        item.is_own_content,
-                        metadata_json,
-                    ),
-                )
-                if cursor.rowcount > 0:
-                    items_added += 1
-            except Exception as e:
-                errors.append(f"Failed to import item: {e}")
-
-        conn.commit()
+        items_added, import_errors = _insert_items_with_parents(conn, items)
+        errors.extend(import_errors)
 
     return ImportResponse(
         status="completed",
         source_type=source_type,
         items_added=items_added,
-        items_updated=items_updated,
+        items_updated=0,
         errors=errors,
     )
+
+
+def _upsert_item(conn, item, parent_id=None):
+    """Insert or update a single item. Returns the row ID."""
+    metadata = dict(item.metadata) if item.metadata else {}
+    # Strip internal parent marker before storing
+    metadata.pop("_parent_source_id", None)
+    metadata_json = json.dumps(metadata) if metadata else None
+    source_id = item.source_id or item.url
+    cursor = conn.execute(
+        """
+        INSERT INTO items (
+            source_type, source_id, url, title, content,
+            author, created_at, is_own_content, metadata, parent_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_type, source_id) DO UPDATE SET
+            content = excluded.content,
+            title = excluded.title,
+            author = excluded.author,
+            metadata = excluded.metadata,
+            parent_id = excluded.parent_id
+        """,
+        (
+            item.source_type,
+            source_id,
+            item.url,
+            item.title,
+            item.content,
+            item.author,
+            item.created_at,
+            item.is_own_content,
+            metadata_json,
+            parent_id or item.parent_id,
+        ),
+    )
+    # Get the ID (works for both insert and upsert)
+    if cursor.lastrowid:
+        return cursor.lastrowid
+    row = conn.execute(
+        "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+        (item.source_type, source_id),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _insert_items_with_parents(conn, items):
+    """Two-pass insert: parents first, then children with resolved parent_id."""
+    parents = []
+    children = []
+    for item in items:
+        if item.metadata and item.metadata.get("_parent_source_id"):
+            children.append(item)
+        else:
+            parents.append(item)
+
+    items_added = 0
+    errors: list[str] = []
+    # Map source_id → DB id for parent resolution
+    parent_id_map: dict[str, int] = {}
+
+    # Pass 1: insert parents
+    for item in parents:
+        try:
+            row_id = _upsert_item(conn, item)
+            if row_id:
+                parent_id_map[item.source_id or ""] = row_id
+                items_added += 1
+        except Exception as e:
+            errors.append(f"Failed to import parent: {e}")
+
+    # Pass 2: insert children with resolved parent_id
+    for item in children:
+        try:
+            parent_source_id = item.metadata["_parent_source_id"]
+            resolved_parent_id = parent_id_map.get(parent_source_id)
+            row_id = _upsert_item(conn, item, parent_id=resolved_parent_id)
+            if row_id:
+                items_added += 1
+        except Exception as e:
+            errors.append(f"Failed to import child: {e}")
+
+    # Also handle items without parent markers (flat items)
+    conn.commit()
+    return items_added, errors
+
+
+@router.post("/api/import/drive", response_model=list[ImportResponse])
+async def import_from_drive(body: DriveImportRequest):
+    """Download files from Google Drive and import them.
+
+    Requires Google auth to be configured via 'lestash google auth'.
+    """
+    from lestash.core.google_auth import download_drive_file, extract_drive_file_id
+
+    results = []
+    for file_id_or_url in body.file_ids:
+        file_id = extract_drive_file_id(file_id_or_url)
+        try:
+            path = download_drive_file(file_id)
+            data = path.read_bytes()
+
+            if path.name.endswith(".zip"):
+                items, source_type = _parse_zip(data)
+            elif path.name.endswith(".json"):
+                items = parse_json_items(data)
+                source_type = "json"
+            else:
+                results.append(
+                    ImportResponse(
+                        status="error",
+                        source_type="unknown",
+                        items_added=0,
+                        items_updated=0,
+                        errors=[f"Unsupported file: {path.name}"],
+                    )
+                )
+                continue
+
+            with get_db() as conn:
+                items_added, import_errors = _insert_items_with_parents(conn, items)
+
+            results.append(
+                ImportResponse(
+                    status="completed",
+                    source_type=source_type,
+                    items_added=items_added,
+                    items_updated=0,
+                    errors=import_errors,
+                )
+            )
+        except ValueError as e:
+            results.append(
+                ImportResponse(
+                    status="error",
+                    source_type="unknown",
+                    items_added=0,
+                    items_updated=0,
+                    errors=[str(e)],
+                )
+            )
+        except Exception as e:
+            results.append(
+                ImportResponse(
+                    status="error",
+                    source_type="unknown",
+                    items_added=0,
+                    items_updated=0,
+                    errors=[f"Drive download failed for {file_id}: {e}"],
+                )
+            )
+
+    return results
 
 
 def _parse_zip(data: bytes):
@@ -117,10 +234,29 @@ def _parse_zip(data: bytes):
             if keep_files:
                 return _parse_google_keep_zip(zf, keep_files), "google-keep"
 
-            # Detect Gemini Takeout
-            gemini_files = [n for n in names if "Gemini" in n and n.endswith(".json")]
-            if gemini_files:
-                return _parse_gemini_zip(zf, gemini_files), "gemini"
+            # Detect Google Takeout with Gemini and/or NotebookLM
+            gemini_convos = [
+                n
+                for n in names
+                if ("Gemini" in n)
+                and (n.endswith(".txt") or n.endswith(".json"))
+                and "Conversation" in n
+                and not n.endswith("/")
+            ]
+            nlm_files = [n for n in names if "NotebookLM" in n and not n.endswith("/")]
+
+            if gemini_convos or nlm_files:
+                all_items = []
+                if gemini_convos:
+                    all_items.extend(_parse_gemini_zip(zf, gemini_convos))
+                if nlm_files:
+                    all_items.extend(_parse_notebooklm_zip(zf, nlm_files, names))
+                source_type = "takeout"
+                if gemini_convos and not nlm_files:
+                    source_type = "gemini"
+                elif nlm_files and not gemini_convos:
+                    source_type = "notebooklm"
+                return all_items, source_type
 
             # Try generic JSON files in zip
             json_files = [n for n in names if n.endswith(".json")]
@@ -200,8 +336,232 @@ def _parse_google_keep_zip(zf, keep_files):
 
 
 def _parse_gemini_zip(zf, gemini_files):
-    """Parse Gemini conversations from a Google Takeout ZIP (stub)."""
-    raise ValueError(
-        "Gemini Takeout import is not yet implemented. "
-        "Please export as JSON manually or check issue #33."
-    )
+    """Parse Gemini conversations from a Google Takeout ZIP.
+
+    Gemini Takeout exports conversations as .txt files containing JSON with
+    'conversation_turns' array of user_turn/system_turn pairs.
+    """
+    from datetime import datetime
+
+    from lestash.models.item import ItemCreate
+
+    items = []
+    for name in gemini_files:
+        try:
+            raw = zf.read(name).decode("utf-8")
+            data = json.loads(raw)
+            turns = data.get("conversation_turns", [])
+            if not turns:
+                continue
+
+            parts = []
+            first_prompt = ""
+            earliest_ts = None
+
+            for turn in turns:
+                if "user_turn" in turn:
+                    ut = turn["user_turn"]
+                    prompt = ut.get("prompt", "")
+                    if prompt:
+                        parts.append(f"**User:** {prompt}")
+                        if not first_prompt:
+                            first_prompt = prompt
+                    ts = ut.get("turn_last_modified")
+                    if ts and not earliest_ts:
+                        earliest_ts = ts
+
+                if "system_turn" in turn:
+                    st = turn["system_turn"]
+                    text_parts = st.get("text", [])
+                    text = "\n".join(t.get("data", "") for t in text_parts if isinstance(t, dict))
+                    if text:
+                        parts.append(f"**Gemini:** {text}")
+
+            if not parts:
+                continue
+
+            created_at = None
+            if earliest_ts:
+                with contextlib.suppress(ValueError, OSError):
+                    created_at = datetime.fromisoformat(str(earliest_ts).replace("Z", "+00:00"))
+
+            title = first_prompt[:80] + ("..." if len(first_prompt) > 80 else "")
+
+            items.append(
+                ItemCreate(
+                    source_type="gemini",
+                    source_id=name,
+                    title=title or None,
+                    content="\n\n".join(parts),
+                    created_at=created_at,
+                    is_own_content=True,
+                    metadata={"source": "takeout", "turn_count": len(turns)},
+                )
+            )
+        except Exception:
+            logger.warning(f"Failed to parse Gemini file: {name}", exc_info=True)
+            continue
+
+    return items
+
+
+def _parse_notebooklm_zip(zf, nlm_files, all_names):
+    """Parse NotebookLM notebooks from a Google Takeout ZIP.
+
+    Structure: NotebookLM/<notebook-title>/
+      - <notebook-title>.json (title, emoji, metadata)
+      - Notes/*.html (generated notes)
+      - Chat History/*.html (chat sessions)
+      - Sources/*.html (source content)
+      - Sources/*metadata.json (source metadata)
+    """
+    import re
+    from datetime import datetime
+
+    from lestash.models.item import ItemCreate
+
+    # Discover notebook directories
+    nb_dirs: set[str] = set()
+    for name in nlm_files:
+        match = re.match(r"(Takeout/NotebookLM/[^/]+)/", name)
+        if match:
+            nb_dirs.add(match.group(1))
+
+    items = []
+    for nb_dir in sorted(nb_dirs):
+        try:
+            nb_name = nb_dir.rsplit("/", 1)[-1]
+
+            # Find metadata JSON (not from Sources/Notes/Chat/Artifacts)
+            meta_data: dict = {}
+            meta_candidates = [
+                n
+                for n in all_names
+                if n.startswith(f"{nb_dir}/")
+                and n.endswith(".json")
+                and "/Sources/" not in n
+                and "/Notes/" not in n
+                and "/Chat History/" not in n
+                and "/Artifacts/" not in n
+            ]
+            for m in meta_candidates:
+                try:
+                    meta_data = json.loads(zf.read(m))
+                    break
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+            title = meta_data.get("title", nb_name)
+            metadata_inner = meta_data.get("metadata", {})
+
+            # Collect content HTML files
+            note_htmls = sorted(
+                n for n in all_names if n.startswith(f"{nb_dir}/Notes/") and n.endswith(".html")
+            )
+            chat_htmls = sorted(
+                n
+                for n in all_names
+                if n.startswith(f"{nb_dir}/Chat History/") and n.endswith(".html")
+            )
+            source_metas = [
+                n for n in all_names if n.startswith(f"{nb_dir}/Sources/") and n.endswith(".json")
+            ]
+
+            if not note_htmls and not chat_htmls:
+                continue
+
+            created_at = None
+            create_time = metadata_inner.get("createTime", "")
+            if create_time:
+                with contextlib.suppress(ValueError, OSError):
+                    created_at = datetime.fromisoformat(str(create_time).replace("Z", "+00:00"))
+
+            source_titles = []
+            for sm in source_metas:
+                try:
+                    sd = json.loads(zf.read(sm))
+                    if sd.get("title"):
+                        source_titles.append(sd["title"])
+                except Exception:
+                    continue
+
+            # Parent item: notebook overview
+            parent_metadata: dict[str, object] = {
+                "source": "takeout",
+                "note_count": len(note_htmls),
+                "chat_count": len(chat_htmls),
+            }
+            if meta_data.get("emoji"):
+                parent_metadata["emoji"] = meta_data["emoji"]
+            if source_titles:
+                parent_metadata["sources"] = source_titles
+                parent_metadata["source_count"] = len(source_titles)
+
+            summary_parts = [f"# {title}"]
+            if source_titles:
+                summary_parts.append(
+                    f"**Sources ({len(source_titles)}):** " + ", ".join(source_titles)
+                )
+            summary_parts.append(f"**Notes:** {len(note_htmls)} | **Chats:** {len(chat_htmls)}")
+
+            items.append(
+                ItemCreate(
+                    source_type="notebooklm",
+                    source_id=nb_dir,
+                    title=title,
+                    content="\n\n".join(summary_parts),
+                    created_at=created_at,
+                    is_own_content=True,
+                    metadata=parent_metadata,
+                )
+            )
+
+            # Child items: individual notes
+            for nh in note_htmls:
+                note_name = nh.rsplit("/", 1)[-1].replace(".html", "")
+                html = zf.read(nh).decode("utf-8", errors="replace")
+                text = re.sub(r"<[^>]+>", "", html).strip()
+                if text:
+                    items.append(
+                        ItemCreate(
+                            source_type="notebooklm",
+                            source_id=nh,
+                            title=f"{title} — {note_name}",
+                            content=text,
+                            created_at=created_at,
+                            is_own_content=True,
+                            metadata={
+                                "source": "takeout",
+                                "type": "note",
+                                "_parent_source_id": nb_dir,
+                            },
+                        )
+                    )
+
+            # Child items: individual chat sessions
+            for ch in chat_htmls:
+                chat_name = ch.rsplit("/", 1)[-1].replace(".html", "")
+                html = zf.read(ch).decode("utf-8", errors="replace")
+                text = re.sub(r"<[^>]+>", "", html).strip()
+                if text:
+                    text = text.replace("MODEL:", "**Gemini:**")
+                    items.append(
+                        ItemCreate(
+                            source_type="notebooklm",
+                            source_id=ch,
+                            title=f"{title} — {chat_name}",
+                            content=text,
+                            created_at=created_at,
+                            is_own_content=True,
+                            metadata={
+                                "source": "takeout",
+                                "type": "chat",
+                                "_parent_source_id": nb_dir,
+                            },
+                        )
+                    )
+        except Exception:
+            logger.warning(f"Failed to parse NotebookLM notebook: {nb_dir}", exc_info=True)
+            continue
+
+    return items

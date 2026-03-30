@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -209,6 +209,17 @@ MIGRATIONS = [
         ALTER TABLE post_cache ADD COLUMN reactor_name TEXT;
         """,
     ),
+    (
+        5,
+        "Add parent_id column to items for parent-child relationships",
+        # Note: no IF NOT EXISTS for ALTER TABLE ADD COLUMN in SQLite,
+        # so we check via PRAGMA before altering. Using executescript
+        # doesn't support conditionals, so this is handled specially
+        # in apply_migrations().
+        """
+        CREATE INDEX IF NOT EXISTS idx_items_parent ON items(parent_id);
+        """,
+    ),
 ]
 
 
@@ -230,6 +241,12 @@ def set_schema_version(conn: sqlite3.Connection, version: int) -> None:
     conn.execute(f"PRAGMA user_version = {version}")
 
 
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    """Check if a column exists in a table."""
+    cursor = conn.execute(f"PRAGMA table_info({table})")
+    return any(row[1] == column for row in cursor.fetchall())
+
+
 def apply_migrations(conn: sqlite3.Connection) -> int:
     """Apply any pending migrations.
 
@@ -242,6 +259,10 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
     for version, description, sql in MIGRATIONS:
         if version > current_version:
             logger.info(f"Applying migration {version}: {description}")
+            # Migration 5: add parent_id column (needs special handling
+            # because ALTER TABLE ADD COLUMN has no IF NOT EXISTS in SQLite)
+            if version == 5 and not _column_exists(conn, "items", "parent_id"):
+                conn.execute("ALTER TABLE items ADD COLUMN parent_id INTEGER")
             conn.executescript(sql)
             set_schema_version(conn, version)
             conn.commit()
