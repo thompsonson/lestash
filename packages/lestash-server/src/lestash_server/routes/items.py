@@ -22,6 +22,9 @@ router = APIRouter(prefix="/api/items", tags=["items"])
 def _enrich_item(conn, item: Item) -> ItemResponse:
     """Convert an Item to an enriched API response."""
     author_display, actor_display = get_author_actor(conn, item)
+    child_count = conn.execute(
+        "SELECT COUNT(*) FROM items WHERE parent_id = ?", (item.id,)
+    ).fetchone()[0]
     return ItemResponse(
         id=item.id,
         source_type=item.source_type,
@@ -34,11 +37,13 @@ def _enrich_item(conn, item: Item) -> ItemResponse:
         fetched_at=item.fetched_at,
         is_own_content=item.is_own_content,
         metadata=item.metadata,
+        parent_id=item.parent_id,
         subtype=get_item_subtype(item),
         author_display=author_display,
         actor_display=actor_display,
         preview=get_preview(conn, item, max_length=120),
         tags=get_tags(conn, item.id),
+        child_count=child_count,
     )
 
 
@@ -56,6 +61,8 @@ def list_items(
     ),
     since: str | None = Query(None, description="Only items fetched since this ISO datetime"),
     tag: str | None = Query(None, description="Filter by tag name"),
+    parent_id: int | None = Query(None, description="Filter to children of this parent item"),
+    include_children: bool = Query(False, description="Include items that have a parent"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
@@ -64,6 +71,14 @@ def list_items(
         count_query = "SELECT COUNT(*) FROM items WHERE 1=1"
         query = "SELECT * FROM items WHERE 1=1"
         params: list = []
+
+        if parent_id is not None:
+            query += " AND parent_id = ?"
+            count_query += " AND parent_id = ?"
+            params.append(parent_id)
+        elif not include_children:
+            query += " AND parent_id IS NULL"
+            count_query += " AND parent_id IS NULL"
 
         if tag:
             query = (
@@ -164,13 +179,14 @@ def create_item(body: ItemCreateRequest):
             """
             INSERT INTO items (
                 source_type, source_id, url, title, content,
-                author, created_at, is_own_content, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                author, created_at, is_own_content, metadata, parent_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_type, source_id) DO UPDATE SET
                 content = excluded.content,
                 title = excluded.title,
                 author = excluded.author,
-                metadata = excluded.metadata
+                metadata = excluded.metadata,
+                parent_id = excluded.parent_id
             """,
             (
                 body.source_type,
@@ -182,6 +198,7 @@ def create_item(body: ItemCreateRequest):
                 body.created_at,
                 body.is_own_content,
                 metadata_json,
+                body.parent_id,
             ),
         )
         conn.commit()

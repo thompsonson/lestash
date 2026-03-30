@@ -18,6 +18,7 @@ class ItemCreate(BaseModel):
     created_at: datetime | None = None
     is_own_content: bool = False
     metadata: dict[str, Any] | None = None
+    parent_id: int | None = None
 
 
 class Item(BaseModel):
@@ -34,6 +35,7 @@ class Item(BaseModel):
     fetched_at: datetime
     is_own_content: bool = False
     metadata: dict[str, Any] | None = None
+    parent_id: int | None = None
 
     @classmethod
     def from_row(cls, row: Any) -> "Item":
