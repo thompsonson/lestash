@@ -141,16 +141,20 @@ The core unit of content:
 | `created_at` | datetime | When the content was created |
 | `is_own_content` | bool | Whether user authored this |
 | `metadata` | dict | Source-specific data (JSON) |
+| `parent_id` | int | Optional FK to parent item (for grouping children) |
 
 ### Database
 
 SQLite database with:
 
-- **items** - Main content table with unique constraint on (source_type, source_id)
+- **items** - Main content table with unique constraint on (source_type, source_id) and optional `parent_id` for hierarchical grouping
 - **items_fts** - Full-text search virtual table (FTS5)
+- **vec_items** - Vector embeddings for semantic search (sqlite-vec)
 - **item_history** - Audit trail of content changes
 - **person_profiles** - URN to name/URL mapping for display
+- **post_cache** - Cached metadata for posts referenced by reactions/comments
 - **tags** / **item_tags** - Tagging system
+- **collections** / **collection_items** - Cross-source item grouping
 - **sources** - Plugin configuration storage
 - **sync_log** - Sync operation history
 

@@ -105,15 +105,16 @@ def sync_source(
                         """
                         INSERT INTO items (
                             source_type, source_id, url, title, content,
-                            author, created_at, is_own_content, metadata
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            author, created_at, is_own_content, metadata, parent_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(source_type, source_id) DO UPDATE SET
                             url = excluded.url,
                             title = excluded.title,
                             content = excluded.content,
                             author = excluded.author,
                             is_own_content = excluded.is_own_content,
-                            metadata = excluded.metadata
+                            metadata = excluded.metadata,
+                            parent_id = excluded.parent_id
                         """,
                         (
                             item.source_type,
@@ -125,12 +126,24 @@ def sync_source(
                             item.created_at,
                             item.is_own_content,
                             metadata_json,
+                            item.parent_id,
                         ),
                     )
                     if cursor.rowcount > 0:
                         items_added += 1
 
                 conn.commit()
+
+                # Resolve parent_id for LinkedIn reactions/comments
+                if name == "linkedin":
+                    try:
+                        from lestash_linkedin.source import resolve_linkedin_parents
+
+                        resolved = resolve_linkedin_parents(conn)
+                        if resolved:
+                            console.print(f"  [dim]Resolved {resolved} parent references[/dim]")
+                    except ImportError:
+                        pass
 
                 # Update source last_sync
                 conn.execute(

@@ -2,7 +2,7 @@
 
 ## Project
 
-Personal knowledge base CLI + web UI. UV workspace monorepo (Python 3.12+). Aggregates content from LinkedIn, Bluesky, YouTube, arXiv, Micro.blog into SQLite with FTS5 search. FastAPI HTTPS server + Tauri v2 desktop/mobile app.
+Personal knowledge base CLI + web UI. UV workspace monorepo (Python 3.12+). Aggregates content from LinkedIn, Bluesky, YouTube, arXiv, Micro.blog into SQLite with FTS5 + vector search. Parent-child item grouping (reactions/comments under posts). FastAPI HTTPS server + Tauri v2 desktop/mobile app.
 
 ## Structure
 
@@ -28,10 +28,12 @@ cd app && npx tauri dev    # Run desktop app
 ## Key Patterns
 
 - Plugins register via `[project.entry-points."lestash.sources"]`
-- `sync()` yields `ItemCreate` objects; CLI/server does UPSERT
+- `sync()` yields `ItemCreate` objects; CLI/server does UPSERT (including `parent_id`)
+- Post-sync hooks resolve parent references (e.g., LinkedIn reactions → parent post)
 - Display helpers in `core/enrichment.py` (shared by CLI + server)
 - SQLite WAL mode for concurrent access
 - `datetime(created_at)` in ORDER BY for timezone-safe sorting
+- Default item listings filter `parent_id IS NULL`; children shown in detail view
 - Single `index.html` frontend — no framework, dual Tauri/browser mode
 
 ## When Making Changes

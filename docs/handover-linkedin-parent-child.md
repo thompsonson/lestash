@@ -1,5 +1,7 @@
 # Handover: LinkedIn Parent-Child Backfill
 
+> **Status: Implemented** (2026-03-30) — see commits on `feat/vector-search` branch.
+
 ## Objective
 
 Populate `parent_id` on LinkedIn reactions and comments so they become children of their parent post, when that post exists in the database.
@@ -78,59 +80,30 @@ When new LinkedIn reactions/comments are synced via the changelog API, resolve `
 
 The default item listing already hides children (`AND parent_id IS NULL`). So once reactions/comments get a `parent_id`, they'll disappear from the main feed and only appear when drilling into their parent post's detail view. This is the desired behavior.
 
-## Implementation Approach
+## Implementation
 
-This is best done as:
-1. A **one-time backfill script/command** (e.g. `lestash linkedin backfill-parents`) that scans existing items and sets `parent_id`
-2. A **change to the sync path** so future reactions/comments get `parent_id` set at insert time
+Implemented as:
+1. **`lestash linkedin backfill-parents`** CLI command — one-time backfill for existing items (with `--dry-run`)
+2. **Post-sync resolution** — `resolve_linkedin_parents()` runs automatically after `lestash sources sync` and `lestash linkedin fetch --changelog`
+3. **Core `upsert_item()` fix** — now persists `parent_id` from `ItemCreate` (was silently ignored)
 
-### Backfill SQL sketch
+### Resolution SQL
 
-```sql
--- Find reactions with resolvable parents
-UPDATE items SET parent_id = (
-    SELECT p.id FROM items p
-    WHERE p.source_type = 'linkedin'
-    AND (
-        json_extract(p.metadata, '$.post_id') = json_extract(items.metadata, '$.reacted_to')
-        OR p.source_id = json_extract(items.metadata, '$.reacted_to')
-    )
-    LIMIT 1
-)
-WHERE source_type = 'linkedin'
-AND json_extract(metadata, '$.reacted_to') IS NOT NULL
-AND parent_id IS NULL;
-```
+Matches `metadata.reacted_to` / `metadata.commented_on` URNs against parent posts via `metadata.post_id` or `source_id`. An `EXISTS` guard ensures only items with a resolvable parent are updated.
 
-Similar for `commented_on`. Test with a SELECT first to verify matches before running the UPDATE.
+### Key Files
 
-## Testing
+| File | Change |
+|------|--------|
+| `packages/lestash/src/lestash/core/database.py` | `upsert_item()` includes `parent_id` in INSERT/UPDATE |
+| `packages/lestash/src/lestash/cli/sources.py` | Inline sync SQL includes `parent_id` + post-sync resolution |
+| `packages/lestash-linkedin/src/lestash_linkedin/source.py` | `resolve_linkedin_parents()`, `backfill-parents` command, fetch SQL fix |
+| `packages/lestash-linkedin/tests/test_parent_resolution.py` | 9 tests covering resolution, upsert, edge cases |
 
-- **Before**: count LinkedIn items with `parent_id IS NULL` that have `reacted_to` or `commented_on` in metadata
-- **After**: those items should have `parent_id` set to their parent post's ID
-- **Feed**: reactions/comments should no longer appear as top-level items
-- **Detail view**: clicking a LinkedIn post should show its reactions/comments as children
-- Run `uv run just check` — all 418+ tests must pass
-- Run `lestash embeddings rebuild` if parent items change (shouldn't be needed for this)
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `packages/lestash/src/lestash/core/database.py` | Schema, migrations, get_connection |
-| `packages/lestash-linkedin/src/lestash_linkedin/source.py` | Sync logic, ItemCreate creation |
-| `packages/lestash-linkedin/src/lestash_linkedin/extractors/changelog.py` | Metadata field extraction |
-| `packages/lestash/src/lestash/core/enrichment.py` | Display enrichment for reactions/comments |
-| `packages/lestash-server/src/lestash_server/routes/items.py` | API — default listing hides children |
-
-## Commands
+### Testing
 
 ```bash
-uv sync --dev              # Install deps
-uv run just check          # Lint + format + typecheck + tests
-uv run lestash items list  # CLI to inspect items
+uv run just check                               # All 427+ tests pass
+uv run lestash linkedin backfill-parents --dry-run  # Preview resolvable counts
+uv run lestash linkedin backfill-parents            # Run backfill
 ```
-
-## Branch Strategy
-
-Branch from `feat/vector-search` (or `main` once PRs #80 and #81 are merged). The `parent_id` column and filtering are already in place — this work only adds data population.
