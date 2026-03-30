@@ -121,9 +121,10 @@ With vector embeddings, collections could be **auto-suggested**: "These 5 items 
 ### Phase 1: Enhanced FTS5 — DONE (2026-03-30)
 - Auto-prefix matching: `learn` matches `learning`, `learned`, etc.
 - Preserves FTS5 syntax: `"quoted phrases"`, `AND`/`OR`/`NOT`, `prefix*`
-- Query sanitization prevents FTS5 syntax errors from raw user input
+- Query sanitization: strips dangling operators, fixes unbalanced quotes, returns 400 (not 500) for invalid queries
 - Search results show highlighted snippets via `snippet()` function
 - Result count + search tips in UI
+- `include_children` param (defaults true for search — finds individual messages)
 - No schema changes needed
 
 ### Phase 2: Collections — DONE (2026-03-30)
