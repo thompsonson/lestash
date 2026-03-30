@@ -1139,8 +1139,15 @@
       const view = document.getElementById('item-view');
 
       if (viewStack.length > 0) {
-        // Go back to parent item view
-        renderItemView(viewStack[viewStack.length - 1].item);
+        const prev = viewStack[viewStack.length - 1];
+        if (prev.item) {
+          renderItemView(prev.item);
+        } else if (prev.collection) {
+          // Re-render the collection view
+          viewStack.pop(); // Remove it so openCollectionView can push it again
+          openCollectionView(prev.collection);
+          return;
+        }
         document.querySelector('main').scrollTop = 0;
       } else {
         // Back to list
@@ -1240,7 +1247,7 @@
           item.tags = updated.tags;
           renderItemView(item);
         }
-      }, { once: true });
+      });
 
       // Enter key in tag input
       container.querySelector(`[data-tag-input="${item.id}"]`)?.addEventListener('keydown', (e) => {
@@ -2131,9 +2138,10 @@
     async function openCollectionView(coll) {
       try {
         const detail = await api(`/api/collections/${coll.id}`);
-        // Use the item view system to show collection
         const mainEl = document.querySelector('main');
-        viewStack.push({ scrollY: mainEl.scrollTop });
+        // Push a collection entry (not an item) onto the view stack
+        viewStack.push({ scrollY: mainEl.scrollTop, collection: coll });
+
         document.querySelector('nav').style.display = 'none';
         document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
         document.getElementById('item-view').style.display = 'block';
