@@ -118,9 +118,12 @@ With vector embeddings, collections could be **auto-suggested**: "These 5 items 
 
 ## Implementation Roadmap
 
-### Phase 1: Enhanced FTS5 (small, immediate)
-- Improve search UI with prefix matching, boolean operators
-- Add search result highlighting
+### Phase 1: Enhanced FTS5 — DONE (2026-03-30)
+- Auto-prefix matching: `learn` matches `learning`, `learned`, etc.
+- Preserves FTS5 syntax: `"quoted phrases"`, `AND`/`OR`/`NOT`, `prefix*`
+- Query sanitization prevents FTS5 syntax errors from raw user input
+- Search results show highlighted snippets via `snippet()` function
+- Result count + search tips in UI
 - No schema changes needed
 
 ### Phase 2: Collections — DONE (2026-03-30)
@@ -148,7 +151,7 @@ With vector embeddings, collections could be **auto-suggested**: "These 5 items 
 
 | Feature | Effort | Value | Status |
 |---------|--------|-------|--------|
-| Better FTS5 UI | Small | Medium | Planned |
+| Better FTS5 UI | Small | Medium | **Done** |
 | Collections | Medium | High | **Done** |
 | sqlite-vec search | Medium-Large | High | Planned |
 | Auto-suggestions | Large | Medium | Future |
