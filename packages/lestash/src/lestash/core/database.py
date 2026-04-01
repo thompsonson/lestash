@@ -428,13 +428,14 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
         """
         INSERT INTO items (
             source_type, source_id, url, title, content,
-            author, created_at, is_own_content, metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            author, created_at, is_own_content, metadata, parent_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_type, source_id) DO UPDATE SET
             title = excluded.title,
             content = excluded.content,
             author = excluded.author,
-            metadata = excluded.metadata
+            metadata = excluded.metadata,
+            parent_id = excluded.parent_id
         """,
         (
             item.source_type,
@@ -446,6 +447,7 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
             item.created_at,
             item.is_own_content,
             metadata_json,
+            item.parent_id,
         ),
     )
     conn.commit()

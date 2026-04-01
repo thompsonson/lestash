@@ -1,9 +1,12 @@
 """LinkedIn source plugin implementation."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import re
 import shutil
+import sqlite3
 import webbrowser
 from collections.abc import Iterator
 from datetime import datetime
@@ -32,6 +35,47 @@ from lestash_linkedin.importer import import_from_zip
 
 console = Console()
 logger = get_plugin_logger("linkedin")
+
+
+def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
+    """Resolve parent_id for LinkedIn reactions and comments.
+
+    Matches metadata.reacted_to / metadata.commented_on URNs against parent
+    posts identified by metadata.post_id or source_id.
+
+    Returns the number of items updated.
+    """
+    total = 0
+    for field in ("reacted_to", "commented_on"):
+        cursor = conn.execute(
+            f"""
+            UPDATE items SET parent_id = (
+                SELECT p.id FROM items p
+                WHERE p.source_type = 'linkedin'
+                AND (
+                    json_extract(p.metadata, '$.post_id')
+                        = json_extract(items.metadata, '$.{field}')
+                    OR p.source_id = json_extract(items.metadata, '$.{field}')
+                )
+                LIMIT 1
+            )
+            WHERE source_type = 'linkedin'
+            AND json_extract(metadata, '$.{field}') IS NOT NULL
+            AND parent_id IS NULL
+            AND EXISTS (
+                SELECT 1 FROM items p
+                WHERE p.source_type = 'linkedin'
+                AND (
+                    json_extract(p.metadata, '$.post_id')
+                        = json_extract(items.metadata, '$.{field}')
+                    OR p.source_id = json_extract(items.metadata, '$.{field}')
+                )
+            )
+            """,
+        )
+        total += cursor.rowcount
+    conn.commit()
+    return total
 
 
 def parse_linkedin_date(date_str: str) -> datetime | None:
@@ -361,12 +405,13 @@ class LinkedInSource(SourcePlugin):
                                     """
                                     INSERT INTO items (
                                         source_type, source_id, url, title, content,
-                                        author, created_at, is_own_content, metadata
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        author, created_at, is_own_content, metadata, parent_id
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                     ON CONFLICT(source_type, source_id) DO UPDATE SET
                                         content = excluded.content,
                                         author = excluded.author,
-                                        metadata = excluded.metadata
+                                        metadata = excluded.metadata,
+                                        parent_id = excluded.parent_id
                                     """,
                                     (
                                         item.source_type,
@@ -378,11 +423,16 @@ class LinkedInSource(SourcePlugin):
                                         item.created_at,
                                         item.is_own_content,
                                         metadata_json,
+                                        item.parent_id,
                                     ),
                                 )
                                 if cursor.rowcount > 0:
                                     total_items += 1
                             conn.commit()
+
+                            resolved = resolve_linkedin_parents(conn)
+                            if resolved:
+                                console.print(f"[dim]  Resolved {resolved} parent references[/dim]")
 
                     except Exception as e:
                         logger.error(f"Error fetching changelog: {e}", exc_info=True)
@@ -1067,6 +1117,55 @@ class LinkedInSource(SourcePlugin):
                         console.print("[yellow]Skipped (no author provided)[/yellow]")
 
                 console.print(f"\n[bold green]Enriched {enriched_count} items[/bold green]")
+
+        @app.command("backfill-parents")
+        def backfill_parents(
+            dry_run: Annotated[
+                bool, typer.Option("--dry-run", help="Preview without making changes")
+            ] = False,
+        ) -> None:
+            """Backfill parent_id for LinkedIn reactions and comments."""
+            from lestash.core.config import Config
+            from lestash.core.database import get_connection
+
+            config = Config.load()
+            with get_connection(config) as conn:
+                if dry_run:
+                    for field, label in [
+                        ("reacted_to", "reactions"),
+                        ("commented_on", "comments"),
+                    ]:
+                        total = conn.execute(
+                            f"""
+                            SELECT COUNT(*) FROM items
+                            WHERE source_type = 'linkedin'
+                            AND json_extract(metadata, '$.{field}') IS NOT NULL
+                            AND parent_id IS NULL
+                            """,
+                        ).fetchone()[0]
+                        resolvable = conn.execute(
+                            f"""
+                            SELECT COUNT(*) FROM items
+                            WHERE source_type = 'linkedin'
+                            AND json_extract(metadata, '$.{field}') IS NOT NULL
+                            AND parent_id IS NULL
+                            AND EXISTS (
+                                SELECT 1 FROM items p
+                                WHERE p.source_type = 'linkedin'
+                                AND (
+                                    json_extract(p.metadata, '$.post_id')
+                                        = json_extract(items.metadata, '$.{field}')
+                                    OR p.source_id
+                                        = json_extract(items.metadata, '$.{field}')
+                                )
+                            )
+                            """,
+                        ).fetchone()[0]
+                        console.print(f"  {label}: {resolvable}/{total} resolvable")
+                    console.print("\n[dim]Run without --dry-run to apply.[/dim]")
+                else:
+                    updated = resolve_linkedin_parents(conn)
+                    console.print(f"[green]Updated {updated} items with parent_id[/green]")
 
         return app
 

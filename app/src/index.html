@@ -1184,6 +1184,54 @@
         html += `<div style="margin-top:0.5rem"><button class="sync-btn" onclick="openProcessDialog(${item.id})">Process</button></div>`;
       }
 
+      // Context section for reactions/comments
+      const hasReactionContext = item.metadata && (item.metadata.reacted_to || item.metadata.commented_on);
+      if (hasReactionContext) {
+        const isUrn = (s) => s && s.startsWith('urn:');
+        const actorUrn = item.metadata.raw && item.metadata.raw.actor;
+        const ownerUrn = item.metadata.raw && item.metadata.raw.owner;
+        // For "you reacted to someone else's content", author is the post author
+        // For "someone else reacted to your content", actor is the reactor
+        const authorUrn = item.metadata.reacted_to || item.metadata.commented_on;
+
+        html += '<hr style="border-color:var(--border);margin:0.75rem 0">';
+
+        // Actor (who performed the action)
+        if (actorUrn) {
+          html += `<div class="item-detail-field"><label>Actor</label>`;
+          if (isUrn(item.actor_display)) {
+            html += `<span id="actor-display">${escHtml(item.actor_display)}</span>
+              <button class="sync-btn" data-action="edit-profile" data-urn="${escHtml(actorUrn)}" data-role="actor" style="font-size:0.7rem;padding:0.15rem 0.4rem;margin-left:0.3rem">Set name</button>
+              <div id="actor-edit" style="display:none" class="tag-input-row">
+                <input type="text" placeholder="Name" data-profile-name="actor" style="flex:2">
+                <input type="text" placeholder="Profile URL (optional)" data-profile-url="actor" style="flex:3">
+                <button class="sync-btn" data-action="save-profile" data-urn="${escHtml(actorUrn)}" data-role="actor" style="font-size:0.7rem;padding:0.15rem 0.4rem">Save</button>
+              </div>`;
+          } else {
+            html += `<span>${escHtml(item.actor_display)}</span>`;
+          }
+          html += `</div>`;
+        }
+
+        // Author (of the target post) — only show when someone reacted to another's content
+        if (ownerUrn && actorUrn && ownerUrn === actorUrn && item.author_display) {
+          html += `<div class="item-detail-field"><label>Post author</label>`;
+          if (item.author_display === '-') {
+            html += `<span style="color:var(--muted)">Unknown</span>`;
+          } else {
+            html += `<span>${escHtml(item.author_display)}</span>`;
+          }
+          html += `</div>`;
+        }
+
+        // Parent post link
+        if (item.parent_id) {
+          html += `<div class="item-detail-field"><label>Parent post</label>
+            <div class="item-list" id="parent-post"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
+          </div>`;
+        }
+      }
+
       // Tags
       html += '<hr style="border-color:var(--border);margin:0.75rem 0">';
       const currentTags = (item.tags || []).map(t =>
@@ -1261,12 +1309,51 @@
           item.tags = updated.tags;
           renderItemView(item);
         }
+        if (btn.dataset.action === 'edit-profile') {
+          const role = btn.dataset.role;
+          const editRow = container.querySelector(`#${role}-edit`);
+          if (editRow) editRow.style.display = 'flex';
+          btn.style.display = 'none';
+        }
+        if (btn.dataset.action === 'save-profile') {
+          const role = btn.dataset.role;
+          const urn = btn.dataset.urn;
+          const nameInput = container.querySelector(`[data-profile-name="${role}"]`);
+          const urlInput = container.querySelector(`[data-profile-url="${role}"]`);
+          const displayName = nameInput.value.trim();
+          if (!displayName) return;
+          const body = { display_name: displayName };
+          const profileUrl = urlInput.value.trim();
+          if (profileUrl) body.profile_url = profileUrl;
+          await api(`/api/profiles/${encodeURIComponent(urn)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          // Refresh item to get updated display names
+          const updated = await api(`/api/items/${item.id}`);
+          Object.assign(item, updated);
+          renderItemView(item);
+        }
       });
 
       // Enter key in tag input
       container.querySelector(`[data-tag-input="${item.id}"]`)?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') container.querySelector(`[data-action="add-tag"][data-id="${item.id}"]`).click();
       });
+
+      // Load parent post card
+      if (item.parent_id && document.getElementById('parent-post')) {
+        api(`/api/items/${item.parent_id}`).then(parent => {
+          const list = document.getElementById('parent-post');
+          if (!list) return;
+          list.innerHTML = '';
+          list.appendChild(renderCard(parent));
+        }).catch(() => {
+          const list = document.getElementById('parent-post');
+          if (list) list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Could not load parent</span>';
+        });
+      }
 
       // Load children
       if (item.child_count > 0) {

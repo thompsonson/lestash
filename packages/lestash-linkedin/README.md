@@ -103,6 +103,22 @@ Use `--changelog` to fetch this data:
 lestash linkedin fetch --changelog
 ```
 
+### `lestash linkedin backfill-parents`
+
+Link existing reactions and comments to their parent post. This sets `parent_id` so that reactions/comments are grouped under the post they relate to, rather than appearing as top-level items in the feed.
+
+```bash
+# Preview what would be resolved (no changes made)
+lestash linkedin backfill-parents --dry-run
+
+# Run the backfill
+lestash linkedin backfill-parents
+```
+
+The backfill matches `metadata.reacted_to` / `metadata.commented_on` URNs against parent posts by `metadata.post_id` or `source_id`. Items whose parent post is not in the database are left unchanged.
+
+Future syncs (`lestash sources sync`, `lestash linkedin fetch --changelog`) automatically resolve parent references for new items, so this command only needs to be run once for existing data.
+
 ## Display Enhancements
 
 ### Reaction Emojis

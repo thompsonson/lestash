@@ -9,6 +9,8 @@ This is born from not having access to LinkedIn posts that are over a year old (
 - **Multi-source aggregation** - Import content from LinkedIn, Bluesky, Micro.blog, arXiv, and more
 - **Plugin architecture** - Extensible design for adding new data sources
 - **Full-text search** - SQLite FTS5 for fast content search
+- **Vector search** - Semantic similarity search using sqlite-vec and sentence-transformers
+- **Parent-child grouping** - Reactions, comments, and replies grouped under their parent post
 - **Person profiles** - Map URNs to names and profile URLs for better display
 - **Draft export** - Create Micro.blog drafts from saved items for the search→write workflow
 - **Audit history** - Track changes to items over time
@@ -172,7 +174,7 @@ uv run lestash-server
 uv run lestash-server --port 8444 --cert /path/to/cert.crt --key /path/to/key.key
 ```
 
-Endpoints: `/api/health`, `/api/items`, `/api/items/search`, `/api/items/{id}`, `/api/sources`, `/api/profiles`, `/api/stats`
+Endpoints: `/api/health`, `/api/items`, `/api/items/search`, `/api/items/{id}`, `/api/items/{id}/children`, `/api/items/{id}/similar`, `/api/sources`, `/api/profiles`, `/api/stats`
 
 API docs available at `/api/docs` when the server is running.
 
