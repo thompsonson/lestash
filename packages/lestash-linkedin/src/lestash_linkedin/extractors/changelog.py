@@ -25,6 +25,29 @@ logger = logging.getLogger(__name__)
 LINKEDIN_BASE_URL = "https://www.linkedin.com/feed/update"
 
 
+def _urn_to_snowflake_ts(urn: str | None) -> int | None:
+    """Extract second-precision timestamp from a LinkedIn Snowflake ID URN.
+
+    LinkedIn URN IDs are Snowflake-like: upper bits encode creation timestamp.
+    Share URNs (urn:li:share:X) and activity URNs (urn:li:activity:Y) for the
+    same post have different IDs but nearly identical timestamps (~200-700ms
+    apart). Using 5-second buckets avoids boundary mismatches.
+
+    Returns:
+        Timestamp bucket (epoch_ms >> 22 // 5000), or None if extraction fails.
+    """
+    if not urn:
+        return None
+    parts = urn.rsplit(":", 1)
+    if len(parts) != 2:
+        return None
+    try:
+        snowflake_id = int(parts[-1])
+    except ValueError:
+        return None
+    return (snowflake_id >> 22) // 5000
+
+
 def _activity_urn_to_url(urn: str | None) -> str | None:
     """Convert a LinkedIn activity URN to a feed URL.
 
@@ -113,6 +136,7 @@ def _extract_ugc_post(event: ChangelogEvent) -> ItemCreate:
             "visibility": activity.visibility,
             "lifecycle_state": activity.lifecycle_state,
             "post_id": activity.id,
+            "snowflake_ts": _urn_to_snowflake_ts(activity.id),
         },
     )
 
@@ -133,7 +157,10 @@ def _extract_comment(event: ChangelogEvent) -> ItemCreate:
         content=activity.get_text(),
         author=activity.actor or activity.author,
         created_at=created_at,
-        extra_metadata={"commented_on": activity.object},
+        extra_metadata={
+            "commented_on": activity.object,
+            "target_snowflake_ts": _urn_to_snowflake_ts(activity.object),
+        },
         url=url,
     )
 
@@ -187,6 +214,7 @@ def _extract_reaction(event: ChangelogEvent) -> ItemCreate:
         extra_metadata={
             "reaction_type": activity.reaction_type,
             "reacted_to": activity.object,
+            "target_snowflake_ts": _urn_to_snowflake_ts(activity.object),
         },
         url=url,
     )
@@ -324,8 +352,10 @@ def _create_item(
     if not created_at and event.processed_at:
         created_at = datetime.fromtimestamp(event.processed_at / 1000)
 
-    # Generate unique ID
-    event_id = f"changelog-{event.resource_name}-{event.processed_at or hash(str(event))}"
+    # Generate stable ID using resource_id (same across CREATE/PARTIAL_UPDATE)
+    # Fall back to processedAt for events without a resource_id
+    stable_id = event.resource_id or str(event.processed_at or hash(str(event)))
+    event_id = f"changelog-{event.resource_name}-{stable_id}"
 
     return ItemCreate(
         source_type="linkedin",
