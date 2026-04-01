@@ -406,8 +406,7 @@ class TestSnowflakeTimestamp:
         assert "target_snowflake_ts" in item.metadata
 
     def test_share_and_activity_urns_match_by_snowflake_ts(self):
-        """The key insight: share and activity URNs for the same post
-        have the same second-precision Snowflake timestamp."""
+        """Share and activity URNs for the same post match at 2-second bucket precision."""
         from lestash_linkedin.extractors.changelog import _urn_to_snowflake_ts
 
         # Real pair from production data
@@ -419,6 +418,11 @@ class TestSnowflakeTimestamp:
         share_ts2 = _urn_to_snowflake_ts("urn:li:share:7418960805229985792")
         activity_ts2 = _urn_to_snowflake_ts("urn:li:activity:7418960806467436544")
         assert share_ts2 == activity_ts2
+
+        # Boundary case: 190ms apart, straddling a second boundary
+        share_ts3 = _urn_to_snowflake_ts("urn:li:share:7443293302017302528")
+        activity_ts3 = _urn_to_snowflake_ts("urn:li:activity:7443293302814117889")
+        assert share_ts3 == activity_ts3
 
     def test_urn_to_snowflake_ts_returns_none_for_invalid(self):
         from lestash_linkedin.extractors.changelog import _urn_to_snowflake_ts

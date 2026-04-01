@@ -197,7 +197,7 @@ class TestResolveLinkedinParents:
             metadata={
                 "resource_name": "ugcPosts",
                 "post_id": "urn:li:share:7441773333693493249",
-                "snowflake_ts": 1774257024,
+                "snowflake_ts": 887128512,
             },
         )
         reaction = ItemCreate(
@@ -207,7 +207,7 @@ class TestResolveLinkedinParents:
             metadata={
                 "resource_name": "socialActions/likes",
                 "reacted_to": "urn:li:activity:7441773334410719232",
-                "target_snowflake_ts": 1774257024,
+                "target_snowflake_ts": 887128512,
             },
         )
         with get_connection(test_db) as conn:
