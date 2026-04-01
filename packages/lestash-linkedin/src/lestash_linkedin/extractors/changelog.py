@@ -30,11 +30,11 @@ def _urn_to_snowflake_ts(urn: str | None) -> int | None:
 
     LinkedIn URN IDs are Snowflake-like: upper bits encode creation timestamp.
     Share URNs (urn:li:share:X) and activity URNs (urn:li:activity:Y) for the
-    same post have different IDs but nearly identical timestamps (~190ms apart).
-    Using 2-second buckets avoids boundary mismatches.
+    same post have different IDs but nearly identical timestamps (~200-700ms
+    apart). Using 5-second buckets avoids boundary mismatches.
 
     Returns:
-        Timestamp bucket (epoch_ms >> 22 // 2000), or None if extraction fails.
+        Timestamp bucket (epoch_ms >> 22 // 5000), or None if extraction fails.
     """
     if not urn:
         return None
@@ -45,7 +45,7 @@ def _urn_to_snowflake_ts(urn: str | None) -> int | None:
         snowflake_id = int(parts[-1])
     except ValueError:
         return None
-    return (snowflake_id >> 22) // 2000
+    return (snowflake_id >> 22) // 5000
 
 
 def _activity_urn_to_url(urn: str | None) -> str | None:
