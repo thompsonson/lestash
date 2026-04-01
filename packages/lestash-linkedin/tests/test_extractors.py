@@ -199,9 +199,10 @@ class TestSourceIdGeneration:
         item = extract_changelog_item(ugc_post_event)
         assert "ugcPosts" in item.source_id
 
-    def test_source_id_includes_processed_at(self, ugc_post_event):
+    def test_source_id_uses_resource_id(self, ugc_post_event):
         item = extract_changelog_item(ugc_post_event)
-        assert "1768818123997" in item.source_id
+        # Uses resourceId from event envelope for stable dedup
+        assert "urn:li:share:7418960805229985792" in item.source_id
 
 
 class TestContentExtractionBehavior:
@@ -385,3 +386,83 @@ class TestAuthorExtraction:
         }
         item = extract_changelog_item(event)
         assert item.author == "urn:li:person:deleter"
+
+
+class TestSnowflakeTimestamp:
+    """Test Snowflake ID timestamp extraction and matching."""
+
+    def test_post_has_snowflake_ts(self, ugc_post_event):
+        item = extract_changelog_item(ugc_post_event)
+        assert item.metadata.get("snowflake_ts") is not None
+        assert isinstance(item.metadata["snowflake_ts"], int)
+
+    def test_comment_has_target_snowflake_ts(self, comment_event):
+        item = extract_changelog_item(comment_event)
+        # urn:li:activity:123456 has a tiny ID, ts will be 0
+        assert "target_snowflake_ts" in item.metadata
+
+    def test_reaction_has_target_snowflake_ts(self, reaction_event):
+        item = extract_changelog_item(reaction_event)
+        assert "target_snowflake_ts" in item.metadata
+
+    def test_share_and_activity_urns_match_by_snowflake_ts(self):
+        """The key insight: share and activity URNs for the same post
+        have the same second-precision Snowflake timestamp."""
+        from lestash_linkedin.extractors.changelog import _urn_to_snowflake_ts
+
+        # Real pair from production data
+        share_ts = _urn_to_snowflake_ts("urn:li:share:7441773333693493249")
+        activity_ts = _urn_to_snowflake_ts("urn:li:activity:7441773334410719232")
+        assert share_ts == activity_ts
+
+        # Another real pair
+        share_ts2 = _urn_to_snowflake_ts("urn:li:share:7418960805229985792")
+        activity_ts2 = _urn_to_snowflake_ts("urn:li:activity:7418960806467436544")
+        assert share_ts2 == activity_ts2
+
+    def test_urn_to_snowflake_ts_returns_none_for_invalid(self):
+        from lestash_linkedin.extractors.changelog import _urn_to_snowflake_ts
+
+        assert _urn_to_snowflake_ts(None) is None
+        assert _urn_to_snowflake_ts("") is None
+        assert _urn_to_snowflake_ts("not-a-urn") is None
+        assert _urn_to_snowflake_ts("urn:li:groupPost:15875004-7420329640118005760") is None
+
+
+class TestSourceIdDedup:
+    """Test that source_id is stable across CREATE/PARTIAL_UPDATE events."""
+
+    def test_source_id_uses_resource_id(self):
+        """CREATE and PARTIAL_UPDATE for the same comment should produce same source_id."""
+        create_event = {
+            "resourceName": "socialActions/comments",
+            "resourceId": "comment-42",
+            "method": "CREATE",
+            "processedAt": 1000,
+            "activity": {"message": "Hello", "object": "urn:li:activity:999"},
+        }
+        update_event = {
+            "resourceName": "socialActions/comments",
+            "resourceId": "comment-42",
+            "method": "PARTIAL_UPDATE",
+            "processedAt": 2000,
+            "activity": {"message": "Hello"},
+        }
+        create_item = extract_changelog_item(create_event)
+        update_item = extract_changelog_item(update_event)
+        assert create_item.source_id == update_item.source_id
+
+    def test_source_id_falls_back_to_processed_at(self):
+        """Events without resourceId use processedAt."""
+        event = {
+            "resourceName": "ugcPosts",
+            "method": "CREATE",
+            "processedAt": 5000,
+            "activity": {
+                "specificContent": {
+                    "com.linkedin.ugc.ShareContent": {"shareCommentary": {"text": "test"}}
+                }
+            },
+        }
+        item = extract_changelog_item(event)
+        assert "5000" in item.source_id

@@ -186,6 +186,42 @@ class TestResolveLinkedinParents:
 
             assert updated == 2
 
+    def test_resolves_via_snowflake_ts(self, test_db):
+        """Reaction targeting activity URN resolves to post with share URN
+        via matching snowflake_ts."""
+        # Real URN pair: share and activity have same second-precision timestamp
+        post = ItemCreate(
+            source_type="linkedin",
+            source_id="changelog-ugcPosts-share123",
+            content="Post with share URN",
+            metadata={
+                "resource_name": "ugcPosts",
+                "post_id": "urn:li:share:7441773333693493249",
+                "snowflake_ts": 1774257024,
+            },
+        )
+        reaction = ItemCreate(
+            source_type="linkedin",
+            source_id="changelog-socialActions/likes-reaction456",
+            content="👍 LIKE",
+            metadata={
+                "resource_name": "socialActions/likes",
+                "reacted_to": "urn:li:activity:7441773334410719232",
+                "target_snowflake_ts": 1774257024,
+            },
+        )
+        with get_connection(test_db) as conn:
+            post_id = upsert_item(conn, post)
+            upsert_item(conn, reaction)
+            updated = resolve_linkedin_parents(conn)
+
+            assert updated == 1
+            row = conn.execute(
+                "SELECT parent_id FROM items WHERE source_id = ?",
+                ("changelog-socialActions/likes-reaction456",),
+            ).fetchone()
+            assert row[0] == post_id
+
 
 class TestUpsertItemParentId:
     """Test that upsert_item correctly handles parent_id."""

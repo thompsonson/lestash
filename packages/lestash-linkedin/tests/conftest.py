@@ -15,6 +15,7 @@ def ugc_post_event() -> dict:
     """
     return {
         "resourceName": "ugcPosts",
+        "resourceId": "urn:li:share:7418960805229985792",
         "method": "CREATE",
         "processedAt": 1768818123997,
         "activityStatus": "SUCCESS",
@@ -71,6 +72,7 @@ def comment_event() -> dict:
     """Sample socialActions/comments changelog event."""
     return {
         "resourceName": "socialActions/comments",
+        "resourceId": "comment-001",
         "method": "CREATE",
         "processedAt": 1768800000000,
         "activity": {
@@ -101,6 +103,7 @@ def reaction_event() -> dict:
     """Sample socialActions/likes changelog event."""
     return {
         "resourceName": "socialActions/likes",
+        "resourceId": "urn:li:activity:789012",
         "method": "CREATE",
         "processedAt": 1768800000000,
         "activity": {

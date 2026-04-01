@@ -37,26 +37,45 @@ console = Console()
 logger = get_plugin_logger("linkedin")
 
 
+def _parent_match_sql(field: str) -> str:
+    """Build SQL condition to match a child's target URN to a parent post.
+
+    Matches by:
+    1. Exact URN match (post_id or source_id = reacted_to/commented_on)
+    2. Snowflake timestamp match (share URN vs activity URN for the same post)
+    """
+    return f"""
+        p.source_type = 'linkedin'
+        AND json_extract(p.metadata, '$.resource_name') = 'ugcPosts'
+        AND (
+            json_extract(p.metadata, '$.post_id')
+                = json_extract(items.metadata, '$.{field}')
+            OR p.source_id = json_extract(items.metadata, '$.{field}')
+            OR (
+                json_extract(items.metadata, '$.target_snowflake_ts') IS NOT NULL
+                AND json_extract(p.metadata, '$.snowflake_ts')
+                    = json_extract(items.metadata, '$.target_snowflake_ts')
+            )
+        )
+    """
+
+
 def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
     """Resolve parent_id for LinkedIn reactions and comments.
 
-    Matches metadata.reacted_to / metadata.commented_on URNs against parent
-    posts identified by metadata.post_id or source_id.
+    Matches by exact URN (post_id, source_id) or by Snowflake timestamp
+    (handles share URN vs activity URN mismatch for the same post).
 
     Returns the number of items updated.
     """
     total = 0
     for field in ("reacted_to", "commented_on"):
+        match_sql = _parent_match_sql(field)
         cursor = conn.execute(
             f"""
             UPDATE items SET parent_id = (
                 SELECT p.id FROM items p
-                WHERE p.source_type = 'linkedin'
-                AND (
-                    json_extract(p.metadata, '$.post_id')
-                        = json_extract(items.metadata, '$.{field}')
-                    OR p.source_id = json_extract(items.metadata, '$.{field}')
-                )
+                WHERE {match_sql}
                 LIMIT 1
             )
             WHERE source_type = 'linkedin'
@@ -64,12 +83,7 @@ def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
             AND parent_id IS NULL
             AND EXISTS (
                 SELECT 1 FROM items p
-                WHERE p.source_type = 'linkedin'
-                AND (
-                    json_extract(p.metadata, '$.post_id')
-                        = json_extract(items.metadata, '$.{field}')
-                    OR p.source_id = json_extract(items.metadata, '$.{field}')
-                )
+                WHERE {match_sql}
             )
             """,
         )
@@ -1124,13 +1138,41 @@ class LinkedInSource(SourcePlugin):
                 bool, typer.Option("--dry-run", help="Preview without making changes")
             ] = False,
         ) -> None:
-            """Backfill parent_id for LinkedIn reactions and comments."""
+            """Backfill parent_id for LinkedIn reactions and comments.
+
+            Also fixes dedup issues (PARTIAL_UPDATE duplicates) and
+            populates snowflake_ts fields for cross-URN-type matching.
+            """
             from lestash.core.config import Config
             from lestash.core.database import get_connection
+
+            from lestash_linkedin.extractors.changelog import _urn_to_snowflake_ts
 
             config = Config.load()
             with get_connection(config) as conn:
                 if dry_run:
+                    # Count duplicates
+                    dupes = conn.execute("""
+                        SELECT COUNT(*) FROM items
+                        WHERE source_type = 'linkedin'
+                        AND json_extract(metadata, '$.method') = 'PARTIAL_UPDATE'
+                        AND json_extract(metadata, '$.resource_name')
+                            IN ('socialActions/comments', 'socialActions/likes')
+                    """).fetchone()[0]
+                    if dupes:
+                        console.print(f"  duplicates (PARTIAL_UPDATE): {dupes}")
+
+                    # Count missing snowflake_ts
+                    missing_ts = conn.execute("""
+                        SELECT COUNT(*) FROM items
+                        WHERE source_type = 'linkedin'
+                        AND json_extract(metadata, '$.resource_name') = 'ugcPosts'
+                        AND json_extract(metadata, '$.snowflake_ts') IS NULL
+                        AND json_extract(metadata, '$.post_id') IS NOT NULL
+                    """).fetchone()[0]
+                    if missing_ts:
+                        console.print(f"  posts missing snowflake_ts: {missing_ts}")
+
                     for field, label in [
                         ("reacted_to", "reactions"),
                         ("commented_on", "comments"),
@@ -1143,6 +1185,7 @@ class LinkedInSource(SourcePlugin):
                             AND parent_id IS NULL
                             """,
                         ).fetchone()[0]
+                        match_sql = _parent_match_sql(field)
                         resolvable = conn.execute(
                             f"""
                             SELECT COUNT(*) FROM items
@@ -1151,19 +1194,74 @@ class LinkedInSource(SourcePlugin):
                             AND parent_id IS NULL
                             AND EXISTS (
                                 SELECT 1 FROM items p
-                                WHERE p.source_type = 'linkedin'
-                                AND (
-                                    json_extract(p.metadata, '$.post_id')
-                                        = json_extract(items.metadata, '$.{field}')
-                                    OR p.source_id
-                                        = json_extract(items.metadata, '$.{field}')
-                                )
+                                WHERE {match_sql}
                             )
                             """,
                         ).fetchone()[0]
                         console.print(f"  {label}: {resolvable}/{total} resolvable")
                     console.print("\n[dim]Run without --dry-run to apply.[/dim]")
                 else:
+                    # Step 1: Remove PARTIAL_UPDATE duplicates
+                    deleted = conn.execute("""
+                        DELETE FROM items
+                        WHERE source_type = 'linkedin'
+                        AND json_extract(metadata, '$.method') = 'PARTIAL_UPDATE'
+                        AND json_extract(metadata, '$.resource_name')
+                            IN ('socialActions/comments', 'socialActions/likes')
+                    """).rowcount
+                    if deleted:
+                        console.print(f"[dim]Removed {deleted} duplicate items[/dim]")
+
+                    # Step 2: Backfill snowflake_ts on posts
+                    rows = conn.execute("""
+                        SELECT id, json_extract(metadata, '$.post_id'), metadata
+                        FROM items
+                        WHERE source_type = 'linkedin'
+                        AND json_extract(metadata, '$.resource_name') = 'ugcPosts'
+                        AND json_extract(metadata, '$.snowflake_ts') IS NULL
+                        AND json_extract(metadata, '$.post_id') IS NOT NULL
+                    """).fetchall()
+                    ts_count = 0
+                    for row_id, post_id, meta_json in rows:
+                        ts = _urn_to_snowflake_ts(post_id)
+                        if ts:
+                            import json
+
+                            meta = json.loads(meta_json)
+                            meta["snowflake_ts"] = ts
+                            conn.execute(
+                                "UPDATE items SET metadata = ? WHERE id = ?",
+                                (json.dumps(meta), row_id),
+                            )
+                            ts_count += 1
+                    if ts_count:
+                        console.print(f"[dim]Added snowflake_ts to {ts_count} posts[/dim]")
+
+                    # Step 3: Backfill target_snowflake_ts on reactions/comments
+                    for field in ("reacted_to", "commented_on"):
+                        rows = conn.execute(
+                            f"""
+                            SELECT id, json_extract(metadata, '$.{field}'), metadata
+                            FROM items
+                            WHERE source_type = 'linkedin'
+                            AND json_extract(metadata, '$.{field}') IS NOT NULL
+                            AND json_extract(metadata, '$.target_snowflake_ts') IS NULL
+                            """,
+                        ).fetchall()
+                        for row_id, target_urn, meta_json in rows:
+                            ts = _urn_to_snowflake_ts(target_urn)
+                            if ts:
+                                import json
+
+                                meta = json.loads(meta_json)
+                                meta["target_snowflake_ts"] = ts
+                                conn.execute(
+                                    "UPDATE items SET metadata = ? WHERE id = ?",
+                                    (json.dumps(meta), row_id),
+                                )
+                    conn.commit()
+
+                    # Step 4: Resolve parents
                     updated = resolve_linkedin_parents(conn)
                     console.print(f"[green]Updated {updated} items with parent_id[/green]")
 
