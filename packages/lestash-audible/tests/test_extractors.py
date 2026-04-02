@@ -8,6 +8,7 @@ from lestash_audible.client import extract_book_metadata
 from lestash_audible.source import (
     _deduplicate_annotations,
     _extract_annotations,
+    _find_chapter,
     _get_note_text,
     book_to_item,
     bookmark_to_item,
@@ -58,21 +59,18 @@ class TestBookToItem:
         item = book_to_item(sample_book)
         assert item.url == "https://www.audible.com/pd/B08G9PRS1K"
 
-    def test_content_includes_author(self, sample_book):
+    def test_content_is_description(self, sample_book):
         item = book_to_item(sample_book)
-        assert "Andy Weir" in item.content
+        assert "lone astronaut must save the earth" in item.content
 
-    def test_content_includes_narrator(self, sample_book):
+    def test_content_strips_html(self, sample_book):
         item = book_to_item(sample_book)
-        assert "Ray Porter" in item.content
+        assert "<p>" not in item.content
 
-    def test_content_includes_series(self, sample_book):
-        item = book_to_item(sample_book)
-        assert "Series:" in item.content
-
-    def test_content_includes_runtime(self, sample_book):
-        item = book_to_item(sample_book)
-        assert "16h 18m" in item.content
+    def test_content_fallback_without_description(self, sample_book_no_extras):
+        item = book_to_item(sample_book_no_extras)
+        assert "Hitchhiker" in item.content
+        assert "Douglas Adams" in item.content
 
     def test_metadata_has_asin(self, sample_book):
         item = book_to_item(sample_book)
@@ -82,6 +80,28 @@ class TestBookToItem:
         item = book_to_item(sample_book)
         assert item.metadata["type"] == "book"
 
+    def test_metadata_has_rating(self, sample_book):
+        item = book_to_item(sample_book)
+        assert item.metadata["rating"] == 4.8
+        assert item.metadata["rating_count"] == 50000
+
+    def test_metadata_has_categories(self, sample_book):
+        item = book_to_item(sample_book)
+        assert "Science Fiction" in item.metadata["categories"]
+
+    def test_metadata_has_progress(self, sample_book):
+        item = book_to_item(sample_book)
+        assert item.metadata["percent_complete"] == 72.5
+        assert item.metadata["is_finished"] is False
+
+    def test_metadata_has_cover_urls(self, sample_book):
+        item = book_to_item(sample_book)
+        assert "500" in item.metadata["cover_urls"]
+
+    def test_chapters_stored_in_metadata(self, sample_book, sample_chapters):
+        item = book_to_item(sample_book, chapters=sample_chapters)
+        assert len(item.metadata["chapters"]) == 3
+
     def test_not_own_content(self, sample_book):
         item = book_to_item(sample_book)
         assert item.is_own_content is False
@@ -89,8 +109,6 @@ class TestBookToItem:
     def test_minimal_book(self, sample_book_no_extras):
         item = book_to_item(sample_book_no_extras)
         assert item.title == "The Hitchhiker's Guide to the Galaxy"
-        assert "Narrated by" not in item.content
-        assert "Series:" not in item.content
 
 
 class TestGetNoteText:
@@ -166,6 +184,41 @@ class TestBookmarkToItem:
         item = bookmark_to_item(sample_note, meta)
         assert item.metadata["position_ms"] == 3600000
         assert item.metadata["position_str"] == "1:00:00"
+
+    def test_chapter_in_title(self, sample_note, sample_book, sample_chapters):
+        meta = extract_book_metadata(sample_book)
+        item = bookmark_to_item(sample_note, meta, chapters=sample_chapters)
+        assert "Chapter 1: The Problem" in item.title
+        assert "Project Hail Mary" in item.title
+
+    def test_chapter_in_metadata(self, sample_note, sample_book, sample_chapters):
+        meta = extract_book_metadata(sample_book)
+        item = bookmark_to_item(sample_note, meta, chapters=sample_chapters)
+        assert item.metadata["chapter"] == "Chapter 1: The Problem"
+
+    def test_no_chapter_without_chapters_param(self, sample_note, sample_book):
+        meta = extract_book_metadata(sample_book)
+        item = bookmark_to_item(sample_note, meta)
+        assert "chapter" not in item.metadata
+
+
+class TestFindChapter:
+    """Test chapter resolution from position."""
+
+    def test_finds_matching_chapter(self, sample_chapters):
+        assert _find_chapter(3600000, sample_chapters) == "Chapter 1: The Problem"
+
+    def test_finds_first_chapter(self, sample_chapters):
+        assert _find_chapter(0, sample_chapters) == "Opening Credits"
+
+    def test_finds_last_chapter(self, sample_chapters):
+        assert _find_chapter(5000000, sample_chapters) == "Chapter 2: The Solution"
+
+    def test_returns_none_past_end(self, sample_chapters):
+        assert _find_chapter(99999999, sample_chapters) is None
+
+    def test_returns_none_empty_chapters(self):
+        assert _find_chapter(1000, []) is None
 
 
 class TestDeduplicateAnnotations:
@@ -261,3 +314,30 @@ class TestExtractBookMetadata:
         meta = extract_book_metadata({"asin": "X", "series": None, "authors": None})
         assert meta["series"] == []
         assert meta["authors"] == []
+
+    def test_extracts_description(self, sample_book):
+        meta = extract_book_metadata(sample_book)
+        assert "lone astronaut must save the earth" in meta["description"]
+
+    def test_strips_html_from_description(self, sample_book):
+        meta = extract_book_metadata(sample_book)
+        assert "<p>" not in meta["description"]
+
+    def test_extracts_rating(self, sample_book):
+        meta = extract_book_metadata(sample_book)
+        assert meta["rating"] == 4.8
+        assert meta["rating_count"] == 50000
+
+    def test_extracts_categories(self, sample_book):
+        meta = extract_book_metadata(sample_book)
+        assert "Science Fiction & Fantasy" in meta["categories"]
+        assert "Science Fiction" in meta["categories"]
+
+    def test_extracts_progress(self, sample_book):
+        meta = extract_book_metadata(sample_book)
+        assert meta["percent_complete"] == 72.5
+        assert meta["is_finished"] is False
+
+    def test_extracts_cover_urls(self, sample_book):
+        meta = extract_book_metadata(sample_book)
+        assert "500" in meta["cover_urls"]

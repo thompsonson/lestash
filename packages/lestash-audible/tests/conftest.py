@@ -1,6 +1,6 @@
 """Test fixtures for Audible plugin.
 
-Fixtures match the real Audible sidecar API response format.
+Fixtures match the real Audible API response format.
 """
 
 import pytest
@@ -8,7 +8,7 @@ import pytest
 
 @pytest.fixture
 def sample_book() -> dict:
-    """Sample Audible library book entry."""
+    """Sample Audible library book entry with full metadata."""
     return {
         "asin": "B08G9PRS1K",
         "title": "Project Hail Mary",
@@ -23,6 +23,26 @@ def sample_book() -> dict:
         "series": [{"title": "Project Hail Mary", "sequence": "1"}],
         "format_type": "unabridged",
         "content_type": "Product",
+        "merchandising_summary": "<p>A lone astronaut must save the earth.</p>",
+        "rating": {
+            "overall_distribution": {
+                "average_rating": 4.8,
+                "num_ratings": 50000,
+                "display_average_rating": "4.8",
+                "display_stars": 5.0,
+            },
+            "num_reviews": 2500,
+        },
+        "category_ladders": [
+            {
+                "ladder": [
+                    {"name": "Science Fiction & Fantasy"},
+                    {"name": "Science Fiction"},
+                ],
+            }
+        ],
+        "percent_complete": 72.5,
+        "is_finished": False,
     }
 
 
@@ -41,6 +61,16 @@ def sample_book_no_extras() -> dict:
         "product_images": {},
         "series": [],
     }
+
+
+@pytest.fixture
+def sample_chapters() -> list[dict]:
+    """Chapter list matching real API chapter_info format."""
+    return [
+        {"title": "Opening Credits", "start_ms": 0, "length_ms": 30000},
+        {"title": "Chapter 1: The Problem", "start_ms": 30000, "length_ms": 3600000},
+        {"title": "Chapter 2: The Solution", "start_ms": 3630000, "length_ms": 4000000},
+    ]
 
 
 @pytest.fixture

@@ -19,6 +19,7 @@ from lestash_audible.client import (
     complete_auth,
     extract_book_metadata,
     get_bookmarks,
+    get_chapters,
     get_client,
     get_library,
     is_authenticated,
@@ -42,34 +43,30 @@ def format_position(position_ms: int) -> str:
     return f"{minutes}:{seconds:02d}"
 
 
-def book_to_item(book: dict[str, Any]) -> ItemCreate:
+def book_to_item(
+    book: dict[str, Any],
+    chapters: list[dict[str, Any]] | None = None,
+) -> ItemCreate:
     """Convert an Audible library book to an ItemCreate."""
     meta = extract_book_metadata(book)
     asin = meta["asin"]
     title = meta["title"]
     authors_str = ", ".join(meta["authors"]) if meta["authors"] else "Unknown"
 
-    subtitle = f" — {meta['subtitle']}" if meta.get("subtitle") else ""
-    series_info = ""
-    if meta.get("series"):
-        s = meta["series"][0]
-        pos = f", Book {s['position']}" if s.get("position") else ""
-        series_info = f"\nSeries: {s['name']}{pos}"
-
-    narrators_str = ", ".join(meta["narrators"]) if meta["narrators"] else ""
-    narrator_line = f"\nNarrated by: {narrators_str}" if narrators_str else ""
-
-    runtime = ""
-    if meta.get("runtime_minutes"):
-        hours, mins = divmod(meta["runtime_minutes"], 60)
-        runtime = f"\nLength: {hours}h {mins}m" if hours else f"\nLength: {mins}m"
-
-    content = f"{title}{subtitle}\nBy: {authors_str}{narrator_line}{series_info}{runtime}"
+    # Use publisher description as content (searchable), fall back to formatted info
+    content = meta.get("description", "")
+    if not content:
+        subtitle = f" — {meta['subtitle']}" if meta.get("subtitle") else ""
+        content = f"{title}{subtitle}\nBy: {authors_str}"
 
     created_at = None
     if meta.get("release_date"):
         with suppress(ValueError):
             created_at = datetime.strptime(meta["release_date"], "%Y-%m-%d")
+
+    book_meta: dict[str, Any] = {"type": "book", **meta}
+    if chapters:
+        book_meta["chapters"] = chapters
 
     return ItemCreate(
         source_type="audible",
@@ -80,11 +77,18 @@ def book_to_item(book: dict[str, Any]) -> ItemCreate:
         created_at=created_at,
         url=f"https://www.audible.com/pd/{asin}",
         is_own_content=False,
-        metadata={
-            "type": "book",
-            **meta,
-        },
+        metadata=book_meta,
     )
+
+
+def _find_chapter(position_ms: int, chapters: list[dict[str, Any]]) -> str | None:
+    """Find the chapter title for a given position in milliseconds."""
+    for ch in chapters:
+        start = ch.get("start_ms", 0)
+        length = ch.get("length_ms", 0)
+        if start <= position_ms < start + length:
+            return ch.get("title")
+    return None
 
 
 def _deduplicate_annotations(annotations: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -121,12 +125,14 @@ def _get_note_text(record: dict[str, Any]) -> str:
 def bookmark_to_item(
     bookmark: dict[str, Any],
     book_meta: dict[str, Any],
+    chapters: list[dict[str, Any]] | None = None,
 ) -> ItemCreate | None:
     """Convert an Audible bookmark/note to an ItemCreate.
 
     Args:
         bookmark: Bookmark dict from sidecar endpoint.
         book_meta: Book metadata from extract_book_metadata().
+        chapters: Optional chapter list for resolving position → chapter name.
 
     Returns:
         ItemCreate or None if bookmark has no useful content.
@@ -145,19 +151,34 @@ def bookmark_to_item(
     # Format the position for display
     position_str = format_position(position_ms)
 
-    # Build content
+    # Resolve chapter
+    chapter_name = _find_chapter(position_ms, chapters) if chapters else None
+
+    # Build title with chapter context
+    location = f" — {chapter_name}" if chapter_name else ""
     if note_text:
         content = note_text
-        title = f"Note in {book_title} at {position_str}"
+        title = f"Note in {book_title}{location} at {position_str}"
     else:
         content = f"Bookmark at {position_str}"
-        title = f"Bookmark in {book_title} at {position_str}"
+        title = f"Bookmark in {book_title}{location} at {position_str}"
 
     created_at = None
     if created_at_str:
         with suppress(ValueError, AttributeError):
             # Audible uses "2025-03-22 22:26:53.0" format
             created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S.%f")
+
+    item_meta: dict[str, Any] = {
+        "type": annotation_type,
+        "asin": asin,
+        "book_title": book_title,
+        "position_ms": position_ms,
+        "position_str": position_str,
+        "_parent_source_id": f"audible:book:{asin}",
+    }
+    if chapter_name:
+        item_meta["chapter"] = chapter_name
 
     return ItemCreate(
         source_type="audible",
@@ -168,14 +189,7 @@ def bookmark_to_item(
         created_at=created_at,
         url=f"https://www.audible.com/pd/{asin}",
         is_own_content=True,
-        metadata={
-            "type": annotation_type,
-            "asin": asin,
-            "book_title": book_title,
-            "position_ms": position_ms,
-            "position_str": position_str,
-            "_parent_source_id": f"audible:book:{asin}",
-        },
+        metadata=item_meta,
     )
 
 
@@ -323,17 +337,19 @@ class AudibleSource(SourcePlugin):
                         if not annotations:
                             continue
 
-                        # Insert book as parent
-                        book_item = book_to_item(book)
+                        # Fetch chapters for context
+                        chapters = get_chapters(client, book_asin)
+
+                        # Insert book as parent (with chapters in metadata)
+                        book_item = book_to_item(book, chapters=chapters)
                         book_id = upsert_item(conn, book_item)
                         total_books += 1
 
-                        # Insert bookmarks as children
+                        # Insert bookmarks as children (with chapter context)
                         for annotation in annotations:
-                            bm_item = bookmark_to_item(annotation, meta)
+                            bm_item = bookmark_to_item(annotation, meta, chapters=chapters)
                             if bm_item:
                                 bm_item.parent_id = book_id
-                                # Remove the marker since we resolved directly
                                 if bm_item.metadata:
                                     bm_item.metadata.pop("_parent_source_id", None)
                                 upsert_item(conn, bm_item)
@@ -370,12 +386,15 @@ class AudibleSource(SourcePlugin):
                 if not annotations:
                     continue
 
-                # Yield book as parent
-                yield book_to_item(book)
+                # Fetch chapters for context
+                chapters = get_chapters(client, asin)
 
-                # Yield bookmarks as children (with marker for two-pass resolution)
+                # Yield book as parent (with chapters)
+                yield book_to_item(book, chapters=chapters)
+
+                # Yield bookmarks as children (with chapter context)
                 for annotation in annotations:
-                    item = bookmark_to_item(annotation, meta)
+                    item = bookmark_to_item(annotation, meta, chapters=chapters)
                     if item:
                         yield item
 

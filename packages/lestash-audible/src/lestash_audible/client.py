@@ -22,7 +22,10 @@ from lestash.core.logging import get_plugin_logger
 
 logger = get_plugin_logger("audible")
 
-LIBRARY_RESPONSE_GROUPS = "contributors,product_attrs,product_desc,product_details,media,series"
+LIBRARY_RESPONSE_GROUPS = (
+    "contributors,product_attrs,product_desc,product_details,"
+    "media,series,rating,category_ladders,percent_complete,is_finished"
+)
 SIDECAR_URL = "https://cde-ta-g7g.amazon.com/FionaCDEServiceEngine/sidecar"
 
 # Android device constants (from Libation's AudibleApi)
@@ -307,26 +310,97 @@ def get_bookmarks(client: audible.Client, asin: str) -> list[dict[str, Any]]:
     return records
 
 
+def get_chapters(client: audible.Client, asin: str) -> list[dict[str, Any]]:
+    """Fetch chapter list for a book.
+
+    Args:
+        client: Authenticated Audible client.
+        asin: Book ASIN.
+
+    Returns:
+        List of chapter dicts with title, start_ms, length_ms.
+        Empty list if chapters unavailable.
+    """
+    try:
+        resp = client.post(
+            f"1.0/content/{asin}/licenserequest",
+            body={
+                "response_groups": "chapter_info",
+                "chapter_titles_type": "Flat",
+                "consumption_type": "Download",
+                "drm_type": "Adrm",
+                "quality": "High",
+            },
+        )
+    except Exception:
+        logger.debug(f"No chapters available for {asin}")
+        return []
+
+    chapter_info = (
+        resp.get("content_license", {}).get("content_metadata", {}).get("chapter_info", {})
+    )
+    raw_chapters = chapter_info.get("chapters") or []
+    return [
+        {
+            "title": ch.get("title", ""),
+            "start_ms": ch.get("start_offset_ms", 0),
+            "length_ms": ch.get("length_ms", 0),
+        }
+        for ch in raw_chapters
+    ]
+
+
+def _strip_html(text: str) -> str:
+    """Strip HTML tags from a string."""
+    import re
+
+    return re.sub(r"<[^>]+>", "", text).strip()
+
+
 def extract_book_metadata(book: dict[str, Any]) -> dict[str, Any]:
-    """Extract useful metadata from a library book entry."""
-    authors = []
-    narrators = []
-    for contributor in book.get("authors") or []:
-        authors.append(contributor.get("name", ""))
-    for contributor in book.get("narrators") or []:
-        narrators.append(contributor.get("name", ""))
+    """Extract metadata from a library book entry."""
+    authors = [c.get("name", "") for c in (book.get("authors") or [])]
+    narrators = [c.get("name", "") for c in (book.get("narrators") or [])]
+
+    # Description: publisher_summary or merchandising_summary (HTML)
+    description = book.get("publisher_summary") or book.get("merchandising_summary") or ""
+    if description:
+        description = _strip_html(description)
+
+    # Rating
+    rating_data = book.get("rating") or {}
+    rating = rating_data.get("overall_distribution", {}).get("average_rating")
+    rating_count = rating_data.get("overall_distribution", {}).get("num_ratings", 0)
+
+    # Categories from category_ladders
+    categories: list[str] = []
+    for ladder in book.get("category_ladders") or []:
+        for cat in ladder.get("ladder") or []:
+            name = cat.get("name")
+            if name and name not in categories:
+                categories.append(name)
+
+    # Cover images (all available sizes)
+    cover_urls = book.get("product_images") or {}
 
     return {
         "asin": book.get("asin", ""),
         "title": book.get("title", ""),
         "subtitle": book.get("subtitle"),
+        "description": description,
         "authors": authors,
         "narrators": narrators,
         "runtime_minutes": book.get("runtime_length_min"),
         "release_date": book.get("release_date"),
         "publisher": book.get("publisher_name"),
         "language": book.get("language"),
-        "cover_url": book.get("product_images", {}).get("500"),
+        "rating": rating,
+        "rating_count": rating_count,
+        "categories": categories,
+        "percent_complete": book.get("percent_complete"),
+        "is_finished": book.get("is_finished"),
+        "cover_urls": cover_urls,
+        "cover_url": cover_urls.get("500"),
         "series": [
             {"name": s.get("title"), "position": s.get("sequence")}
             for s in (book.get("series") or [])
