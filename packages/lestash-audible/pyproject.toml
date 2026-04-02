@@ -1,6 +1,6 @@
 [project]
 name = "lestash-audible"
-version = "1.32.0"
+version = "1.33.0"
 description = "Audible source plugin for Le Stash"
 readme = "README.md"
 requires-python = ">=3.12"
