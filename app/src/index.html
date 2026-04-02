@@ -697,6 +697,21 @@
         </div>
       </div>
 
+      <!-- Google auth -->
+      <div id="google-auth-section" style="margin-bottom:1.5rem;display:none">
+        <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Connect Google (YouTube, Drive)</h3>
+        <div id="google-auth-status"></div>
+        <div id="google-auth-flow" style="display:none">
+          <div style="margin-bottom:0.5rem;font-size:0.85rem">
+            After signing in with Google, copy the authorization code and paste it below.
+          </div>
+          <div class="tag-input-row">
+            <input type="text" id="google-auth-code" placeholder="Paste authorization code here..." style="flex:1">
+            <button class="sync-btn" onclick="completeGoogleAuth()">Complete</button>
+          </div>
+        </div>
+      </div>
+
       <table class="source-table" id="sources-table">
         <thead>
           <tr><th>Source</th><th>Description</th><th>Last Sync</th><th></th></tr>
@@ -798,16 +813,22 @@
     <div class="modal" style="max-width:500px">
       <h2>Save Shared Item</h2>
       <label for="capture-url">URL</label>
-      <input type="url" id="capture-url" placeholder="https://...">
+      <input type="url" id="capture-url" placeholder="https://..." oninput="document.getElementById('capture-transcript-option').style.display = _isYouTubeUrl(this.value) ? 'block' : 'none'">
       <label for="capture-title">Title</label>
       <input type="text" id="capture-title" placeholder="Page title or description">
       <label for="capture-notes">Notes</label>
       <textarea id="capture-notes" style="width:100%;min-height:60px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical;margin-bottom:0.75rem" placeholder="Your thoughts..."></textarea>
       <label for="capture-content">Shared content</label>
       <textarea id="capture-content" style="width:100%;min-height:60px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical;margin-bottom:0.75rem" readonly></textarea>
+      <div id="capture-transcript-option" style="display:none;margin-bottom:0.75rem">
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer">
+          <input type="checkbox" id="capture-fetch-transcript" checked>
+          Also fetch video transcript
+        </label>
+      </div>
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeCaptureDialog()">Cancel</button>
-        <button class="btn-save" onclick="saveCaptureItem()">Save</button>
+        <button class="btn-save" id="capture-save-btn" onclick="saveCaptureItem()">Save</button>
       </div>
     </div>
   </div>
@@ -1051,7 +1072,7 @@
       if (tab === 'recent') loadRecent();
       if (tab === 'search') document.getElementById('search-input').focus();
       if (tab === 'notes') { loadSavedNotes(); checkSttModel(); }
-      if (tab === 'sources') { loadSources(); loadAudibleAuth(); }
+      if (tab === 'sources') { loadSources(); loadGoogleAuth(); loadAudibleAuth(); }
       if (tab === 'stats') loadStats();
       if (tab === 'collections') loadCollections();
       if (tab === 'debug') { renderDebugInfo(); renderDebugLog(); }
@@ -1714,6 +1735,65 @@
       }
     }
 
+    /* ── Google Auth ── */
+    let _googleAuthState = null;
+
+    async function loadGoogleAuth() {
+      const section = document.getElementById('google-auth-section');
+      const statusEl = document.getElementById('google-auth-status');
+      const flowEl = document.getElementById('google-auth-flow');
+      try {
+        const data = await api('/api/google/auth-status');
+        section.style.display = 'block';
+        const hasYoutube = data.scopes.some(s => s.includes('youtube'));
+        const hasDrive = data.scopes.some(s => s.includes('drive'));
+        if (data.authenticated && hasYoutube && hasDrive) {
+          statusEl.innerHTML = `<span style="color:var(--ok)">Connected</span> <span style="color:var(--muted);font-size:0.75rem">(YouTube + Drive)</span>`;
+          flowEl.style.display = 'none';
+        } else {
+          const missing = [!hasYoutube && 'YouTube', !hasDrive && 'Drive'].filter(Boolean);
+          const scopeNote = data.authenticated && missing.length ? ` (missing: ${missing.join(', ')})` : '';
+          statusEl.innerHTML = `<button class="sync-btn" onclick="startGoogleAuth()">Connect Google</button><span style="color:var(--muted);font-size:0.75rem;margin-left:0.3rem">${scopeNote}</span>`;
+          flowEl.style.display = 'none';
+        }
+      } catch {
+        section.style.display = 'none';
+      }
+    }
+
+    async function startGoogleAuth() {
+      const statusEl = document.getElementById('google-auth-status');
+      const flowEl = document.getElementById('google-auth-flow');
+      try {
+        const data = await api('/api/google/auth-url');
+        _googleAuthState = data.state;
+        window.open(data.url, '_blank');
+        statusEl.innerHTML = '<span style="color:var(--muted)">Waiting for authorization...</span>';
+        flowEl.style.display = 'block';
+        document.getElementById('google-auth-code').focus();
+      } catch (e) {
+        showToast(`Failed to start auth: ${e.message}`, 'error');
+      }
+    }
+
+    async function completeGoogleAuth() {
+      const input = document.getElementById('google-auth-code');
+      const code = input.value.trim();
+      if (!code) return;
+      try {
+        await api('/api/google/auth-complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, state: _googleAuthState }),
+        });
+        showToast('Google connected!', 'ok');
+        input.value = '';
+        loadGoogleAuth();
+      } catch (e) {
+        showToast(`Auth failed: ${e.message}`, 'error');
+      }
+    }
+
     /* ── Voice Notes ── */
     let isRecording = false;
     let recognition = null;
@@ -1990,13 +2070,22 @@
     }
 
     /* ── Capture Dialog (text/URL share) ── */
+    function _isYouTubeUrl(url) {
+      return /youtube\.com\/watch|youtu\.be\//.test(url || '');
+    }
+
     function openCaptureDialog(share) {
       const text = share.text || '';
       const urlMatch = text.match(/https?:\/\/[^\s]+/);
-      document.getElementById('capture-url').value = urlMatch ? urlMatch[0] : '';
+      const url = urlMatch ? urlMatch[0] : '';
+      document.getElementById('capture-url').value = url;
       document.getElementById('capture-title').value = share.subject || '';
       document.getElementById('capture-notes').value = '';
       document.getElementById('capture-content').value = text;
+      // Show transcript option for YouTube URLs
+      const transcriptOpt = document.getElementById('capture-transcript-option');
+      transcriptOpt.style.display = _isYouTubeUrl(url) ? 'block' : 'none';
+      document.getElementById('capture-fetch-transcript').checked = true;
       document.getElementById('capture-modal').classList.add('open');
     }
 
@@ -2010,6 +2099,9 @@
       const notes = document.getElementById('capture-notes').value.trim();
       const content = document.getElementById('capture-content').value.trim();
       if (!url && !content) { showToast('Nothing to save', 'error'); return; }
+      const btn = document.getElementById('capture-save-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
       try {
         await api('/api/items', {
           method: 'POST',
@@ -2024,10 +2116,30 @@
             metadata: notes ? { notes, shared_text: content } : { shared_text: content },
           }),
         });
-        showToast('Saved', 'ok');
+        // Fetch transcript if YouTube and checkbox checked
+        const fetchTranscript = _isYouTubeUrl(url)
+          && document.getElementById('capture-fetch-transcript').checked;
+        if (fetchTranscript) {
+          btn.textContent = 'Fetching transcript...';
+          try {
+            const result = await api('/api/youtube/fetch-transcript', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url }),
+            });
+            showToast(`Saved + transcript (${result.word_count} words)`, 'ok');
+          } catch (e) {
+            showToast('Saved (transcript unavailable)', 'ok');
+          }
+        } else {
+          showToast('Saved', 'ok');
+        }
         closeCaptureDialog();
       } catch (e) {
         showToast('Save failed: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save';
       }
     }
 
