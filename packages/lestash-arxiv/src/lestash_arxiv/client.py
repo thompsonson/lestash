@@ -21,6 +21,7 @@ class Paper:
     primary_category: str
     url: str
     pdf_url: str
+    version: int | None = None
 
     @property
     def author_display(self) -> str:
@@ -52,6 +53,23 @@ def extract_arxiv_id(entry_id: str) -> str:
     return entry_id
 
 
+def extract_version(entry_id: str) -> int | None:
+    """Extract version number from arXiv entry ID.
+
+    Examples:
+        http://arxiv.org/abs/1706.03762v7 -> 7
+        2301.00001v1 -> 1
+        2301.00001 -> None
+    """
+    if "/" in entry_id:
+        entry_id = entry_id.split("/")[-1]
+
+    match = re.search(r"v(\d+)$", entry_id)
+    if match:
+        return int(match.group(1))
+    return None
+
+
 def paper_from_result(result: arxiv.Result) -> Paper:
     """Convert arxiv.Result to Paper dataclass."""
     return Paper(
@@ -65,6 +83,7 @@ def paper_from_result(result: arxiv.Result) -> Paper:
         primary_category=result.primary_category,
         url=result.entry_id,
         pdf_url=result.pdf_url,
+        version=extract_version(result.entry_id),
     )
 
 
@@ -105,3 +124,21 @@ def get_paper(arxiv_id: str) -> Paper | None:
     if results:
         return paper_from_result(results[0])
     return None
+
+
+def get_papers(arxiv_ids: list[str]) -> list[Paper]:
+    """Batch-fetch multiple papers by arXiv ID.
+
+    Args:
+        arxiv_ids: List of arXiv paper IDs.
+
+    Returns:
+        List of Paper objects (missing IDs are silently skipped).
+    """
+    if not arxiv_ids:
+        return []
+
+    client = arxiv.Client()
+    search = arxiv.Search(id_list=arxiv_ids)
+
+    return [paper_from_result(r) for r in client.results(search)]
