@@ -652,7 +652,10 @@ class YouTubeSource(SourcePlugin):
             console.print(f"[dim]Fetching transcript for {video_id}...[/dim]")
             transcript = get_transcript(video_id)
             if not transcript:
-                console.print("[red]No transcript available for this video.[/red]")
+                console.print(
+                    "[red]No transcript available.[/red] "
+                    "[dim]Check logs — YouTube may be blocking this IP.[/dim]"
+                )
                 raise typer.Exit(1)
 
             # Try to get video metadata if we have auth

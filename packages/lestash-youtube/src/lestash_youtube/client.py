@@ -378,7 +378,10 @@ def get_transcript(video_id: str, languages: list[str] | None = None) -> dict[st
         ]
         full_text = " ".join(str(s["text"]) for s in segments)
         return {"full_text": full_text, "segments": segments, "language": languages[0]}
-    except Exception:
+    except Exception as e:
+        from lestash.core.logging import get_plugin_logger
+
+        get_plugin_logger("youtube").warning(f"Transcript fetch failed for {video_id}: {e}")
         return None
 
 
