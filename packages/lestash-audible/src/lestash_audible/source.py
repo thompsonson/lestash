@@ -87,6 +87,37 @@ def book_to_item(book: dict[str, Any]) -> ItemCreate:
     )
 
 
+def _deduplicate_annotations(annotations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate annotations by startPosition.
+
+    Audible creates multiple records per annotation (bookmark + clip + note).
+    We keep the richest record for each position — prefer notes over clips
+    over bookmarks.
+    """
+    by_position: dict[str, dict[str, Any]] = {}
+    type_priority = {"audible.note": 3, "audible.clip": 2, "audible.bookmark": 1}
+
+    for a in annotations:
+        pos = a.get("startPosition", "0")
+        priority = type_priority.get(a.get("type", ""), 0)
+        existing = by_position.get(pos)
+        if not existing or priority > type_priority.get(existing.get("type", ""), 0):
+            by_position[pos] = a
+
+    return list(by_position.values())
+
+
+def _get_note_text(record: dict[str, Any]) -> str:
+    """Extract note text from a sidecar record.
+
+    Notes store text in 'text' field, clips in 'metadata.note'.
+    """
+    text = record.get("text", "")
+    if not text:
+        text = (record.get("metadata") or {}).get("note", "")
+    return text.strip() if text else ""
+
+
 def bookmark_to_item(
     bookmark: dict[str, Any],
     book_meta: dict[str, Any],
@@ -102,13 +133,14 @@ def bookmark_to_item(
     """
     asin = book_meta["asin"]
     book_title = book_meta["title"]
-    position_ms = bookmark.get("position", 0)
-    note_text = bookmark.get("note", "")
-    annotation_type = bookmark.get("type", "bookmark")
+    position_ms = int(bookmark.get("startPosition", 0))
+    note_text = _get_note_text(bookmark)
+    annotation_type = bookmark.get("type", "audible.bookmark")
+    annotation_id = bookmark.get("annotationId", str(position_ms))
     created_at_str = bookmark.get("creationTime")
 
-    # Build a unique source_id from ASIN + position
-    source_id = f"audible:bookmark:{asin}:{position_ms}"
+    # Use annotationId for stable dedup
+    source_id = f"audible:annotation:{asin}:{annotation_id}"
 
     # Format the position for display
     position_str = format_position(position_ms)
@@ -124,7 +156,8 @@ def bookmark_to_item(
     created_at = None
     if created_at_str:
         with suppress(ValueError, AttributeError):
-            created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+            # Audible uses "2025-03-22 22:26:53.0" format
+            created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S.%f")
 
     return ItemCreate(
         source_type="audible",
@@ -352,9 +385,11 @@ class AudibleSource(SourcePlugin):
 
 
 def _extract_annotations(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Filter sidecar records to only user annotations.
+    """Filter and deduplicate sidecar records to user annotations.
 
-    Excludes system records like audible.last_heard (listening position).
+    Excludes system records (audible.last_heard) and deduplicates by position
+    (Audible creates bookmark + clip + note records for the same annotation).
     """
     skip_types = {"audible.last_heard"}
-    return [r for r in records if isinstance(r, dict) and r.get("type") not in skip_types]
+    filtered = [r for r in records if isinstance(r, dict) and r.get("type") not in skip_types]
+    return _deduplicate_annotations(filtered)

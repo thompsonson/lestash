@@ -1,4 +1,7 @@
-"""Test fixtures for Audible plugin."""
+"""Test fixtures for Audible plugin.
+
+Fixtures match the real Audible sidecar API response format.
+"""
 
 import pytest
 
@@ -41,28 +44,59 @@ def sample_book_no_extras() -> dict:
 
 
 @pytest.fixture
-def sample_bookmark_with_note() -> dict:
-    """Bookmark with a user note."""
+def sample_note() -> dict:
+    """Note record from sidecar API (audible.note type)."""
     return {
-        "type": "note",
-        "position": 3_600_000,
-        "note": "This is the key insight about the Astrophage.",
-        "creationTime": "2026-01-15T10:30:00Z",
+        "type": "audible.note",
+        "annotationId": "a1A3VFUSQG5UQ0",
+        "startPosition": "3600000",
+        "endPosition": "3600000",
+        "creationTime": "2026-01-15 10:30:00.0",
+        "text": "This is the key insight about the Astrophage.",
+        "lastModificationTime": "2026-01-15 10:30:00.0",
     }
 
 
 @pytest.fixture
-def sample_bookmark_no_note() -> dict:
-    """Bookmark without a note (position-only)."""
+def sample_clip() -> dict:
+    """Clip record from sidecar API (audible.clip type with metadata.note)."""
     return {
-        "type": "bookmark",
-        "position": 7_200_000,
-        "note": "",
-        "creationTime": "2026-01-16T14:00:00Z",
+        "type": "audible.clip",
+        "annotationId": "a3LPJUGNSGN37A",
+        "startPosition": "3600000",
+        "endPosition": "3630000",
+        "creationTime": "2026-01-15 10:30:00.0",
+        "metadata": {
+            "note": "This is the key insight about the Astrophage.",
+            "c_version": "10291671",
+        },
+        "lastModificationTime": "2026-01-15 10:30:00.0",
     }
 
 
 @pytest.fixture
-def sample_records(sample_bookmark_with_note, sample_bookmark_no_note) -> list:
-    """Sample sidecar records list (from payload.records)."""
-    return [sample_bookmark_no_note, sample_bookmark_with_note]
+def sample_bookmark() -> dict:
+    """Bookmark record from sidecar API (position-only, no text)."""
+    return {
+        "type": "audible.bookmark",
+        "annotationId": "a2ZRCY6982QR1F",
+        "startPosition": "7200000",
+        "creationTime": "2026-01-16 14:00:00.0",
+        "lastModificationTime": "2026-01-16 14:00:00.0",
+    }
+
+
+@pytest.fixture
+def sample_last_heard() -> dict:
+    """System record for last listening position (should be filtered out)."""
+    return {
+        "type": "audible.last_heard",
+        "startPosition": "5783528",
+        "creationTime": "2026-03-17 22:19:05.0",
+    }
+
+
+@pytest.fixture
+def sample_records(sample_note, sample_clip, sample_bookmark, sample_last_heard) -> list:
+    """Realistic sidecar records list including duplicates and system records."""
+    return [sample_last_heard, sample_note, sample_clip, sample_bookmark]

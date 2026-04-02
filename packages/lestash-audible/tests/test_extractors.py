@@ -1,9 +1,14 @@
-"""Tests for Audible item extraction."""
+"""Tests for Audible item extraction.
+
+Tests use fixtures matching the real Audible sidecar API response format.
+"""
 
 from lestash.models.item import ItemCreate
 from lestash_audible.client import extract_book_metadata
 from lestash_audible.source import (
+    _deduplicate_annotations,
     _extract_annotations,
+    _get_note_text,
     book_to_item,
     bookmark_to_item,
     format_position,
@@ -88,57 +93,122 @@ class TestBookToItem:
         assert "Series:" not in item.content
 
 
+class TestGetNoteText:
+    """Test note text extraction from different record types."""
+
+    def test_extracts_from_text_field(self, sample_note):
+        assert "key insight about the Astrophage" in _get_note_text(sample_note)
+
+    def test_extracts_from_metadata_note(self, sample_clip):
+        assert "key insight about the Astrophage" in _get_note_text(sample_clip)
+
+    def test_returns_empty_for_bookmark(self, sample_bookmark):
+        assert _get_note_text(sample_bookmark) == ""
+
+    def test_returns_empty_for_empty_record(self):
+        assert _get_note_text({}) == ""
+
+
 class TestBookmarkToItem:
     """Test bookmark/note to ItemCreate conversion."""
 
-    def test_note_creates_item(self, sample_bookmark_with_note, sample_book):
+    def test_note_creates_item(self, sample_note, sample_book):
         meta = extract_book_metadata(sample_book)
-        item = bookmark_to_item(sample_bookmark_with_note, meta)
+        item = bookmark_to_item(sample_note, meta)
         assert isinstance(item, ItemCreate)
 
-    def test_note_content(self, sample_bookmark_with_note, sample_book):
+    def test_note_content(self, sample_note, sample_book):
         meta = extract_book_metadata(sample_book)
-        item = bookmark_to_item(sample_bookmark_with_note, meta)
+        item = bookmark_to_item(sample_note, meta)
         assert "key insight about the Astrophage" in item.content
 
-    def test_note_title_includes_book(self, sample_bookmark_with_note, sample_book):
+    def test_note_title_includes_book(self, sample_note, sample_book):
         meta = extract_book_metadata(sample_book)
-        item = bookmark_to_item(sample_bookmark_with_note, meta)
+        item = bookmark_to_item(sample_note, meta)
         assert "Project Hail Mary" in item.title
         assert "1:00:00" in item.title
 
-    def test_bookmark_without_note(self, sample_bookmark_no_note, sample_book):
+    def test_clip_extracts_note_text(self, sample_clip, sample_book):
         meta = extract_book_metadata(sample_book)
-        item = bookmark_to_item(sample_bookmark_no_note, meta)
+        item = bookmark_to_item(sample_clip, meta)
+        assert "key insight about the Astrophage" in item.content
+
+    def test_bookmark_without_note(self, sample_bookmark, sample_book):
+        meta = extract_book_metadata(sample_book)
+        item = bookmark_to_item(sample_bookmark, meta)
         assert item.content == "Bookmark at 2:00:00"
 
-    def test_source_id_format(self, sample_bookmark_with_note, sample_book):
+    def test_source_id_uses_annotation_id(self, sample_note, sample_book):
         meta = extract_book_metadata(sample_book)
-        item = bookmark_to_item(sample_bookmark_with_note, meta)
-        assert item.source_id == "audible:bookmark:B08G9PRS1K:3600000"
+        item = bookmark_to_item(sample_note, meta)
+        assert item.source_id == "audible:annotation:B08G9PRS1K:a1A3VFUSQG5UQ0"
 
-    def test_is_own_content(self, sample_bookmark_with_note, sample_book):
+    def test_is_own_content(self, sample_note, sample_book):
         meta = extract_book_metadata(sample_book)
-        item = bookmark_to_item(sample_bookmark_with_note, meta)
+        item = bookmark_to_item(sample_note, meta)
         assert item.is_own_content is True
 
-    def test_has_parent_marker(self, sample_bookmark_with_note, sample_book):
+    def test_has_parent_marker(self, sample_note, sample_book):
         meta = extract_book_metadata(sample_book)
-        item = bookmark_to_item(sample_bookmark_with_note, meta)
+        item = bookmark_to_item(sample_note, meta)
         assert item.metadata["_parent_source_id"] == "audible:book:B08G9PRS1K"
 
-    def test_created_at_parsed(self, sample_bookmark_with_note, sample_book):
+    def test_created_at_parsed(self, sample_note, sample_book):
         meta = extract_book_metadata(sample_book)
-        item = bookmark_to_item(sample_bookmark_with_note, meta)
+        item = bookmark_to_item(sample_note, meta)
         assert item.created_at is not None
         assert item.created_at.year == 2026
+        assert item.created_at.month == 1
+        assert item.created_at.day == 15
+
+    def test_position_in_metadata(self, sample_note, sample_book):
+        meta = extract_book_metadata(sample_book)
+        item = bookmark_to_item(sample_note, meta)
+        assert item.metadata["position_ms"] == 3600000
+        assert item.metadata["position_str"] == "1:00:00"
+
+
+class TestDeduplicateAnnotations:
+    """Test deduplication of records at the same position."""
+
+    def test_keeps_note_over_clip_and_bookmark(self):
+        records = [
+            {"type": "audible.bookmark", "startPosition": "1000", "annotationId": "a1"},
+            {"type": "audible.clip", "startPosition": "1000", "annotationId": "a2"},
+            {"type": "audible.note", "startPosition": "1000", "annotationId": "a3", "text": "hi"},
+        ]
+        result = _deduplicate_annotations(records)
+        assert len(result) == 1
+        assert result[0]["type"] == "audible.note"
+
+    def test_keeps_clip_over_bookmark(self):
+        records = [
+            {"type": "audible.bookmark", "startPosition": "1000", "annotationId": "a1"},
+            {"type": "audible.clip", "startPosition": "1000", "annotationId": "a2"},
+        ]
+        result = _deduplicate_annotations(records)
+        assert len(result) == 1
+        assert result[0]["type"] == "audible.clip"
+
+    def test_keeps_different_positions(self):
+        records = [
+            {"type": "audible.bookmark", "startPosition": "1000", "annotationId": "a1"},
+            {"type": "audible.bookmark", "startPosition": "2000", "annotationId": "a2"},
+        ]
+        result = _deduplicate_annotations(records)
+        assert len(result) == 2
+
+    def test_empty_list(self):
+        assert _deduplicate_annotations([]) == []
 
 
 class TestExtractAnnotations:
-    """Test record filtering."""
+    """Test filtering and deduplication pipeline."""
 
-    def test_extracts_bookmarks_and_notes(self, sample_records):
+    def test_filters_last_heard_and_deduplicates(self, sample_records):
+        # sample_records has: last_heard + note + clip (same pos) + bookmark (diff pos)
         annotations = _extract_annotations(sample_records)
+        # last_heard filtered, note+clip deduped to note, bookmark kept = 2
         assert len(annotations) == 2
 
     def test_empty_list(self):
@@ -147,14 +217,14 @@ class TestExtractAnnotations:
     def test_filters_last_heard(self):
         records = [
             {"type": "audible.last_heard", "startPosition": "1000"},
-            {"type": "note", "position": 2000, "note": "keep this"},
+            {"type": "audible.note", "startPosition": "2000", "text": "keep"},
         ]
         annotations = _extract_annotations(records)
         assert len(annotations) == 1
-        assert annotations[0]["type"] == "note"
+        assert annotations[0]["type"] == "audible.note"
 
     def test_ignores_non_dict_items(self):
-        records = ["not a dict", 42, {"type": "bookmark", "position": 1000}]
+        records = ["not a dict", 42, {"type": "audible.bookmark", "startPosition": "1000"}]
         annotations = _extract_annotations(records)
         assert len(annotations) == 1
 
@@ -185,3 +255,9 @@ class TestExtractBookMetadata:
         assert meta["authors"] == []
         assert meta["narrators"] == []
         assert meta["series"] == []
+
+    def test_handles_null_series(self):
+        """API returns null instead of missing key for some fields."""
+        meta = extract_book_metadata({"asin": "X", "series": None, "authors": None})
+        assert meta["series"] == []
+        assert meta["authors"] == []
