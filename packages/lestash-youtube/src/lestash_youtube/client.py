@@ -1,137 +1,53 @@
-"""YouTube Data API v3 client with OAuth 2.0 authentication."""
+"""YouTube Data API v3 client with OAuth 2.0 authentication.
 
-import json
-from pathlib import Path
+Uses the shared Google OAuth module (lestash.core.google_auth) for authentication,
+which supports headless/SSH environments and web UI auth.
+"""
+
 from typing import Any
 
-from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from lestash.core.google_auth import (
+    get_client_secrets_path,
+    get_credentials,
+    run_auth_flow,
+)
 
 # YouTube API scopes
-# - youtube.readonly: View account info (liked videos, subscriptions, etc.)
-# - youtube: Full access (needed for some history operations)
-SCOPES = [
+YOUTUBE_SCOPES = [
     "https://www.googleapis.com/auth/youtube.readonly",
 ]
 
 
-def get_config_dir() -> Path:
-    """Get lestash config directory."""
-    config_dir = Path.home() / ".config" / "lestash"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    return config_dir
-
-
-def get_client_secrets_path() -> Path:
-    """Get path to YouTube OAuth client secrets file."""
-    return get_config_dir() / "youtube_client_secrets.json"
-
-
-def get_credentials_path() -> Path:
-    """Get path to YouTube OAuth tokens file."""
-    return get_config_dir() / "youtube_credentials.json"
-
-
-def save_credentials(credentials: Credentials) -> None:
-    """Save OAuth credentials to config file."""
-    creds_data = {
-        "token": credentials.token,
-        "refresh_token": credentials.refresh_token,
-        "token_uri": credentials.token_uri,
-        "client_id": credentials.client_id,
-        "client_secret": credentials.client_secret,
-        "scopes": list(credentials.scopes) if credentials.scopes else SCOPES,
-    }
-
-    path = get_credentials_path()
-    path.write_text(json.dumps(creds_data, indent=2))
-    path.chmod(0o600)  # Make file readable only by owner
-
-
-def load_credentials() -> Credentials | None:
-    """Load OAuth credentials from config file."""
-    path = get_credentials_path()
-    if not path.exists():
-        return None
-
-    try:
-        creds_data = json.loads(path.read_text())
-        return Credentials(
-            token=creds_data.get("token"),
-            refresh_token=creds_data.get("refresh_token"),
-            token_uri=creds_data.get("token_uri"),
-            client_id=creds_data.get("client_id"),
-            client_secret=creds_data.get("client_secret"),
-            scopes=creds_data.get("scopes", SCOPES),
-        )
-    except (json.JSONDecodeError, OSError, KeyError):
-        return None
-
-
 def check_client_secrets() -> bool:
-    """Check if client secrets file exists."""
+    """Check if Google client secrets file exists."""
     return get_client_secrets_path().exists()
 
 
 def run_oauth_flow() -> Credentials:
-    """Run OAuth 2.0 flow to get user credentials.
+    """Run OAuth 2.0 flow for YouTube access.
 
-    Requires client_secrets.json to be present in config directory.
+    Delegates to the shared Google auth module which supports
+    desktop, headless/SSH, and web UI flows.
+    """
+    return run_auth_flow(scopes=YOUTUBE_SCOPES)
 
-    Returns:
-        Authenticated credentials.
+
+def load_credentials() -> Credentials | None:
+    """Load stored credentials (for status checks)."""
+    from lestash.core.google_auth import load_credentials as _load
+
+    return _load()
+
+
+def get_youtube_credentials() -> Credentials:
+    """Get valid OAuth credentials with YouTube scope.
 
     Raises:
-        FileNotFoundError: If client secrets file is not found.
+        ValueError: If no credentials available.
     """
-    secrets_path = get_client_secrets_path()
-    if not secrets_path.exists():
-        raise FileNotFoundError(
-            f"Client secrets file not found at {secrets_path}.\n"
-            "Download it from Google Cloud Console:\n"
-            "1. Go to https://console.cloud.google.com/apis/credentials\n"
-            "2. Create OAuth 2.0 Client ID (Desktop application)\n"
-            "3. Download the JSON and save it as:\n"
-            f"   {secrets_path}"
-        )
-
-    flow = InstalledAppFlow.from_client_secrets_file(str(secrets_path), SCOPES)
-
-    # Run local server for OAuth callback
-    credentials = flow.run_local_server(port=0)
-
-    # Save credentials for future use
-    save_credentials(credentials)
-
-    return credentials
-
-
-def get_credentials() -> Credentials:
-    """Get valid OAuth credentials, refreshing if necessary.
-
-    Returns:
-        Valid credentials.
-
-    Raises:
-        ValueError: If no credentials available and can't authenticate.
-    """
-    credentials = load_credentials()
-
-    if credentials and credentials.valid:
-        return credentials
-
-    if credentials and credentials.expired and credentials.refresh_token:
-        try:
-            credentials.refresh(Request())
-            save_credentials(credentials)
-            return credentials
-        except Exception:
-            # Refresh failed, need to re-authenticate
-            pass
-
-    raise ValueError("No valid credentials. Run 'lestash youtube auth' to authenticate.")
+    return get_credentials(scopes=YOUTUBE_SCOPES)
 
 
 def create_youtube_client():
@@ -140,7 +56,7 @@ def create_youtube_client():
     Returns:
         YouTube API service object.
     """
-    credentials = get_credentials()
+    credentials = get_youtube_credentials()
     return build("youtube", "v3", credentials=credentials)
 
 
@@ -430,3 +346,81 @@ def get_channel_info(youtube) -> dict[str, Any] | None:
         "video_count": channel.get("statistics", {}).get("videoCount"),
         "view_count": channel.get("statistics", {}).get("viewCount"),
     }
+
+
+def get_transcript(video_id: str, languages: list[str] | None = None) -> dict[str, Any] | None:
+    """Fetch transcript/captions for a YouTube video.
+
+    Uses youtube-transcript-api (no Google auth needed for public videos).
+
+    Args:
+        video_id: YouTube video ID.
+        languages: Preferred languages (default: ["en"]).
+
+    Returns:
+        Dict with full_text and segments, or None if unavailable.
+    """
+    from youtube_transcript_api import YouTubeTranscriptApi
+
+    if languages is None:
+        languages = ["en"]
+
+    try:
+        ytt_api = YouTubeTranscriptApi()
+        transcript = ytt_api.fetch(video_id, languages=languages)
+        segments = [
+            {
+                "text": entry.text,
+                "start": entry.start,
+                "duration": entry.duration,
+            }
+            for entry in transcript
+        ]
+        full_text = " ".join(str(s["text"]) for s in segments)
+        return {"full_text": full_text, "segments": segments, "language": languages[0]}
+    except Exception:
+        return None
+
+
+def get_comments(youtube: Any, video_id: str, max_results: int = 100) -> list[dict[str, Any]]:
+    """Fetch top-level comments for a video.
+
+    Args:
+        youtube: Authenticated YouTube API client.
+        video_id: YouTube video ID.
+        max_results: Maximum number of comments to fetch.
+
+    Returns:
+        List of comment dicts with author, text, published_at, like_count.
+    """
+    comments: list[dict[str, Any]] = []
+    try:
+        response = (
+            youtube.commentThreads()
+            .list(
+                part="snippet",
+                videoId=video_id,
+                maxResults=min(max_results, 100),
+                order="relevance",
+                textFormat="plainText",
+            )
+            .execute()
+        )
+
+        for item in response.get("items", []):
+            snippet = item["snippet"]["topLevelComment"]["snippet"]
+            comments.append(
+                {
+                    "id": item["snippet"]["topLevelComment"]["id"],
+                    "author": snippet.get("authorDisplayName", ""),
+                    "author_channel_id": snippet.get("authorChannelId", {}).get("value"),
+                    "text": snippet.get("textDisplay", ""),
+                    "published_at": snippet.get("publishedAt"),
+                    "like_count": snippet.get("likeCount", 0),
+                    "reply_count": item["snippet"].get("totalReplyCount", 0),
+                }
+            )
+    except Exception:
+        pass  # Comments may be disabled
+
+    return comments

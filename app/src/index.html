@@ -697,6 +697,21 @@
         </div>
       </div>
 
+      <!-- Google auth -->
+      <div id="google-auth-section" style="margin-bottom:1.5rem;display:none">
+        <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Connect Google (YouTube, Drive)</h3>
+        <div id="google-auth-status"></div>
+        <div id="google-auth-flow" style="display:none">
+          <div style="margin-bottom:0.5rem;font-size:0.85rem">
+            After signing in with Google, copy the authorization code and paste it below.
+          </div>
+          <div class="tag-input-row">
+            <input type="text" id="google-auth-code" placeholder="Paste authorization code here..." style="flex:1">
+            <button class="sync-btn" onclick="completeGoogleAuth()">Complete</button>
+          </div>
+        </div>
+      </div>
+
       <table class="source-table" id="sources-table">
         <thead>
           <tr><th>Source</th><th>Description</th><th>Last Sync</th><th></th></tr>
@@ -1051,7 +1066,7 @@
       if (tab === 'recent') loadRecent();
       if (tab === 'search') document.getElementById('search-input').focus();
       if (tab === 'notes') { loadSavedNotes(); checkSttModel(); }
-      if (tab === 'sources') { loadSources(); loadAudibleAuth(); }
+      if (tab === 'sources') { loadSources(); loadGoogleAuth(); loadAudibleAuth(); }
       if (tab === 'stats') loadStats();
       if (tab === 'collections') loadCollections();
       if (tab === 'debug') { renderDebugInfo(); renderDebugLog(); }
@@ -1709,6 +1724,61 @@
         showToast('Audible connected!', 'ok');
         input.value = '';
         loadAudibleAuth();
+      } catch (e) {
+        showToast(`Auth failed: ${e.message}`, 'error');
+      }
+    }
+
+    /* ── Google Auth ── */
+    let _googleAuthState = null;
+
+    async function loadGoogleAuth() {
+      const section = document.getElementById('google-auth-section');
+      const statusEl = document.getElementById('google-auth-status');
+      const flowEl = document.getElementById('google-auth-flow');
+      try {
+        const data = await api('/api/google/auth-status');
+        section.style.display = 'block';
+        if (data.authenticated) {
+          statusEl.innerHTML = `<span style="color:var(--ok)">Connected</span> <span style="color:var(--muted);font-size:0.75rem">(${escHtml(data.scopes.join(', '))})</span>`;
+          flowEl.style.display = 'none';
+        } else {
+          statusEl.innerHTML = `<button class="sync-btn" onclick="startGoogleAuth()">Connect Google</button>`;
+          flowEl.style.display = 'none';
+        }
+      } catch {
+        section.style.display = 'none';
+      }
+    }
+
+    async function startGoogleAuth() {
+      const statusEl = document.getElementById('google-auth-status');
+      const flowEl = document.getElementById('google-auth-flow');
+      try {
+        const data = await api('/api/google/auth-url');
+        _googleAuthState = data.state;
+        window.open(data.url, '_blank');
+        statusEl.innerHTML = '<span style="color:var(--muted)">Waiting for authorization...</span>';
+        flowEl.style.display = 'block';
+        document.getElementById('google-auth-code').focus();
+      } catch (e) {
+        showToast(`Failed to start auth: ${e.message}`, 'error');
+      }
+    }
+
+    async function completeGoogleAuth() {
+      const input = document.getElementById('google-auth-code');
+      const code = input.value.trim();
+      if (!code) return;
+      try {
+        await api('/api/google/auth-complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, state: _googleAuthState }),
+        });
+        showToast('Google connected!', 'ok');
+        input.value = '';
+        loadGoogleAuth();
       } catch (e) {
         showToast(`Auth failed: ${e.message}`, 'error');
       }

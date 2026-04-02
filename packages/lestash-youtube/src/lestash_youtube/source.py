@@ -8,6 +8,10 @@ from datetime import datetime
 from typing import Annotated, Any
 
 import typer
+from lestash.core.google_auth import (
+    get_client_secrets_path,
+    get_credentials_path,
+)
 from lestash.core.logging import get_plugin_logger
 from lestash.models.item import ItemCreate
 from lestash.plugins.base import SourcePlugin
@@ -18,8 +22,6 @@ from lestash_youtube.client import (
     check_client_secrets,
     create_youtube_client,
     get_channel_info,
-    get_client_secrets_path,
-    get_credentials_path,
     get_liked_videos,
     get_subscriptions,
     get_watch_history,
@@ -186,11 +188,104 @@ def subscription_to_item(subscription: dict[str, Any]) -> ItemCreate:
     )
 
 
+def _extract_video_id(url_or_id: str) -> str | None:
+    """Extract YouTube video ID from a URL or return as-is if already an ID."""
+    # youtube.com/watch?v=ID
+    match = re.search(r"[?&]v=([a-zA-Z0-9_-]{11})", url_or_id)
+    if match:
+        return match.group(1)
+    # youtu.be/ID
+    match = re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", url_or_id)
+    if match:
+        return match.group(1)
+    # Bare ID (11 chars)
+    if re.match(r"^[a-zA-Z0-9_-]{11}$", url_or_id):
+        return url_or_id
+    return None
+
+
+def transcript_to_item(
+    video_id: str,
+    transcript: dict[str, Any],
+    video_title: str | None = None,
+    video_author: str | None = None,
+) -> ItemCreate:
+    """Create an ItemCreate for a video transcript.
+
+    Args:
+        video_id: YouTube video ID.
+        transcript: Dict from get_transcript() with full_text, segments, language.
+        video_title: Video title for context.
+        video_author: Video channel name.
+
+    Returns:
+        ItemCreate with transcript as searchable content.
+    """
+    title_prefix = f"Transcript: {video_title}" if video_title else f"Transcript: {video_id}"
+
+    return ItemCreate(
+        source_type="youtube",
+        source_id=f"transcript:{video_id}",
+        url=f"https://www.youtube.com/watch?v={video_id}",
+        title=title_prefix,
+        content=transcript["full_text"],
+        author=video_author,
+        is_own_content=False,
+        metadata={
+            "type": "transcript",
+            "video_id": video_id,
+            "language": transcript.get("language", "en"),
+            "segment_count": len(transcript.get("segments", [])),
+            "_parent_source_id": f"liked:{video_id}",
+        },
+    )
+
+
+def comment_to_item(
+    comment: dict[str, Any],
+    video_id: str,
+    video_title: str | None = None,
+) -> ItemCreate:
+    """Create an ItemCreate for a video comment.
+
+    Args:
+        comment: Comment dict from get_comments().
+        video_id: YouTube video ID.
+        video_title: Video title for context.
+
+    Returns:
+        ItemCreate for the comment.
+    """
+    created_at = None
+    if comment.get("published_at"):
+        with suppress(ValueError, AttributeError):
+            created_at = datetime.fromisoformat(comment["published_at"].replace("Z", "+00:00"))
+
+    return ItemCreate(
+        source_type="youtube",
+        source_id=f"comment:{comment['id']}",
+        url=f"https://www.youtube.com/watch?v={video_id}",
+        title=f"Comment on {video_title or video_id}",
+        content=comment.get("text", ""),
+        author=comment.get("author"),
+        created_at=created_at,
+        is_own_content=False,
+        metadata={
+            "type": "comment",
+            "video_id": video_id,
+            "comment_id": comment["id"],
+            "like_count": comment.get("like_count", 0),
+            "reply_count": comment.get("reply_count", 0),
+            "_parent_source_id": f"liked:{video_id}",
+        },
+    )
+
+
 class YouTubeSource(SourcePlugin):
     """YouTube source plugin."""
 
     name = "youtube"
-    description = "YouTube liked videos, watch history, and subscriptions"
+    description = "YouTube liked videos, watch history, subscriptions, and transcripts"
 
     def get_commands(self) -> typer.Typer:
         """Return Typer app with YouTube commands."""
@@ -538,6 +633,63 @@ class YouTubeSource(SourcePlugin):
                 console.print(f"[red]Failed: {e}[/red]")
                 raise typer.Exit(1) from None
 
+        @app.command("fetch-transcript")
+        def fetch_transcript_cmd(
+            url_or_id: Annotated[str, typer.Argument(help="YouTube video URL or ID")],
+        ) -> None:
+            """Fetch and store a transcript for a YouTube video."""
+            from lestash.core.config import Config
+            from lestash.core.database import get_connection, upsert_item
+
+            from lestash_youtube.client import get_transcript
+
+            # Extract video ID from URL
+            video_id = _extract_video_id(url_or_id)
+            if not video_id:
+                console.print(f"[red]Could not extract video ID from: {url_or_id}[/red]")
+                raise typer.Exit(1)
+
+            console.print(f"[dim]Fetching transcript for {video_id}...[/dim]")
+            transcript = get_transcript(video_id)
+            if not transcript:
+                console.print("[red]No transcript available for this video.[/red]")
+                raise typer.Exit(1)
+
+            # Try to get video metadata if we have auth
+            video_title = None
+            video_author = None
+            try:
+                youtube = create_youtube_client()
+                response = youtube.videos().list(part="snippet", id=video_id).execute()
+                if response.get("items"):
+                    snippet = response["items"][0]["snippet"]
+                    video_title = snippet.get("title")
+                    video_author = snippet.get("channelTitle")
+            except Exception:
+                pass
+
+            item = transcript_to_item(video_id, transcript, video_title, video_author)
+
+            config = Config.load()
+            with get_connection(config) as conn:
+                # Check if video exists and link as parent
+                row = conn.execute(
+                    "SELECT id FROM items WHERE source_type = 'youtube' AND source_id = ?",
+                    (f"liked:{video_id}",),
+                ).fetchone()
+                if row:
+                    item.parent_id = row[0]
+                if item.metadata:
+                    item.metadata.pop("_parent_source_id", None)
+                upsert_item(conn, item)
+                conn.commit()
+
+            word_count = len(transcript["full_text"].split())
+            console.print(
+                f"[green]Saved transcript for"
+                f" {video_title or video_id} ({word_count} words)[/green]"
+            )
+
         return app
 
     def sync(self, config: dict) -> Iterator[ItemCreate]:
@@ -549,36 +701,37 @@ class YouTubeSource(SourcePlugin):
         Yields:
             ItemCreate objects for each video/subscription
         """
+        from google.auth.exceptions import RefreshError
+
         try:
             youtube = create_youtube_client()
+        except (ValueError, RefreshError) as e:
+            # Auth failures should propagate so sync shows as "failed"
+            raise RuntimeError(f"YouTube auth failed: {e}") from e
 
-            # Sync liked videos
-            if config.get("sync_likes", True):
-                for video in get_liked_videos(youtube):
-                    try:
-                        yield video_to_item(video, "liked")
-                    except Exception as e:
-                        logger.warning(f"Failed to process video {video.get('id')}: {e}")
+        # Sync liked videos
+        if config.get("sync_likes", True):
+            for video in get_liked_videos(youtube):
+                try:
+                    yield video_to_item(video, "liked")
+                except Exception as e:
+                    logger.warning(f"Failed to process video {video.get('id')}: {e}")
 
-            # Attempt watch history
-            if config.get("sync_history", True):
-                for video in get_watch_history(youtube):
-                    try:
-                        yield video_to_item(video, "history")
-                    except Exception as e:
-                        logger.warning(f"Failed to process video {video.get('id')}: {e}")
+        # Attempt watch history
+        if config.get("sync_history", True):
+            for video in get_watch_history(youtube):
+                try:
+                    yield video_to_item(video, "history")
+                except Exception as e:
+                    logger.warning(f"Failed to process video {video.get('id')}: {e}")
 
-            # Sync subscriptions
-            if config.get("sync_subscriptions", False):
-                for sub in get_subscriptions(youtube):
-                    try:
-                        yield subscription_to_item(sub)
-                    except Exception as e:
-                        logger.warning(f"Failed to process subscription: {e}")
-
-        except Exception as e:
-            logger.error(f"Sync failed: {e}", exc_info=True)
-            return
+        # Sync subscriptions
+        if config.get("sync_subscriptions", False):
+            for sub in get_subscriptions(youtube):
+                try:
+                    yield subscription_to_item(sub)
+                except Exception as e:
+                    logger.warning(f"Failed to process subscription: {e}")
 
     def configure(self) -> dict:
         """Interactive configuration."""

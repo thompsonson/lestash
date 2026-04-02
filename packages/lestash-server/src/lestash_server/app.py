@@ -11,6 +11,7 @@ from lestash_server.routes import (
     audible_auth,
     collections,
     embeddings,
+    google_auth,
     imports,
     items,
     profiles,
@@ -65,6 +66,7 @@ def create_app(static_dir: str | None = None) -> FastAPI:
     app.include_router(collections.router)
     app.include_router(embeddings.router)
     app.include_router(audible_auth.router)
+    app.include_router(google_auth.router)
 
     @app.get("/api/health", response_model=HealthResponse)
     def health():
