@@ -50,7 +50,7 @@ def auth_status():
 @router.get("/auth-url", response_model=AuthUrlResponse)
 def get_auth_url(
     scopes: str = Query(
-        default="https://www.googleapis.com/auth/youtube.readonly",
+        default="https://www.googleapis.com/auth/youtube.readonly,https://www.googleapis.com/auth/drive.readonly",
         description="Comma-separated OAuth scopes",
     ),
 ):
