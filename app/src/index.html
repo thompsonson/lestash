@@ -1668,7 +1668,11 @@
           statusEl.innerHTML = `<span style="color:var(--ok)">Connected</span> (${escHtml(data.locale || 'unknown')})`;
           flowEl.style.display = 'none';
         } else {
-          statusEl.innerHTML = `<button class="sync-btn" onclick="startAudibleAuth()">Connect Audible</button>`;
+          statusEl.innerHTML = `<select id="audible-locale" style="font-size:0.8rem;padding:0.25rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-right:0.3rem">
+            <option value="fr">France</option><option value="uk">UK</option><option value="us">US</option>
+            <option value="de">Germany</option><option value="au">Australia</option><option value="ca">Canada</option>
+            <option value="it">Italy</option><option value="es">Spain</option><option value="jp">Japan</option><option value="in">India</option>
+          </select><button class="sync-btn" onclick="startAudibleAuth()">Connect</button>`;
           flowEl.style.display = 'none';
         }
       } catch {
@@ -1680,7 +1684,8 @@
       const statusEl = document.getElementById('audible-auth-status');
       const flowEl = document.getElementById('audible-auth-flow');
       try {
-        const data = await api('/api/audible/auth-url?locale=uk');
+        const locale = document.getElementById('audible-locale')?.value || 'uk';
+        const data = await api(`/api/audible/auth-url?locale=${locale}`);
         _audibleStateToken = data.state_token;
         window.open(data.url, '_blank');
         statusEl.innerHTML = '<span style="color:var(--muted)">Waiting for login...</span>';
