@@ -682,6 +682,21 @@
         <div id="import-result" style="display:none;padding:0.75rem;background:var(--surface);border-radius:6px;margin-top:0.5rem;font-size:0.85rem"></div>
       </div>
 
+      <!-- Audible auth -->
+      <div id="audible-auth-section" style="margin-bottom:1.5rem;display:none">
+        <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Connect Audible</h3>
+        <div id="audible-auth-status"></div>
+        <div id="audible-auth-flow" style="display:none">
+          <div style="margin-bottom:0.5rem;font-size:0.85rem">
+            After signing in at Amazon, copy the URL from your browser's address bar and paste it below.
+          </div>
+          <div class="tag-input-row">
+            <input type="text" id="audible-redirect-url" placeholder="Paste the redirect URL here..." style="flex:1">
+            <button class="sync-btn" onclick="completeAudibleAuth()">Complete</button>
+          </div>
+        </div>
+      </div>
+
       <table class="source-table" id="sources-table">
         <thead>
           <tr><th>Source</th><th>Description</th><th>Last Sync</th><th></th></tr>
@@ -1036,7 +1051,7 @@
       if (tab === 'recent') loadRecent();
       if (tab === 'search') document.getElementById('search-input').focus();
       if (tab === 'notes') { loadSavedNotes(); checkSttModel(); }
-      if (tab === 'sources') loadSources();
+      if (tab === 'sources') { loadSources(); loadAudibleAuth(); }
       if (tab === 'stats') loadStats();
       if (tab === 'collections') loadCollections();
       if (tab === 'debug') { renderDebugInfo(); renderDebugLog(); }
@@ -1636,6 +1651,66 @@
         showToast(`Sync failed: ${e.message}`, 'error');
         btn.disabled = false;
         btn.textContent = 'Sync';
+      }
+    }
+
+    /* ── Audible Auth ── */
+    let _audibleStateToken = null;
+
+    async function loadAudibleAuth() {
+      const section = document.getElementById('audible-auth-section');
+      const statusEl = document.getElementById('audible-auth-status');
+      const flowEl = document.getElementById('audible-auth-flow');
+      try {
+        const data = await api('/api/audible/auth-status');
+        section.style.display = 'block';
+        if (data.authenticated) {
+          statusEl.innerHTML = `<span style="color:var(--ok)">Connected</span> (${escHtml(data.locale || 'unknown')})`;
+          flowEl.style.display = 'none';
+        } else {
+          statusEl.innerHTML = `<select id="audible-locale" style="font-size:0.8rem;padding:0.25rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-right:0.3rem">
+            <option value="fr">France</option><option value="uk">UK</option><option value="us">US</option>
+            <option value="de">Germany</option><option value="au">Australia</option><option value="ca">Canada</option>
+            <option value="it">Italy</option><option value="es">Spain</option><option value="jp">Japan</option><option value="in">India</option>
+          </select><button class="sync-btn" onclick="startAudibleAuth()">Connect</button>`;
+          flowEl.style.display = 'none';
+        }
+      } catch {
+        section.style.display = 'none';
+      }
+    }
+
+    async function startAudibleAuth() {
+      const statusEl = document.getElementById('audible-auth-status');
+      const flowEl = document.getElementById('audible-auth-flow');
+      try {
+        const locale = document.getElementById('audible-locale')?.value || 'uk';
+        const data = await api(`/api/audible/auth-url?locale=${locale}`);
+        _audibleStateToken = data.state_token;
+        window.open(data.url, '_blank');
+        statusEl.innerHTML = '<span style="color:var(--muted)">Waiting for login...</span>';
+        flowEl.style.display = 'block';
+        document.getElementById('audible-redirect-url').focus();
+      } catch (e) {
+        showToast(`Failed to start auth: ${e.message}`, 'error');
+      }
+    }
+
+    async function completeAudibleAuth() {
+      const input = document.getElementById('audible-redirect-url');
+      const url = input.value.trim();
+      if (!url) return;
+      try {
+        await api('/api/audible/auth-complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ redirect_url: url, state_token: _audibleStateToken }),
+        });
+        showToast('Audible connected!', 'ok');
+        input.value = '';
+        loadAudibleAuth();
+      } catch (e) {
+        showToast(`Auth failed: ${e.message}`, 'error');
       }
     }
 

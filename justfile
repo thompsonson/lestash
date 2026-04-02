@@ -21,6 +21,8 @@ test-all:
     uv run pytest packages/lestash-microblog/tests
     @echo "\nRunning lestash-youtube tests..."
     uv run pytest packages/lestash-youtube/tests
+    @echo "\nRunning lestash-audible tests..."
+    uv run pytest packages/lestash-audible/tests
     @echo "\nRunning lestash-server tests..."
     uv run pytest packages/lestash-server/tests
 
