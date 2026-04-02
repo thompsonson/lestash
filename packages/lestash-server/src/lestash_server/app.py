@@ -68,6 +68,14 @@ def create_app(static_dir: str | None = None) -> FastAPI:
     app.include_router(audible_auth.router)
     app.include_router(google_auth.router)
 
+    # Optional YouTube routes (only if lestash-youtube is installed)
+    try:
+        from lestash_server.routes import youtube
+
+        app.include_router(youtube.router)
+    except ImportError:
+        pass
+
     @app.get("/api/health", response_model=HealthResponse)
     def health():
         with get_db() as conn:
