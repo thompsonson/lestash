@@ -61,9 +61,7 @@ def get_auth_url(locale: str = "uk"):
     try:
         from lestash_audible.client import build_login_url
     except ImportError as e:
-        raise HTTPException(
-            status_code=501, detail="lestash-audible not installed"
-        ) from e
+        raise HTTPException(status_code=501, detail="lestash-audible not installed") from e
 
     state = build_login_url(locale=locale)
     state_token = state["serial"]
@@ -77,9 +75,7 @@ def complete_authentication(body: AuthCompleteRequest):
     try:
         from lestash_audible.client import complete_auth
     except ImportError as e:
-        raise HTTPException(
-            status_code=501, detail="lestash-audible not installed"
-        ) from e
+        raise HTTPException(status_code=501, detail="lestash-audible not installed") from e
 
     state = _pending_auth.pop(body.state_token, None)
     if not state:
@@ -94,8 +90,6 @@ def complete_authentication(body: AuthCompleteRequest):
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Audible auth failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Authentication failed: {e}"
-        ) from e
+        raise HTTPException(status_code=500, detail=f"Authentication failed: {e}") from e
 
     return AuthCompleteResponse(status="ok", locale=state["locale"])
