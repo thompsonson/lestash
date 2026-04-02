@@ -135,29 +135,28 @@ class TestBookmarkToItem:
 
 
 class TestExtractAnnotations:
-    """Test sidecar response parsing."""
+    """Test record filtering."""
 
-    def test_extracts_bookmarks_and_notes(self, sample_sidecar_response):
-        annotations = _extract_annotations(sample_sidecar_response)
+    def test_extracts_bookmarks_and_notes(self, sample_records):
+        annotations = _extract_annotations(sample_records)
         assert len(annotations) == 2
 
-    def test_empty_response(self):
-        assert _extract_annotations({}) == []
+    def test_empty_list(self):
+        assert _extract_annotations([]) == []
 
-    def test_handles_clips_key(self):
-        sidecar = {"clips": [{"position": 1000, "note": "clip text"}]}
-        annotations = _extract_annotations(sidecar)
+    def test_filters_last_heard(self):
+        records = [
+            {"type": "audible.last_heard", "startPosition": "1000"},
+            {"type": "note", "position": 2000, "note": "keep this"},
+        ]
+        annotations = _extract_annotations(records)
         assert len(annotations) == 1
-
-    def test_ignores_non_list_values(self):
-        sidecar = {"bookmarks": "not a list"}
-        annotations = _extract_annotations(sidecar)
-        assert len(annotations) == 0
+        assert annotations[0]["type"] == "note"
 
     def test_ignores_non_dict_items(self):
-        sidecar = {"bookmarks": ["not a dict", 42]}
-        annotations = _extract_annotations(sidecar)
-        assert len(annotations) == 0
+        records = ["not a dict", 42, {"type": "bookmark", "position": 1000}]
+        annotations = _extract_annotations(records)
+        assert len(annotations) == 1
 
 
 class TestExtractBookMetadata:

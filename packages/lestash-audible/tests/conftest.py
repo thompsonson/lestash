@@ -63,9 +63,6 @@ def sample_bookmark_no_note() -> dict:
 
 
 @pytest.fixture
-def sample_sidecar_response(sample_bookmark_with_note, sample_bookmark_no_note) -> dict:
-    """Sample sidecar endpoint response."""
-    return {
-        "bookmarks": [sample_bookmark_no_note],
-        "notes": [sample_bookmark_with_note],
-    }
+def sample_records(sample_bookmark_with_note, sample_bookmark_no_note) -> list:
+    """Sample sidecar records list (from payload.records)."""
+    return [sample_bookmark_no_note, sample_bookmark_with_note]

@@ -285,13 +285,8 @@ class AudibleSource(SourcePlugin):
                         book_asin = meta["asin"]
 
                         # Fetch bookmarks for this book
-                        try:
-                            sidecar = get_bookmarks(client, book_asin)
-                        except Exception as e:
-                            logger.warning(f"Failed to fetch bookmarks for {book_asin}: {e}")
-                            continue
-
-                        annotations = _extract_annotations(sidecar)
+                        records = get_bookmarks(client, book_asin)
+                        annotations = _extract_annotations(records)
                         if not annotations:
                             continue
 
@@ -337,13 +332,8 @@ class AudibleSource(SourcePlugin):
                 meta = extract_book_metadata(book)
                 asin = meta["asin"]
 
-                try:
-                    sidecar = get_bookmarks(client, asin)
-                except Exception as e:
-                    logger.warning(f"Failed to fetch bookmarks for {asin}: {e}")
-                    continue
-
-                annotations = _extract_annotations(sidecar)
+                records = get_bookmarks(client, asin)
+                annotations = _extract_annotations(records)
                 if not annotations:
                     continue
 
@@ -361,20 +351,10 @@ class AudibleSource(SourcePlugin):
         return {"locale": "us"}
 
 
-def _extract_annotations(sidecar: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract bookmark and note annotations from sidecar response.
+def _extract_annotations(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter sidecar records to only user annotations.
 
-    The sidecar endpoint returns various data. We extract anything
-    that looks like a user annotation (bookmarks, notes, clips).
+    Excludes system records like audible.last_heard (listening position).
     """
-    annotations: list[dict[str, Any]] = []
-
-    # The response structure varies; handle known patterns
-    for key in ("bookmarks", "notes", "clips", "records"):
-        items = sidecar.get(key, [])
-        if isinstance(items, list):
-            for item in items:
-                if isinstance(item, dict):
-                    annotations.append(item)
-
-    return annotations
+    skip_types = {"audible.last_heard"}
+    return [r for r in records if isinstance(r, dict) and r.get("type") not in skip_types]

@@ -282,7 +282,7 @@ def get_library(client: audible.Client) -> list[dict[str, Any]]:
     return books
 
 
-def get_bookmarks(client: audible.Client, asin: str) -> dict[str, Any]:
+def get_bookmarks(client: audible.Client, asin: str) -> list[dict[str, Any]]:
     """Fetch bookmarks, clips, and notes for a specific book.
 
     Args:
@@ -290,22 +290,30 @@ def get_bookmarks(client: audible.Client, asin: str) -> dict[str, Any]:
         asin: Book ASIN.
 
     Returns:
-        Dict with bookmark data from the sidecar endpoint.
+        List of bookmark/note records from the sidecar endpoint.
     """
-    response = client.get(
-        SIDECAR_URL,
-        params={"type": "AUDI", "key": asin},
-    )
-    return response
+    try:
+        response = client.get(
+            SIDECAR_URL,
+            params={"type": "AUDI", "key": asin},
+        )
+    except Exception:
+        return []
+
+    # Records are nested under payload.records
+    records = response.get("payload", {}).get("records", [])
+    if not isinstance(records, list):
+        return []
+    return records
 
 
 def extract_book_metadata(book: dict[str, Any]) -> dict[str, Any]:
     """Extract useful metadata from a library book entry."""
     authors = []
     narrators = []
-    for contributor in book.get("authors", []):
+    for contributor in book.get("authors") or []:
         authors.append(contributor.get("name", ""))
-    for contributor in book.get("narrators", []):
+    for contributor in book.get("narrators") or []:
         narrators.append(contributor.get("name", ""))
 
     return {
@@ -320,7 +328,8 @@ def extract_book_metadata(book: dict[str, Any]) -> dict[str, Any]:
         "language": book.get("language"),
         "cover_url": book.get("product_images", {}).get("500"),
         "series": [
-            {"name": s.get("title"), "position": s.get("sequence")} for s in book.get("series", [])
+            {"name": s.get("title"), "position": s.get("sequence")}
+            for s in (book.get("series") or [])
         ],
         "format_type": book.get("format_type"),
         "content_type": book.get("content_type"),
