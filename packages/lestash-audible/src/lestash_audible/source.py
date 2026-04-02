@@ -15,7 +15,8 @@ from rich.console import Console
 from rich.table import Table
 
 from lestash_audible.client import (
-    authenticate,
+    build_login_url,
+    complete_auth,
     extract_book_metadata,
     get_bookmarks,
     get_client,
@@ -157,19 +158,18 @@ class AudibleSource(SourcePlugin):
 
         @app.command("auth")
         def auth(
-            email: Annotated[str | None, typer.Option(help="Amazon/Audible email")] = None,
-            password: Annotated[str | None, typer.Option(help="Amazon/Audible password")] = None,
             locale: Annotated[
                 str, typer.Option(help=f"Marketplace ({', '.join(MARKETPLACES)})")
             ] = "us",
         ) -> None:
-            """Authenticate with Audible."""
-            from rich.prompt import Prompt
+            """Authenticate with Audible via browser.
 
-            if not email:
-                email = Prompt.ask("Email")
-            if not password:
-                password = Prompt.ask("Password", password=True)
+            Opens the Amazon login page in your browser. After signing in,
+            copy the URL from the address bar and paste it here.
+            """
+            import webbrowser
+
+            from rich.prompt import Prompt
 
             if locale not in MARKETPLACES:
                 valid = ", ".join(MARKETPLACES)
@@ -177,7 +177,15 @@ class AudibleSource(SourcePlugin):
                 raise typer.Exit(1)
 
             try:
-                authenticate(email, password, locale=locale)
+                state = build_login_url(locale=locale)
+                console.print("[bold]Opening Amazon login in browser...[/bold]")
+                webbrowser.open(state["url"])
+                console.print(
+                    "\nAfter signing in, copy the URL from your browser's"
+                    " address bar and paste it below."
+                )
+                redirect_url = Prompt.ask("URL")
+                complete_auth(redirect_url, state)
                 console.print("[green]Authenticated and credentials saved.[/green]")
             except Exception as e:
                 console.print(f"[red]Authentication failed: {e}[/red]")

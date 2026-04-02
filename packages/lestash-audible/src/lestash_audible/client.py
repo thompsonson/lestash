@@ -49,26 +49,81 @@ def is_authenticated() -> bool:
     return get_auth_path().exists()
 
 
-def authenticate(
-    email: str,
-    password: str,
-    locale: str = "us",
-) -> audible.Authenticator:
-    """Run Audible authentication flow.
+def build_login_url(locale: str = "us") -> dict[str, Any]:
+    """Build the Amazon OAuth URL for Audible authentication.
+
+    Returns a dict with the login URL and state needed to complete auth.
+    The user visits the URL, logs in, then provides the redirect URL back.
 
     Args:
-        email: Amazon/Audible email.
-        password: Amazon/Audible password.
-        locale: Audible marketplace (us, uk, de, fr, au, ca, jp, it, in, es).
+        locale: Audible marketplace code.
+
+    Returns:
+        Dict with keys: url, code_verifier, serial, locale, domain.
+    """
+    from audible.localization import Locale
+    from audible.login import build_oauth_url as _build_oauth_url
+    from audible.login import create_code_verifier
+
+    loc = Locale(locale)
+    code_verifier = create_code_verifier()
+    oauth_url, serial = _build_oauth_url(
+        country_code=loc.country_code,
+        domain=loc.domain,
+        market_place_id=loc.market_place_id,
+        code_verifier=code_verifier,
+        serial=None,
+    )
+    return {
+        "url": oauth_url,
+        "code_verifier": code_verifier.decode(),
+        "serial": serial,
+        "locale": locale,
+        "domain": loc.domain,
+    }
+
+
+def complete_auth(redirect_url: str, state: dict[str, Any]) -> audible.Authenticator:
+    """Complete authentication using the redirect URL from Amazon.
+
+    Args:
+        redirect_url: The URL from the browser after Amazon login
+            (contains openid.oa2.authorization_code parameter).
+        state: The state dict returned by build_login_url().
 
     Returns:
         Authenticated Authenticator instance.
     """
-    auth = audible.Authenticator.from_login(
-        email,
-        password,
-        locale=locale,
+    from urllib.parse import parse_qs
+
+    import httpx
+    from audible.register import register as register_device
+
+    # Extract authorization code from redirect URL
+    parsed = httpx.URL(redirect_url)
+    params = parse_qs(parsed.query.decode())
+    if "openid.oa2.authorization_code" not in params:
+        raise ValueError(
+            "No authorization code found in URL. "
+            "Make sure you copied the full URL after signing in."
+        )
+    auth_code = params["openid.oa2.authorization_code"][0]
+
+    # Register device to get tokens
+    register_data = register_device(
+        authorization_code=auth_code,
+        code_verifier=state["code_verifier"].encode(),
+        domain=state["domain"],
+        serial=state["serial"],
     )
+
+    # Build Authenticator from registration data
+    locale = state["locale"]
+    auth = audible.Authenticator()
+    auth.locale = locale  # type: ignore[assignment]
+    auth._update_attrs(**register_data)  # noqa: SLF001
+
+    # Save credentials
     auth_path = get_auth_path()
     auth_path.parent.mkdir(parents=True, exist_ok=True)
     auth.to_file(str(auth_path))
