@@ -1739,11 +1739,13 @@
       try {
         const data = await api('/api/google/auth-status');
         section.style.display = 'block';
-        if (data.authenticated) {
+        const hasYoutube = data.scopes.some(s => s.includes('youtube'));
+        if (data.authenticated && hasYoutube) {
           statusEl.innerHTML = `<span style="color:var(--ok)">Connected</span> <span style="color:var(--muted);font-size:0.75rem">(${escHtml(data.scopes.join(', '))})</span>`;
           flowEl.style.display = 'none';
         } else {
-          statusEl.innerHTML = `<button class="sync-btn" onclick="startGoogleAuth()">Connect Google</button>`;
+          const scopeNote = data.authenticated ? ' (YouTube scope missing)' : '';
+          statusEl.innerHTML = `<button class="sync-btn" onclick="startGoogleAuth()">Connect Google</button><span style="color:var(--muted);font-size:0.75rem;margin-left:0.3rem">${scopeNote}</span>`;
           flowEl.style.display = 'none';
         }
       } catch {
