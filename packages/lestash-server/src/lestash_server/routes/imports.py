@@ -258,6 +258,12 @@ def _parse_zip(data: bytes):
                     source_type = "notebooklm"
                 return all_items, source_type
 
+            # Detect Mistral Le Chat export
+            from lestash_server.parsers.mistral import detect_mistral_zip, parse_mistral_zip
+
+            if detect_mistral_zip(names):
+                return parse_mistral_zip(zf), "mistral"
+
             # Try generic JSON files in zip
             json_files = [n for n in names if n.endswith(".json")]
             if json_files:
