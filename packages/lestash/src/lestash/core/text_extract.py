@@ -13,6 +13,8 @@ DOCLING_MIME_TYPES = {
 
 TEXT_MIME_TYPES = {
     "text/plain",
+    "text/markdown",
+    "text/csv",
 }
 
 

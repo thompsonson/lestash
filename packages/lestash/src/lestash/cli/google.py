@@ -101,6 +101,7 @@ def download(
 @app.command("ls")
 def list_folder(
     folder: str = typer.Argument(help="Google Drive folder URL or ID"),
+    recursive: bool = typer.Option(False, "--recursive", "-r", help="List subfolders recursively"),
 ) -> None:
     """List files in a Google Drive folder."""
     from lestash.core.google_auth import get_drive_service
@@ -108,7 +109,7 @@ def list_folder(
 
     folder_id = extract_folder_id(folder)
     service = get_drive_service()
-    files = list_drive_folder(service, folder_id)
+    files = list_drive_folder(service, folder_id, recursive=recursive)
 
     table = Table(title=f"Drive folder ({len(files)} items)")
     table.add_column("Name", style="cyan")
@@ -122,7 +123,9 @@ def list_folder(
         mime = f.get("mimeType", "")
         short_type = mime.split("/")[-1].split(".")[-1][:10]
         modified = (f.get("modifiedTime") or "")[:10]
-        table.add_row(f["name"], short_type, size_str, modified)
+        path = f.get("folder_path", "")
+        name = f"{path}/{f['name']}" if path else f["name"]
+        table.add_row(name, short_type, size_str, modified)
 
     console.print(table)
 
@@ -131,6 +134,7 @@ def list_folder(
 def sync(
     folder: str = typer.Argument(help="Google Drive folder URL or ID"),
     dry_run: bool = typer.Option(False, "--dry-run", help="List files without importing"),
+    recursive: bool = typer.Option(False, "--recursive", "-r", help="Recurse into subfolders"),
     since: str | None = typer.Option(
         None, "--since", help="Only sync files modified after this ISO date"
     ),
@@ -143,19 +147,32 @@ def sync(
     from lestash.core.config import Config
     from lestash.core.database import get_connection, upsert_item
     from lestash.core.google_auth import get_drive_service
-    from lestash.core.google_drive import extract_folder_id, list_drive_folder, sync_drive_folder
+    from lestash.core.google_drive import (
+        FOLDER_MIME,
+        SKIP_MIME_PREFIXES,
+        extract_folder_id,
+        list_drive_folder,
+        sync_drive_folder,
+    )
 
     folder_id = extract_folder_id(folder)
 
     if dry_run:
         service = get_drive_service()
-        files = list_drive_folder(service, folder_id, since=since)
-        files = [f for f in files if f.get("mimeType") != "application/vnd.google-apps.folder"]
+        files = list_drive_folder(service, folder_id, since=since, recursive=recursive)
+        files = [
+            f
+            for f in files
+            if f.get("mimeType") != FOLDER_MIME
+            and not any(f.get("mimeType", "").startswith(p) for p in SKIP_MIME_PREFIXES)
+        ]
         console.print(f"\n[bold]Dry run:[/bold] {len(files)} files would be imported\n")
         for f in files:
             size = int(f.get("size", 0))
             size_str = f"{size / 1024:.0f} KB" if size > 0 else "—"
-            console.print(f"  {f['name']}  [dim]({size_str})[/dim]")
+            path = f.get("folder_path", "")
+            name = f"{path}/{f['name']}" if path else f["name"]
+            console.print(f"  {name}  [dim]({size_str})[/dim]")
         return
 
     config = Config.load()
@@ -166,7 +183,7 @@ def sync(
         console.status("[bold]Syncing Google Drive folder...[/bold]") as status,
         get_connection(config) as conn,
     ):
-        for item in sync_drive_folder(folder_id, since=since):
+        for item in sync_drive_folder(folder_id, since=since, recursive=recursive):
             status.update(f"Processing: {item.title or 'unknown'}")
             try:
                 upsert_item(conn, item)
