@@ -16,6 +16,7 @@ _BACKFILL_RULES: dict[str, list[tuple[str, str, bool]]] = {
     "microblog": [("photos", "image", True)],
     "youtube": [("thumbnail_url", "thumbnail", False)],
     "arxiv": [("pdf_url", "pdf", False)],
+    "audible": [("cover_url", "thumbnail", False)],
     "linkedin": [("media_category", "_linkedin_special", False)],
 }
 

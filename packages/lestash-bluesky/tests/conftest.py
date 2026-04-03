@@ -193,6 +193,14 @@ def mock_embed_images():
             SimpleNamespace(
                 alt=img["alt"],
                 aspect_ratio=img.get("aspect_ratio"),
+                image=img.get(
+                    "image",
+                    SimpleNamespace(
+                        ref="bafkreiexample123",
+                        mime_type="image/jpeg",
+                        size=12345,
+                    ),
+                ),
             )
             for img in images
         ]

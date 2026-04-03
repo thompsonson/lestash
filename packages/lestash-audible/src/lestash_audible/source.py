@@ -9,7 +9,7 @@ from typing import Annotated, Any
 
 import typer
 from lestash.core.logging import get_plugin_logger
-from lestash.models.item import ItemCreate
+from lestash.models.item import ItemCreate, MediaCreate
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 from rich.table import Table
@@ -68,6 +68,10 @@ def book_to_item(
     if chapters:
         book_meta["chapters"] = chapters
 
+    media: list[MediaCreate] | None = None
+    if meta.get("cover_url"):
+        media = [MediaCreate(media_type="thumbnail", url=meta["cover_url"])]
+
     return ItemCreate(
         source_type="audible",
         source_id=f"audible:book:{asin}",
@@ -78,6 +82,7 @@ def book_to_item(
         url=f"https://www.audible.com/pd/{asin}",
         is_own_content=False,
         metadata=book_meta,
+        media=media,
     )
 
 

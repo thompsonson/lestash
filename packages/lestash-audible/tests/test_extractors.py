@@ -98,6 +98,13 @@ class TestBookToItem:
         item = book_to_item(sample_book)
         assert "500" in item.metadata["cover_urls"]
 
+    def test_media_has_cover_thumbnail(self, sample_book):
+        item = book_to_item(sample_book)
+        assert item.media is not None
+        assert len(item.media) == 1
+        assert item.media[0].media_type == "thumbnail"
+        assert "cover.jpg" in item.media[0].url
+
     def test_chapters_stored_in_metadata(self, sample_book, sample_chapters):
         item = book_to_item(sample_book, chapters=sample_chapters)
         assert len(item.metadata["chapters"]) == 3

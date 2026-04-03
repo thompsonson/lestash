@@ -189,6 +189,14 @@ class TestEmbeds:
         assert item.metadata["images"][0]["aspect_ratio"]["width"] == 1200
         assert item.metadata["images"][0]["aspect_ratio"]["height"] == 800
 
+        # Verify media entries with CDN URLs
+        assert item.media is not None
+        assert len(item.media) == 1
+        assert item.media[0].media_type == "image"
+        assert "cdn.bsky.app" in item.media[0].url
+        assert "bafkreiexample123" in item.media[0].url
+        assert item.media[0].alt_text == "A sunset"
+
     def test_embed_external_stores_uri_title_description(
         self, bluesky_post_factory, mock_embed_external
     ):
