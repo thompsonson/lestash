@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -244,6 +244,26 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_collection_items_item ON collection_items(item_id);
         """,
     ),
+    (
+        7,
+        "Add item_media table for generic media/attachment support",
+        """
+        CREATE TABLE IF NOT EXISTS item_media (
+            id INTEGER PRIMARY KEY,
+            item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            media_type TEXT NOT NULL,
+            url TEXT,
+            local_path TEXT,
+            mime_type TEXT,
+            alt_text TEXT,
+            position INTEGER DEFAULT 0,
+            source_origin TEXT DEFAULT 'sync',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_item_media_item ON item_media(item_id);
+        """,
+    ),
 ]
 
 
@@ -459,6 +479,24 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
             (item.source_type, item.source_id),
         ).fetchone()
         item_id = row[0]
+
+    # Insert any media attachments
+    if item.media:
+        for media in item.media:
+            add_item_media(
+                conn,
+                item_id,
+                media_type=media.media_type,
+                url=media.url,
+                local_path=media.local_path,
+                mime_type=media.mime_type,
+                alt_text=media.alt_text,
+                position=media.position,
+                source_origin=media.source_origin,
+                _commit=False,
+            )
+        conn.commit()
+
     return item_id
 
 
@@ -620,3 +658,130 @@ def upsert_post_cache(
         ),
     )
     conn.commit()
+
+
+def get_media_dir(config: Config | None = None) -> Path:
+    """Get the media directory for storing attachments.
+
+    Returns:
+        Path to ~/.lestash/media/
+    """
+    if config is None:
+        config = Config.load()
+    db_path = Path(config.general.database_path).expanduser()
+    media_dir = db_path.parent / "media"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    return media_dir
+
+
+def save_media_file(
+    item_id: int,
+    data: bytes,
+    filename: str,
+    config: Config | None = None,
+) -> str:
+    """Save media file to disk.
+
+    Args:
+        item_id: The item this media belongs to.
+        data: File content bytes.
+        filename: Original filename (used for extension).
+        config: Optional config override.
+
+    Returns:
+        Relative path from media dir (e.g. "42/a1b2c3d4.jpg").
+    """
+    import hashlib
+
+    media_dir = get_media_dir(config)
+    item_dir = media_dir / str(item_id)
+    item_dir.mkdir(parents=True, exist_ok=True)
+
+    ext = Path(filename).suffix or ".bin"
+    file_hash = hashlib.sha256(data).hexdigest()[:12]
+    rel_path = f"{item_id}/{file_hash}{ext}"
+
+    dest = media_dir / rel_path
+    if not dest.exists():
+        dest.write_bytes(data)
+        logger.debug(f"Saved media file: {rel_path} ({len(data)} bytes)")
+
+    return rel_path
+
+
+def add_item_media(
+    conn: sqlite3.Connection,
+    item_id: int,
+    *,
+    media_type: str,
+    url: str | None = None,
+    local_path: str | None = None,
+    mime_type: str | None = None,
+    alt_text: str | None = None,
+    position: int = 0,
+    source_origin: str = "sync",
+    _commit: bool = True,
+) -> int:
+    """Add a media attachment to an item.
+
+    Skips insert if an identical (item_id, media_type, url, local_path) row exists.
+
+    Returns:
+        The media row ID.
+    """
+    existing = conn.execute(
+        """SELECT id FROM item_media
+           WHERE item_id = ? AND media_type = ?
+             AND (url = ? OR (url IS NULL AND ? IS NULL))
+             AND (local_path = ? OR (local_path IS NULL AND ? IS NULL))""",
+        (item_id, media_type, url, url, local_path, local_path),
+    ).fetchone()
+    if existing:
+        return existing[0]
+
+    cursor = conn.execute(
+        """INSERT INTO item_media
+           (item_id, media_type, url, local_path, mime_type, alt_text, position, source_origin)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (item_id, media_type, url, local_path, mime_type, alt_text, position, source_origin),
+    )
+    if _commit:
+        conn.commit()
+    return cursor.lastrowid or 0
+
+
+def get_item_media(conn: sqlite3.Connection, item_id: int) -> list[dict]:
+    """Get all media attachments for an item, ordered by position."""
+    rows = conn.execute(
+        """SELECT id, item_id, media_type, url, local_path, mime_type,
+                  alt_text, position, source_origin, created_at
+           FROM item_media WHERE item_id = ? ORDER BY position""",
+        (item_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_item_media_batch(conn: sqlite3.Connection, item_ids: list[int]) -> dict[int, list[dict]]:
+    """Batch-fetch media for multiple items. Returns {item_id: [media_dicts]}."""
+    if not item_ids:
+        return {}
+    placeholders = ",".join("?" for _ in item_ids)
+    rows = conn.execute(
+        f"""SELECT id, item_id, media_type, url, local_path, mime_type,
+                   alt_text, position, source_origin, created_at
+            FROM item_media WHERE item_id IN ({placeholders})
+            ORDER BY item_id, position""",
+        item_ids,
+    ).fetchall()
+    result: dict[int, list[dict]] = {iid: [] for iid in item_ids}
+    for row in rows:
+        d = dict(row)
+        result[d["item_id"]].append(d)
+    return result
+
+
+def delete_item_media(conn: sqlite3.Connection, media_id: int) -> bool:
+    """Delete a media attachment by ID. Returns True if deleted."""
+    cursor = conn.execute("DELETE FROM item_media WHERE id = ?", (media_id,))
+    conn.commit()
+    return cursor.rowcount > 0

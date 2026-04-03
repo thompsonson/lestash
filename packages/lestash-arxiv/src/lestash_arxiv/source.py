@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from typing import Annotated
 
 import typer
-from lestash.models.item import ItemCreate
+from lestash.models.item import ItemCreate, MediaCreate
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 from rich.table import Table
@@ -19,6 +19,10 @@ console = Console()
 
 def paper_to_item(paper: Paper) -> ItemCreate:
     """Convert Paper to ItemCreate."""
+    media: list[MediaCreate] | None = None
+    if paper.pdf_url:
+        media = [MediaCreate(media_type="pdf", url=paper.pdf_url)]
+
     return ItemCreate(
         source_type="arxiv",
         source_id=paper.arxiv_id,
@@ -36,6 +40,7 @@ def paper_to_item(paper: Paper) -> ItemCreate:
             "updated": paper.updated.isoformat() if paper.updated else None,
             "version": paper.version,
         },
+        media=media,
     )
 
 

@@ -132,16 +132,56 @@ def sync_source(
                     if cursor.rowcount > 0:
                         items_added += 1
 
+                    # Insert media attachments if present
+                    if item.media:
+                        from lestash.core.database import add_item_media
+
+                        item_id = cursor.lastrowid
+                        if not item_id:
+                            row = conn.execute(
+                                "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+                                (item.source_type, item.source_id),
+                            ).fetchone()
+                            item_id = row[0] if row else None
+                        if item_id:
+                            for media in item.media:
+                                add_item_media(
+                                    conn,
+                                    item_id,
+                                    media_type=media.media_type,
+                                    url=media.url,
+                                    local_path=media.local_path,
+                                    mime_type=media.mime_type,
+                                    alt_text=media.alt_text,
+                                    position=media.position,
+                                    source_origin=media.source_origin,
+                                    _commit=False,
+                                )
+
                 conn.commit()
 
                 # Resolve parent_id for LinkedIn reactions/comments
                 if name == "linkedin":
                     try:
-                        from lestash_linkedin.source import resolve_linkedin_parents
+                        from lestash_linkedin.source import (
+                            download_linkedin_media,
+                            resolve_linkedin_parents,
+                        )
 
                         resolved = resolve_linkedin_parents(conn)
                         if resolved:
                             console.print(f"  [dim]Resolved {resolved} parent references[/dim]")
+
+                        # Try to download LinkedIn images
+                        from lestash_linkedin.api import load_token
+
+                        token = load_token()
+                        if token and token.get("access_token"):
+                            downloaded = download_linkedin_media(conn, token["access_token"])
+                            if downloaded:
+                                console.print(
+                                    f"  [dim]Downloaded {downloaded} LinkedIn image(s)[/dim]"
+                                )
                     except ImportError:
                         pass
 
