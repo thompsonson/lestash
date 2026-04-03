@@ -35,23 +35,37 @@ SCOPE_WRITE = "w_member_social"
 REDIRECT_URI = "http://localhost:8338/callback"
 
 
+def _load_json(path: Path) -> dict[str, Any] | None:
+    """Load a JSON file, returning None if it doesn't exist."""
+    if path.exists():
+        with open(path) as f:
+            return json.load(f)
+    return None
+
+
+def _save_json(path: Path, data: dict[str, Any]) -> None:
+    """Save data to a JSON file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f)
+
+
+# --- DMA (read) credentials and token ---
+
+
 def get_token_path() -> Path:
-    """Get path to stored OAuth token."""
+    """Get path to stored OAuth token (DMA read)."""
     return get_config_dir() / "linkedin_token.json"
 
 
 def get_credentials_path() -> Path:
-    """Get path to LinkedIn API credentials."""
+    """Get path to LinkedIn API credentials (DMA read)."""
     return get_config_dir() / "linkedin_credentials.json"
 
 
 def load_credentials() -> dict[str, str] | None:
-    """Load LinkedIn API credentials from config."""
-    creds_path = get_credentials_path()
-    if creds_path.exists():
-        with open(creds_path) as f:
-            return json.load(f)
-    return None
+    """Load LinkedIn DMA API credentials from config."""
+    return _load_json(get_credentials_path())
 
 
 def save_credentials(
@@ -60,41 +74,81 @@ def save_credentials(
     mode: str = "3rd-party",
     person_urn: str | None = None,
 ) -> None:
-    """Save LinkedIn API credentials."""
-    creds_path = get_credentials_path()
-    creds_path.parent.mkdir(parents=True, exist_ok=True)
+    """Save LinkedIn DMA API credentials."""
+    _save_creds(get_credentials_path(), client_id, client_secret, mode, person_urn)
+
+
+def load_token() -> dict[str, Any] | None:
+    """Load stored OAuth token (DMA read)."""
+    return _load_json(get_token_path())
+
+
+def save_token(token: dict[str, Any]) -> None:
+    """Save OAuth token to config (DMA read)."""
+    _save_json(get_token_path(), token)
+
+
+# --- Write (posting) credentials and token ---
+
+
+def get_write_token_path() -> Path:
+    """Get path to stored OAuth token (posting/write)."""
+    return get_config_dir() / "linkedin_write_token.json"
+
+
+def get_write_credentials_path() -> Path:
+    """Get path to LinkedIn API credentials (posting/write)."""
+    return get_config_dir() / "linkedin_write_credentials.json"
+
+
+def load_write_credentials() -> dict[str, str] | None:
+    """Load LinkedIn posting API credentials from config."""
+    return _load_json(get_write_credentials_path())
+
+
+def save_write_credentials(
+    client_id: str,
+    client_secret: str,
+    person_urn: str | None = None,
+) -> None:
+    """Save LinkedIn posting API credentials."""
+    _save_creds(get_write_credentials_path(), client_id, client_secret, "write", person_urn)
+
+
+def load_write_token() -> dict[str, Any] | None:
+    """Load stored OAuth token (posting/write)."""
+    return _load_json(get_write_token_path())
+
+
+def save_write_token(token: dict[str, Any]) -> None:
+    """Save OAuth token to config (posting/write)."""
+    _save_json(get_write_token_path(), token)
+
+
+# --- Shared credential helpers ---
+
+
+def _save_creds(
+    creds_path: Path,
+    client_id: str,
+    client_secret: str,
+    mode: str,
+    person_urn: str | None = None,
+) -> None:
+    """Save credentials to the given path, preserving existing person_urn."""
     data: dict[str, str] = {
         "client_id": client_id,
         "client_secret": client_secret,
         "mode": mode,
     }
-    # Preserve existing person_urn if not provided
     if person_urn is None:
-        existing = load_credentials()
+        existing = _load_json(creds_path)
         if existing and "person_urn" in existing:
             data["person_urn"] = existing["person_urn"]
     else:
         data["person_urn"] = person_urn
-    with open(creds_path, "w") as f:
-        json.dump(data, f)
+    _save_json(creds_path, data)
     console.print(f"[green]Credentials saved to {creds_path}[/green]")
-
-
-def load_token() -> dict[str, Any] | None:
-    """Load stored OAuth token."""
-    token_path = get_token_path()
-    if token_path.exists():
-        with open(token_path) as f:
-            return json.load(f)
-    return None
-
-
-def save_token(token: dict[str, Any]) -> None:
-    """Save OAuth token to config."""
-    token_path = get_token_path()
-    token_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(token_path, "w") as f:
-        json.dump(token, f)
 
 
 class OAuthCallbackHandler(BaseHTTPRequestHandler):
@@ -133,8 +187,8 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
         pass
 
 
-def authorize(client_id: str, client_secret: str, mode: str = "3rd-party") -> dict[str, Any]:
-    """Run OAuth authorization flow.
+def _run_oauth_flow(client_id: str, client_secret: str, scope: str) -> dict[str, Any]:
+    """Run OAuth authorization flow (shared by DMA and write auth).
 
     Opens browser for user to authorize, captures callback,
     exchanges code for token.
@@ -142,20 +196,17 @@ def authorize(client_id: str, client_secret: str, mode: str = "3rd-party") -> di
     Args:
         client_id: LinkedIn app client ID.
         client_secret: LinkedIn app client secret.
-        mode: API mode - "self-serve" for personal use, "3rd-party" for apps.
+        scope: OAuth scope string.
 
     Returns:
         Token dict with access_token, expires_in, etc.
     """
     import secrets
 
-    logger.debug(f"Starting OAuth flow with mode={mode}")
+    logger.debug(f"Starting OAuth flow with scope={scope}")
 
     state = secrets.token_urlsafe(16)
-    dma_scope = SCOPE_SELF_SERVE if mode == "self-serve" else SCOPE_3RD_PARTY
-    scope = f"{dma_scope} {SCOPE_WRITE}"
 
-    # Build authorization URL
     auth_params = {
         "response_type": "code",
         "client_id": client_id,
@@ -170,25 +221,21 @@ def authorize(client_id: str, client_secret: str, mode: str = "3rd-party") -> di
     console.print("[bold]Opening browser for LinkedIn authorization...[/bold]")
     console.print(f"[dim]If browser doesn't open, visit: {auth_url}[/dim]")
 
-    # Start local server to capture callback
     server = HTTPServer(("localhost", 8338), OAuthCallbackHandler)
-    server.timeout = 120  # 2 minute timeout
+    server.timeout = 120
 
-    # Open browser
     webbrowser.open(auth_url)
 
-    # Wait for callback
     console.print("[dim]Waiting for authorization...[/dim]")
     logger.debug("Waiting for OAuth callback")
     while OAuthCallbackHandler.authorization_code is None:
         server.handle_request()
 
     code = OAuthCallbackHandler.authorization_code
-    OAuthCallbackHandler.authorization_code = None  # Reset for next use
+    OAuthCallbackHandler.authorization_code = None
 
     logger.debug("Received authorization code, exchanging for token")
 
-    # Exchange code for token
     console.print("[dim]Exchanging code for token...[/dim]")
     with httpx.Client() as client:
         response = client.post(
@@ -205,10 +252,43 @@ def authorize(client_id: str, client_secret: str, mode: str = "3rd-party") -> di
         response.raise_for_status()
         token = response.json()
 
-    save_token(token)
     logger.info("OAuth authorization completed successfully")
     console.print("[green]✓ Authorization successful![/green]")
 
+    return token
+
+
+def authorize(client_id: str, client_secret: str, mode: str = "3rd-party") -> dict[str, Any]:
+    """Run OAuth authorization flow for DMA Portability API (read).
+
+    Args:
+        client_id: LinkedIn DMA app client ID.
+        client_secret: LinkedIn DMA app client secret.
+        mode: API mode - "self-serve" for personal use, "3rd-party" for apps.
+
+    Returns:
+        Token dict with access_token, expires_in, etc.
+    """
+    scope = SCOPE_SELF_SERVE if mode == "self-serve" else SCOPE_3RD_PARTY
+    token = _run_oauth_flow(client_id, client_secret, scope)
+    save_token(token)
+    return token
+
+
+def authorize_write(client_id: str, client_secret: str) -> dict[str, Any]:
+    """Run OAuth authorization flow for posting (Share on LinkedIn).
+
+    Uses a separate LinkedIn app with the w_member_social scope.
+
+    Args:
+        client_id: LinkedIn posting app client ID.
+        client_secret: LinkedIn posting app client secret.
+
+    Returns:
+        Token dict with access_token, expires_in, etc.
+    """
+    token = _run_oauth_flow(client_id, client_secret, SCOPE_WRITE)
+    save_write_token(token)
     return token
 
 
@@ -561,10 +641,19 @@ class LinkedInAPI:
 
 
 def get_person_urn(credentials: dict[str, str] | None = None) -> str | None:
-    """Get the person URN from stored credentials."""
-    creds = credentials or load_credentials()
-    if creds:
-        return creds.get("person_urn")
+    """Get the person URN from stored credentials.
+
+    Checks write credentials first (posting app), then DMA credentials.
+    """
+    if credentials:
+        return credentials.get("person_urn")
+    # Write credentials take priority (posting requires person URN)
+    write_creds = load_write_credentials()
+    if write_creds and "person_urn" in write_creds:
+        return write_creds["person_urn"]
+    read_creds = load_credentials()
+    if read_creds and "person_urn" in read_creds:
+        return read_creds["person_urn"]
     return None
 
 

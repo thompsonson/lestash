@@ -34,18 +34,21 @@ class LinkedInPostResponse(BaseModel):
 
 
 def _get_api():
-    """Create a LinkedInAPI instance from stored credentials."""
-    from lestash_linkedin.api import LinkedInAPI, get_person_urn, load_token
+    """Create a LinkedInAPI instance from stored write credentials."""
+    from lestash_linkedin.api import LinkedInAPI, get_person_urn, load_write_token
 
-    token = load_token()
+    token = load_write_token()
     if not token or not token.get("access_token"):
-        raise HTTPException(status_code=401, detail="No LinkedIn token. Run: lestash linkedin auth")
+        raise HTTPException(
+            status_code=401,
+            detail="No LinkedIn posting token. Run: lestash linkedin auth-post",
+        )
 
     person_urn = get_person_urn()
     if not person_urn:
         raise HTTPException(
             status_code=400,
-            detail="No person URN configured. Set via: lestash linkedin auth --person-urn URN",
+            detail="No person URN configured. Run: lestash linkedin auth-post --person-urn URN",
         )
 
     api = LinkedInAPI(token["access_token"])
@@ -139,9 +142,9 @@ def create_post(body: LinkedInPostRequest):
 
 @router.post("/post-with-image", response_model=LinkedInPostResponse, status_code=201)
 def create_post_with_image(
+    image: UploadFile,
     text: str = Form(...),
     visibility: str = Form("PUBLIC"),
-    image: UploadFile = Form(...),
 ):
     """Create a LinkedIn post with an image attachment."""
     import httpx

@@ -25,12 +25,18 @@ from lestash_linkedin.api import (
     SNAPSHOT_DOMAINS,
     LinkedInAPI,
     authorize,
+    authorize_write,
     get_credentials_path,
     get_person_urn,
     get_token_path,
+    get_write_credentials_path,
+    get_write_token_path,
     load_credentials,
     load_token,
+    load_write_credentials,
+    load_write_token,
     save_credentials,
+    save_write_credentials,
 )
 from lestash_linkedin.importer import import_from_zip
 
@@ -289,15 +295,8 @@ class LinkedInSource(SourcePlugin):
                     help="API mode: 'self-serve' (personal) or '3rd-party' (apps)",
                 ),
             ] = "3rd-party",
-            person_urn: Annotated[
-                str | None,
-                typer.Option(
-                    "--person-urn",
-                    help="Your LinkedIn person URN (urn:li:person:ID) for posting",
-                ),
-            ] = None,
         ) -> None:
-            """Authenticate with LinkedIn API (EU/EEA members only).
+            """Authenticate with LinkedIn DMA API for reading data (EU/EEA members only).
 
             Two modes are available:
 
@@ -315,6 +314,8 @@ class LinkedInSource(SourcePlugin):
 
             After first use, credentials are stored and you can just run:
                 lestash linkedin auth
+
+            For posting, use a separate app: lestash linkedin auth-post
             """
             # Validate mode
             if mode not in ("self-serve", "3rd-party"):
@@ -325,15 +326,8 @@ class LinkedInSource(SourcePlugin):
             creds = load_credentials()
 
             if client_id and client_secret:
-                save_credentials(client_id, client_secret, mode, person_urn)
+                save_credentials(client_id, client_secret, mode)
                 creds = {"client_id": client_id, "client_secret": client_secret, "mode": mode}
-            elif person_urn and creds:
-                # Just updating the person URN on existing credentials
-                save_credentials(
-                    creds["client_id"], creds["client_secret"], creds.get("mode", mode), person_urn
-                )
-                console.print(f"[green]Person URN saved: {person_urn}[/green]")
-                return
             elif not creds:
                 console.print("[red]No credentials found.[/red]")
                 console.print(
@@ -352,6 +346,70 @@ class LinkedInSource(SourcePlugin):
                 authorize(creds["client_id"], creds["client_secret"], mode)
             except Exception as e:
                 logger.error(f"Authorization failed: {e}", exc_info=True)
+                console.print(f"[red]Authorization failed: {e}[/red]")
+                raise typer.Exit(1) from None
+
+        @app.command("auth-post")
+        def auth_post_cmd(
+            client_id: Annotated[
+                str | None,
+                typer.Option("--client-id", help="LinkedIn posting app Client ID"),
+            ] = None,
+            client_secret: Annotated[
+                str | None,
+                typer.Option("--client-secret", help="LinkedIn posting app Client Secret"),
+            ] = None,
+            person_urn: Annotated[
+                str | None,
+                typer.Option(
+                    "--person-urn",
+                    help="Your LinkedIn person URN (urn:li:person:ID)",
+                ),
+            ] = None,
+        ) -> None:
+            """Authenticate with LinkedIn for posting (separate app).
+
+            LinkedIn requires a separate app with "Share on LinkedIn" product
+            (needs a real company page) for posting. This is different from the
+            DMA Portability API app used for reading.
+
+            First use:
+              lestash linkedin auth-post --client-id ID --client-secret SECRET \\
+                --person-urn urn:li:person:YOUR_ID
+
+            Re-authenticate (credentials already stored):
+              lestash linkedin auth-post
+
+            Just update person URN:
+              lestash linkedin auth-post --person-urn urn:li:person:YOUR_ID
+            """
+            creds = load_write_credentials()
+
+            if client_id and client_secret:
+                save_write_credentials(client_id, client_secret, person_urn)
+                creds = {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                }
+            elif person_urn and creds:
+                save_write_credentials(
+                    creds["client_id"],
+                    creds["client_secret"],
+                    person_urn,
+                )
+                console.print(f"[green]Person URN saved: {person_urn}[/green]")
+                return
+            elif not creds:
+                console.print("[red]No posting credentials found.[/red]")
+                console.print(
+                    "Run with --client-id and --client-secret from your 'Share on LinkedIn' app"
+                )
+                raise typer.Exit(1)
+
+            try:
+                authorize_write(creds["client_id"], creds["client_secret"])
+            except Exception as e:
+                logger.error(f"Write authorization failed: {e}", exc_info=True)
                 console.print(f"[red]Authorization failed: {e}[/red]")
                 raise typer.Exit(1) from None
 
@@ -631,6 +689,38 @@ class LinkedInSource(SourcePlugin):
                         console.print(f"  [red]✗ {status} Error[/red]")
                 except Exception as e:
                     console.print(f"  [red]✗ Error: {e}[/red]")
+
+            # Check write (posting) credentials
+            console.print("\n[bold]Posting (Share on LinkedIn):[/bold]")
+            write_creds = load_write_credentials()
+            write_creds_path = get_write_credentials_path()
+            if write_creds:
+                console.print(f"  Write credentials: [green]✓ Found[/green] ({write_creds_path})")
+                urn = write_creds.get("person_urn")
+                if urn:
+                    console.print(f"  Person URN: {urn}")
+                else:
+                    console.print(
+                        "  Person URN: [yellow]✗ Not set[/yellow]\n"
+                        "  [dim]Set with: lestash linkedin auth-post "
+                        "--person-urn urn:li:person:YOUR_ID[/dim]"
+                    )
+            else:
+                console.print(
+                    f"  Write credentials: [dim]Not configured[/dim] ({write_creds_path})\n"
+                    "  [dim]To enable posting: lestash linkedin auth-post "
+                    "--client-id ID --client-secret SECRET[/dim]"
+                )
+
+            write_token = load_write_token()
+            write_token_path = get_write_token_path()
+            if write_token and write_token.get("access_token"):
+                console.print(f"  Write token: [green]✓ Found[/green] ({write_token_path})")
+            elif write_creds:
+                console.print(
+                    f"  Write token: [red]✗ Not found[/red] ({write_token_path})\n"
+                    "  [dim]Run: lestash linkedin auth-post[/dim]"
+                )
 
         def _find_own_content(conn, target_urn: str) -> str | None:
             """Find content from user's own post/comment matching the target URN.
@@ -1384,7 +1474,8 @@ class LinkedInSource(SourcePlugin):
             if not urn:
                 console.print(
                     "[red]No person URN configured.[/red]\n"
-                    "[dim]Set it with: lestash linkedin auth --person-urn urn:li:person:YOUR_ID\n"
+                    "[dim]Set it with: lestash linkedin auth-post "
+                    "--person-urn urn:li:person:YOUR_ID\n"
                     "Or pass --person-urn to this command.[/dim]"
                 )
                 raise typer.Exit(1)
@@ -1406,10 +1497,12 @@ class LinkedInSource(SourcePlugin):
                 console.print("[yellow]Dry run — not posted[/yellow]")
                 return
 
-            # Load token
-            token = load_token()
+            # Load write token (posting uses separate app)
+            token = load_write_token()
             if not token or not token.get("access_token"):
-                console.print("[red]No LinkedIn token found. Run: lestash linkedin auth[/red]")
+                console.print(
+                    "[red]No LinkedIn posting token found. Run: lestash linkedin auth-post[/red]"
+                )
                 raise typer.Exit(1)
 
             # Post to LinkedIn
@@ -1429,12 +1522,12 @@ class LinkedInSource(SourcePlugin):
                     console.print(
                         "[red]403 Forbidden — missing w_member_social scope.[/red]\n"
                         "[dim]Add 'Share on LinkedIn' product in the Developer Portal, "
-                        "then re-auth: lestash linkedin auth[/dim]"
+                        "then re-auth: lestash linkedin auth-post[/dim]"
                     )
                 elif e.response.status_code == 401:
                     console.print(
                         "[red]401 Unauthorized — token expired or invalid.[/red]\n"
-                        "[dim]Re-authenticate: lestash linkedin auth[/dim]"
+                        "[dim]Re-authenticate: lestash linkedin auth-post[/dim]"
                     )
                 else:
                     console.print(f"[red]LinkedIn API error: {e.response.status_code}[/red]")
