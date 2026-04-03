@@ -45,8 +45,8 @@ def serve_media(media_id: int):
             )
             return FileResponse(file_path, media_type=content_type)
 
-    # Fall back to remote URL
-    if media["url"]:
+    # Fall back to remote URL (only if it's an actual HTTP URL)
+    if media["url"] and media["url"].startswith("http"):
         return RedirectResponse(url=media["url"])
 
     raise HTTPException(status_code=404, detail="Media file not available")

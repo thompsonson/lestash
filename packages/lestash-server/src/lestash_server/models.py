@@ -15,6 +15,7 @@ class MediaResponse(BaseModel):
     serve_url: str
     alt_text: str | None = None
     position: int = 0
+    available: bool = False
 
 
 class ItemResponse(BaseModel):

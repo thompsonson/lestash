@@ -1178,7 +1178,7 @@
       card.className = 'item-card';
       const emoji = item.metadata && item.metadata.emoji ? item.metadata.emoji + ' ' : '';
       const displayTitle = item.title || item.preview || '(untitled)';
-      const firstImg = (item.media || []).find(m => m.media_type === 'image' || m.media_type === 'thumbnail');
+      const firstImg = (item.media || []).find(m => (m.media_type === 'image' || m.media_type === 'thumbnail') && m.available);
       const thumbHtml = firstImg ? `<img src="${getApiBase()}${escHtml(firstImg.serve_url)}" alt="${escHtml(firstImg.alt_text || '')}" class="item-card-thumb" loading="lazy">` : '';
       card.innerHTML = `
         <div class="item-card-header">
@@ -1279,10 +1279,11 @@
       html += `<div class="item-view-content">${escHtml(item.content)}</div>`;
 
       // Media gallery
-      if (item.media && item.media.length > 0) {
+      const visibleMedia = (item.media || []).filter(m => m.available || m.media_type === 'link' || m.media_type === 'pdf');
+      if (visibleMedia.length > 0) {
         html += '<div class="item-media-gallery">';
-        for (const m of item.media) {
-          if (m.media_type === 'image' || m.media_type === 'thumbnail') {
+        for (const m of visibleMedia) {
+          if ((m.media_type === 'image' || m.media_type === 'thumbnail') && m.available) {
             html += `<img src="${getApiBase()}${escHtml(m.serve_url)}" alt="${escHtml(m.alt_text || '')}">`;
           } else if (m.media_type === 'pdf') {
             html += `<a href="${escHtml(m.url)}" target="_blank" rel="noopener">📄 PDF</a>`;
