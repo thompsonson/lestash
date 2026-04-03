@@ -1,5 +1,6 @@
 """Parse a JSON array of items for import."""
 
+import hashlib
 import json
 
 from lestash.models.item import ItemCreate
@@ -37,10 +38,16 @@ def parse_json_items(data: bytes) -> list[ItemCreate]:
         if "source_type" not in item:
             item["source_type"] = "import"
 
+        # Generate deterministic source_id from content if missing
+        source_id = item.get("source_id")
+        if not source_id and not item.get("url"):
+            content_hash = hashlib.sha256(item["content"][:500].encode()).hexdigest()[:12]
+            source_id = f"{item['source_type']}-{content_hash}"
+
         results.append(
             ItemCreate(
                 source_type=item["source_type"],
-                source_id=item.get("source_id"),
+                source_id=source_id,
                 url=item.get("url"),
                 title=item.get("title"),
                 content=item["content"],
