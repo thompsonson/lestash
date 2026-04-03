@@ -2578,7 +2578,8 @@
         if (data.authenticated) {
           statusEl.innerHTML = `<span style="color:var(--ok)">Connected</span>` +
             (data.person_urn ? ` <span style="color:var(--muted);font-size:0.75rem">(${escHtml(data.person_urn)})</span>` : '') +
-            ` <button class="sync-btn" style="margin-left:0.5rem" onclick="openLinkedInCompose()">New Post</button>`;
+            ` <button class="sync-btn" style="margin-left:0.5rem" onclick="openLinkedInCompose()">New Post</button>` +
+            ` <button class="sync-btn" style="margin-left:0.3rem;opacity:0.7" onclick="startLinkedInAuth()">Reconnect</button>`;
         } else {
           statusEl.innerHTML = `<button class="sync-btn" onclick="startLinkedInAuth()">Connect for Posting</button>` +
             ` <span style="color:var(--muted);font-size:0.75rem">Requires auth-post credentials configured via CLI</span>`;
