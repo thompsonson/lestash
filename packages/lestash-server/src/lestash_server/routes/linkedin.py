@@ -1,12 +1,14 @@
-"""LinkedIn posting endpoints."""
+"""LinkedIn posting and authentication endpoints."""
 
 import json
 import logging
+import secrets
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Query, UploadFile
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from lestash_server.deps import get_db
@@ -14,6 +16,114 @@ from lestash_server.deps import get_db
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/linkedin", tags=["linkedin"])
+
+# In-memory state for pending auth flows
+_pending_auth: dict[str, dict] = {}
+
+
+# --- Auth models ---
+
+
+class AuthStatusResponse(BaseModel):
+    """Response with LinkedIn posting auth status."""
+
+    authenticated: bool
+    person_urn: str | None = None
+
+
+class AuthUrlResponse(BaseModel):
+    """Response with the LinkedIn OAuth URL."""
+
+    url: str
+    state: str
+
+
+# --- Auth endpoints ---
+
+
+@router.get("/auth-status", response_model=AuthStatusResponse)
+def auth_status():
+    """Check if LinkedIn posting is authenticated."""
+    try:
+        from lestash_linkedin.api import get_person_urn, load_write_token
+
+        token = load_write_token()
+        authenticated = bool(token and token.get("access_token"))
+        return AuthStatusResponse(
+            authenticated=authenticated,
+            person_urn=get_person_urn() if authenticated else None,
+        )
+    except ImportError:
+        return AuthStatusResponse(authenticated=False)
+
+
+@router.get("/auth-url", response_model=AuthUrlResponse)
+def get_auth_url(
+    redirect_uri: str = Query(..., description="Server callback URL for OAuth redirect"),
+):
+    """Generate LinkedIn OAuth URL for posting authentication."""
+    from lestash_linkedin.api import (
+        SCOPE_WRITE,
+        build_auth_url,
+        load_write_credentials,
+    )
+
+    creds = load_write_credentials()
+    if not creds:
+        raise HTTPException(
+            status_code=400,
+            detail="No write credentials configured. "
+            "Run: lestash linkedin auth-post --client-id ID --client-secret SECRET",
+        )
+
+    state = secrets.token_urlsafe(16)
+    url = build_auth_url(creds["client_id"], SCOPE_WRITE, redirect_uri, state)
+
+    _pending_auth[state] = {
+        "client_id": creds["client_id"],
+        "client_secret": creds["client_secret"],
+        "redirect_uri": redirect_uri,
+    }
+
+    return AuthUrlResponse(url=url, state=state)
+
+
+@router.get("/auth-callback", response_class=HTMLResponse)
+def auth_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+):
+    """Handle LinkedIn OAuth callback — exchanges code for token."""
+    from lestash_linkedin.api import exchange_code_for_token, save_write_token
+
+    pending = _pending_auth.pop(state, None)
+    if not pending:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired state. Start auth again.",
+        )
+
+    try:
+        token = exchange_code_for_token(
+            code,
+            pending["client_id"],
+            pending["client_secret"],
+            pending["redirect_uri"],
+        )
+        save_write_token(token)
+    except Exception as e:
+        logger.error(f"LinkedIn auth failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {e}") from e
+
+    return HTMLResponse(
+        "<html><body>"
+        "<h1>LinkedIn authorization successful!</h1>"
+        "<p>You can close this window.</p>"
+        "</body></html>"
+    )
+
+
+# --- Post models ---
 
 
 class LinkedInPostRequest(BaseModel):

@@ -187,16 +187,22 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
         pass
 
 
-def _run_oauth_flow(client_id: str, client_secret: str, scope: str) -> dict[str, Any]:
-    """Run OAuth authorization flow (shared by DMA and write auth).
+def _run_oauth_flow(
+    client_id: str,
+    client_secret: str,
+    scope: str,
+    redirect_uri: str = REDIRECT_URI,
+) -> dict[str, Any]:
+    """Run CLI OAuth authorization flow with local callback server.
 
-    Opens browser for user to authorize, captures callback,
+    Opens browser for user to authorize, captures callback on localhost,
     exchanges code for token.
 
     Args:
         client_id: LinkedIn app client ID.
         client_secret: LinkedIn app client secret.
         scope: OAuth scope string.
+        redirect_uri: OAuth redirect URI (must match app config).
 
     Returns:
         Token dict with access_token, expires_in, etc.
@@ -210,7 +216,7 @@ def _run_oauth_flow(client_id: str, client_secret: str, scope: str) -> dict[str,
     auth_params = {
         "response_type": "code",
         "client_id": client_id,
-        "redirect_uri": REDIRECT_URI,
+        "redirect_uri": redirect_uri,
         "state": state,
         "scope": scope,
     }
@@ -237,20 +243,7 @@ def _run_oauth_flow(client_id: str, client_secret: str, scope: str) -> dict[str,
     logger.debug("Received authorization code, exchanging for token")
 
     console.print("[dim]Exchanging code for token...[/dim]")
-    with httpx.Client() as client:
-        response = client.post(
-            TOKEN_URL,
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": REDIRECT_URI,
-                "client_id": client_id,
-                "client_secret": client_secret,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        response.raise_for_status()
-        token = response.json()
+    token = exchange_code_for_token(code, client_id, client_secret, redirect_uri)
 
     logger.info("OAuth authorization completed successfully")
     console.print("[green]✓ Authorization successful![/green]")
@@ -258,8 +251,63 @@ def _run_oauth_flow(client_id: str, client_secret: str, scope: str) -> dict[str,
     return token
 
 
+def exchange_code_for_token(
+    code: str,
+    client_id: str,
+    client_secret: str,
+    redirect_uri: str = REDIRECT_URI,
+) -> dict[str, Any]:
+    """Exchange an authorization code for an access token.
+
+    Args:
+        code: Authorization code from OAuth callback.
+        client_id: LinkedIn app client ID.
+        client_secret: LinkedIn app client secret.
+        redirect_uri: Must match the redirect_uri used in the auth request.
+
+    Returns:
+        Token dict with access_token, expires_in, etc.
+    """
+    with httpx.Client() as client:
+        response = client.post(
+            TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+def build_auth_url(client_id: str, scope: str, redirect_uri: str, state: str) -> str:
+    """Build a LinkedIn OAuth authorization URL.
+
+    Args:
+        client_id: LinkedIn app client ID.
+        scope: OAuth scope string.
+        redirect_uri: OAuth redirect URI.
+        state: CSRF state token.
+
+    Returns:
+        Full authorization URL string.
+    """
+    auth_params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "state": state,
+        "scope": scope,
+    }
+    return f"{AUTHORIZATION_URL}?{'&'.join(f'{k}={v}' for k, v in auth_params.items())}"
+
+
 def authorize(client_id: str, client_secret: str, mode: str = "3rd-party") -> dict[str, Any]:
-    """Run OAuth authorization flow for DMA Portability API (read).
+    """Run CLI OAuth authorization flow for DMA Portability API (read).
 
     Args:
         client_id: LinkedIn DMA app client ID.
@@ -276,9 +324,11 @@ def authorize(client_id: str, client_secret: str, mode: str = "3rd-party") -> di
 
 
 def authorize_write(client_id: str, client_secret: str) -> dict[str, Any]:
-    """Run OAuth authorization flow for posting (Share on LinkedIn).
+    """Run CLI OAuth authorization flow for posting (Share on LinkedIn).
 
     Uses a separate LinkedIn app with the w_member_social scope.
+    Uses localhost callback — for server-based auth, use the
+    /api/linkedin/auth-url and /auth-callback server endpoints instead.
 
     Args:
         client_id: LinkedIn posting app client ID.

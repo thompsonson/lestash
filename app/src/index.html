@@ -668,10 +668,10 @@
 
     <!-- Sources tab -->
     <div class="tab-content" id="tab-sources">
-      <!-- Post to LinkedIn -->
-      <div style="margin-bottom:1.5rem">
-        <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Post</h3>
-        <button class="sync-btn" onclick="openLinkedInCompose()">Post to LinkedIn</button>
+      <!-- LinkedIn posting -->
+      <div id="linkedin-post-section" style="margin-bottom:1.5rem;display:none">
+        <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">LinkedIn</h3>
+        <div id="linkedin-auth-status"></div>
       </div>
 
       <!-- Import section -->
@@ -1115,7 +1115,7 @@
       if (tab === 'recent') loadRecent();
       if (tab === 'search') document.getElementById('search-input').focus();
       if (tab === 'notes') { loadSavedNotes(); checkSttModel(); }
-      if (tab === 'sources') { loadSources(); loadGoogleAuth(); loadAudibleAuth(); }
+      if (tab === 'sources') { loadSources(); loadGoogleAuth(); loadAudibleAuth(); loadLinkedInAuth(); }
       if (tab === 'stats') loadStats();
       if (tab === 'collections') loadCollections();
       if (tab === 'debug') { renderDebugInfo(); renderDebugLog(); }
@@ -2567,7 +2567,38 @@
       }
     }
 
-    /* ── LinkedIn Compose ── */
+    /* ── LinkedIn Auth + Compose ── */
+
+    async function loadLinkedInAuth() {
+      const section = document.getElementById('linkedin-post-section');
+      const statusEl = document.getElementById('linkedin-auth-status');
+      try {
+        const data = await api('/api/linkedin/auth-status');
+        section.style.display = 'block';
+        if (data.authenticated) {
+          statusEl.innerHTML = `<span style="color:var(--ok)">Connected</span>` +
+            (data.person_urn ? ` <span style="color:var(--muted);font-size:0.75rem">(${escHtml(data.person_urn)})</span>` : '') +
+            ` <button class="sync-btn" style="margin-left:0.5rem" onclick="openLinkedInCompose()">New Post</button>`;
+        } else {
+          statusEl.innerHTML = `<button class="sync-btn" onclick="startLinkedInAuth()">Connect for Posting</button>` +
+            ` <span style="color:var(--muted);font-size:0.75rem">Requires auth-post credentials configured via CLI</span>`;
+        }
+      } catch {
+        section.style.display = 'none';
+      }
+    }
+
+    async function startLinkedInAuth() {
+      try {
+        const base = getApiBase();
+        const callbackUrl = `${base}/api/linkedin/auth-callback`;
+        const data = await api(`/api/linkedin/auth-url?redirect_uri=${encodeURIComponent(callbackUrl)}`);
+        window.open(data.url, '_blank');
+        showToast('Complete authorization in the new tab, then refresh', 'ok');
+      } catch (e) {
+        showToast(`Failed to start auth: ${e.message}`, 'error');
+      }
+    }
 
     function openLinkedInCompose() {
       document.getElementById('li-post-text').value = '';
