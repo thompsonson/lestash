@@ -563,14 +563,11 @@ class LinkedInAPI:
     def _posts_headers(self) -> dict[str, str]:
         """Return override headers required by the Posts API.
 
-        The Posts API requires a current-month LinkedIn-Version and
+        The Posts API requires a recent LinkedIn-Version (YYYYMM) and
         X-Restli-Protocol-Version header, different from the DMA API defaults.
         """
-        from datetime import UTC, datetime
-
-        version = datetime.now(UTC).strftime("%Y%m")
         return {
-            "LinkedIn-Version": version,
+            "LinkedIn-Version": "202501",
             "X-Restli-Protocol-Version": "2.0.0",
         }
 
