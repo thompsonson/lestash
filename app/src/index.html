@@ -2590,8 +2590,7 @@
 
     async function startLinkedInAuth() {
       try {
-        const base = getApiBase();
-        const callbackUrl = `${base}/api/linkedin/auth-callback`;
+        const callbackUrl = `${window.location.origin}/api/linkedin/auth-callback`;
         const data = await api(`/api/linkedin/auth-url?redirect_uri=${encodeURIComponent(callbackUrl)}`);
         window.open(data.url, '_blank');
         showToast('Complete authorization in the new tab, then refresh', 'ok');
