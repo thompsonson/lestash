@@ -668,6 +668,12 @@
 
     <!-- Sources tab -->
     <div class="tab-content" id="tab-sources">
+      <!-- LinkedIn posting -->
+      <div id="linkedin-post-section" style="margin-bottom:1.5rem;display:none">
+        <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">LinkedIn</h3>
+        <div id="linkedin-auth-status"></div>
+      </div>
+
       <!-- Import section -->
       <div style="margin-bottom:1.5rem">
         <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Import</h3>
@@ -844,6 +850,43 @@
       <div class="modal-actions">
         <button class="btn-cancel" onclick="document.getElementById('new-collection-modal').classList.remove('open')">Cancel</button>
         <button class="btn-save" onclick="saveNewCollection()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LinkedIn Compose Modal -->
+  <div class="modal-overlay" id="linkedin-compose-modal">
+    <div class="modal" style="max-width:520px">
+      <h2>Post to LinkedIn</h2>
+      <div style="position:relative">
+        <textarea id="li-post-text" style="width:100%;min-height:120px;font-family:inherit;font-size:0.85rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.5rem 0.6rem;resize:vertical" placeholder="What do you want to talk about?" maxlength="3000"></textarea>
+        <div id="li-char-count" style="text-align:right;font-size:0.75rem;color:var(--muted);margin-top:0.2rem">0 / 3,000</div>
+      </div>
+      <details style="margin-top:0.5rem">
+        <summary style="font-size:0.8rem;color:var(--muted);cursor:pointer">Attach image</summary>
+        <div style="margin-top:0.4rem">
+          <input type="file" id="li-post-image" accept="image/jpeg,image/png,image/gif" style="font-size:0.8rem">
+          <div id="li-image-preview" style="margin-top:0.4rem"></div>
+        </div>
+      </details>
+      <details style="margin-top:0.5rem">
+        <summary style="font-size:0.8rem;color:var(--muted);cursor:pointer">Share a link</summary>
+        <div style="margin-top:0.4rem;display:flex;flex-direction:column;gap:0.3rem">
+          <input type="url" id="li-article-url" placeholder="URL" style="font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem">
+          <input type="text" id="li-article-title" placeholder="Title (required)" style="font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem">
+          <input type="text" id="li-article-desc" placeholder="Description (optional)" style="font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem">
+        </div>
+      </details>
+      <div style="margin-top:0.6rem">
+        <label for="li-visibility" style="font-size:0.8rem;color:var(--muted)">Visibility</label>
+        <select id="li-visibility" style="font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;margin-left:0.4rem">
+          <option value="PUBLIC">Public</option>
+          <option value="CONNECTIONS">Connections only</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeLinkedInCompose()">Cancel</button>
+        <button class="btn-save" id="li-post-btn" onclick="submitLinkedInPost()">Post</button>
       </div>
     </div>
   </div>
@@ -1072,7 +1115,7 @@
       if (tab === 'recent') loadRecent();
       if (tab === 'search') document.getElementById('search-input').focus();
       if (tab === 'notes') { loadSavedNotes(); checkSttModel(); }
-      if (tab === 'sources') { loadSources(); loadGoogleAuth(); loadAudibleAuth(); }
+      if (tab === 'sources') { loadSources(); loadGoogleAuth(); loadAudibleAuth(); loadLinkedInAuth(); }
       if (tab === 'stats') loadStats();
       if (tab === 'collections') loadCollections();
       if (tab === 'debug') { renderDebugInfo(); renderDebugLog(); }
@@ -2521,6 +2564,130 @@
         loadCollections();
       } catch (e) {
         showToast('Failed: ' + e.message, 'error');
+      }
+    }
+
+    /* ── LinkedIn Auth + Compose ── */
+
+    async function loadLinkedInAuth() {
+      const section = document.getElementById('linkedin-post-section');
+      const statusEl = document.getElementById('linkedin-auth-status');
+      try {
+        const data = await api('/api/linkedin/auth-status');
+        section.style.display = 'block';
+        if (data.authenticated) {
+          statusEl.innerHTML = `<span style="color:var(--ok)">Connected</span>` +
+            (data.person_urn ? ` <span style="color:var(--muted);font-size:0.75rem">(${escHtml(data.person_urn)})</span>` : '') +
+            ` <button class="sync-btn" style="margin-left:0.5rem" onclick="openLinkedInCompose()">New Post</button>` +
+            ` <button class="sync-btn" style="margin-left:0.3rem;opacity:0.7" onclick="startLinkedInAuth()">Reconnect</button>`;
+        } else {
+          statusEl.innerHTML = `<button class="sync-btn" onclick="startLinkedInAuth()">Connect for Posting</button>` +
+            ` <span style="color:var(--muted);font-size:0.75rem">Requires auth-post credentials configured via CLI</span>`;
+        }
+      } catch {
+        section.style.display = 'none';
+      }
+    }
+
+    async function startLinkedInAuth() {
+      try {
+        const callbackUrl = `${window.location.origin}/api/linkedin/auth-callback`;
+        const data = await api(`/api/linkedin/auth-url?redirect_uri=${encodeURIComponent(callbackUrl)}`);
+        window.open(data.url, '_blank');
+        showToast('Complete authorization in the new tab, then refresh', 'ok');
+      } catch (e) {
+        showToast(`Failed to start auth: ${e.message}`, 'error');
+      }
+    }
+
+    function openLinkedInCompose() {
+      document.getElementById('li-post-text').value = '';
+      document.getElementById('li-char-count').textContent = '0 / 3,000';
+      document.getElementById('li-post-image').value = '';
+      document.getElementById('li-image-preview').innerHTML = '';
+      document.getElementById('li-article-url').value = '';
+      document.getElementById('li-article-title').value = '';
+      document.getElementById('li-article-desc').value = '';
+      document.getElementById('li-visibility').value = 'PUBLIC';
+      document.getElementById('li-post-btn').disabled = false;
+      document.getElementById('linkedin-compose-modal').classList.add('open');
+      document.getElementById('li-post-text').focus();
+    }
+
+    function closeLinkedInCompose() {
+      document.getElementById('linkedin-compose-modal').classList.remove('open');
+    }
+
+    // Character counter
+    document.addEventListener('DOMContentLoaded', () => {
+      const ta = document.getElementById('li-post-text');
+      if (ta) ta.addEventListener('input', () => {
+        const len = ta.value.length;
+        const counter = document.getElementById('li-char-count');
+        counter.textContent = len.toLocaleString() + ' / 3,000';
+        counter.style.color = len > 2900 ? 'var(--accent)' : 'var(--muted)';
+      });
+      const imgInput = document.getElementById('li-post-image');
+      if (imgInput) imgInput.addEventListener('change', () => {
+        const preview = document.getElementById('li-image-preview');
+        const file = imgInput.files[0];
+        if (file) {
+          const img = document.createElement('img');
+          img.src = URL.createObjectURL(file);
+          img.style.cssText = 'max-width:100%;max-height:150px;border-radius:4px';
+          preview.innerHTML = '';
+          preview.appendChild(img);
+        } else {
+          preview.innerHTML = '';
+        }
+      });
+    });
+
+    async function submitLinkedInPost() {
+      const text = document.getElementById('li-post-text').value.trim();
+      if (!text) { showToast('Post text is required', 'error'); return; }
+      if (text.length > 3000) { showToast('Text too long (max 3,000)', 'error'); return; }
+
+      const visibility = document.getElementById('li-visibility').value;
+      const imageFile = document.getElementById('li-post-image').files[0];
+      const articleUrl = document.getElementById('li-article-url').value.trim();
+      const articleTitle = document.getElementById('li-article-title').value.trim();
+      const articleDesc = document.getElementById('li-article-desc').value.trim();
+
+      if (articleUrl && !articleTitle) { showToast('Article title required with URL', 'error'); return; }
+
+      const btn = document.getElementById('li-post-btn');
+      btn.disabled = true;
+      btn.textContent = 'Posting...';
+
+      try {
+        let result;
+        if (imageFile) {
+          const formData = new FormData();
+          formData.append('text', text);
+          formData.append('visibility', visibility);
+          formData.append('image', imageFile);
+          result = await api('/api/linkedin/post-with-image', { method: 'POST', body: formData });
+        } else {
+          const body = { text, visibility };
+          if (articleUrl) {
+            body.article_url = articleUrl;
+            body.article_title = articleTitle;
+            if (articleDesc) body.article_description = articleDesc;
+          }
+          result = await api('/api/linkedin/post', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+        }
+        closeLinkedInCompose();
+        showToast('Posted to LinkedIn!', 'ok');
+      } catch (e) {
+        showToast('Post failed: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Post';
       }
     }
 

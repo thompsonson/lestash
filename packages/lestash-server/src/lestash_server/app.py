@@ -68,6 +68,14 @@ def create_app(static_dir: str | None = None) -> FastAPI:
     app.include_router(audible_auth.router)
     app.include_router(google_auth.router)
 
+    # Optional LinkedIn routes (only if lestash-linkedin is installed)
+    try:
+        from lestash_server.routes import linkedin
+
+        app.include_router(linkedin.router)
+    except ImportError:
+        pass
+
     # Optional YouTube routes (only if lestash-youtube is installed)
     try:
         from lestash_server.routes import youtube
