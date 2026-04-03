@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 import typer
 from lestash.core.logging import get_plugin_logger
-from lestash.models.item import ItemCreate
+from lestash.models.item import ItemCreate, MediaCreate
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 from rich.table import Table
@@ -180,6 +180,14 @@ def post_to_item(entry: dict[str, Any], is_own: bool = True) -> ItemCreate:
     if like_of:
         metadata["like_of"] = like_of
 
+    # Build media list from photos
+    media_list: list[MediaCreate] | None = None
+    if photos:
+        media_list = [
+            MediaCreate(media_type="image", url=photo_url, position=i)
+            for i, photo_url in enumerate(photos)
+        ]
+
     return ItemCreate(
         source_type="microblog",
         source_id=source_id,
@@ -190,6 +198,7 @@ def post_to_item(entry: dict[str, Any], is_own: bool = True) -> ItemCreate:
         created_at=created_at,
         is_own_content=is_own,
         metadata=metadata,
+        media=media_list,
     )
 
 

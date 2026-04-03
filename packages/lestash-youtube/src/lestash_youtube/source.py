@@ -13,7 +13,7 @@ from lestash.core.google_auth import (
     get_credentials_path,
 )
 from lestash.core.logging import get_plugin_logger
-from lestash.models.item import ItemCreate
+from lestash.models.item import ItemCreate, MediaCreate
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 from rich.table import Table
@@ -131,6 +131,10 @@ def video_to_item(video: dict[str, Any], source_subtype: str = "liked") -> ItemC
     if video.get("watched_at"):
         metadata["watched_at"] = video["watched_at"]
 
+    media: list[MediaCreate] | None = None
+    if thumbnail_url:
+        media = [MediaCreate(media_type="thumbnail", url=thumbnail_url)]
+
     return ItemCreate(
         source_type="youtube",
         source_id=f"{source_subtype}:{video_id}",
@@ -141,6 +145,7 @@ def video_to_item(video: dict[str, Any], source_subtype: str = "liked") -> ItemC
         created_at=created_at,
         is_own_content=False,  # Liked/watched videos are not own content
         metadata=metadata,
+        media=media,
     )
 
 
@@ -175,6 +180,10 @@ def subscription_to_item(subscription: dict[str, Any]) -> ItemCreate:
         "thumbnail_url": thumbnail_url,
     }
 
+    sub_media: list[MediaCreate] | None = None
+    if thumbnail_url:
+        sub_media = [MediaCreate(media_type="thumbnail", url=thumbnail_url)]
+
     return ItemCreate(
         source_type="youtube",
         source_id=f"subscription:{channel_id}",
@@ -185,6 +194,7 @@ def subscription_to_item(subscription: dict[str, Any]) -> ItemCreate:
         created_at=created_at,
         is_own_content=False,
         metadata=metadata,
+        media=sub_media,
     )
 
 

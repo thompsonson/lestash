@@ -175,8 +175,10 @@ def _get_api():
     return api, person_urn
 
 
-def _save_item(post_urn: str, text: str, visibility: str, metadata_extra: dict | None = None):
-    """Save the posted content as a LeStash item."""
+def _save_item(
+    post_urn: str, text: str, visibility: str, metadata_extra: dict | None = None
+) -> int:
+    """Save the posted content as a LeStash item. Returns the item ID."""
     metadata = {
         "post_urn": post_urn,
         "visibility": visibility,
@@ -186,7 +188,7 @@ def _save_item(post_urn: str, text: str, visibility: str, metadata_extra: dict |
         metadata.update(metadata_extra)
 
     with get_db() as conn:
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT INTO items (
                 source_type, source_id, url, title, content,
@@ -209,6 +211,14 @@ def _save_item(post_urn: str, text: str, visibility: str, metadata_extra: dict |
             ),
         )
         conn.commit()
+        item_id = cursor.lastrowid
+        if not item_id:
+            row = conn.execute(
+                "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+                ("linkedin", post_urn),
+            ).fetchone()
+            item_id = row[0]
+    return item_id
 
 
 @router.post("/post", response_model=LinkedInPostResponse, status_code=201)
@@ -255,7 +265,21 @@ def create_post(body: LinkedInPostRequest):
     if body.article_url:
         extra["article_url"] = body.article_url
         extra["article_title"] = body.article_title or ""
-    _save_item(post_urn, body.text, body.visibility, extra or None)
+    item_id = _save_item(post_urn, body.text, body.visibility, extra or None)
+
+    # Save article link as media attachment
+    if body.article_url:
+        from lestash.core.database import add_item_media
+
+        with get_db() as conn:
+            add_item_media(
+                conn,
+                item_id,
+                media_type="link",
+                url=body.article_url,
+                alt_text=body.article_title,
+                source_origin="upload",
+            )
 
     return LinkedInPostResponse(status="posted", post_urn=post_urn)
 
@@ -277,8 +301,9 @@ def create_post_with_image(
 
     # Save uploaded image to temp file
     suffix = Path(image.filename or "image.jpg").suffix or ".jpg"
+    image_bytes = image.file.read()
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(image.file.read())
+        tmp.write(image_bytes)
         tmp_path = Path(tmp.name)
 
     api, person_urn = _get_api()
@@ -303,6 +328,23 @@ def create_post_with_image(
         api.close()
         tmp_path.unlink(missing_ok=True)
 
-    _save_item(post_urn, text, visibility, {"has_image": True})
+    item_id = _save_item(post_urn, text, visibility, {"has_image": True})
+
+    # Save image locally and create media attachment
+    from lestash.core.database import add_item_media, save_media_file
+
+    from lestash_server.deps import get_config
+
+    filename = image.filename or f"image{suffix}"
+    rel_path = save_media_file(item_id, image_bytes, filename, get_config())
+    with get_db() as conn:
+        add_item_media(
+            conn,
+            item_id,
+            media_type="image",
+            local_path=rel_path,
+            mime_type=image.content_type,
+            source_origin="upload",
+        )
 
     return LinkedInPostResponse(status="posted", post_urn=post_urn)

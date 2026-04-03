@@ -6,6 +6,18 @@ from typing import Any
 from pydantic import BaseModel
 
 
+class MediaResponse(BaseModel):
+    """Media attachment for API responses."""
+
+    id: int
+    media_type: str
+    url: str | None = None
+    serve_url: str
+    alt_text: str | None = None
+    position: int = 0
+    available: bool = False
+
+
 class ItemResponse(BaseModel):
     """Enriched item for API responses."""
 
@@ -28,6 +40,7 @@ class ItemResponse(BaseModel):
     preview: str
     tags: list[str] = []
     child_count: int = 0
+    media: list[MediaResponse] = []
 
 
 class ItemListResponse(BaseModel):

@@ -99,6 +99,92 @@ def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
     return total
 
 
+def download_linkedin_media(
+    conn: sqlite3.Connection,
+    access_token: str,
+    config: Any | None = None,
+) -> int:
+    """Attempt to download LinkedIn image assets that don't have local files.
+
+    Queries item_media for LinkedIn image entries with a URL (asset URN) but
+    no local_path, and tries to resolve + download each one.
+
+    Returns the number of images successfully downloaded.
+    """
+    from lestash.core.database import save_media_file
+
+    rows = conn.execute(
+        """SELECT im.id, im.item_id, im.url
+           FROM item_media im
+           JOIN items i ON im.item_id = i.id
+           WHERE i.source_type = 'linkedin'
+             AND im.media_type = 'image'
+             AND im.url IS NOT NULL
+             AND im.local_path IS NULL"""
+    ).fetchall()
+
+    if not rows:
+        return 0
+
+    downloaded = 0
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "X-Restli-Protocol-Version": "2.0.0",
+    }
+
+    for row in rows:
+        media_id, item_id, asset_url = row["id"], row["item_id"], row["url"]
+        if not asset_url or not asset_url.startswith("urn:li:digitalmediaAsset:"):
+            continue
+
+        try:
+            # Try to get the download URL from the asset metadata
+            asset_id = asset_url.replace("urn:li:digitalmediaAsset:", "")
+            resp = httpx.get(
+                f"https://api.linkedin.com/v2/assets/{asset_id}",
+                headers=headers,
+                timeout=15.0,
+            )
+            resp.raise_for_status()
+            asset_data = resp.json()
+
+            # Find the download URL in the recipes
+            download_url = None
+            for recipe in asset_data.get("recipes", []):
+                for identifier in recipe.get("identifiers", []):
+                    if identifier.get("identifierType") == "EXTERNAL_URL":
+                        download_url = identifier.get("identifier")
+                        break
+                if download_url:
+                    break
+
+            if not download_url:
+                logger.debug(f"No download URL found for asset {asset_id}")
+                continue
+
+            # Download the image
+            img_resp = httpx.get(download_url, timeout=30.0)
+            img_resp.raise_for_status()
+
+            content_type = img_resp.headers.get("content-type", "image/jpeg")
+            ext = ".jpg" if "jpeg" in content_type else ".png" if "png" in content_type else ".jpg"
+            rel_path = save_media_file(item_id, img_resp.content, f"linkedin{ext}", config)
+
+            conn.execute(
+                "UPDATE item_media SET local_path = ?, mime_type = ? WHERE id = ?",
+                (rel_path, content_type, media_id),
+            )
+            downloaded += 1
+
+        except Exception:
+            logger.debug(f"Could not download LinkedIn asset {asset_url}", exc_info=True)
+            continue
+
+    if downloaded:
+        conn.commit()
+    return downloaded
+
+
 def parse_linkedin_date(date_str: str) -> datetime | None:
     """Parse LinkedIn API date formats."""
     if not date_str:
@@ -1551,7 +1637,7 @@ class LinkedInSource(SourcePlugin):
                 metadata["article_title"] = article_title
 
             with get_connection(config) as conn:
-                conn.execute(
+                cursor = conn.execute(
                     """
                     INSERT INTO items (
                         source_type, source_id, url, title, content,
@@ -1574,6 +1660,42 @@ class LinkedInSource(SourcePlugin):
                     ),
                 )
                 conn.commit()
+                item_id = cursor.lastrowid
+                if not item_id:
+                    row = conn.execute(
+                        "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+                        ("linkedin", post_urn),
+                    ).fetchone()
+                    item_id = row[0]
+
+                # Save image locally as media attachment
+                if image:
+                    from lestash.core.database import add_item_media, save_media_file
+
+                    image_path = Path(image)
+                    rel_path = save_media_file(
+                        item_id, image_path.read_bytes(), image_path.name, config
+                    )
+                    add_item_media(
+                        conn,
+                        item_id,
+                        media_type="image",
+                        local_path=rel_path,
+                        source_origin="upload",
+                    )
+
+                # Save article link as media attachment
+                if article_url:
+                    from lestash.core.database import add_item_media
+
+                    add_item_media(
+                        conn,
+                        item_id,
+                        media_type="link",
+                        url=article_url,
+                        alt_text=article_title,
+                        source_origin="upload",
+                    )
 
             console.print("[dim]Saved to LeStash[/dim]")
 

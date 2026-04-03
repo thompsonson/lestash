@@ -3,7 +3,7 @@
 import typer
 
 from lestash import __version__
-from lestash.cli import config, embeddings, google, items, profiles, sources
+from lestash.cli import config, embeddings, google, items, media, profiles, sources
 from lestash.core.database import init_database
 from lestash.core.logging import get_console, get_logger, setup_logging
 from lestash.plugins.loader import load_plugins
@@ -23,6 +23,7 @@ app.add_typer(config.app, name="config")
 app.add_typer(profiles.app, name="profiles")
 app.add_typer(google.app, name="google")
 app.add_typer(embeddings.app, name="embeddings")
+app.add_typer(media.app, name="media")
 
 
 def register_plugin_commands() -> None:

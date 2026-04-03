@@ -4,7 +4,7 @@ import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
-from lestash.core.database import add_tag, get_tags, list_tags, remove_tag
+from lestash.core.database import add_tag, get_item_media, get_tags, list_tags, remove_tag
 from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
 from lestash.models.item import Item
 
@@ -13,6 +13,7 @@ from lestash_server.models import (
     ItemCreateRequest,
     ItemListResponse,
     ItemResponse,
+    MediaResponse,
     TagAddRequest,
     TagListResponse,
 )
@@ -20,6 +21,22 @@ from lestash_server.models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/items", tags=["items"])
+
+
+def _media_responses(conn, item_id: int) -> list[MediaResponse]:
+    """Build MediaResponse list for an item."""
+    return [
+        MediaResponse(
+            id=m["id"],
+            media_type=m["media_type"],
+            url=m["url"],
+            serve_url=f"/api/media/{m['id']}",
+            alt_text=m["alt_text"],
+            position=m["position"],
+            available=bool(m["local_path"] or (m["url"] and m["url"].startswith("http"))),
+        )
+        for m in get_item_media(conn, item_id)
+    ]
 
 
 def _enrich_item(conn, item: Item) -> ItemResponse:
@@ -47,6 +64,7 @@ def _enrich_item(conn, item: Item) -> ItemResponse:
         preview=get_preview(conn, item, max_length=120),
         tags=get_tags(conn, item.id),
         child_count=child_count,
+        media=_media_responses(conn, item.id),
     )
 
 

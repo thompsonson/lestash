@@ -7,7 +7,7 @@ Unknown resource types are preserved with generic content for discovery.
 import logging
 from datetime import datetime
 
-from lestash.models.item import ItemCreate
+from lestash.models.item import ItemCreate, MediaCreate
 
 from lestash_linkedin.schemas.changelog import ChangelogEvent
 from lestash_linkedin.schemas.content_types import (
@@ -124,20 +124,49 @@ def _extract_ugc_post(event: ChangelogEvent) -> ItemCreate:
     if created_at_ms:
         created_at = datetime.fromtimestamp(created_at_ms / 1000)
 
+    share_content = activity.specific_content.get("com.linkedin.ugc.ShareContent", {})
+    media_category = share_content.get("shareMediaCategory")
+
+    # Extract media entries from the share content
+    media_list: list[MediaCreate] = []
+    raw_media = share_content.get("media", [])
+    for i, m in enumerate(raw_media):
+        if media_category == "IMAGE":
+            # Image asset URN — not a direct URL, but we store it for reference
+            asset_urn = m.get("media", "")
+            media_list.append(
+                MediaCreate(
+                    media_type="image",
+                    url=asset_urn,
+                    alt_text=m.get("title", {}).get("text"),
+                    position=i,
+                )
+            )
+        elif media_category == "ARTICLE":
+            original_url = m.get("originalUrl", "")
+            if original_url:
+                media_list.append(
+                    MediaCreate(
+                        media_type="link",
+                        url=original_url,
+                        alt_text=m.get("title", {}).get("text"),
+                        position=i,
+                    )
+                )
+
     return _create_item(
         event=event,
         content=activity.get_text(),
         author=activity.author,
         created_at=created_at,
         extra_metadata={
-            "media_category": activity.specific_content.get(
-                "com.linkedin.ugc.ShareContent", {}
-            ).get("shareMediaCategory"),
+            "media_category": media_category,
             "visibility": activity.visibility,
             "lifecycle_state": activity.lifecycle_state,
             "post_id": activity.id,
             "snowflake_ts": _urn_to_snowflake_ts(activity.id),
         },
+        media=media_list or None,
     )
 
 
@@ -334,6 +363,7 @@ def _create_item(
     created_at: datetime | None,
     extra_metadata: dict,
     url: str | None = None,
+    media: list[MediaCreate] | None = None,
 ) -> ItemCreate:
     """Create an ItemCreate with standard fields.
 
@@ -344,6 +374,7 @@ def _create_item(
         created_at: Creation timestamp if available
         extra_metadata: Additional metadata specific to the resource type
         url: Optional URL linking to the content on LinkedIn
+        media: Optional list of media attachments
 
     Returns:
         ItemCreate ready for database insertion
@@ -373,4 +404,5 @@ def _create_item(
             **{k: v for k, v in extra_metadata.items() if v is not None},
             "raw": event.model_dump(by_alias=True),
         },
+        media=media,
     )
