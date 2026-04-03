@@ -565,9 +565,10 @@ class LinkedInAPI:
 
         The Posts API requires a recent LinkedIn-Version (YYYYMM) and
         X-Restli-Protocol-Version header, different from the DMA API defaults.
+        Versions are supported for ~1 year before sunset.
         """
         return {
-            "LinkedIn-Version": "202501",
+            "LinkedIn-Version": "202603",
             "X-Restli-Protocol-Version": "2.0.0",
         }
 
