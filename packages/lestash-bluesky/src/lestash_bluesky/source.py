@@ -136,7 +136,8 @@ def post_to_item(post: "models.AppBskyFeedDefs.FeedViewPost", handle: str) -> It
             for i, img in enumerate(record.embed.images):
                 blob = getattr(img, "image", None)
                 if blob and getattr(blob, "ref", None):
-                    cid = str(blob.ref)
+                    ref = blob.ref
+                    cid = ref.link if hasattr(ref, "link") else str(ref)
                     cdn_url = (
                         f"https://cdn.bsky.app/img/feed_thumbnail/plain/{author.did}/{cid}@jpeg"
                     )

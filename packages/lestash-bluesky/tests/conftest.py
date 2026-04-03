@@ -196,7 +196,7 @@ def mock_embed_images():
                 image=img.get(
                     "image",
                     SimpleNamespace(
-                        ref="bafkreiexample123",
+                        ref=SimpleNamespace(link="bafkreiexample123"),
                         mime_type="image/jpeg",
                         size=12345,
                     ),
