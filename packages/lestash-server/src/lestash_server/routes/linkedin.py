@@ -94,7 +94,12 @@ def auth_callback(
     state: str = Query(...),
 ):
     """Handle LinkedIn OAuth callback — exchanges code for token."""
-    from lestash_linkedin.api import exchange_code_for_token, save_write_token
+    from lestash_linkedin.api import (
+        _fetch_person_urn,
+        exchange_code_for_token,
+        save_write_credentials,
+        save_write_token,
+    )
 
     pending = _pending_auth.pop(state, None)
     if not pending:
@@ -111,6 +116,11 @@ def auth_callback(
             pending["redirect_uri"],
         )
         save_write_token(token)
+
+        # Auto-discover numeric person URN
+        person_urn = _fetch_person_urn(token["access_token"])
+        if person_urn:
+            save_write_credentials(pending["client_id"], pending["client_secret"], person_urn)
     except Exception as e:
         logger.error(f"LinkedIn auth failed: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {e}") from e

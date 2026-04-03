@@ -28,8 +28,8 @@ RATE_LIMIT_DOCS = "https://learn.microsoft.com/en-us/linkedin/shared/api-guide/c
 SCOPE_SELF_SERVE = "r_dma_portability_self_serve"  # Personal use (Member API)
 SCOPE_3RD_PARTY = "r_dma_portability_3rd_party"  # App for others (3rd Party API)
 
-# Write scope for posting (Community Management / Share on LinkedIn)
-SCOPE_WRITE = "w_member_social"
+# Write scope for posting (Share on LinkedIn) + openid for person URN discovery
+SCOPE_WRITE = "w_member_social openid profile"
 
 # Local callback server
 REDIRECT_URI = "http://localhost:8338/callback"
@@ -327,8 +327,7 @@ def authorize_write(client_id: str, client_secret: str) -> dict[str, Any]:
     """Run CLI OAuth authorization flow for posting (Share on LinkedIn).
 
     Uses a separate LinkedIn app with the w_member_social scope.
-    Uses localhost callback — for server-based auth, use the
-    /api/linkedin/auth-url and /auth-callback server endpoints instead.
+    Also fetches and stores the numeric person URN via /v2/userinfo.
 
     Args:
         client_id: LinkedIn posting app client ID.
@@ -339,7 +338,36 @@ def authorize_write(client_id: str, client_secret: str) -> dict[str, Any]:
     """
     token = _run_oauth_flow(client_id, client_secret, SCOPE_WRITE)
     save_write_token(token)
+
+    # Fetch and store the numeric person URN
+    person_urn = _fetch_person_urn(token["access_token"])
+    if person_urn:
+        save_write_credentials(client_id, client_secret, person_urn)
+        console.print(f"[dim]Person URN: {person_urn}[/dim]")
+
     return token
+
+
+def _fetch_person_urn(access_token: str) -> str | None:
+    """Fetch the authenticated member's person URN via /v2/userinfo.
+
+    Requires openid scope. Returns urn:li:person:{sub} where sub is
+    the numeric member ID needed by the UGC Posts API.
+    """
+    try:
+        response = httpx.get(
+            "https://api.linkedin.com/v2/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        sub = response.json().get("sub")
+        if sub:
+            logger.info(f"Fetched person URN: urn:li:person:{sub}")
+            return f"urn:li:person:{sub}"
+    except Exception as e:
+        logger.warning(f"Could not fetch person URN: {e}")
+    return None
 
 
 class LinkedInAPI:
@@ -560,60 +588,66 @@ class LinkedInAPI:
         logger.info(f"Fetched {len(all_events)} total changelog events")
         return all_events
 
-    def _posts_headers(self) -> dict[str, str]:
-        """Return override headers required by the Posts API.
-
-        The Posts API requires a recent LinkedIn-Version (YYYYMM) and
-        X-Restli-Protocol-Version header, different from the DMA API defaults.
-        Versions are supported for ~1 year before sunset.
-        """
-        return {
-            "LinkedIn-Version": "202603",
-            "X-Restli-Protocol-Version": "2.0.0",
-        }
-
     def _upload_image(self, image_path: Path, owner_urn: str) -> str:
-        """Upload an image for use in a post.
+        """Upload an image for use in a UGC post.
 
-        Three-step flow: initialize upload, PUT binary, return image URN.
+        Uses the legacy v2/assets API (required by Share on LinkedIn product).
 
         Args:
             image_path: Path to image file (JPG, PNG, or GIF).
             owner_urn: Person URN (e.g. urn:li:person:abc123).
 
         Returns:
-            Image URN string (e.g. urn:li:image:...).
+            Asset URN string (e.g. urn:li:digitalmediaAsset:...).
         """
-        headers = self._posts_headers()
-
-        # Step 1: Initialize upload
-        logger.debug(f"Initializing image upload for {image_path.name}")
-        init_response = self._request(
-            "POST",
-            "/images?action=initializeUpload",
-            json={"initializeUploadRequest": {"owner": owner_urn}},
-            headers=headers,
+        # Step 1: Register upload
+        logger.debug(f"Registering image upload for {image_path.name}")
+        register_body = {
+            "registerUploadRequest": {
+                "recipes": ["urn:li:digitalmediaRecipe:feedshare-image"],
+                "owner": owner_urn,
+                "serviceRelationships": [
+                    {
+                        "relationshipType": "OWNER",
+                        "identifier": "urn:li:userGeneratedContent",
+                    }
+                ],
+            }
+        }
+        # Use v2 API directly (not /rest)
+        register_response = httpx.post(
+            "https://api.linkedin.com/v2/assets?action=registerUpload",
+            json=register_body,
+            headers={
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json",
+                "X-Restli-Protocol-Version": "2.0.0",
+            },
+            timeout=30.0,
         )
-        init_data = init_response.json()
-        upload_url = init_data["value"]["uploadUrl"]
-        image_urn = init_data["value"]["image"]
+        register_response.raise_for_status()
+        register_data = register_response.json()
 
-        # Step 2: Upload binary (external URL, use httpx directly)
+        upload_url = register_data["value"]["uploadMechanism"][
+            "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"
+        ]["uploadUrl"]
+        asset_urn = register_data["value"]["asset"]
+
+        # Step 2: Upload binary
         logger.debug(f"Uploading image binary to {upload_url[:80]}...")
         image_bytes = image_path.read_bytes()
-        with httpx.Client(timeout=60.0) as upload_client:
-            upload_response = upload_client.put(
-                upload_url,
-                content=image_bytes,
-                headers={
-                    "Authorization": f"Bearer {self.access_token}",
-                    "Content-Type": "application/octet-stream",
-                },
-            )
-            upload_response.raise_for_status()
+        upload_response = httpx.post(
+            upload_url,
+            content=image_bytes,
+            headers={
+                "Authorization": f"Bearer {self.access_token}",
+            },
+            timeout=60.0,
+        )
+        upload_response.raise_for_status()
 
-        logger.info(f"Image uploaded: {image_urn}")
-        return image_urn
+        logger.info(f"Image uploaded: {asset_urn}")
+        return asset_urn
 
     def create_post(
         self,
@@ -626,62 +660,83 @@ class LinkedInAPI:
         article_title: str | None = None,
         article_description: str | None = None,
     ) -> str:
-        """Create a LinkedIn post.
+        """Create a LinkedIn post via the UGC Posts API.
 
-        Supports text-only, image, and article/link share posts.
+        Uses the legacy v2/ugcPosts API required by the "Share on LinkedIn"
+        product (w_member_social scope). Supports text, image, and article posts.
 
         Args:
-            text: Post text (commentary), max 3,000 characters.
+            text: Post text, max 3,000 characters.
             author_urn: Person URN (e.g. urn:li:person:abc123).
             visibility: "PUBLIC" or "CONNECTIONS".
             image_path: Optional image to attach (JPG, PNG, GIF).
             article_url: Optional article URL to share.
-            article_title: Article title (required if article_url is set).
+            article_title: Article title (used with article_url).
             article_description: Optional article description.
 
         Returns:
             Post URN string from x-restli-id response header.
         """
+        # Determine media category and build media list
+        if image_path:
+            asset_urn = self._upload_image(image_path, author_urn)
+            share_media_category = "IMAGE"
+            media = [
+                {
+                    "status": "READY",
+                    "media": asset_urn,
+                    "title": {"text": image_path.stem},
+                }
+            ]
+        elif article_url:
+            share_media_category = "ARTICLE"
+            media_entry: dict[str, Any] = {
+                "status": "READY",
+                "originalUrl": article_url,
+            }
+            if article_title:
+                media_entry["title"] = {"text": article_title}
+            if article_description:
+                media_entry["description"] = {"text": article_description}
+            media = [media_entry]
+        else:
+            share_media_category = "NONE"
+            media = []
+
+        share_content: dict[str, Any] = {
+            "shareCommentary": {"text": text},
+            "shareMediaCategory": share_media_category,
+        }
+        if media:
+            share_content["media"] = media
+
         body: dict[str, Any] = {
             "author": author_urn,
-            "commentary": text,
-            "visibility": visibility,
-            "distribution": {
-                "feedDistribution": "MAIN_FEED",
-                "targetEntities": [],
-                "thirdPartyDistributionChannels": [],
-            },
             "lifecycleState": "PUBLISHED",
-            "isReshareDisabledByAuthor": False,
+            "specificContent": {
+                "com.linkedin.ugc.ShareContent": share_content,
+            },
+            "visibility": {
+                "com.linkedin.ugc.MemberNetworkVisibility": visibility,
+            },
         }
 
-        # Image post
-        if image_path:
-            image_urn = self._upload_image(image_path, author_urn)
-            body["content"] = {
-                "media": {
-                    "id": image_urn,
-                    "altText": image_path.stem,
-                },
-            }
-
-        # Article/link share post
-        elif article_url:
-            article: dict[str, str] = {
-                "source": article_url,
-                "title": article_title or article_url,
-            }
-            if article_description:
-                article["description"] = article_description
-            body["content"] = {"article": article}
-
-        logger.debug(f"Creating post (visibility={visibility}, has_image={image_path is not None})")
-        response = self._request(
-            "POST",
-            "/posts",
-            json=body,
-            headers=self._posts_headers(),
+        logger.debug(
+            f"Creating UGC post (visibility={visibility}, category={share_media_category})"
         )
+
+        # Use v2 API directly (not /rest which requires Marketing API versions)
+        response = httpx.post(
+            "https://api.linkedin.com/v2/ugcPosts",
+            json=body,
+            headers={
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json",
+                "X-Restli-Protocol-Version": "2.0.0",
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
 
         post_urn = response.headers.get("x-restli-id", "")
         logger.info(f"Post created: {post_urn}")
