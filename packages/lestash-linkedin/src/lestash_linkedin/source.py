@@ -11,7 +11,7 @@ import webbrowser
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 import typer
@@ -26,6 +26,7 @@ from lestash_linkedin.api import (
     LinkedInAPI,
     authorize,
     get_credentials_path,
+    get_person_urn,
     get_token_path,
     load_credentials,
     load_token,
@@ -288,6 +289,13 @@ class LinkedInSource(SourcePlugin):
                     help="API mode: 'self-serve' (personal) or '3rd-party' (apps)",
                 ),
             ] = "3rd-party",
+            person_urn: Annotated[
+                str | None,
+                typer.Option(
+                    "--person-urn",
+                    help="Your LinkedIn person URN (urn:li:person:ID) for posting",
+                ),
+            ] = None,
         ) -> None:
             """Authenticate with LinkedIn API (EU/EEA members only).
 
@@ -317,8 +325,15 @@ class LinkedInSource(SourcePlugin):
             creds = load_credentials()
 
             if client_id and client_secret:
-                save_credentials(client_id, client_secret, mode)
+                save_credentials(client_id, client_secret, mode, person_urn)
                 creds = {"client_id": client_id, "client_secret": client_secret, "mode": mode}
+            elif person_urn and creds:
+                # Just updating the person URN on existing credentials
+                save_credentials(
+                    creds["client_id"], creds["client_secret"], creds.get("mode", mode), person_urn
+                )
+                console.print(f"[green]Person URN saved: {person_urn}[/green]")
+                return
             elif not creds:
                 console.print("[red]No credentials found.[/red]")
                 console.print(
@@ -1264,6 +1279,210 @@ class LinkedInSource(SourcePlugin):
                     # Step 4: Resolve parents
                     updated = resolve_linkedin_parents(conn)
                     console.print(f"[green]Updated {updated} items with parent_id[/green]")
+
+        @app.command("post")
+        def post_cmd(
+            text: Annotated[
+                str | None,
+                typer.Argument(help="Post text (up to 3,000 characters)"),
+            ] = None,
+            file: Annotated[
+                Path | None,
+                typer.Option("--file", "-f", help="Read post text from file"),
+            ] = None,
+            stdin: Annotated[
+                bool,
+                typer.Option("--stdin", help="Read post text from stdin"),
+            ] = False,
+            image: Annotated[
+                Path | None,
+                typer.Option("--image", "-i", help="Attach image (JPG, PNG, GIF)"),
+            ] = None,
+            article_url: Annotated[
+                str | None,
+                typer.Option("--article-url", help="Share a link"),
+            ] = None,
+            article_title: Annotated[
+                str | None,
+                typer.Option("--article-title", help="Article title (required with --article-url)"),
+            ] = None,
+            article_description: Annotated[
+                str | None,
+                typer.Option("--article-description", help="Article description"),
+            ] = None,
+            visibility: Annotated[
+                str,
+                typer.Option("--visibility", "-v", help="PUBLIC or CONNECTIONS"),
+            ] = "PUBLIC",
+            person_urn: Annotated[
+                str | None,
+                typer.Option("--person-urn", help="Override person URN"),
+            ] = None,
+            dry_run: Annotated[
+                bool,
+                typer.Option("--dry-run", "-n", help="Preview without posting"),
+            ] = False,
+        ) -> None:
+            """Post to LinkedIn.
+
+            Supports text-only, image, and article/link share posts.
+
+            Examples:
+              lestash linkedin post "Hello LinkedIn!"
+              lestash linkedin post --file draft.md
+              lestash linkedin post --file draft.md --image photo.jpg
+              echo "text" | lestash linkedin post --stdin
+              lestash linkedin post "Check this out" --article-url URL --article-title "Title"
+            """
+            import sys
+
+            from lestash.core.config import Config
+            from lestash.core.database import get_connection
+
+            # Resolve text from exactly one source
+            sources_count = sum([text is not None, file is not None, stdin])
+            if sources_count == 0:
+                console.print("[red]Provide post text as argument, --file, or --stdin[/red]")
+                raise typer.Exit(1)
+            if sources_count > 1:
+                console.print("[red]Provide only one of: text argument, --file, or --stdin[/red]")
+                raise typer.Exit(1)
+
+            if file:
+                if not file.exists():
+                    console.print(f"[red]File not found: {file}[/red]")
+                    raise typer.Exit(1)
+                text = file.read_text().strip()
+            elif stdin:
+                text = sys.stdin.read().strip()
+
+            if not text:
+                console.print("[red]Post text is empty[/red]")
+                raise typer.Exit(1)
+
+            if len(text) > 3000:
+                console.print(f"[red]Text too long: {len(text)} characters (max 3,000)[/red]")
+                raise typer.Exit(1)
+
+            # Validate options
+            if visibility not in ("PUBLIC", "CONNECTIONS"):
+                console.print(
+                    f"[red]Invalid visibility: {visibility}. Use PUBLIC or CONNECTIONS.[/red]"
+                )
+                raise typer.Exit(1)
+
+            if image and not image.exists():
+                console.print(f"[red]Image not found: {image}[/red]")
+                raise typer.Exit(1)
+
+            if article_url and not article_title:
+                console.print("[red]--article-title is required with --article-url[/red]")
+                raise typer.Exit(1)
+
+            # Resolve person URN
+            urn = person_urn or get_person_urn()
+            if not urn:
+                console.print(
+                    "[red]No person URN configured.[/red]\n"
+                    "[dim]Set it with: lestash linkedin auth --person-urn urn:li:person:YOUR_ID\n"
+                    "Or pass --person-urn to this command.[/dim]"
+                )
+                raise typer.Exit(1)
+
+            # Dry run preview
+            if dry_run:
+                console.print("[bold]--- Post Preview ---[/bold]")
+                console.print(f"[dim]Author:[/dim] {urn}")
+                console.print(f"[dim]Visibility:[/dim] {visibility}")
+                console.print(f"[dim]Text ({len(text)} chars):[/dim]")
+                console.print(text)
+                if image:
+                    console.print(f"[dim]Image:[/dim] {image}")
+                if article_url:
+                    console.print(f"[dim]Article:[/dim] {article_url}")
+                    console.print(f"[dim]  Title:[/dim] {article_title}")
+                    if article_description:
+                        console.print(f"[dim]  Description:[/dim] {article_description}")
+                console.print("[yellow]Dry run — not posted[/yellow]")
+                return
+
+            # Load token
+            token = load_token()
+            if not token or not token.get("access_token"):
+                console.print("[red]No LinkedIn token found. Run: lestash linkedin auth[/red]")
+                raise typer.Exit(1)
+
+            # Post to LinkedIn
+            try:
+                with LinkedInAPI(token["access_token"]) as api:
+                    post_urn = api.create_post(
+                        text=text,
+                        author_urn=urn,
+                        visibility=visibility,
+                        image_path=image,
+                        article_url=article_url,
+                        article_title=article_title,
+                        article_description=article_description,
+                    )
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 403:
+                    console.print(
+                        "[red]403 Forbidden — missing w_member_social scope.[/red]\n"
+                        "[dim]Add 'Share on LinkedIn' product in the Developer Portal, "
+                        "then re-auth: lestash linkedin auth[/dim]"
+                    )
+                elif e.response.status_code == 401:
+                    console.print(
+                        "[red]401 Unauthorized — token expired or invalid.[/red]\n"
+                        "[dim]Re-authenticate: lestash linkedin auth[/dim]"
+                    )
+                else:
+                    console.print(f"[red]LinkedIn API error: {e.response.status_code}[/red]")
+                    logger.error(f"Post failed: {e.response.text}", exc_info=True)
+                raise typer.Exit(1) from None
+
+            console.print("[green]✓ Posted to LinkedIn![/green]")
+            console.print(f"[dim]Post URN: {post_urn}[/dim]")
+
+            # Save as LeStash item
+            config = Config.load()
+            metadata: dict[str, Any] = {
+                "post_urn": post_urn,
+                "visibility": visibility,
+                "resource_name": "ugcPosts",
+            }
+            if image:
+                metadata["has_image"] = True
+            if article_url:
+                metadata["article_url"] = article_url
+                metadata["article_title"] = article_title
+
+            with get_connection(config) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO items (
+                        source_type, source_id, url, title, content,
+                        author, created_at, is_own_content, metadata
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(source_type, source_id) DO UPDATE SET
+                        content = excluded.content,
+                        metadata = excluded.metadata
+                    """,
+                    (
+                        "linkedin",
+                        post_urn,
+                        None,
+                        None,
+                        text,
+                        None,
+                        datetime.now().isoformat(),
+                        True,
+                        json.dumps(metadata),
+                    ),
+                )
+                conn.commit()
+
+            console.print("[dim]Saved to LeStash[/dim]")
 
         return app
 

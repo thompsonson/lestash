@@ -28,6 +28,9 @@ RATE_LIMIT_DOCS = "https://learn.microsoft.com/en-us/linkedin/shared/api-guide/c
 SCOPE_SELF_SERVE = "r_dma_portability_self_serve"  # Personal use (Member API)
 SCOPE_3RD_PARTY = "r_dma_portability_3rd_party"  # App for others (3rd Party API)
 
+# Write scope for posting (Community Management / Share on LinkedIn)
+SCOPE_WRITE = "w_member_social"
+
 # Local callback server
 REDIRECT_URI = "http://localhost:8338/callback"
 
@@ -51,12 +54,29 @@ def load_credentials() -> dict[str, str] | None:
     return None
 
 
-def save_credentials(client_id: str, client_secret: str, mode: str = "3rd-party") -> None:
+def save_credentials(
+    client_id: str,
+    client_secret: str,
+    mode: str = "3rd-party",
+    person_urn: str | None = None,
+) -> None:
     """Save LinkedIn API credentials."""
     creds_path = get_credentials_path()
     creds_path.parent.mkdir(parents=True, exist_ok=True)
+    data: dict[str, str] = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "mode": mode,
+    }
+    # Preserve existing person_urn if not provided
+    if person_urn is None:
+        existing = load_credentials()
+        if existing and "person_urn" in existing:
+            data["person_urn"] = existing["person_urn"]
+    else:
+        data["person_urn"] = person_urn
     with open(creds_path, "w") as f:
-        json.dump({"client_id": client_id, "client_secret": client_secret, "mode": mode}, f)
+        json.dump(data, f)
     console.print(f"[green]Credentials saved to {creds_path}[/green]")
 
 
@@ -132,7 +152,8 @@ def authorize(client_id: str, client_secret: str, mode: str = "3rd-party") -> di
     logger.debug(f"Starting OAuth flow with mode={mode}")
 
     state = secrets.token_urlsafe(16)
-    scope = SCOPE_SELF_SERVE if mode == "self-serve" else SCOPE_3RD_PARTY
+    dma_scope = SCOPE_SELF_SERVE if mode == "self-serve" else SCOPE_3RD_PARTY
+    scope = f"{dma_scope} {SCOPE_WRITE}"
 
     # Build authorization URL
     auth_params = {
@@ -408,6 +429,143 @@ class LinkedInAPI:
 
         logger.info(f"Fetched {len(all_events)} total changelog events")
         return all_events
+
+    def _posts_headers(self) -> dict[str, str]:
+        """Return override headers required by the Posts API.
+
+        The Posts API requires a current-month LinkedIn-Version and
+        X-Restli-Protocol-Version header, different from the DMA API defaults.
+        """
+        from datetime import UTC, datetime
+
+        version = datetime.now(UTC).strftime("%Y%m")
+        return {
+            "LinkedIn-Version": version,
+            "X-Restli-Protocol-Version": "2.0.0",
+        }
+
+    def _upload_image(self, image_path: Path, owner_urn: str) -> str:
+        """Upload an image for use in a post.
+
+        Three-step flow: initialize upload, PUT binary, return image URN.
+
+        Args:
+            image_path: Path to image file (JPG, PNG, or GIF).
+            owner_urn: Person URN (e.g. urn:li:person:abc123).
+
+        Returns:
+            Image URN string (e.g. urn:li:image:...).
+        """
+        headers = self._posts_headers()
+
+        # Step 1: Initialize upload
+        logger.debug(f"Initializing image upload for {image_path.name}")
+        init_response = self._request(
+            "POST",
+            "/images?action=initializeUpload",
+            json={"initializeUploadRequest": {"owner": owner_urn}},
+            headers=headers,
+        )
+        init_data = init_response.json()
+        upload_url = init_data["value"]["uploadUrl"]
+        image_urn = init_data["value"]["image"]
+
+        # Step 2: Upload binary (external URL, use httpx directly)
+        logger.debug(f"Uploading image binary to {upload_url[:80]}...")
+        image_bytes = image_path.read_bytes()
+        with httpx.Client(timeout=60.0) as upload_client:
+            upload_response = upload_client.put(
+                upload_url,
+                content=image_bytes,
+                headers={
+                    "Authorization": f"Bearer {self.access_token}",
+                    "Content-Type": "application/octet-stream",
+                },
+            )
+            upload_response.raise_for_status()
+
+        logger.info(f"Image uploaded: {image_urn}")
+        return image_urn
+
+    def create_post(
+        self,
+        text: str,
+        author_urn: str,
+        *,
+        visibility: str = "PUBLIC",
+        image_path: Path | None = None,
+        article_url: str | None = None,
+        article_title: str | None = None,
+        article_description: str | None = None,
+    ) -> str:
+        """Create a LinkedIn post.
+
+        Supports text-only, image, and article/link share posts.
+
+        Args:
+            text: Post text (commentary), max 3,000 characters.
+            author_urn: Person URN (e.g. urn:li:person:abc123).
+            visibility: "PUBLIC" or "CONNECTIONS".
+            image_path: Optional image to attach (JPG, PNG, GIF).
+            article_url: Optional article URL to share.
+            article_title: Article title (required if article_url is set).
+            article_description: Optional article description.
+
+        Returns:
+            Post URN string from x-restli-id response header.
+        """
+        body: dict[str, Any] = {
+            "author": author_urn,
+            "commentary": text,
+            "visibility": visibility,
+            "distribution": {
+                "feedDistribution": "MAIN_FEED",
+                "targetEntities": [],
+                "thirdPartyDistributionChannels": [],
+            },
+            "lifecycleState": "PUBLISHED",
+            "isReshareDisabledByAuthor": False,
+        }
+
+        # Image post
+        if image_path:
+            image_urn = self._upload_image(image_path, author_urn)
+            body["content"] = {
+                "media": {
+                    "id": image_urn,
+                    "altText": image_path.stem,
+                },
+            }
+
+        # Article/link share post
+        elif article_url:
+            article: dict[str, str] = {
+                "source": article_url,
+                "title": article_title or article_url,
+            }
+            if article_description:
+                article["description"] = article_description
+            body["content"] = {"article": article}
+
+        logger.debug(f"Creating post (visibility={visibility}, has_image={image_path is not None})")
+        response = self._request(
+            "POST",
+            "/posts",
+            json=body,
+            headers=self._posts_headers(),
+        )
+
+        post_urn = response.headers.get("x-restli-id", "")
+        logger.info(f"Post created: {post_urn}")
+        return post_urn
+
+
+def get_person_urn(credentials: dict[str, str] | None = None) -> str | None:
+    """Get the person URN from stored credentials."""
+    creds = credentials or load_credentials()
+    if creds:
+        return creds.get("person_urn")
+    return None
 
 
 # Common snapshot domains that are typically available
