@@ -191,6 +191,14 @@ def extract_drive_file_id(url_or_id: str) -> str:
     return url_or_id
 
 
+def get_drive_service():
+    """Get an authenticated Google Drive v3 service object."""
+    from googleapiclient.discovery import build
+
+    credentials = get_credentials()
+    return build("drive", "v3", credentials=credentials)
+
+
 def download_drive_file(file_id: str, output_dir: Path | None = None) -> Path:
     """Download a file from Google Drive.
 

@@ -1,7 +1,8 @@
-"""Google integration CLI commands — auth, doctor, and Drive download."""
+"""Google integration CLI commands — auth, doctor, Drive download, and folder sync."""
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
 app = typer.Typer(help="Google account integration (Drive, Docs).", no_args_is_help=True)
 console = Console()
@@ -95,3 +96,87 @@ def download(
     except Exception as e:
         console.print(f"[red]✗[/red] Download failed: {e}")
         raise typer.Exit(1) from None
+
+
+@app.command("ls")
+def list_folder(
+    folder: str = typer.Argument(help="Google Drive folder URL or ID"),
+) -> None:
+    """List files in a Google Drive folder."""
+    from lestash.core.google_auth import get_drive_service
+    from lestash.core.google_drive import extract_folder_id, list_drive_folder
+
+    folder_id = extract_folder_id(folder)
+    service = get_drive_service()
+    files = list_drive_folder(service, folder_id)
+
+    table = Table(title=f"Drive folder ({len(files)} items)")
+    table.add_column("Name", style="cyan")
+    table.add_column("Type", style="dim")
+    table.add_column("Size", justify="right")
+    table.add_column("Modified", style="dim")
+
+    for f in files:
+        size = int(f.get("size", 0))
+        size_str = f"{size / 1024:.0f} KB" if size > 0 else "—"
+        mime = f.get("mimeType", "")
+        short_type = mime.split("/")[-1].split(".")[-1][:10]
+        modified = (f.get("modifiedTime") or "")[:10]
+        table.add_row(f["name"], short_type, size_str, modified)
+
+    console.print(table)
+
+
+@app.command()
+def sync(
+    folder: str = typer.Argument(help="Google Drive folder URL or ID"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List files without importing"),
+    since: str | None = typer.Option(
+        None, "--since", help="Only sync files modified after this ISO date"
+    ),
+) -> None:
+    """Import files from a Google Drive folder into LeStash.
+
+    Downloads each file, converts to markdown via Docling, and stores
+    as a searchable item with source_type 'google-drive'.
+    """
+    from lestash.core.config import Config
+    from lestash.core.database import get_connection, upsert_item
+    from lestash.core.google_auth import get_drive_service
+    from lestash.core.google_drive import extract_folder_id, list_drive_folder, sync_drive_folder
+
+    folder_id = extract_folder_id(folder)
+
+    if dry_run:
+        service = get_drive_service()
+        files = list_drive_folder(service, folder_id, since=since)
+        files = [f for f in files if f.get("mimeType") != "application/vnd.google-apps.folder"]
+        console.print(f"\n[bold]Dry run:[/bold] {len(files)} files would be imported\n")
+        for f in files:
+            size = int(f.get("size", 0))
+            size_str = f"{size / 1024:.0f} KB" if size > 0 else "—"
+            console.print(f"  {f['name']}  [dim]({size_str})[/dim]")
+        return
+
+    config = Config.load()
+    added = 0
+    errors: list[str] = []
+
+    with (
+        console.status("[bold]Syncing Google Drive folder...[/bold]") as status,
+        get_connection(config) as conn,
+    ):
+        for item in sync_drive_folder(folder_id, since=since):
+            status.update(f"Processing: {item.title or 'unknown'}")
+            try:
+                upsert_item(conn, item)
+                added += 1
+            except Exception as e:
+                errors.append(f"{item.title}: {e}")
+        conn.commit()
+
+    console.print(f"\n[green]✓[/green] Imported {added} items from Google Drive")
+    if errors:
+        console.print(f"[yellow]  {len(errors)} errors:[/yellow]")
+        for err in errors:
+            console.print(f"    • {err}")
