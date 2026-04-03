@@ -16,6 +16,7 @@ _BACKFILL_RULES: dict[str, list[tuple[str, str, bool]]] = {
     "microblog": [("photos", "image", True)],
     "youtube": [("thumbnail_url", "thumbnail", False)],
     "arxiv": [("pdf_url", "pdf", False)],
+    "audible": [("cover_url", "thumbnail", False)],
     "linkedin": [("media_category", "_linkedin_special", False)],
 }
 
@@ -76,6 +77,81 @@ def _backfill_linkedin(metadata: dict, item_id: int, conn) -> int:
     return count
 
 
+def _backfill_bluesky(conn, dry_run: bool) -> int:
+    """Re-fetch Bluesky image posts to extract blob CIDs for CDN URLs."""
+    rows = conn.execute(
+        """SELECT id, source_id, metadata FROM items
+           WHERE source_type = 'bluesky'
+             AND json_extract(metadata, '$.images') IS NOT NULL
+             AND id NOT IN (SELECT item_id FROM item_media)"""
+    ).fetchall()
+
+    if not rows:
+        return 0
+
+    if dry_run:
+        return len(rows)
+
+    try:
+        from lestash_bluesky.client import create_client
+    except ImportError:
+        console.print("[dim]lestash-bluesky not installed, skipping[/dim]")
+        return 0
+
+    try:
+        client = create_client()
+    except Exception as e:
+        console.print(f"[dim]Bluesky auth failed ({e}), skipping[/dim]")
+        return 0
+
+    count = 0
+    # Process in batches of 25 (API limit)
+    uris = [(row["id"], row["source_id"], json.loads(row["metadata"])) for row in rows]
+    for batch_start in range(0, len(uris), 25):
+        batch = uris[batch_start : batch_start + 25]
+        batch_uris = [uri for _, uri, _ in batch]
+        try:
+            resp = client.get_posts(batch_uris)
+        except Exception:
+            continue
+
+        # Map URI -> post for lookup
+        post_map = {p.uri: p for p in resp.posts}
+
+        for item_id, uri, metadata in batch:
+            post = post_map.get(uri)
+            if not post or not post.record or not hasattr(post.record, "embed"):
+                continue
+            embed = post.record.embed
+            if not embed or not hasattr(embed, "images"):
+                continue
+
+            author_did = metadata.get("author_did", "")
+            for i, img in enumerate(embed.images):
+                blob = getattr(img, "image", None)
+                if blob and getattr(blob, "ref", None):
+                    ref = blob.ref
+                    cid = ref.link if hasattr(ref, "link") else str(ref)
+                    cdn_url = (
+                        f"https://cdn.bsky.app/img/feed_thumbnail/plain/{author_did}/{cid}@jpeg"
+                    )
+                    add_item_media(
+                        conn,
+                        item_id,
+                        media_type="image",
+                        url=cdn_url,
+                        alt_text=img.alt,
+                        mime_type=getattr(blob, "mime_type", None),
+                        position=i,
+                        source_origin="backfill",
+                        _commit=False,
+                    )
+                    count += 1
+
+    conn.commit()
+    return count
+
+
 @app.command()
 def backfill(
     source: str | None = typer.Option(None, help="Only backfill this source type"),
@@ -83,6 +159,13 @@ def backfill(
 ) -> None:
     """Populate item_media from existing item metadata."""
     with get_connection() as conn:
+        # Bluesky needs special handling (re-fetches from API)
+        if source is None or source == "bluesky":
+            bs_count = _backfill_bluesky(conn, dry_run)
+            if bs_count:
+                prefix = "[dim](dry run)[/dim] " if dry_run else ""
+                console.print(f"{prefix}bluesky: {bs_count} media entries (via API)")
+
         query = "SELECT id, source_type, metadata FROM items WHERE metadata IS NOT NULL"
         params: list = []
         if source:

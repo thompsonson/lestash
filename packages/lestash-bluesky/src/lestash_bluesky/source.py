@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 from lestash.core.logging import get_plugin_logger
-from lestash.models.item import ItemCreate
+from lestash.models.item import ItemCreate, MediaCreate
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 from rich.table import Table
@@ -113,6 +113,7 @@ def post_to_item(post: "models.AppBskyFeedDefs.FeedViewPost", handle: str) -> It
         }
 
     # Add embed information if present
+    media_list: list[MediaCreate] = []
     if hasattr(record, "embed") and record.embed:
         embed_type = type(record.embed).__name__
         metadata["embed_type"] = embed_type
@@ -131,6 +132,24 @@ def post_to_item(post: "models.AppBskyFeedDefs.FeedViewPost", handle: str) -> It
                 }
                 for img in record.embed.images
             ]
+            # Build media entries with CDN URLs
+            for i, img in enumerate(record.embed.images):
+                blob = getattr(img, "image", None)
+                if blob and getattr(blob, "ref", None):
+                    ref = blob.ref
+                    cid = ref.link if hasattr(ref, "link") else str(ref)
+                    cdn_url = (
+                        f"https://cdn.bsky.app/img/feed_thumbnail/plain/{author.did}/{cid}@jpeg"
+                    )
+                    media_list.append(
+                        MediaCreate(
+                            media_type="image",
+                            url=cdn_url,
+                            alt_text=img.alt,
+                            mime_type=getattr(blob, "mime_type", None),
+                            position=i,
+                        )
+                    )
 
         # Handle external links
         elif isinstance(record.embed, models.AppBskyEmbedExternal.Main):
@@ -157,6 +176,7 @@ def post_to_item(post: "models.AppBskyFeedDefs.FeedViewPost", handle: str) -> It
         created_at=created_at,
         is_own_content=is_own_content,
         metadata=metadata,
+        media=media_list or None,
     )
 
 
