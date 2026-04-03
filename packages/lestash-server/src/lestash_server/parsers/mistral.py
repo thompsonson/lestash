@@ -38,7 +38,10 @@ def parse_mistral_zip(zf: zipfile.ZipFile) -> list[ItemCreate]:
             if not isinstance(messages, list) or not messages:
                 continue
 
-            chat_id = messages[0].get("chatId", name)
+            chat_id = messages[0].get("chatId")
+            if not chat_id:
+                logger.warning("Skipping chat without chatId: %s", name)
+                continue
             parent_source_id = f"mistral-{chat_id}"
 
             first_user_msg = ""
@@ -52,8 +55,12 @@ def parse_mistral_zip(zf: zipfile.ZipFile) -> list[ItemCreate]:
                 if not content:
                     continue
 
+                msg_id = msg.get("id")
+                if not msg_id:
+                    logger.warning("Skipping message without id in chat %s", chat_id)
+                    continue
+
                 msg_count += 1
-                msg_id = msg.get("id", f"{chat_id}-{msg_count}")
 
                 if role == "user" and not first_user_msg:
                     first_user_msg = content

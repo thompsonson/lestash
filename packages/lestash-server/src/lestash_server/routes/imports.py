@@ -70,12 +70,20 @@ async def import_file(file: UploadFile):
 
 
 def _upsert_item(conn, item, parent_id=None):
-    """Insert or update a single item. Returns the row ID."""
+    """Insert or update a single item. Returns the row ID, or None if skipped."""
     metadata = dict(item.metadata) if item.metadata else {}
     # Strip internal parent marker before storing
     metadata.pop("_parent_source_id", None)
     metadata_json = json.dumps(metadata) if metadata else None
     source_id = item.source_id or item.url
+
+    if not source_id:
+        logger.warning(
+            "Skipping item with no source_id or url: %s",
+            (item.title or item.content[:50]) if item.content else "empty",
+        )
+        return None
+
     cursor = conn.execute(
         """
         INSERT INTO items (
@@ -83,9 +91,11 @@ def _upsert_item(conn, item, parent_id=None):
             author, created_at, is_own_content, metadata, parent_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_type, source_id) DO UPDATE SET
+            url = excluded.url,
             content = excluded.content,
             title = excluded.title,
             author = excluded.author,
+            is_own_content = excluded.is_own_content,
             metadata = excluded.metadata,
             parent_id = excluded.parent_id
         """,
@@ -132,7 +142,9 @@ def _insert_items_with_parents(conn, items):
         try:
             row_id = _upsert_item(conn, item)
             if row_id:
-                parent_id_map[item.source_id or ""] = row_id
+                # Use the effective source_id (same logic as _upsert_item)
+                effective_id = item.source_id or item.url or ""
+                parent_id_map[effective_id] = row_id
                 items_added += 1
         except Exception as e:
             errors.append(f"Failed to import parent: {e}")
