@@ -737,6 +737,22 @@
         </div>
       </div>
 
+      <!-- Google Drive import -->
+      <div id="drive-import-section" style="margin-bottom:1.5rem;display:none">
+        <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Google Drive Import</h3>
+        <div class="tag-input-row">
+          <input type="url" id="drive-url-input" placeholder="Paste Drive or Docs URL..." style="flex:1">
+          <button class="sync-btn" id="drive-import-btn" onclick="importDriveUrl()">Import</button>
+        </div>
+        <div style="font-size:0.72rem;margin-top:0.3rem;color:var(--muted)">
+          Google Docs, Drive files, or folder URLs — converts to markdown
+        </div>
+        <div id="drive-import-progress" style="display:none;padding:0.5rem;color:var(--muted);font-size:0.85rem">
+          <span class="spinner"></span> Importing from Drive...
+        </div>
+        <div id="drive-import-result" style="display:none;padding:0.75rem;background:var(--surface);border-radius:6px;margin-top:0.5rem;font-size:0.85rem"></div>
+      </div>
+
       <table class="source-table" id="sources-table">
         <thead>
           <tr><th>Source</th><th>Description</th><th>Last Sync</th><th></th></tr>
@@ -849,6 +865,12 @@
         <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer">
           <input type="checkbox" id="capture-fetch-transcript" checked>
           Also fetch video transcript
+        </label>
+      </div>
+      <div id="capture-drive-option" style="display:none;margin-bottom:0.75rem">
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer">
+          <input type="checkbox" id="capture-drive-import" checked>
+          Import as document (convert to markdown)
         </label>
       </div>
       <div class="modal-actions">
@@ -1823,6 +1845,7 @@
       const section = document.getElementById('google-auth-section');
       const statusEl = document.getElementById('google-auth-status');
       const flowEl = document.getElementById('google-auth-flow');
+      const driveSection = document.getElementById('drive-import-section');
       try {
         const data = await api('/api/google/auth-status');
         section.style.display = 'block';
@@ -1831,14 +1854,17 @@
         if (data.authenticated && hasYoutube && hasDrive) {
           statusEl.innerHTML = `<span style="color:var(--ok)">Connected</span> <span style="color:var(--muted);font-size:0.75rem">(YouTube + Drive)</span>`;
           flowEl.style.display = 'none';
+          driveSection.style.display = '';
         } else {
           const missing = [!hasYoutube && 'YouTube', !hasDrive && 'Drive'].filter(Boolean);
           const scopeNote = data.authenticated && missing.length ? ` (missing: ${missing.join(', ')})` : '';
           statusEl.innerHTML = `<button class="sync-btn" onclick="startGoogleAuth()">Connect Google</button><span style="color:var(--muted);font-size:0.75rem;margin-left:0.3rem">${scopeNote}</span>`;
           flowEl.style.display = 'none';
+          driveSection.style.display = hasDrive && data.authenticated ? '' : 'none';
         }
       } catch {
         section.style.display = 'none';
+        driveSection.style.display = 'none';
       }
     }
 
@@ -1872,6 +1898,45 @@
         loadGoogleAuth();
       } catch (e) {
         showToast(`Auth failed: ${e.message}`, 'error');
+      }
+    }
+
+    function _isDriveOrDocsUrl(url) {
+      return /^https?:\/\/(drive\.google\.com|docs\.google\.com)\//i.test(url);
+    }
+
+    async function importDriveUrl() {
+      const input = document.getElementById('drive-url-input');
+      const url = input.value.trim();
+      if (!url) return;
+      const btn = document.getElementById('drive-import-btn');
+      const progress = document.getElementById('drive-import-progress');
+      const result = document.getElementById('drive-import-result');
+      btn.disabled = true;
+      progress.style.display = '';
+      result.style.display = 'none';
+      try {
+        const data = await api('/api/import/drive/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ urls: [url] }),
+        });
+        result.style.display = '';
+        let html = `Imported <strong>${data.items_added}</strong> items`;
+        if (data.items_skipped) html += `, ${data.items_skipped} skipped`;
+        if (data.errors.length) {
+          html += `<br><span style="color:var(--error)">${data.errors.length} errors</span>`;
+        }
+        result.innerHTML = html;
+        showToast(`Imported ${data.items_added} items from Drive`, 'ok');
+        input.value = '';
+      } catch (e) {
+        result.style.display = '';
+        result.innerHTML = `<span style="color:var(--error)">Import failed: ${escHtml(e.message)}</span>`;
+        showToast(`Drive import failed: ${e.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+        progress.style.display = 'none';
       }
     }
 
@@ -2167,6 +2232,10 @@
       const transcriptOpt = document.getElementById('capture-transcript-option');
       transcriptOpt.style.display = _isYouTubeUrl(url) ? 'block' : 'none';
       document.getElementById('capture-fetch-transcript').checked = true;
+      // Show Drive import option for Drive/Docs URLs
+      const driveOpt = document.getElementById('capture-drive-option');
+      driveOpt.style.display = _isDriveOrDocsUrl(url) ? 'block' : 'none';
+      document.getElementById('capture-drive-import').checked = true;
       document.getElementById('capture-modal').classList.add('open');
     }
 
@@ -2197,10 +2266,25 @@
             metadata: notes ? { notes, shared_text: content } : { shared_text: content },
           }),
         });
+        // Import from Drive if Drive URL and checkbox checked
+        const importDrive = _isDriveOrDocsUrl(url)
+          && document.getElementById('capture-drive-import').checked;
         // Fetch transcript if YouTube and checkbox checked
         const fetchTranscript = _isYouTubeUrl(url)
           && document.getElementById('capture-fetch-transcript').checked;
-        if (fetchTranscript) {
+        if (importDrive) {
+          btn.textContent = 'Importing from Drive...';
+          try {
+            const result = await api('/api/import/drive/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ urls: [url] }),
+            });
+            showToast(`Saved + imported ${result.items_added} items`, 'ok');
+          } catch (e) {
+            showToast('Saved (Drive import failed)', 'ok');
+          }
+        } else if (fetchTranscript) {
           btn.textContent = 'Fetching transcript...';
           try {
             const result = await api('/api/youtube/fetch-transcript', {
