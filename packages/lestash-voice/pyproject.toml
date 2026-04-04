@@ -1,6 +1,6 @@
 [project]
 name = "lestash-voice"
-version = "1.40.0"
+version = "1.41.0"
 description = "Voice note transcription plugin for Le Stash"
 readme = "README.md"
 requires-python = ">=3.12"
