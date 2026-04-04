@@ -28,23 +28,26 @@ const SELECTORS = {
  */
 function extractGeminiConversation() {
   const url = window.location.href;
-  const match = url.match(/\/app\/([a-f0-9]+)/);
+  const appMatch = url.match(/\/app\/([a-f0-9]+)/);
+  const shareMatch = url.match(/\/share\/([a-f0-9]+)/);
+  const match = appMatch || shareMatch;
   if (!match) return null;
 
   const conversationId = match[1];
+  const isShared = !!shareMatch;
 
-  // Title: try active sidebar entry first, fall back to page title / first prompt
+  // Title: try active sidebar entry (not available on shared pages)
   let title = 'Untitled';
-  const activeLink = document.querySelector(SELECTORS.activeConversation);
-  if (activeLink) {
-    const titleEl = activeLink.querySelector(SELECTORS.conversationTitle);
-    if (titleEl) title = titleEl.textContent.trim();
-  }
+  let isPinned = false;
 
-  // Pinned state
-  const isPinned = activeLink
-    ? !!activeLink.querySelector(SELECTORS.pinnedIcon)
-    : false;
+  if (!isShared) {
+    const activeLink = document.querySelector(SELECTORS.activeConversation);
+    if (activeLink) {
+      const titleEl = activeLink.querySelector(SELECTORS.conversationTitle);
+      if (titleEl) title = titleEl.textContent.trim();
+      isPinned = !!activeLink.querySelector(SELECTORS.pinnedIcon);
+    }
+  }
 
   // Extract turns
   const turnEls = document.querySelectorAll(SELECTORS.turnContainer);
@@ -92,9 +95,10 @@ function extractGeminiConversation() {
   }
 
   return {
-    conversation_id: `c_${conversationId}`,
+    conversation_id: isShared ? `share_${conversationId}` : `c_${conversationId}`,
     title,
     is_pinned: isPinned,
+    is_shared: isShared,
     url,
     turns,
   };

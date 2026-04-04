@@ -20,7 +20,10 @@
   "options_page": "options/options.html",
   "content_scripts": [
     {
-      "matches": ["https://gemini.google.com/app/*"],
+      "matches": [
+        "https://gemini.google.com/app/*",
+        "https://gemini.google.com/share/*"
+      ],
       "js": ["content-scripts/gemini.js"],
       "run_at": "document_idle"
     }
