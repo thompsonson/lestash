@@ -41,7 +41,7 @@ def create_app(static_dir: str | None = None) -> FastAPI:
         redoc_url=None,
     )
 
-    # CORS for Tauri app and browser access
+    # CORS for Tauri app, browser access, and Chrome extension
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -51,7 +51,7 @@ def create_app(static_dir: str | None = None) -> FastAPI:
             "http://localhost:1420",  # Tauri dev
             "http://localhost:5173",  # Vite dev
         ],
-        allow_origin_regex=r"https?://.*\.ts\.net(:\d+)?",  # Any Tailscale domain
+        allow_origin_regex=r"(https?://.*\.ts\.net(:\d+)?|chrome-extension://.+)",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Le Stash Settings</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --border: #0f3460;
+      --text: #e0e0e0;
+      --text-muted: #888;
+      --accent: #e94560;
+      --ok: #4ecca3;
+      --error: #e94560;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 14px;
+      padding: 32px;
+      min-width: 480px;
+    }
+    h1 {
+      font-size: 18px;
+      margin-bottom: 24px;
+      font-weight: 600;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+    input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover { opacity: 0.9; }
+    .status {
+      margin-top: 12px;
+      font-size: 13px;
+      min-height: 20px;
+    }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--error); }
+    .hint {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: -14px;
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Le Stash Settings</h1>
+
+  <label for="endpoint">API Endpoint</label>
+  <input type="url" id="endpoint" placeholder="https://pop-mini.monkey-ladon.ts.net:8444">
+  <p class="hint">Your Le Stash server URL (Tailscale address)</p>
+
+  <label for="token">API Token (optional)</label>
+  <input type="password" id="token" placeholder="Leave blank if not required">
+
+  <button id="save">Save</button>
+  <div id="status" class="status"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>
