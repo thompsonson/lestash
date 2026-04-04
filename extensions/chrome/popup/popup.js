@@ -18,7 +18,11 @@ let isGeminiPage = false;
   // Get active tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   activeTab = tab;
-  isGeminiPage = tab.url && tab.url.startsWith('https://gemini.google.com/app/');
+  isGeminiPage = tab.url && (
+    tab.url.startsWith('https://gemini.google.com/app/') ||
+    tab.url.startsWith('https://gemini.google.com/share/')
+  );
+  const isGeminiShared = tab.url && tab.url.startsWith('https://gemini.google.com/share/');
 
   // Check config
   const config = await LeStashAPI.getConfig();
@@ -62,6 +66,9 @@ let isGeminiPage = false;
   // Show Gemini section if on gemini.google.com
   if (isGeminiPage) {
     geminiSection.style.display = '';
+    if (isGeminiShared) {
+      $('#save-all-gemini').style.display = 'none';
+    }
     loadGeminiInfo();
   }
 })();
