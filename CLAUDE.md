@@ -41,6 +41,27 @@ cd app && npx tauri dev    # Run desktop app
 - [`docs/api.md`](docs/api.md) — REST API reference (all 45 endpoints)
 - [`extensions/chrome/README.md`](extensions/chrome/README.md) — Chrome extension usage and architecture
 
+## Android Build
+
+The Android project lives in `app/src-tauri/gen/android/` and is committed to the repo. This replaces the previous approach of generating it at CI time with `tauri android init` and patching with `sed`.
+
+### Modifying the Android manifest
+
+Edit `app/src-tauri/gen/android/app/src/main/AndroidManifest.xml` directly. Intent filters, permissions, and other manifest entries are version-controlled and reviewable in PRs.
+
+### Custom MainActivity
+
+The share intent handler is at `app/src-tauri/gen/android/app/src/main/java/dev/lestash/app/MainActivity.kt`. A copy is also kept at `app/android-src/MainActivity.kt` for reference.
+
+### Upgrading Tauri
+
+When upgrading the Tauri CLI version:
+1. Create a throwaway branch
+2. Run `cd app && npx tauri android init` (requires Android SDK)
+3. Diff the regenerated `gen/android/` against the committed version
+4. Merge changes manually, preserving custom manifest entries and MainActivity
+5. Test the build with `npx tauri android build`
+
 ## When Making Changes
 
 1. Run `uv run ruff check packages/` and `uv run ruff format --check packages/`
