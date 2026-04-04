@@ -68,10 +68,18 @@ def parse_gemini_html(
         logger.warning("No conversation-container elements found in Gemini HTML")
         return parse_generic_html(html, source_url, notes)
 
-    parts = []
+    items: list[ItemCreate] = []
     first_prompt = None
+    msg_count = 0
+
+    # Generate stable parent source_id
+    # Use a preliminary hash; will be refined after extracting content
+    content_hash = hashlib.sha256(html.encode()).hexdigest()[:12]
+    parent_source_id = source_url or f"gemini-html-{content_hash}"
 
     for turn in turns:
+        turn_id = turn.get("id", "")
+
         # User prompt
         query_el = turn.find("user-query")
         if query_el:
@@ -79,9 +87,25 @@ def parse_gemini_html(
             if lines:
                 text = "\n".join(p.get_text(strip=True) for p in lines)
                 if text:
-                    parts.append(f"**User:** {text}")
+                    msg_count += 1
                     if not first_prompt:
                         first_prompt = text
+                    msg_id = f"{parent_source_id}-user-{msg_count}"
+                    items.append(
+                        ItemCreate(
+                            source_type="gemini",
+                            source_id=msg_id,
+                            title=None,
+                            content=text,
+                            author="user",
+                            is_own_content=True,
+                            metadata={
+                                "role": "user",
+                                "turn_id": turn_id,
+                                "_parent_source_id": parent_source_id,
+                            },
+                        )
+                    )
 
         # Model response
         response_el = turn.find("model-response")
@@ -90,43 +114,59 @@ def parse_gemini_html(
             if md_el:
                 text = md_el.get_text(separator="\n", strip=True)
                 if text:
-                    parts.append(f"**Gemini:** {text}")
+                    msg_count += 1
+                    msg_id = f"{parent_source_id}-model-{msg_count}"
+                    items.append(
+                        ItemCreate(
+                            source_type="gemini",
+                            source_id=msg_id,
+                            title=None,
+                            content=text,
+                            author="model",
+                            is_own_content=False,
+                            metadata={
+                                "role": "model",
+                                "turn_id": turn_id,
+                                "_parent_source_id": parent_source_id,
+                            },
+                        )
+                    )
 
-    if not parts:
+    if msg_count == 0:
         logger.warning("No turns extracted from Gemini HTML")
         return parse_generic_html(html, source_url, notes)
 
-    content = "\n\n".join(parts)
     if first_prompt:
         title = first_prompt[:80] + ("..." if len(first_prompt) > 80 else "")
     else:
         title = "Untitled"
-    turn_count = len(turns)
 
-    # Generate stable source_id
-    content_hash = hashlib.sha256(content.encode()).hexdigest()[:12]
-    source_id = source_url or f"gemini-html-{content_hash}"
-
-    metadata: dict = {
+    parent_metadata: dict = {
         "source": "html_import",
-        "turn_count": turn_count,
+        "message_count": msg_count,
     }
     if source_url:
-        metadata["source_url"] = source_url
+        parent_metadata["source_url"] = source_url
     if notes:
-        metadata["notes"] = notes
+        parent_metadata["notes"] = notes
 
-    return [
+    summary = f"Gemini conversation with {msg_count} messages."
+
+    # Insert parent BEFORE children
+    items.insert(
+        0,
         ItemCreate(
             source_type="gemini",
-            source_id=source_id,
+            source_id=parent_source_id,
             url=source_url,
             title=title,
-            content=content,
-            is_own_content=False,
-            metadata=metadata,
-        )
-    ]
+            content=summary,
+            is_own_content=True,
+            metadata=parent_metadata,
+        ),
+    )
+
+    return items
 
 
 def parse_generic_html(
