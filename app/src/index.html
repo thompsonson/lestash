@@ -249,6 +249,27 @@
       margin-bottom: 0.5rem; font-weight: bold;
     }
 
+    /* ── Chat bubbles ── */
+    .chat-thread { display: flex; flex-direction: column; gap: 0.4rem; }
+    .chat-bubble {
+      padding: 0.6rem 0.8rem; border-radius: 12px;
+      max-width: 85%; font-size: 0.85rem; line-height: 1.5;
+      white-space: pre-wrap; word-wrap: break-word;
+    }
+    .chat-bubble.user {
+      background: var(--border); margin-left: auto;
+      border-bottom-right-radius: 4px;
+    }
+    .chat-bubble.model {
+      background: var(--surface); margin-right: auto;
+      border-bottom-left-radius: 4px;
+    }
+    .chat-role {
+      font-size: 0.7rem; color: var(--muted);
+      margin-bottom: 0.15rem; padding: 0 0.2rem;
+    }
+    .chat-role.user { text-align: right; }
+
     /* ── Media ── */
     .item-card-thumb {
       max-width: 100%; max-height: 160px;
@@ -1255,6 +1276,20 @@
       return card;
     }
 
+    const CHAT_ROLES = new Set(['user', 'model', 'assistant', 'system']);
+    function renderChatBubble(item) {
+      const isUser = item.author === 'user';
+      const roleClass = isUser ? 'user' : 'model';
+      const roleLabel = isUser ? 'You' : (item.source_type === 'mistral' ? 'Mistral' : item.source_type === 'gemini' ? 'Gemini' : 'Assistant');
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = `
+        <div class="chat-role ${roleClass}">${roleLabel}</div>
+        <div class="chat-bubble ${roleClass}">${escHtml(item.content)}</div>
+      `;
+      wrapper.querySelector('.chat-bubble').addEventListener('click', () => openItemView(item));
+      return wrapper;
+    }
+
     /* ── Master-detail navigation ── */
     const viewStack = [];
 
@@ -1520,14 +1555,19 @@
 
       // Load children
       if (item.child_count > 0) {
-        api(`/api/items?parent_id=${item.id}&limit=50`).then(data => {
+        api(`/api/items?parent_id=${item.id}&limit=50&include_children=true`).then(data => {
           const list = document.getElementById('children-list');
           if (!list) return;
           list.innerHTML = '';
-          data.items.forEach(child => {
-            const childCard = renderCard(child);
-            list.appendChild(childCard);
-          });
+          const isChat = data.items.length > 0 && CHAT_ROLES.has(data.items[0].author);
+          if (isChat) {
+            const thread = document.createElement('div');
+            thread.className = 'chat-thread';
+            data.items.forEach(child => thread.appendChild(renderChatBubble(child)));
+            list.appendChild(thread);
+          } else {
+            data.items.forEach(child => list.appendChild(renderCard(child)));
+          }
         }).catch(() => {});
       }
 
