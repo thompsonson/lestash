@@ -69,7 +69,28 @@ class MainActivity : TauriActivity() {
             val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
             if (subject != null) json.put("subject", subject)
         } else {
-            return
+            // Fallback: check file extension for generic MIME types (e.g. application/octet-stream)
+            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            if (uri != null) {
+                val fileName = getFileName(uri) ?: ""
+                if (fileName.endsWith(".html", ignoreCase = true) || fileName.endsWith(".htm", ignoreCase = true)) {
+                    val tempFile = File(cacheDir, "shared_${System.currentTimeMillis()}.html")
+                    try {
+                        contentResolver.openInputStream(uri)?.use { input ->
+                            tempFile.outputStream().use { output -> input.copyTo(output) }
+                        } ?: return
+                    } catch (e: Exception) {
+                        return
+                    }
+                    json.put("mimeType", "text/html")
+                    json.put("filePath", tempFile.absolutePath)
+                    json.put("fileName", fileName)
+                } else {
+                    return
+                }
+            } else {
+                return
+            }
         }
 
         val pendingFile = File(cacheDir, "pending_share.json")
