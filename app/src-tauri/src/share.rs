@@ -116,6 +116,8 @@ pub async fn read_shared_file(
         "ogg" => "audio/ogg",
         "flac" => "audio/flac",
         "webm" => "audio/webm",
+        "html" | "htm" => "text/html",
+        "xhtml" => "application/xhtml+xml",
         _ => "application/octet-stream",
     };
 
