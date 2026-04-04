@@ -10,7 +10,12 @@ from io import BytesIO
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from lestash_server.deps import get_db
-from lestash_server.models import DriveImportRequest, ImportResponse
+from lestash_server.models import (
+    DriveImportRequest,
+    DriveSyncRequest,
+    DriveSyncResponse,
+    ImportResponse,
+)
 from lestash_server.parsers.json_items import parse_json_items
 
 logger = logging.getLogger(__name__)
@@ -231,6 +236,58 @@ async def import_from_drive(body: DriveImportRequest):
             )
 
     return results
+
+
+@router.post("/api/import/drive/sync", response_model=DriveSyncResponse)
+async def sync_from_drive(body: DriveSyncRequest):
+    """Import Google Drive files/folders with Docling markdown conversion.
+
+    Accepts Drive URLs, Google Docs URLs, folder URLs, or bare file IDs.
+    Files are downloaded, converted to markdown, and stored as items.
+    """
+    from lestash.core.database import upsert_item
+    from lestash.core.google_drive import (
+        classify_drive_url,
+        sync_drive_folder,
+        sync_single_file,
+    )
+
+    items_added = 0
+    items_skipped = 0
+    errors: list[str] = []
+
+    for url in body.urls:
+        try:
+            url_type, file_id = classify_drive_url(url)
+
+            if url_type == "folder":
+                with get_db() as conn:
+                    for item in sync_drive_folder(file_id, recursive=True):
+                        try:
+                            upsert_item(conn, item)
+                            items_added += 1
+                        except Exception as e:
+                            errors.append(f"{item.title}: {e}")
+                    conn.commit()
+            elif url_type == "file":
+                item = sync_single_file(file_id)
+                with get_db() as conn:
+                    upsert_item(conn, item)
+                    conn.commit()
+                items_added += 1
+            else:
+                errors.append(f"Could not parse URL: {url}")
+                items_skipped += 1
+        except Exception as e:
+            logger.exception("Failed to sync %s", url)
+            errors.append(f"{url}: {e}")
+
+    return DriveSyncResponse(
+        status="completed" if not errors else "completed_with_errors",
+        items_added=items_added,
+        items_skipped=items_skipped,
+        errors=errors,
+    )
 
 
 def _parse_zip(data: bytes):

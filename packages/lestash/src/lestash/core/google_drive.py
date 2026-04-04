@@ -46,6 +46,37 @@ def extract_folder_id(url_or_id: str) -> str:
     return url_or_id
 
 
+def extract_file_id(url_or_id: str) -> str:
+    """Extract a Google Drive/Docs file ID from a URL or return as-is."""
+    # Match /d/<id> in Drive and Docs URLs
+    match = re.search(r"/d/([a-zA-Z0-9_-]+)", url_or_id)
+    if match:
+        return match.group(1)
+    # Match id= parameter
+    match = re.search(r"[?&]id=([a-zA-Z0-9_-]+)", url_or_id)
+    if match:
+        return match.group(1)
+    return url_or_id
+
+
+def classify_drive_url(url: str) -> tuple[str, str]:
+    """Classify a Google Drive/Docs URL and extract its ID.
+
+    Returns:
+        Tuple of (type, id) where type is 'folder', 'file', or 'unknown'.
+    """
+    if re.search(r"drive\.google\.com/drive/folders/", url):
+        return "folder", extract_folder_id(url)
+    if re.search(r"(drive\.google\.com/file/d/|docs\.google\.com/\w+/d/)", url):
+        return "file", extract_file_id(url)
+    if re.search(r"/d/[a-zA-Z0-9_-]+", url):
+        return "file", extract_file_id(url)
+    # Bare ID — assume file
+    if re.match(r"^[a-zA-Z0-9_-]{10,}$", url):
+        return "file", url
+    return "unknown", url
+
+
 def list_drive_folder(
     service,
     folder_id: str,
@@ -182,15 +213,52 @@ def file_to_item(file_meta: dict, content: str) -> ItemCreate:
     )
 
 
+def _process_file(service, file_meta: dict) -> ItemCreate:
+    """Download/export a single file, convert to markdown, return ItemCreate."""
+    from lestash.core.text_extract import extract_content
+
+    file_id = file_meta["id"]
+    name = file_meta["name"]
+    mime_type = file_meta.get("mimeType", "")
+
+    logger.info("Processing %s (%s)", name, mime_type)
+
+    content = ""
+    try:
+        # Google Workspace files need export, not download
+        if mime_type in EXPORTABLE_MIMES:
+            path = _export_google_file(service, file_id, name, mime_type)
+            export_mime, _ = EXPORTABLE_MIMES[mime_type]
+        else:
+            path = _download_file(service, file_id, name)
+            export_mime = mime_type
+
+        try:
+            content = extract_content(path, export_mime)
+        finally:
+            path.unlink(missing_ok=True)
+    except Exception:
+        logger.exception("Failed to download/extract %s", name)
+
+    return file_to_item(file_meta, content)
+
+
+def _filter_syncable(files: list[dict]) -> list[dict]:
+    """Filter out folders and non-document files."""
+    return [
+        f
+        for f in files
+        if f.get("mimeType") != FOLDER_MIME
+        and not any(f.get("mimeType", "").startswith(p) for p in SKIP_MIME_PREFIXES)
+    ]
+
+
 def sync_drive_folder(
     folder_id: str,
     since: str | None = None,
     recursive: bool = False,
 ) -> Iterator[ItemCreate]:
     """Sync files from a Google Drive folder, yielding ItemCreate objects.
-
-    Downloads each file to a local cache, converts to markdown via Docling,
-    and yields an ItemCreate with the full markdown content.
 
     Args:
         folder_id: Google Drive folder ID or URL.
@@ -201,42 +269,31 @@ def sync_drive_folder(
         ItemCreate objects ready for database upsert.
     """
     from lestash.core.google_auth import get_drive_service
-    from lestash.core.text_extract import extract_content
 
     folder_id = extract_folder_id(folder_id)
     service = get_drive_service()
     files = list_drive_folder(service, folder_id, since=since, recursive=recursive)
-
-    # Skip folders and non-document files (images, audio, video, binary)
-    files = [
-        f
-        for f in files
-        if f.get("mimeType") != FOLDER_MIME
-        and not any(f.get("mimeType", "").startswith(p) for p in SKIP_MIME_PREFIXES)
-    ]
+    files = _filter_syncable(files)
 
     for file_meta in files:
-        file_id = file_meta["id"]
-        name = file_meta["name"]
-        mime_type = file_meta.get("mimeType", "")
+        yield _process_file(service, file_meta)
 
-        logger.info("Processing %s (%s)", name, mime_type)
 
-        content = ""
-        try:
-            # Google Workspace files need export, not download
-            if mime_type in EXPORTABLE_MIMES:
-                path = _export_google_file(service, file_id, name, mime_type)
-                export_mime, _ = EXPORTABLE_MIMES[mime_type]
-            else:
-                path = _download_file(service, file_id, name)
-                export_mime = mime_type
+def sync_single_file(file_id: str) -> ItemCreate:
+    """Download/export a single Drive file and return an ItemCreate.
 
-            try:
-                content = extract_content(path, export_mime)
-            finally:
-                path.unlink(missing_ok=True)
-        except Exception:
-            logger.exception("Failed to download/extract %s", name)
+    Args:
+        file_id: Google Drive file ID.
 
-        yield file_to_item(file_meta, content)
+    Returns:
+        ItemCreate with markdown content.
+    """
+    from lestash.core.google_auth import get_drive_service
+
+    service = get_drive_service()
+    file_meta = (
+        service.files()
+        .get(fileId=file_id, fields="id,name,mimeType,size,modifiedTime,webViewLink")
+        .execute()
+    )
+    return _process_file(service, file_meta)

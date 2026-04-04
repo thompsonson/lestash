@@ -157,6 +157,21 @@ class DriveImportRequest(BaseModel):
     file_ids: list[str]
 
 
+class DriveSyncRequest(BaseModel):
+    """Request to sync Google Drive files/folders with Docling conversion."""
+
+    urls: list[str]
+
+
+class DriveSyncResponse(BaseModel):
+    """Response from Drive sync import."""
+
+    status: str
+    items_added: int
+    items_skipped: int
+    errors: list[str]
+
+
 class RefineRequest(BaseModel):
     """Request to refine a transcript via LLM."""
 
