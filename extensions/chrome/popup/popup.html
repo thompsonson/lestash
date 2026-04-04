@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1><span class="dot" id="dot"></span> Le Stash</h1>
+
+    <!-- Shown when not configured -->
+    <div id="setup" class="setup" style="display:none;">
+      API endpoint not configured.<br>
+      <a id="open-options">Open settings</a>
+    </div>
+
+    <!-- Main capture form -->
+    <form id="form" style="display:none;">
+      <div class="field">
+        <label for="url">URL</label>
+        <input type="text" id="url" readonly>
+      </div>
+      <div class="field">
+        <label for="title">Title</label>
+        <input type="text" id="title">
+      </div>
+      <div class="field">
+        <label for="content">Content</label>
+        <textarea id="content" rows="4" placeholder="Selected text or your notes..."></textarea>
+      </div>
+      <div class="field">
+        <label for="source-type">Source type</label>
+        <select id="source-type">
+          <option value="web">web</option>
+          <option value="article">article</option>
+          <option value="reference">reference</option>
+          <option value="note">note</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="tags-input">Tags</label>
+        <input type="text" id="tags-input" placeholder="Type and press Enter">
+        <div class="tags-row" id="tags-row"></div>
+      </div>
+      <div class="field">
+        <label for="collection">Collection</label>
+        <select id="collection">
+          <option value="">None</option>
+        </select>
+      </div>
+      <div class="actions">
+        <button type="submit" class="btn-primary" id="save-btn">Save</button>
+      </div>
+      <div id="status" class="status"></div>
+    </form>
+
+    <!-- Gemini section (shown on gemini.google.com) -->
+    <div id="gemini-section" class="gemini-section" style="display:none;">
+      <h2>Gemini Conversation</h2>
+      <div id="gemini-info" class="gemini-info"></div>
+      <div class="field">
+        <label for="gemini-collection">Add to collection</label>
+        <select id="gemini-collection">
+          <option value="">None</option>
+        </select>
+      </div>
+      <div class="gemini-actions">
+        <button class="btn-primary" id="save-gemini">Save This Conversation</button>
+        <button class="btn-secondary" id="save-all-gemini">Save All</button>
+      </div>
+      <div id="gemini-status" class="status"></div>
+      <div id="gemini-progress" class="progress"></div>
+    </div>
+  </div>
+
+  <script src="../lib/api.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
