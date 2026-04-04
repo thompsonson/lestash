@@ -36,6 +36,11 @@ cd app && npx tauri dev    # Run desktop app
 - Default item listings filter `parent_id IS NULL`; children shown in detail view
 - Single `index.html` frontend — no framework, dual Tauri/browser mode
 
+## Documentation
+
+- [`docs/api.md`](docs/api.md) — REST API reference (all 45 endpoints)
+- [`extensions/chrome/README.md`](extensions/chrome/README.md) — Chrome extension usage and architecture
+
 ## When Making Changes
 
 1. Run `uv run ruff check packages/` and `uv run ruff format --check packages/`
