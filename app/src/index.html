@@ -696,10 +696,10 @@
       <!-- Import section -->
       <div style="margin-bottom:1.5rem">
         <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Import</h3>
-        <input type="file" id="import-file" accept=".zip,.json" style="display:none">
+        <input type="file" id="import-file" accept=".zip,.json,.html,.htm" style="display:none">
         <div class="import-dropzone" id="import-dropzone">
           Drop a file here or <a href="#" onclick="document.getElementById('import-file').click();return false">browse</a>
-          <div style="font-size:0.75rem;margin-top:0.4rem">JSON, Google Takeout (Gemini, Keep)</div>
+          <div style="font-size:0.75rem;margin-top:0.4rem">JSON, Google Takeout, HTML pages</div>
         </div>
         <div id="import-progress" style="display:none;padding:0.75rem;color:var(--muted)">
           <span class="spinner"></span> Importing...
@@ -876,6 +876,30 @@
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeCaptureDialog()">Cancel</button>
         <button class="btn-save" id="capture-save-btn" onclick="saveCaptureItem()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- HTML import dialog (file share / upload) -->
+  <div class="modal-overlay" id="html-import-modal">
+    <div class="modal" style="max-width:500px">
+      <h2>Import HTML Page</h2>
+      <div id="html-import-preview" style="font-size:0.8rem;color:var(--muted);margin-bottom:0.75rem;padding:0.5rem;background:var(--bg);border-radius:4px;border:1px solid var(--border)"></div>
+      <label for="html-import-type">Page type</label>
+      <select id="html-import-type" style="width:100%;padding:0.4rem 0.6rem;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:0.75rem;cursor:pointer">
+        <option value="auto">Auto-detect</option>
+        <option value="gemini">Gemini conversation</option>
+        <option value="chatgpt">ChatGPT conversation</option>
+        <option value="article">Article</option>
+        <option value="unknown">Raw HTML</option>
+      </select>
+      <label for="html-import-url">Source URL (optional)</label>
+      <input type="url" id="html-import-url" placeholder="https://gemini.google.com/share/..." style="margin-bottom:0.75rem">
+      <label for="html-import-notes">Notes (optional)</label>
+      <textarea id="html-import-notes" style="width:100%;min-height:60px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical;margin-bottom:0.75rem" placeholder="Your annotations..."></textarea>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeHtmlImportDialog()">Cancel</button>
+        <button class="btn-save" id="html-import-save-btn" onclick="saveHtmlImport()">Import</button>
       </div>
     </div>
   </div>
@@ -2308,6 +2332,71 @@
       }
     }
 
+    /* ── HTML Import Dialog ─��� */
+    let _pendingHtmlFile = null; // File object for web upload, or {base64, fileName} for Android
+
+    function _detectHtmlType(html) {
+      if (html.includes('user-query') && html.includes('model-response')) return 'gemini';
+      if (html.includes('data-message-author-role')) return 'chatgpt';
+      if (html.includes('<article')) return 'article';
+      return 'unknown';
+    }
+
+    function _htmlTypeLabel(type) {
+      return { gemini: 'Gemini conversation', chatgpt: 'ChatGPT conversation', article: 'Article', unknown: 'Unknown' }[type] || type;
+    }
+
+    function openHtmlImportDialog(fileOrData, htmlText) {
+      _pendingHtmlFile = fileOrData;
+      const detected = _detectHtmlType(htmlText);
+      const preview = document.getElementById('html-import-preview');
+      const snippet = htmlText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+      preview.textContent = `Detected: ${_htmlTypeLabel(detected)} — ${snippet}...`;
+      document.getElementById('html-import-type').value = detected === 'unknown' ? 'auto' : detected;
+      document.getElementById('html-import-url').value = '';
+      document.getElementById('html-import-notes').value = '';
+      document.getElementById('html-import-modal').classList.add('open');
+    }
+
+    function closeHtmlImportDialog() {
+      document.getElementById('html-import-modal').classList.remove('open');
+      _pendingHtmlFile = null;
+    }
+
+    async function saveHtmlImport() {
+      const btn = document.getElementById('html-import-save-btn');
+      btn.disabled = true;
+      btn.textContent = 'Importing...';
+      try {
+        const formData = new FormData();
+        if (_pendingHtmlFile instanceof File) {
+          formData.append('file', _pendingHtmlFile);
+        } else if (_pendingHtmlFile && _pendingHtmlFile.base64) {
+          const byteStr = atob(_pendingHtmlFile.base64);
+          const bytes = new Uint8Array(byteStr.length);
+          for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
+          const file = new File([bytes], _pendingHtmlFile.fileName || 'shared_page.html', { type: 'text/html' });
+          formData.append('file', file);
+        }
+        formData.append('page_type', document.getElementById('html-import-type').value);
+        const sourceUrl = document.getElementById('html-import-url').value.trim();
+        if (sourceUrl) formData.append('source_url', sourceUrl);
+        const notes = document.getElementById('html-import-notes').value.trim();
+        if (notes) formData.append('notes', notes);
+
+        const res = await fetch(`${getApiBase()}/api/import`, { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.status);
+        showToast(`Imported ${data.items_added} items from ${data.source_type}`, 'ok');
+        closeHtmlImportDialog();
+      } catch (e) {
+        showToast('Import failed: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Import';
+      }
+    }
+
     /* ── Share Intent Handling (Android) ── */
     async function handlePendingShare() {
       if (!IS_TAURI || !tauriInvoke) return;
@@ -2339,6 +2428,17 @@
           // Switch to Notes tab and use existing upload function
           document.querySelector('[data-tab="notes"]')?.click();
           transcribeAudioFile(file);
+        } else if (share.mimeType === 'text/html' && share.filePath) {
+          // HTML file shared — read and open import dialog
+          const fileName = share.fileName || 'shared_page.html';
+          addDebugLog('SHARE', 'read_shared_file', 'START', null, `html: ${share.filePath}`);
+          const fileData = await tauriInvoke('read_shared_file', {
+            filePath: share.filePath,
+            fileName: fileName,
+          });
+          addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${fileName} (${(fileData.base64.length * 0.75 / 1024).toFixed(0)} KB)`);
+          const htmlText = atob(fileData.base64);
+          openHtmlImportDialog(fileData, htmlText);
         } else if (share.text) {
           openCaptureDialog(share);
         }
@@ -2430,6 +2530,13 @@
     });
 
     async function uploadImport(file) {
+      // HTML files get the type picker dialog
+      if (file.name.match(/\.html?$/i)) {
+        const htmlText = await file.text();
+        openHtmlImportDialog(file, htmlText);
+        return;
+      }
+
       const progress = document.getElementById('import-progress');
       const result = document.getElementById('import-result');
       progress.style.display = '';

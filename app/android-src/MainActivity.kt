@@ -42,6 +42,27 @@ class MainActivity : TauriActivity() {
 
             json.put("filePath", tempFile.absolutePath)
             json.put("fileName", fileName)
+        } else if (mimeType == "text/html" || mimeType == "application/xhtml+xml") {
+            // HTML file share: try file stream first, fall back to text
+            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            if (uri != null) {
+                val fileName = getFileName(uri) ?: "shared_page.html"
+                val tempFile = File(cacheDir, "shared_${System.currentTimeMillis()}.html")
+                try {
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        tempFile.outputStream().use { output -> input.copyTo(output) }
+                    } ?: return
+                } catch (e: Exception) {
+                    return
+                }
+                json.put("filePath", tempFile.absolutePath)
+                json.put("fileName", fileName)
+            } else {
+                val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+                json.put("text", text)
+                val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+                if (subject != null) json.put("subject", subject)
+            }
         } else if (mimeType.startsWith("text/")) {
             val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
             json.put("text", text)

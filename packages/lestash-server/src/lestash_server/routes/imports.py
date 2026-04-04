@@ -7,7 +7,7 @@ import zipfile
 from datetime import UTC
 from io import BytesIO
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, Form, HTTPException, UploadFile
 
 from lestash_server.deps import get_db
 from lestash_server.models import (
@@ -26,12 +26,23 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 
 @router.post("/api/import", response_model=ImportResponse)
-async def import_file(file: UploadFile):
+async def import_file(
+    file: UploadFile,
+    page_type: str = Form("auto"),
+    source_url: str | None = Form(None),
+    notes: str | None = Form(None),
+):
     """Import items from an uploaded file.
 
     Supports:
     - JSON array of items (.json)
     - ZIP files with known structures (Google Takeout, Claude export)
+    - HTML pages with auto-detection (Gemini, etc.)
+
+    Optional form fields for HTML imports:
+    - page_type: "auto", "gemini", "chatgpt", "article", or "unknown"
+    - source_url: original URL of the page
+    - notes: user annotations
     """
     data = await file.read()
     if len(data) > MAX_FILE_SIZE:
@@ -48,6 +59,16 @@ async def import_file(file: UploadFile):
             source_type = "json"
         elif filename.endswith(".zip"):
             items, source_type = _parse_zip(data)
+        elif filename.endswith((".html", ".htm")):
+            from lestash_server.parsers.html_page import parse_html_page
+
+            html_text = data.decode("utf-8", errors="replace")
+            items, source_type = parse_html_page(
+                html_text,
+                page_type=page_type,
+                source_url=source_url,
+                notes=notes,
+            )
         else:
             # Try JSON first, then fail
             try:
@@ -56,7 +77,7 @@ async def import_file(file: UploadFile):
             except ValueError:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Unsupported file format: {filename}. Use .json or .zip",
+                    detail=f"Unsupported file format: {filename}. Use .json, .zip, or .html",
                 ) from None
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
