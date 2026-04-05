@@ -239,7 +239,9 @@ $('#save-gemini').addEventListener('click', async () => {
     });
 
     if (resp.success) {
-      geminiStatus.textContent = `Saved (item #${resp.item.id})`;
+      const r = resp.item;
+      const label = r.items_added ? `${r.items_added} items` : `item #${r.id}`;
+      geminiStatus.textContent = `Saved (${label})`;
       geminiStatus.className = 'status ok';
     } else {
       throw new Error(resp.error);
