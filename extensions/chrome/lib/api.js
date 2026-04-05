@@ -68,6 +68,13 @@ const LeStashAPI = {
     });
   },
 
+  async importGeminiConversation(data) {
+    return this._fetch('/import/gemini-conversation', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   async checkHealth() {
     return this._fetch('/health');
   },

@@ -20,6 +20,11 @@ const SELECTORS = {
   modelResponse: 'model-response',
   modelResponseMarkdown: '.markdown.markdown-main-panel',
   thinkingBlock: 'model-thoughts',
+
+  // Deep Research widgets
+  deepResearchWidget: 'deep-research-confirmation-widget',
+  deepResearchTitle: '[data-test-id="title"]',
+  deepResearchSteps: '.research-step-description',
 };
 
 /**
@@ -73,18 +78,41 @@ function extractGeminiConversation() {
     // Model response
     const responseEl = turn.querySelector(SELECTORS.modelResponse);
     if (responseEl) {
+      let text = '';
+      let isDeepResearch = false;
+
       const mdEl = responseEl.querySelector(SELECTORS.modelResponseMarkdown);
       if (mdEl) {
-        const text = mdEl.innerText.trim();
-        if (text) {
-          const hasThinking = !!turn.querySelector(SELECTORS.thinkingBlock);
-          turns.push({
-            turn_id: turnId,
-            role: 'model',
-            text,
-            ...(hasThinking ? { has_thinking: true } : {}),
-          });
+        // Check for Deep Research widget inside the markdown
+        const drWidget = mdEl.querySelector(SELECTORS.deepResearchWidget);
+        if (drWidget) {
+          isDeepResearch = true;
+          const drTitle = drWidget.querySelector(SELECTORS.deepResearchTitle);
+          const drSteps = drWidget.querySelectorAll(SELECTORS.deepResearchSteps);
+          const parts = [];
+          if (drTitle) parts.push(`[Deep Research] ${drTitle.innerText.trim()}`);
+          // Get any text before the widget
+          const preText = mdEl.innerText.split(drTitle?.innerText || '')[0]?.trim();
+          if (preText) parts.unshift(preText);
+          if (drSteps.length) {
+            parts.push('Research plan:');
+            drSteps.forEach((s, i) => parts.push(`${i + 1}. ${s.innerText.trim()}`));
+          }
+          text = parts.join('\n\n');
+        } else {
+          text = mdEl.innerText.trim();
         }
+      }
+
+      if (text) {
+        const hasThinking = !!turn.querySelector(SELECTORS.thinkingBlock);
+        turns.push({
+          turn_id: turnId,
+          role: 'model',
+          text,
+          ...(hasThinking ? { has_thinking: true } : {}),
+          ...(isDeepResearch ? { is_deep_research: true } : {}),
+        });
       }
     }
   }

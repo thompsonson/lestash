@@ -172,6 +172,26 @@ class DriveSyncResponse(BaseModel):
     errors: list[str]
 
 
+class GeminiConversationTurn(BaseModel):
+    """A single turn in a Gemini conversation."""
+
+    role: str
+    text: str
+    turn_id: str = ""
+    has_thinking: bool = False
+
+
+class GeminiConversationImport(BaseModel):
+    """Request to import a Gemini conversation with parent-child pattern."""
+
+    conversation_id: str
+    title: str
+    url: str
+    turns: list[GeminiConversationTurn]
+    tags: list[str] = []
+    collection_id: int | None = None
+
+
 class RefineRequest(BaseModel):
     """Request to refine a transcript via LLM."""
 

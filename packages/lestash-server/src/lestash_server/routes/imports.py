@@ -8,12 +8,14 @@ from datetime import UTC
 from io import BytesIO
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile
+from lestash.core.database import add_tag
 
 from lestash_server.deps import get_db
 from lestash_server.models import (
     DriveImportRequest,
     DriveSyncRequest,
     DriveSyncResponse,
+    GeminiConversationImport,
     ImportResponse,
 )
 from lestash_server.parsers.json_items import parse_json_items
@@ -307,6 +309,143 @@ async def sync_from_drive(body: DriveSyncRequest):
         status="completed" if not errors else "completed_with_errors",
         items_added=items_added,
         items_skipped=items_skipped,
+        errors=errors,
+    )
+
+
+@router.post("/api/import/gemini-conversation", response_model=ImportResponse)
+async def import_gemini_conversation(body: GeminiConversationImport):
+    """Import a Gemini conversation with parent-child pattern.
+
+    Used by the Chrome extension. If a parent stub exists (from search page
+    import), it is matched by title and updated. Otherwise a new parent is
+    created. Child items are created for each turn.
+    """
+    if not body.turns:
+        raise HTTPException(status_code=400, detail="No turns provided")
+
+    with get_db() as conn:
+        # Try to find an existing parent stub by title
+        row = conn.execute(
+            """
+            SELECT id, source_id FROM items
+            WHERE source_type = 'gemini'
+              AND title = ?
+              AND json_extract(metadata, '$.import_status') = 'stub'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (body.title,),
+        ).fetchone()
+
+        msg_count = len(body.turns)
+        summary = f"Gemini conversation with {msg_count} messages."
+
+        if row:
+            parent_db_id, parent_source_id = row
+            # Update the stub with real conversation data
+            metadata = json.dumps({
+                "source": "search_page_import",
+                "conversation_id": body.conversation_id,
+                "message_count": msg_count,
+                "url": body.url,
+            })
+            conn.execute(
+                """
+                UPDATE items
+                SET content = ?, url = ?, metadata = ?
+                WHERE id = ?
+                """,
+                (summary, body.url, metadata, parent_db_id),
+            )
+            logger.info(
+                "Updated stub parent #%d (%s) with conversation %s",
+                parent_db_id, body.title, body.conversation_id,
+            )
+        else:
+            # Create a new parent
+            parent_source_id = body.conversation_id
+            metadata = json.dumps({
+                "source": "extension",
+                "conversation_id": body.conversation_id,
+                "message_count": msg_count,
+                "url": body.url,
+            })
+            cursor = conn.execute(
+                """
+                INSERT INTO items (
+                    source_type, source_id, url, title, content,
+                    is_own_content, metadata
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_type, source_id) DO UPDATE SET
+                    url = excluded.url,
+                    content = excluded.content,
+                    title = excluded.title,
+                    metadata = excluded.metadata
+                """,
+                (
+                    "gemini", parent_source_id, body.url,
+                    body.title, summary, True, metadata,
+                ),
+            )
+            parent_db_id = cursor.lastrowid
+            if not parent_db_id:
+                r = conn.execute(
+                    "SELECT id FROM items WHERE source_type = 'gemini' AND source_id = ?",
+                    (parent_source_id,),
+                ).fetchone()
+                parent_db_id = r[0] if r else None
+
+            logger.info(
+                "Created parent #%d for conversation %s",
+                parent_db_id, body.conversation_id,
+            )
+
+        # Create child items for each turn
+        items_added = 1  # count the parent
+        errors: list[str] = []
+        for idx, turn in enumerate(body.turns, 1):
+            child_source_id = f"{parent_source_id}-{turn.role}-{idx}"
+            child_metadata = json.dumps({
+                "role": turn.role,
+                "turn_id": turn.turn_id,
+            })
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO items (
+                        source_type, source_id, title, content,
+                        author, is_own_content, metadata, parent_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(source_type, source_id) DO UPDATE SET
+                        content = excluded.content,
+                        author = excluded.author,
+                        metadata = excluded.metadata,
+                        parent_id = excluded.parent_id
+                    """,
+                    (
+                        "gemini", child_source_id, None, turn.text,
+                        turn.role, turn.role == "user", child_metadata,
+                        parent_db_id,
+                    ),
+                )
+                items_added += 1
+            except Exception as e:
+                errors.append(f"Turn {idx}: {e}")
+
+        conn.commit()
+
+    # Handle tags outside the main transaction
+    if body.tags and parent_db_id:
+        with get_db() as conn:
+            for tag_name in body.tags:
+                with contextlib.suppress(Exception):
+                    add_tag(conn, parent_db_id, tag_name)
+
+    return ImportResponse(
+        status="completed" if not errors else "completed_with_errors",
+        source_type="gemini",
+        items_added=items_added,
+        items_updated=0,
         errors=errors,
     )
 

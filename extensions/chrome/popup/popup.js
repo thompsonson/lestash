@@ -222,32 +222,20 @@ $('#save-gemini').addEventListener('click', async () => {
     }
 
     const conv = result.result;
-    const turnsMd = conv.turns
-      .map(t => `**${t.role === 'user' ? 'You' : 'Gemini'}:** ${t.text}`)
-      .join('\n\n---\n\n');
+    const collectionId = $('#gemini-collection').value || null;
 
     const data = {
-      source_type: 'gemini',
-      source_id: conv.conversation_id,
+      conversation_id: conv.conversation_id,
       title: conv.title,
-      content: turnsMd,
-      is_own_content: false,
-      metadata: {
-        source: 'extension',
-        conversation_id: conv.conversation_id,
-        turn_count: conv.turns.length,
-        is_pinned: conv.is_pinned,
-        url: conv.url,
-        turns: conv.turns,
-      },
+      url: conv.url,
+      turns: conv.turns,
+      tags: ['gemini', 'conversation'],
+      collection_id: collectionId ? parseInt(collectionId) : null,
     };
 
-    const collectionId = $('#gemini-collection').value || null;
     const resp = await chrome.runtime.sendMessage({
       action: 'saveGeminiConversation',
       data,
-      tags: ['gemini', 'conversation'],
-      collectionId: collectionId ? parseInt(collectionId) : null,
     });
 
     if (resp.success) {

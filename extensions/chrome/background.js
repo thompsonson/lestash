@@ -61,14 +61,8 @@ async function handleMessage(msg) {
     }
 
     case 'saveGeminiConversation': {
-      const item = await LeStashAPI.createItem(msg.data);
-      if (msg.tags && msg.tags.length) {
-        await LeStashAPI.addTags(item.id, msg.tags);
-      }
-      if (msg.collectionId) {
-        await LeStashAPI.addToCollection(msg.collectionId, item.id);
-      }
-      return { success: true, item };
+      const result = await LeStashAPI.importGeminiConversation(msg.data);
+      return { success: true, item: result };
     }
 
     case 'saveBulkGemini': {
