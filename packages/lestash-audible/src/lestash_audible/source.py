@@ -339,11 +339,9 @@ class AudibleSource(SourcePlugin):
                         # Fetch bookmarks for this book
                         records = get_bookmarks(client, book_asin)
                         annotations = _extract_annotations(records)
-                        if not annotations:
-                            continue
 
-                        # Fetch chapters for context
-                        chapters = get_chapters(client, book_asin)
+                        # Fetch chapters for context (only if there are annotations)
+                        chapters = get_chapters(client, book_asin) if annotations else None
 
                         # Insert book as parent (with chapters in metadata)
                         book_item = book_to_item(book, chapters=chapters)
@@ -363,8 +361,7 @@ class AudibleSource(SourcePlugin):
                     conn.commit()
 
             console.print(
-                f"[green]Imported {total_bookmarks} bookmarks/notes"
-                f" from {total_books} books[/green]"
+                f"[green]Imported {total_books} books, {total_bookmarks} bookmarks/notes[/green]"
             )
 
         return app
@@ -388,11 +385,9 @@ class AudibleSource(SourcePlugin):
 
                 records = get_bookmarks(client, asin)
                 annotations = _extract_annotations(records)
-                if not annotations:
-                    continue
 
-                # Fetch chapters for context
-                chapters = get_chapters(client, asin)
+                # Fetch chapters for context (only if there are annotations)
+                chapters = get_chapters(client, asin) if annotations else None
 
                 # Yield book as parent (with chapters)
                 yield book_to_item(book, chapters=chapters)
