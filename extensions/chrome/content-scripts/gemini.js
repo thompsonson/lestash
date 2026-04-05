@@ -169,7 +169,12 @@ let lastUrl = window.location.href;
 const urlObserver = new MutationObserver(() => {
   if (window.location.href !== lastUrl) {
     lastUrl = window.location.href;
-    chrome.runtime.sendMessage({ action: 'geminiNavigated', url: lastUrl });
+    try {
+      chrome.runtime.sendMessage({ action: 'geminiNavigated', url: lastUrl });
+    } catch {
+      // Extension was reloaded/updated — old content script is orphaned.
+      urlObserver.disconnect();
+    }
   }
 });
 urlObserver.observe(document.body, { childList: true, subtree: true });
