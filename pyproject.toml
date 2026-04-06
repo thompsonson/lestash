@@ -13,6 +13,7 @@ dependencies = [
     "lestash-youtube",
     "lestash-voice",
     "lestash-audible",
+    "lestash-claude-code",
     "lestash-server",
 ]
 
@@ -28,6 +29,7 @@ lestash-microblog = { workspace = true }
 lestash-youtube = { workspace = true }
 lestash-voice = { workspace = true }
 lestash-audible = { workspace = true }
+lestash-claude-code = { workspace = true }
 lestash-server = { workspace = true }
 
 [dependency-groups]
@@ -67,6 +69,7 @@ version_toml = [
     "packages/lestash-youtube/pyproject.toml:project.version",
     "packages/lestash-voice/pyproject.toml:project.version",
     "packages/lestash-audible/pyproject.toml:project.version",
+    "packages/lestash-claude-code/pyproject.toml:project.version",
     "packages/lestash-server/pyproject.toml:project.version",
 ]
 branch = "main"
