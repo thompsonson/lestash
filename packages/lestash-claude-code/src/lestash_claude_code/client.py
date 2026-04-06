@@ -38,6 +38,8 @@ class SessionDetail:
     cwd: str | None = None
     git_branch: str | None = None
     version: str | None = None
+    tool_details: dict[str, dict[str, Any]] = field(default_factory=dict)
+    file_operations: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 def _run_reveal(args: list[str], timeout: int = 30) -> dict:
@@ -92,6 +94,26 @@ def list_sessions(since: str | None = None) -> list[SessionSummary]:
     return sessions
 
 
+def _get_tool_details(session_id: str) -> dict[str, dict[str, Any]]:
+    """Fetch per-tool success rates from the /tools subview."""
+    try:
+        data = _run_reveal([f"claude://session/{session_id}/tools"])
+        return data.get("tools", {})
+    except (RuntimeError, json.JSONDecodeError):
+        logger.warning("Could not fetch tool details for session %s", session_id)
+        return {}
+
+
+def _get_file_operations(session_id: str) -> dict[str, dict[str, int]]:
+    """Fetch file operation breakdown from the /files subview."""
+    try:
+        data = _run_reveal([f"claude://session/{session_id}/files"])
+        return data.get("by_operation", {})
+    except (RuntimeError, json.JSONDecodeError):
+        logger.warning("Could not fetch file operations for session %s", session_id)
+        return {}
+
+
 def get_session_detail(session_id: str) -> SessionDetail:
     """Get detailed overview of a single session.
 
@@ -103,6 +125,8 @@ def get_session_detail(session_id: str) -> SessionDetail:
     """
     data = _run_reveal([f"claude://session/{session_id}"])
     context = data.get("context", {})
+    tool_details = _get_tool_details(session_id)
+    file_operations = _get_file_operations(session_id)
     return SessionDetail(
         session=data.get("session", session_id),
         title=data.get("title"),
@@ -117,6 +141,8 @@ def get_session_detail(session_id: str) -> SessionDetail:
         cwd=context.get("cwd"),
         git_branch=context.get("git_branch"),
         version=context.get("version"),
+        tool_details=tool_details,
+        file_operations=file_operations,
     )
 
 

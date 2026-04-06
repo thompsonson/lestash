@@ -48,6 +48,8 @@ def session_detail_factory():
         cwd: str | None = "/home/user/Projects/myproject",
         git_branch: str | None = "main",
         version: str | None = "2.1.87",
+        tool_details: dict | None = None,
+        file_operations: dict | None = None,
     ) -> SessionDetail:
         return SessionDetail(
             session=session,
@@ -63,6 +65,8 @@ def session_detail_factory():
             cwd=cwd,
             git_branch=git_branch,
             version=version,
+            tool_details=tool_details or {},
+            file_operations=file_operations or {},
         )
 
     return _create
@@ -129,6 +133,39 @@ def reveal_session_detail_response():
             "cwd": "/home/user/Projects/lestash",
             "git_branch": "feat/auth",
             "version": "2.1.87",
+        },
+    }
+
+
+@pytest.fixture
+def reveal_tools_response():
+    """Sample JSON response from `reveal claude://session/<uuid>/tools --format json`."""
+    return {
+        "contract_version": "1.0",
+        "type": "claude_tool_summary",
+        "session": "aaaa1111-0000-0000-0000-000000000001",
+        "total_calls": 33,
+        "tools": {
+            "Bash": {"count": 17, "success_rate": "85.2%", "success": 14, "failure": 3},
+            "Read": {"count": 10, "success_rate": "100.0%", "success": 10, "failure": 0},
+            "Edit": {"count": 6, "success_rate": "83.3%", "success": 5, "failure": 1},
+        },
+    }
+
+
+@pytest.fixture
+def reveal_files_response():
+    """Sample JSON response from `reveal claude://session/<uuid>/files --format json`."""
+    return {
+        "contract_version": "1.0",
+        "type": "claude_files",
+        "session": "aaaa1111-0000-0000-0000-000000000001",
+        "total_operations": 12,
+        "unique_files": 3,
+        "by_operation": {
+            "Read": {"src/auth.py": 3, "tests/test_auth.py": 1},
+            "Write": {"src/auth.py": 1},
+            "Edit": {"src/auth.py": 2, "tests/test_auth.py": 1},
         },
     }
 

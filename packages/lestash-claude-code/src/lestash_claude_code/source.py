@@ -123,6 +123,8 @@ def session_to_item(
         "duration": detail.duration,
         "message_count": detail.message_count,
         "tools_used": detail.tools_used,
+        "tool_details": detail.tool_details,
+        "file_operations": detail.file_operations,
         "files_touched": detail.files_touched,
         "token_summary": detail.token_summary,
         "size_kb": summary.size_kb,

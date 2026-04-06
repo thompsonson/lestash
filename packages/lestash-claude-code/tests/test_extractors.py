@@ -235,3 +235,22 @@ class TestSessionToItem:
         item = session_to_item(summary, detail, "fix the login bug")
 
         assert "fix the login bug" in item.content
+
+    def test_metadata_includes_tool_details(self, session_summary_factory, session_detail_factory):
+        tool_details = {
+            "Bash": {"count": 10, "success_rate": "90.0%", "success": 9, "failure": 1},
+        }
+        file_operations = {
+            "Read": {"src/main.py": 3},
+            "Edit": {"src/main.py": 2},
+        }
+        summary = session_summary_factory()
+        detail = session_detail_factory(
+            tool_details=tool_details,
+            file_operations=file_operations,
+        )
+
+        item = session_to_item(summary, detail, None)
+
+        assert item.metadata["tool_details"] == tool_details
+        assert item.metadata["file_operations"] == file_operations

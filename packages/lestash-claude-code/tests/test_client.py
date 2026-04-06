@@ -81,13 +81,25 @@ class TestListSessions:
 class TestGetSessionDetail:
     """Test session overview fetching."""
 
-    def test_parses_detail_response(self, reveal_session_detail_response):
-        with patch("lestash_claude_code.client._run_reveal") as mock:
-            mock.return_value = reveal_session_detail_response
+    def test_parses_detail_response(
+        self,
+        reveal_session_detail_response,
+        reveal_tools_response,
+        reveal_files_response,
+    ):
+        sid = "aaaa1111-0000-0000-0000-000000000001"
 
-            detail = get_session_detail("aaaa1111-0000-0000-0000-000000000001")
+        def mock_reveal(args, timeout=30):
+            uri = args[0]
+            if uri.endswith("/tools"):
+                return reveal_tools_response
+            if uri.endswith("/files"):
+                return reveal_files_response
+            return reveal_session_detail_response
 
-            mock.assert_called_once_with(["claude://session/aaaa1111-0000-0000-0000-000000000001"])
+        with patch("lestash_claude_code.client._run_reveal", side_effect=mock_reveal):
+            detail = get_session_detail(sid)
+
             assert detail.message_count == 109
             assert detail.user_messages == 47
             assert detail.assistant_messages == 51
@@ -97,6 +109,15 @@ class TestGetSessionDetail:
             assert detail.cwd == "/home/user/Projects/lestash"
             assert detail.git_branch == "feat/auth"
             assert detail.version == "2.1.87"
+
+            # Tool details from /tools subview
+            assert detail.tool_details["Bash"]["success_rate"] == "85.2%"
+            assert detail.tool_details["Bash"]["failure"] == 3
+            assert detail.tool_details["Read"]["success_rate"] == "100.0%"
+
+            # File operations from /files subview
+            assert detail.file_operations["Read"]["src/auth.py"] == 3
+            assert detail.file_operations["Edit"]["tests/test_auth.py"] == 1
 
     def test_handles_empty_context(self):
         response = {
@@ -111,6 +132,25 @@ class TestGetSessionDetail:
             assert detail.version is None
             assert detail.tools_used == {}
             assert detail.files_touched == []
+            # Subview calls return same empty response, parsed gracefully
+            assert detail.tool_details == {}
+            assert detail.file_operations == {}
+
+    def test_subview_failures_dont_break_detail(self, reveal_session_detail_response):
+        """Tool/file subviews failing should not prevent detail from returning."""
+
+        def mock_reveal(args, timeout=30):
+            uri = args[0]
+            if "/tools" in uri or "/files" in uri:
+                raise RuntimeError("subview failed")
+            return reveal_session_detail_response
+
+        with patch("lestash_claude_code.client._run_reveal", side_effect=mock_reveal):
+            detail = get_session_detail("aaaa1111-0000-0000-0000-000000000001")
+
+            assert detail.message_count == 109
+            assert detail.tool_details == {}
+            assert detail.file_operations == {}
 
 
 class TestExtractFirstSubstantiveMessage:
