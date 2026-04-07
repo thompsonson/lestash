@@ -10,7 +10,7 @@
   <rect width="512" height="512" rx="80" ry="80" fill="url(#bg)"/>
 
   <!-- Handlebar mustache — scaled to ~75% to leave border -->
-  <g transform="translate(256, 275) scale(0.75)" fill="none" stroke="#f0dfc4" stroke-linecap="round" stroke-linejoin="round">
+  <g transform="translate(256, 245) scale(0.75)" fill="none" stroke="#f0dfc4" stroke-linecap="round" stroke-linejoin="round">
     <!-- Left half -->
     <path d="M -4,-2 C -25,-12 -55,-42 -90,-48 C -125,-54 -148,-32 -155,-10 C -162,14 -148,38 -128,40 C -112,42 -104,28 -108,14" stroke-width="28"/>
     <!-- Right half -->
@@ -18,5 +18,8 @@
   </g>
 
   <!-- Italic "Le" accent -->
-  <text x="256" y="200" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="42" font-style="italic" fill="#8b6fe0" opacity="0.5" letter-spacing="3">Le</text>
+  <text x="256" y="175" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="42" font-style="italic" fill="#8b6fe0" opacity="0.5" letter-spacing="3">Le</text>
+
+  <!-- "Stash" text below moustache -->
+  <text x="256" y="370" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="72" font-style="italic" fill="#f0dfc4" opacity="0.85" letter-spacing="6">Stash</text>
 </svg>
