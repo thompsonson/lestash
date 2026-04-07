@@ -1447,21 +1447,34 @@
         </div>
       </div>`;
 
+      // Add note
+      html += `<div class="item-detail-field">
+        <div id="note-form" style="display:none">
+          <textarea id="note-text" placeholder="Add a note..." rows="3" style="width:100%;resize:vertical;font-family:inherit;font-size:0.85rem;padding:0.5rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px"></textarea>
+          <div style="display:flex;gap:0.5rem;margin-top:0.25rem">
+            <button class="sync-btn" data-action="save-note" data-id="${item.id}" style="font-size:0.75rem;padding:0.25rem 0.5rem">Save</button>
+            <button class="sync-btn" data-action="cancel-note" style="font-size:0.75rem;padding:0.25rem 0.5rem">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+
       // Actions
       html += `<div class="item-detail-actions">
+        <button class="sync-btn" data-action="show-note-form">+ Note</button>
         <button class="sync-btn" data-action="copy" data-id="${item.id}">Copy</button>
         <button class="sync-btn" data-action="copy-link" data-id="${item.id}">Copy Link</button>
         <button class="sync-btn" onclick="addToCollection(${item.id})">+ Collection</button>
         <select id="add-to-coll-select" style="display:none;font-size:0.75rem;padding:0.25rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px" onchange="confirmAddToCollection(this)"></select>
       </div>`;
 
-      // Children placeholder
-      if (item.child_count > 0) {
-        html += `<div class="item-view-children">
-          <div class="item-view-children-title">${item.child_count} items</div>
-          <div class="item-list" id="children-list"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
-        </div>`;
-      }
+      // Children section (always shown so new notes appear immediately)
+      html += `<div class="item-view-children">
+        <div class="item-view-children-title">${item.child_count > 0 ? item.child_count + ' items' : 'Notes'}</div>
+        <div class="item-list" id="children-list">${item.child_count > 0
+          ? '<span style="color:var(--muted);font-size:0.8rem">Loading...</span>'
+          : '<span style="color:var(--muted);font-size:0.8rem">No notes yet</span>'
+        }</div>
+      </div>`;
 
       // Similar items (parent items only)
       if (!item.parent_id) {
@@ -1510,6 +1523,59 @@
           const updated = await api(`/api/items/${btn.dataset.id}`);
           item.tags = updated.tags;
           renderItemView(item);
+        }
+        if (btn.dataset.action === 'show-note-form') {
+          document.getElementById('note-form').style.display = 'block';
+          document.getElementById('note-text').focus();
+          btn.style.display = 'none';
+        }
+        if (btn.dataset.action === 'cancel-note') {
+          document.getElementById('note-form').style.display = 'none';
+          document.getElementById('note-text').value = '';
+          const addBtn = container.querySelector('[data-action="show-note-form"]');
+          if (addBtn) addBtn.style.display = '';
+        }
+        if (btn.dataset.action === 'save-note') {
+          const textarea = document.getElementById('note-text');
+          const content = textarea.value.trim();
+          if (!content) return;
+          btn.disabled = true;
+          btn.textContent = 'Saving...';
+          try {
+            const note = await api('/api/items', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                source_type: 'note',
+                source_id: 'note-' + Date.now(),
+                content,
+                author: 'user',
+                is_own_content: true,
+                parent_id: item.id,
+                metadata: { input_type: 'text' },
+              }),
+            });
+            textarea.value = '';
+            document.getElementById('note-form').style.display = 'none';
+            const addBtn = container.querySelector('[data-action="show-note-form"]');
+            if (addBtn) addBtn.style.display = '';
+            // Append the new note to the children list
+            const list = document.getElementById('children-list');
+            if (list) {
+              const placeholder = list.querySelector('span');
+              if (placeholder) list.innerHTML = '';
+              list.appendChild(renderCard(note));
+            }
+            item.child_count = (item.child_count || 0) + 1;
+            const title = container.querySelector('.item-view-children-title');
+            if (title) title.textContent = item.child_count + ' items';
+            showToast('Note added');
+          } catch (err) {
+            showToast('Failed to save note', 'error');
+          } finally {
+            btn.disabled = false;
+            btn.textContent = 'Save';
+          }
         }
         if (btn.dataset.action === 'edit-profile') {
           const role = btn.dataset.role;
