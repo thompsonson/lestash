@@ -598,6 +598,27 @@
       .source-table th:nth-child(2),
       .source-table td:nth-child(2) { display: none; }
       .subtype-filters label { min-height: 44px; }
+      /* Mobile typography */
+      body { font-size: 16px; }
+      .item-title { font-size: 1rem; white-space: normal; }
+      .item-preview { font-size: 0.95rem; line-height: 1.5; }
+      .item-view-content { font-size: 1rem; font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; }
+      .item-view-title { font-size: 1.25rem; }
+      .item-view-meta { font-size: 0.9rem; }
+      .item-date, .item-footer, .item-meta { font-size: 0.8rem; }
+      .chat-bubble { font-size: 0.95rem; }
+      /* Mobile tab grid */
+      nav { flex-wrap: wrap; }
+      nav button {
+        flex: 0 0 25%; font-size: 0; line-height: 0;
+        min-height: 48px; padding: 0.4rem 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 0.15rem;
+        border-bottom: 2px solid transparent;
+      }
+      nav button::before { content: attr(data-icon); font-size: 1.1rem; line-height: 1; }
+      nav button::after { content: attr(data-tab); font-size: 0.6rem; line-height: 1; text-transform: capitalize; color: var(--muted); }
+      nav button.active::after { color: var(--accent); }
     }
   </style>
 </head>
@@ -617,14 +638,14 @@
 
   <!-- Tabs -->
   <nav id="tabs">
-    <button class="active" data-tab="feed">Feed</button>
-    <button data-tab="recent">Recent</button>
-    <button data-tab="notes">Notes</button>
-    <button data-tab="search">Search</button>
-    <button data-tab="sources">Sources</button>
-    <button data-tab="collections">Collections</button>
-    <button data-tab="stats">Stats</button>
-    <button data-tab="debug">Debug</button>
+    <button class="active" data-tab="feed" data-icon="☰">Feed</button>
+    <button data-tab="recent" data-icon="⏱">Recent</button>
+    <button data-tab="notes" data-icon="✎">Notes</button>
+    <button data-tab="search" data-icon="⌕">Search</button>
+    <button data-tab="sources" data-icon="⇄">Sources</button>
+    <button data-tab="collections" data-icon="▤">Collections</button>
+    <button data-tab="stats" data-icon="◩">Stats</button>
+    <button data-tab="debug" data-icon="⚙">Debug</button>
   </nav>
 
   <!-- Main content -->
@@ -820,6 +841,7 @@
 
     <!-- Item detail view (replaces list when an item is clicked) -->
     <div id="item-view" style="display:none">
+      <button class="item-view-back" onclick="closeItemView()">&larr; Back</button>
       <div id="item-view-content"></div>
     </div>
   </main>
@@ -1319,6 +1341,14 @@
       }
     }
 
+    function _restoreListView() {
+      document.getElementById('item-view').style.display = 'none';
+      document.querySelector('nav').style.display = '';
+      document.querySelectorAll('.tab-content').forEach(t => t.style.display = '');
+      const active = document.querySelector('.tab-content.active');
+      if (active) active.style.display = 'block';
+    }
+
     function closeItemView() {
       // In browser, let history.back() trigger popstate which handles the DOM update
       if (!IS_TAURI && viewStack.length > 0) {
@@ -1330,26 +1360,22 @@
 
     function _doCloseItemView() {
       viewStack.pop();
-      const view = document.getElementById('item-view');
 
       if (viewStack.length > 0) {
         const prev = viewStack[viewStack.length - 1];
         if (prev.item) {
           renderItemView(prev.item);
         } else if (prev.collection) {
-          // Re-render the collection view
           viewStack.pop(); // Remove it so openCollectionView can push it again
-          openCollectionView(prev.collection);
+          openCollectionView(prev.collection).catch(() => {
+            viewStack.length = 0;
+            _restoreListView();
+          });
           return;
         }
         document.querySelector('main').scrollTop = 0;
       } else {
-        // Back to list
-        view.style.display = 'none';
-        document.querySelector('nav').style.display = '';
-        document.querySelectorAll('.tab-content').forEach(t => t.style.display = '');
-        const active = document.querySelector('.tab-content.active');
-        if (active) active.style.display = 'block';
+        _restoreListView();
       }
     }
 
@@ -1360,8 +1386,7 @@
         ? new Date(item.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
         : '';
 
-      let html = `<button class="item-view-back" onclick="closeItemView()">&larr; Back</button>`;
-      html += `<div class="item-view-title">${emoji}${escHtml(item.title || item.preview || '(untitled)')}</div>`;
+      let html = `<div class="item-view-title">${emoji}${escHtml(item.title || item.preview || '(untitled)')}</div>`;
       html += `<div class="item-view-meta">${sourceName(item.subtype)}${dateFmt ? ' &middot; ' + dateFmt : ''}${item.url ? ' &middot; <a href="' + escHtml(item.url) + '" target="_blank" rel="noopener" style="color:var(--accent)">link</a>' : ''}</div>`;
       html += `<div class="item-view-content">${escHtml(item.content)}</div>`;
 
@@ -1504,8 +1529,9 @@
 
       container.innerHTML = html;
 
-      // Event delegation for actions
-      container.addEventListener('click', async (e) => {
+      // Event delegation for actions — remove previous listener to prevent stacking
+      if (container._actionHandler) container.removeEventListener('click', container._actionHandler);
+      container._actionHandler = async (e) => {
         const btn = e.target.closest('[data-action]');
         if (!btn) return;
         if (btn.dataset.action === 'copy') copyToClipboard(item.content, 'Copied to clipboard');
@@ -1729,7 +1755,8 @@
           Object.assign(item, updated);
           renderItemView(item);
         }
-      });
+      };
+      container.addEventListener('click', container._actionHandler);
 
       // Enter key in tag input
       container.querySelector(`[data-tag-input="${item.id}"]`)?.addEventListener('keydown', (e) => {
@@ -3061,8 +3088,7 @@
         document.getElementById('item-view').style.display = 'block';
 
         const container = document.getElementById('item-view-content');
-        let html = `<button class="item-view-back" onclick="closeItemView()">&larr; Back</button>`;
-        html += `<div class="item-view-title">${escHtml(detail.name)}</div>`;
+        let html = `<div class="item-view-title">${escHtml(detail.name)}</div>`;
         if (detail.description) html += `<div class="item-view-meta">${escHtml(detail.description)}</div>`;
         html += `<div class="item-view-children-title">${detail.items.length} items</div>`;
         html += '<div class="item-list" id="collection-items-list"></div>';
@@ -3339,6 +3365,21 @@
           applyUrlFilters();
           loadFeed();
         }
+      });
+    }
+
+    // Android hardware back button support
+    if (IS_TAURI && tauriListen) {
+      tauriListen('tauri://back', () => {
+        // Close modals first
+        const openModal = document.querySelector('.modal-overlay.open');
+        if (openModal) { openModal.classList.remove('open'); return; }
+        // Navigate back in view stack
+        if (viewStack.length > 0) { _doCloseItemView(); return; }
+        // Return to feed from other tabs
+        const activeTab = document.querySelector('#tabs button.active');
+        if (activeTab && activeTab.dataset.tab !== 'feed') { switchTab('feed'); return; }
+        // At feed root — let Tauri handle default (minimize/exit)
       });
     }
 
