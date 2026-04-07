@@ -18,7 +18,7 @@
   </g>
 
   <!-- Italic "Le" accent -->
-  <text x="256" y="175" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="42" font-style="italic" fill="#8b6fe0" opacity="0.5" letter-spacing="3">Le</text>
+  <text x="256" y="175" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="42" font-style="italic" fill="#f0dfc4" opacity="0.85" letter-spacing="3">Le</text>
 
   <!-- "Stash" text below moustache -->
   <text x="256" y="370" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="72" font-style="italic" fill="#f0dfc4" opacity="0.85" letter-spacing="6">Stash</text>
