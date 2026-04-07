@@ -107,6 +107,19 @@ class ItemCreateRequest(BaseModel):
     parent_id: int | None = None
 
 
+_UNSET = object()
+
+
+class ItemPatchRequest(BaseModel):
+    """Request body for partially updating an item."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    title: str | None | object = _UNSET
+    content: str | None = None
+    parent_id: int | None | object = _UNSET
+
+
 class CollectionCreate(BaseModel):
     """Request to create a collection."""
 

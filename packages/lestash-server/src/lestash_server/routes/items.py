@@ -10,8 +10,10 @@ from lestash.models.item import Item
 
 from lestash_server.deps import get_db
 from lestash_server.models import (
+    _UNSET,
     ItemCreateRequest,
     ItemListResponse,
+    ItemPatchRequest,
     ItemResponse,
     MediaResponse,
     TagAddRequest,
@@ -367,6 +369,66 @@ def get_all_tags():
         return TagListResponse(
             tags=[TagInfo(**t) for t in list_tags(conn)],
         )
+
+
+@router.patch("/{item_id}", response_model=ItemResponse)
+def update_item(item_id: int, body: ItemPatchRequest):
+    """Partially update an item."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+
+        updates: list[str] = []
+        params: list = []
+
+        if body.content is not None:
+            updates.append("content = ?")
+            params.append(body.content)
+
+        if body.title is not _UNSET:
+            updates.append("title = ?")
+            params.append(body.title)
+
+        if body.parent_id is not _UNSET:
+            new_parent = body.parent_id
+            if new_parent is not None:
+                if new_parent == item_id:
+                    raise HTTPException(status_code=400, detail="Item cannot be its own parent")
+                # Check parent exists
+                if not conn.execute("SELECT 1 FROM items WHERE id = ?", (new_parent,)).fetchone():
+                    raise HTTPException(
+                        status_code=400, detail=f"Parent item {new_parent} not found"
+                    )
+                # Check for circular reference
+                ancestor = new_parent
+                while ancestor is not None:
+                    parent_row = conn.execute(
+                        "SELECT parent_id FROM items WHERE id = ?", (ancestor,)
+                    ).fetchone()
+                    if parent_row is None:
+                        break
+                    ancestor = parent_row[0]
+                    if ancestor == item_id:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Circular parent reference detected",
+                        )
+            updates.append("parent_id = ?")
+            params.append(new_parent)
+
+        if not updates:
+            raise HTTPException(status_code=400, detail="No fields to update")
+
+        params.append(item_id)
+        conn.execute(
+            f"UPDATE items SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        conn.commit()
+
+        row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        return _enrich_item(conn, Item.from_row(row))
 
 
 @router.get("/{item_id}", response_model=ItemResponse)

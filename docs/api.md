@@ -97,6 +97,26 @@ Get a single item by ID. Returns 404 if not found.
 
 ---
 
+### `PATCH /api/items/{item_id}`
+
+Partially update an item. Only provided fields are changed.
+
+**Request body:**
+
+| Field | Type | Description |
+|---|---|---|
+| `title` | string \| null | Set or clear the title |
+| `content` | string | Update content |
+| `parent_id` | int \| null | Reparent the item or detach from parent |
+
+Validates that `parent_id` does not create a circular reference.
+
+**Response:** `ItemResponse`
+
+**Errors:** 400 (circular ref, self-parent, missing parent, no fields), 404 (item not found)
+
+---
+
 ### `GET /api/items/tags`
 
 List all tags with usage counts.
