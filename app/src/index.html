@@ -677,6 +677,8 @@
         <span class="record-status" id="record-status"></span>
       </div>
       <div id="note-editor" style="display:none">
+        <audio id="audio-playback" controls style="display:none;width:100%;margin-bottom:0.75rem"></audio>
+        <button class="sync-btn" id="transcribe-btn" style="display:none;margin-bottom:0.75rem" onclick="transcribeRecordedAudio()">Transcribe</button>
         <label style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:0.25rem">Title</label>
         <input type="text" id="note-title" class="note-textarea" style="min-height:auto;padding:0.5rem 0.75rem;margin-bottom:0.75rem" placeholder="Note title...">
         <label style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:0.25rem">Original Transcript</label>
@@ -865,7 +867,7 @@
       </select>
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeProcessDialog()">Cancel</button>
-        <button class="btn-save" id="process-run-btn" disabled title="LLM processing not yet implemented">Process</button>
+        <button class="btn-save" id="process-run-btn" onclick="runProcessDialog()">Process</button>
       </div>
     </div>
   </div>
@@ -1451,7 +1453,10 @@
       html += `<div class="item-detail-field">
         <div id="note-form" style="display:none">
           <textarea id="note-text" placeholder="Add a note..." rows="3" style="width:100%;resize:vertical;font-family:inherit;font-size:0.85rem;padding:0.5rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px"></textarea>
-          <div style="display:flex;gap:0.5rem;margin-top:0.25rem">
+          <audio id="note-audio-playback" controls style="display:none;width:100%;margin-top:0.25rem"></audio>
+          <span id="note-record-status" style="font-size:0.75rem;color:var(--muted)"></span>
+          <div style="display:flex;gap:0.5rem;margin-top:0.25rem;align-items:center">
+            <button class="sync-btn" data-action="record-note" data-id="${item.id}" style="font-size:0.75rem;padding:0.25rem 0.5rem" title="Record voice note">Mic</button>
             <button class="sync-btn" data-action="save-note" data-id="${item.id}" style="font-size:0.75rem;padding:0.25rem 0.5rem">Save</button>
             <button class="sync-btn" data-action="cancel-note" style="font-size:0.75rem;padding:0.25rem 0.5rem">Cancel</button>
           </div>
@@ -1529,34 +1534,155 @@
           document.getElementById('note-text').focus();
           btn.style.display = 'none';
         }
+        if (btn.dataset.action === 'record-note') {
+          // Toggle recording for item detail note form
+          const noteStatus = document.getElementById('note-record-status');
+          const notePlayback = document.getElementById('note-audio-playback');
+          if (isRecording) {
+            // Stop recording
+            isRecording = false;
+            btn.textContent = 'Mic';
+            btn.classList.remove('recording');
+            clearTimeout(recordingTimer);
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+              mediaRecorder.onstop = async () => {
+                mediaRecorder.stream.getTracks().forEach(t => t.stop());
+                recordedBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+                // Show playback
+                notePlayback.src = URL.createObjectURL(recordedBlob);
+                notePlayback.style.display = 'block';
+                noteStatus.textContent = 'Transcribing...';
+                // Auto-transcribe
+                const ext = recordedBlob.type.includes('webm') ? 'webm' : 'ogg';
+                const file = new File([recordedBlob], `recording.${ext}`, { type: recordedBlob.type });
+                try {
+                  const data = await transcribeAudioFile(file);
+                  if (data) {
+                    document.getElementById('note-text').value = data.text;
+                    noteStatus.textContent = `${data.text.split(' ').length} words — edit and save`;
+                    // Store the server-created item ID for media attachment
+                    btn.dataset.transcribedItemId = data.item_id;
+                  }
+                } catch (e) {
+                  noteStatus.textContent = 'Transcription failed — type your note instead';
+                }
+              };
+              mediaRecorder.stop();
+            }
+          } else {
+            // Start recording
+            try {
+              const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                ? 'audio/webm;codecs=opus'
+                : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+              mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+              audioChunks = [];
+              recordedBlob = null;
+              mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) audioChunks.push(e.data);
+              };
+              mediaRecorder.start(1000);
+              isRecording = true;
+              btn.textContent = 'Stop';
+              btn.classList.add('recording');
+              recordingStartTime = Date.now();
+              const updateTimer = () => {
+                if (!isRecording) return;
+                const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+                const m = Math.floor(elapsed / 60), s = elapsed % 60;
+                noteStatus.textContent = `Recording... ${m}:${String(s).padStart(2, '0')}`;
+                recordingTimer = setTimeout(updateTimer, 1000);
+              };
+              updateTimer();
+            } catch (e) {
+              showToast('Microphone not available: ' + e.message, 'error');
+            }
+          }
+        }
         if (btn.dataset.action === 'cancel-note') {
           document.getElementById('note-form').style.display = 'none';
           document.getElementById('note-text').value = '';
+          const notePlayback = document.getElementById('note-audio-playback');
+          if (notePlayback) { notePlayback.src = ''; notePlayback.style.display = 'none'; }
+          const noteStatus = document.getElementById('note-record-status');
+          if (noteStatus) noteStatus.textContent = '';
+          recordedBlob = null;
+          if (isRecording) {
+            isRecording = false;
+            clearTimeout(recordingTimer);
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+              mediaRecorder.stream.getTracks().forEach(t => t.stop());
+              mediaRecorder.stop();
+            }
+          }
           const addBtn = container.querySelector('[data-action="show-note-form"]');
           if (addBtn) addBtn.style.display = '';
         }
         if (btn.dataset.action === 'save-note') {
           const textarea = document.getElementById('note-text');
           const content = textarea.value.trim();
-          if (!content) return;
+          if (!content && !recordedBlob) return;
           btn.disabled = true;
           btn.textContent = 'Saving...';
           try {
-            const note = await api('/api/items', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                source_type: 'note',
-                source_id: 'note-' + Date.now(),
-                content,
-                author: 'user',
-                is_own_content: true,
-                parent_id: item.id,
-                metadata: { input_type: 'text' },
-              }),
-            });
+            const isVoice = !!recordedBlob;
+            const micBtn = container.querySelector('[data-action="record-note"]');
+            const transcribedItemId = micBtn ? micBtn.dataset.transcribedItemId : null;
+            let note;
+
+            if (transcribedItemId) {
+              // Server created item during transcription — PATCH with edits, reparent under this item
+              await api(`/api/items/${transcribedItemId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  content: content || '(audio recording)',
+                  parent_id: item.id,
+                }),
+              });
+              // Attach raw audio as media
+              if (recordedBlob) {
+                const ext = recordedBlob.type.includes('webm') ? 'webm' : 'ogg';
+                const audioFile = new File([recordedBlob], `recording.${ext}`, { type: recordedBlob.type });
+                const formData = new FormData();
+                formData.append('file', audioFile);
+                await api(`/api/items/${transcribedItemId}/media`, { method: 'POST', body: formData });
+              }
+              note = await api(`/api/items/${transcribedItemId}`);
+            } else {
+              // Text-only note or audio without transcription
+              note = await api('/api/items', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  source_type: 'note',
+                  source_id: 'note-' + Date.now(),
+                  content: content || '(audio recording)',
+                  author: 'user',
+                  is_own_content: true,
+                  parent_id: item.id,
+                  metadata: { input_type: isVoice ? 'voice' : 'text' },
+                }),
+              });
+              // Attach audio if present
+              if (recordedBlob && note.id) {
+                const ext = recordedBlob.type.includes('webm') ? 'webm' : 'ogg';
+                const audioFile = new File([recordedBlob], `recording.${ext}`, { type: recordedBlob.type });
+                const formData = new FormData();
+                formData.append('file', audioFile);
+                await api(`/api/items/${note.id}/media`, { method: 'POST', body: formData });
+              }
+            }
+
             textarea.value = '';
             document.getElementById('note-form').style.display = 'none';
+            const notePlayback = document.getElementById('note-audio-playback');
+            if (notePlayback) { notePlayback.src = ''; notePlayback.style.display = 'none'; }
+            const noteStatus = document.getElementById('note-record-status');
+            if (noteStatus) noteStatus.textContent = '';
+            recordedBlob = null;
+            if (micBtn) delete micBtn.dataset.transcribedItemId;
             const addBtn = container.querySelector('[data-action="show-note-form"]');
             if (addBtn) addBtn.style.display = '';
             // Append the new note to the children list
@@ -2076,133 +2202,102 @@
 
     /* ── Voice Notes ── */
     let isRecording = false;
-    let recognition = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let recordedBlob = null;
+    let recordingStartTime = null;
+    let recordingTimer = null;
     let currentTranscript = '';
     let refineResult = null;
+    let lastTranscribedItemId = null;
 
     function toggleRecording() {
       if (isRecording) stopRecording();
       else startRecording();
     }
 
-    async function ensureMicPermission() {
-      // Try getUserMedia to trigger Android system permission dialog.
-      // The WebView may reject this even after the system grants it,
-      // so we don't gate on success — cpal accesses audio natively.
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(t => t.stop());
-      } catch (e) {
-        // Expected on Android WebView — cpal will still work if system permission was granted
-      }
-    }
-
     async function startRecording() {
       const btn = document.getElementById('record-btn');
       const status = document.getElementById('record-status');
-      const editor = document.getElementById('note-editor');
 
-      // Request mic permission (triggers Android system dialog if needed)
-      await ensureMicPermission();
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+        mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        audioChunks = [];
+        recordedBlob = null;
+        lastTranscribedItemId = null;
 
-      if (IS_TAURI && tauriInvoke) {
-        // Tauri: use whisper-rs (Phase 3)
-        tauriInvoke('start_recording').then(() => {
-          isRecording = true;
-          btn.classList.add('recording');
-          btn.textContent = 'Stop';
-          status.textContent = 'Recording...';
-        }).catch(e => {
-          showToast('Recording not available: ' + e, 'error');
-          // Fall back to Web Speech API
-          startWebSpeech();
-        });
-      } else {
-        startWebSpeech();
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) audioChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = () => {
+          stream.getTracks().forEach(t => t.stop());
+          recordedBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+          showPostRecordingUI();
+        };
+
+        mediaRecorder.start(1000); // collect chunks every second
+        isRecording = true;
+        btn.classList.add('recording');
+        btn.textContent = 'Stop';
+        recordingStartTime = Date.now();
+        updateRecordingTimer();
+      } catch (e) {
+        showToast('Microphone not available: ' + e.message, 'error');
       }
     }
 
-    function startWebSpeech() {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SpeechRecognition) {
-        showToast('Speech recognition not supported in this browser', 'error');
-        return;
-      }
-
-      const btn = document.getElementById('record-btn');
-      const status = document.getElementById('record-status');
-
-      recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-
-      currentTranscript = '';
-      let interimText = '';
-
-      recognition.onresult = (e) => {
-        let final = '';
-        let interim = '';
-        for (let i = 0; i < e.results.length; i++) {
-          if (e.results[i].isFinal) {
-            final += e.results[i][0].transcript + ' ';
-          } else {
-            interim += e.results[i][0].transcript;
-          }
-        }
-        currentTranscript = final.trim();
-        interimText = interim;
-        status.textContent = currentTranscript
-          ? `${currentTranscript.split(' ').length} words`
-          : (interim ? 'Listening...' : 'Speak now...');
-      };
-
-      recognition.onerror = (e) => {
-        if (e.error !== 'no-speech') {
-          showToast('Speech error: ' + e.error, 'error');
-        }
-      };
-
-      recognition.onend = () => {
-        if (isRecording) recognition.start(); // restart if still recording
-      };
-
-      recognition.start();
-      isRecording = true;
-      btn.classList.add('recording');
-      btn.textContent = 'Stop';
-      status.textContent = 'Speak now...';
+    function updateRecordingTimer() {
+      if (!isRecording) return;
+      const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+      const mins = Math.floor(elapsed / 60);
+      const secs = elapsed % 60;
+      document.getElementById('record-status').textContent =
+        `Recording... ${mins}:${String(secs).padStart(2, '0')}`;
+      recordingTimer = setTimeout(updateRecordingTimer, 1000);
     }
 
     function stopRecording() {
       const btn = document.getElementById('record-btn');
-      const status = document.getElementById('record-status');
-      const editor = document.getElementById('note-editor');
-
       isRecording = false;
       btn.classList.remove('recording');
       btn.textContent = 'Record';
+      clearTimeout(recordingTimer);
 
-      if (recognition) {
-        recognition.onend = null; // prevent restart
-        recognition.stop();
-        recognition = null;
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+    }
+
+    function showPostRecordingUI() {
+      const status = document.getElementById('record-status');
+      const editor = document.getElementById('note-editor');
+      const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+      const mins = Math.floor(elapsed / 60);
+      const secs = elapsed % 60;
+      status.textContent = `Recorded ${mins}:${String(secs).padStart(2, '0')}`;
+
+      // Show audio playback
+      const playback = document.getElementById('audio-playback');
+      if (playback) {
+        const url = URL.createObjectURL(recordedBlob);
+        playback.src = url;
+        playback.style.display = 'block';
       }
 
-      if (IS_TAURI && tauriInvoke) {
-        tauriInvoke('stop_recording');
-      }
-
-      if (currentTranscript) {
-        document.getElementById('note-title').value = '';
-        document.getElementById('original-transcript').textContent = currentTranscript;
-        document.getElementById('edited-note').value = currentTranscript;
-        editor.style.display = '';
-        status.textContent = `${currentTranscript.split(' ').length} words captured`;
-        refineResult = null;
-      } else {
-        status.textContent = 'No speech detected';
-      }
+      // Show transcribe button, hide transcript fields until transcribed
+      const transcribeBtn = document.getElementById('transcribe-btn');
+      if (transcribeBtn) transcribeBtn.style.display = '';
+      document.getElementById('note-title').value = '';
+      document.getElementById('original-transcript').textContent = '';
+      document.getElementById('edited-note').value = '';
+      editor.style.display = '';
+      currentTranscript = '';
+      refineResult = null;
     }
 
     // Listen for Tauri STT events (Phase 3)
@@ -2258,49 +2353,119 @@
 
 
 
+    async function transcribeRecordedAudio() {
+      if (!recordedBlob) { showToast('No recording to transcribe', 'error'); return; }
+      const btn = document.getElementById('transcribe-btn');
+      const status = document.getElementById('record-status');
+      btn.disabled = true;
+      btn.textContent = 'Transcribing...';
+      status.textContent = 'Uploading audio...';
+
+      const ext = recordedBlob.type.includes('webm') ? 'webm' : 'ogg';
+      const file = new File([recordedBlob], `recording.${ext}`, { type: recordedBlob.type });
+      try {
+        const data = await transcribeAudioFile(file);
+        if (data) {
+          lastTranscribedItemId = data.item_id;
+          currentTranscript = data.text;
+          document.getElementById('note-title').value = data.title || '';
+          document.getElementById('original-transcript').textContent = data.text;
+          document.getElementById('edited-note').value = data.text;
+          status.textContent = `${data.text.split(' ').length} words transcribed`;
+          btn.style.display = 'none';
+        }
+      } catch (e) {
+        showToast('Transcription failed: ' + e.message, 'error');
+        status.textContent = 'Transcription failed — you can still save the audio';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Transcribe';
+      }
+    }
+
     async function saveVoiceNote() {
       const original = document.getElementById('original-transcript').textContent;
       const edited = document.getElementById('edited-note').value.trim();
-      if (!original && !edited) { showToast('Nothing to save', 'error'); return; }
+      const title = document.getElementById('note-title').value.trim() || null;
 
-      const content = edited || original;
-      const metadata = { original_transcript: original };
-      if (edited && edited !== original) {
-        metadata.edited_text = edited;
+      // Allow saving audio-only (no transcript) if we have a recording
+      if (!original && !edited && !recordedBlob) {
+        showToast('Nothing to save', 'error'); return;
       }
+
+      const content = edited || original || '(audio recording)';
+      const metadata = {};
+      if (original) metadata.original_transcript = original;
+      if (edited && edited !== original) metadata.edited_text = edited;
       if (refineResult) {
         metadata.edit_prompt = refineResult.prompt_used;
         metadata.edit_model = refineResult.model_used;
       }
-      metadata.whisper_model = IS_TAURI ? 'whisper-rs' : 'web-speech-api';
+      metadata.input_type = recordedBlob ? 'recording' : 'file';
 
       try {
-        await api('/api/items', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            source_type: 'voice',
-            source_id: 'voice-' + Date.now(),
-            title: document.getElementById('note-title').value.trim() || null,
-            content: content,
-            is_own_content: true,
-            metadata: metadata,
-          }),
-        });
-        showToast('Voice note saved', 'ok');
+        let itemId = lastTranscribedItemId;
 
-        // Reset editor
-        document.getElementById('note-editor').style.display = 'none';
-        document.getElementById('note-title').value = '';
-        document.getElementById('original-transcript').textContent = '';
-        document.getElementById('edited-note').value = '';
-        document.getElementById('record-status').textContent = '';
-        currentTranscript = '';
-        refineResult = null;
+        if (itemId) {
+          // Server already created the item via transcribe — PATCH if edited
+          if ((edited && edited !== original) || title) {
+            await api(`/api/items/${itemId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ...(edited && edited !== original ? { content: edited } : {}),
+                ...(title ? { title } : {}),
+              }),
+            });
+          }
+        } else {
+          // No transcription — create new item
+          const item = await api('/api/items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              source_type: 'voice',
+              source_id: 'voice-' + Date.now(),
+              title,
+              content,
+              is_own_content: true,
+              metadata,
+            }),
+          });
+          itemId = item.id;
+        }
+
+        // Attach raw audio as media
+        if (recordedBlob && itemId) {
+          const ext = recordedBlob.type.includes('webm') ? 'webm' : 'ogg';
+          const audioFile = new File([recordedBlob], `recording.${ext}`, { type: recordedBlob.type });
+          const formData = new FormData();
+          formData.append('file', audioFile);
+          await api(`/api/items/${itemId}/media`, { method: 'POST', body: formData });
+        }
+
+        showToast('Voice note saved', 'ok');
+        resetVoiceEditor();
         loadSavedNotes();
       } catch (e) {
         showToast('Save failed: ' + e.message, 'error');
       }
+    }
+
+    function resetVoiceEditor() {
+      document.getElementById('note-editor').style.display = 'none';
+      document.getElementById('note-title').value = '';
+      document.getElementById('original-transcript').textContent = '';
+      document.getElementById('edited-note').value = '';
+      document.getElementById('record-status').textContent = '';
+      const playback = document.getElementById('audio-playback');
+      if (playback) { playback.src = ''; playback.style.display = 'none'; }
+      const transcribeBtn = document.getElementById('transcribe-btn');
+      if (transcribeBtn) transcribeBtn.style.display = 'none';
+      currentTranscript = '';
+      refineResult = null;
+      recordedBlob = null;
+      lastTranscribedItemId = null;
     }
 
     async function loadSavedNotes() {
@@ -2347,6 +2512,39 @@
     function closeProcessDialog() {
       document.getElementById('process-modal').classList.remove('open');
       processItemId = null;
+    }
+
+    async function runProcessDialog() {
+      const text = document.getElementById('process-text-preview').textContent;
+      const systemPrompt = document.getElementById('process-system-prompt').value.trim();
+      const userPrompt = document.getElementById('process-user-prompt').value.trim();
+      const model = document.getElementById('process-model').value;
+      if (!text) { showToast('No text to process', 'error'); return; }
+
+      const btn = document.getElementById('process-run-btn');
+      btn.disabled = true;
+      btn.textContent = 'Processing...';
+
+      try {
+        const prompt = userPrompt
+          ? systemPrompt + '\n\nAdditional instructions: ' + userPrompt
+          : systemPrompt;
+        const data = await api('/api/voice/refine', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, prompt, model }),
+        });
+        refineResult = data;
+        // Update the editor with refined text
+        document.getElementById('edited-note').value = data.refined_text;
+        showToast('Text refined', 'ok');
+        closeProcessDialog();
+      } catch (e) {
+        showToast('Processing failed: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Process';
+      }
     }
 
     /* ── Capture Dialog (text/URL share) ── */
@@ -2537,7 +2735,11 @@
 
           // Switch to Notes tab and use existing upload function
           document.querySelector('[data-tab="notes"]')?.click();
-          transcribeAudioFile(file);
+          const data = await transcribeAudioFile(file);
+          if (data) {
+            showToast(`Saved: ${data.title}`, 'ok');
+            loadSavedNotes();
+          }
         } else if (share.mimeType === 'text/html' && share.filePath) {
           // HTML file shared — read and open import dialog
           const fileName = share.fileName || 'shared_page.html';
@@ -2571,8 +2773,30 @@
     const SUPPORTED_AUDIO = new Set(['.m4a', '.mp3', '.wav', '.ogg', '.flac', '.webm']);
     const audioFileInput = document.getElementById('audio-file-input');
 
-    audioFileInput.addEventListener('change', () => {
-      if (audioFileInput.files.length) transcribeAudioFile(audioFileInput.files[0]);
+    audioFileInput.addEventListener('change', async () => {
+      if (audioFileInput.files.length) {
+        const btn = document.getElementById('upload-btn');
+        const status = document.getElementById('record-status');
+        btn.style.pointerEvents = 'none';
+        btn.style.opacity = '0.5';
+        btn.innerText = 'Transcribing...';
+        status.textContent = `Uploading ${audioFileInput.files[0].name}...`;
+        try {
+          const data = await transcribeAudioFile(audioFileInput.files[0]);
+          if (data) {
+            status.textContent = `${data.text.split(' ').length} words transcribed`;
+            showToast(`Saved: ${data.title}`, 'ok');
+            loadSavedNotes();
+          }
+        } catch (e) {
+          showToast('Transcription failed: ' + e.message, 'error');
+          status.textContent = '';
+        } finally {
+          btn.style.pointerEvents = '';
+          btn.style.opacity = '';
+          btn.innerText = 'Upload File';
+        }
+      }
       audioFileInput.value = '';
     });
 
@@ -2580,42 +2804,20 @@
       const ext = '.' + file.name.split('.').pop().toLowerCase();
       if (!SUPPORTED_AUDIO.has(ext)) {
         showToast(`Unsupported format: ${ext}. Use m4a, mp3, wav, ogg, flac, or webm.`, 'error');
-        return;
+        return null;
       }
       if (file.size > 50 * 1024 * 1024) {
         showToast('File too large (max 50MB)', 'error');
-        return;
+        return null;
       }
 
-      const btn = document.getElementById('upload-btn');
-      const status = document.getElementById('record-status');
-      const editor = document.getElementById('note-editor');
-      btn.style.pointerEvents = 'none';
-      btn.style.opacity = '0.5';
-      btn.innerText = 'Transcribing...';
-      status.textContent = `Uploading ${file.name}...`;
-
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('title', file.name.replace(/\.[^.]+$/, ''));
-        const data = await api('/api/voice/transcribe', {
-          method: 'POST',
-          body: formData,
-        });
-
-        // Item already saved by the server — just refresh the list
-        status.textContent = `${data.text.split(' ').length} words transcribed from ${file.name}`;
-        showToast(`Saved: ${data.title}`, 'ok');
-        loadSavedNotes();
-      } catch (e) {
-        showToast('Transcription failed: ' + e.message, 'error');
-        status.textContent = '';
-      } finally {
-        btn.style.pointerEvents = '';
-        btn.style.opacity = '';
-        btn.innerText = 'Upload File';
-      }
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('title', file.name.replace(/\.[^.]+$/, ''));
+      return await api('/api/voice/transcribe', {
+        method: 'POST',
+        body: formData,
+      });
     }
 
     /* ── Import ── */
