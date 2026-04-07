@@ -31,12 +31,22 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake libclang-dev
+        run: |
+          sudo apt-get install -y --no-install-recommends cmake libclang-dev 2>/dev/null \
+            || (sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake libclang-dev)
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
+
+      - name: Cache Android NDK
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/android/sdk/ndk/27.2.12479018
+          key: ndk-27.2.12479018
 
       - name: Install Android NDK
         run: sdkmanager --install "ndk;27.2.12479018"

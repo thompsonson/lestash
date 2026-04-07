@@ -40,14 +40,11 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build packages
+      - name: Build package
         if: steps.release.outputs.released == 'true'
         run: |
           rm -rf dist/
-          for pkg in packages/*/; do
-            echo "Building $pkg"
-            uv build --package "$(basename $pkg)"
-          done
+          uv build --package lestash
 
       - name: Publish to PyPI
         if: steps.release.outputs.released == 'true'
