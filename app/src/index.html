@@ -1276,11 +1276,15 @@
       return card;
     }
 
-    const CHAT_ROLES = new Set(['user', 'model', 'assistant', 'system']);
+    const CHAT_ROLES = new Set(['user', 'model', 'assistant', 'system', 'human']);
+    function getChatRole(item) {
+      return item.author || (item.metadata && item.metadata.sender) || null;
+    }
     function renderChatBubble(item) {
-      const isUser = item.author === 'user';
+      const role = getChatRole(item);
+      const isUser = role === 'user' || role === 'human';
       const roleClass = isUser ? 'user' : 'model';
-      const roleLabel = isUser ? 'You' : (item.source_type === 'mistral' ? 'Mistral' : item.source_type === 'gemini' ? 'Gemini' : 'Assistant');
+      const roleLabel = isUser ? 'You' : (item.source_type === 'claude' || item.source_type === 'claude-code' ? 'Claude' : item.source_type === 'mistral' ? 'Mistral' : item.source_type === 'gemini' ? 'Gemini' : 'Assistant');
       const wrapper = document.createElement('div');
       wrapper.innerHTML = `
         <div class="chat-role ${roleClass}">${roleLabel}</div>
@@ -1559,11 +1563,11 @@
           const list = document.getElementById('children-list');
           if (!list) return;
           list.innerHTML = '';
-          const isChat = data.items.length > 0 && CHAT_ROLES.has(data.items[0].author);
+          const isChat = data.items.length > 0 && CHAT_ROLES.has(getChatRole(data.items[0]));
           if (isChat) {
             const thread = document.createElement('div');
             thread.className = 'chat-thread';
-            data.items.forEach(child => thread.appendChild(renderChatBubble(child)));
+            data.items.slice().reverse().forEach(child => thread.appendChild(renderChatBubble(child)));
             list.appendChild(thread);
           } else {
             data.items.forEach(child => list.appendChild(renderCard(child)));
