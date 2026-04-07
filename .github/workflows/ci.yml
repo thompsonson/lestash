@@ -108,12 +108,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Build packages
-        run: |
-          for pkg in packages/*/; do
-            echo "Building $pkg"
-            uv build --package "$(basename $pkg)"
-          done
+      - name: Build package
+        run: uv build --package lestash
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
