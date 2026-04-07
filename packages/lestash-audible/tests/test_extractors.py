@@ -261,6 +261,27 @@ class TestDeduplicateAnnotations:
     def test_empty_list(self):
         assert _deduplicate_annotations([]) == []
 
+    def test_deduplicates_int_and_str_positions(self):
+        """Regression: API may return startPosition as int or str."""
+        records = [
+            {"type": "audible.bookmark", "startPosition": 0, "annotationId": "a1"},
+            {"type": "audible.clip", "startPosition": "0", "annotationId": "a2"},
+            {"type": "audible.note", "startPosition": 0, "annotationId": "a3", "text": "hi"},
+        ]
+        result = _deduplicate_annotations(records)
+        assert len(result) == 1
+        assert result[0]["type"] == "audible.note"
+
+    def test_deduplicates_missing_start_position(self):
+        """Records without startPosition should dedup to position 0."""
+        records = [
+            {"type": "audible.bookmark", "annotationId": "a1"},
+            {"type": "audible.note", "startPosition": 0, "annotationId": "a2", "text": "hi"},
+        ]
+        result = _deduplicate_annotations(records)
+        assert len(result) == 1
+        assert result[0]["type"] == "audible.note"
+
 
 class TestExtractAnnotations:
     """Test filtering and deduplication pipeline."""

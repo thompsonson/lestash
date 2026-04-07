@@ -107,7 +107,7 @@ def _deduplicate_annotations(annotations: list[dict[str, Any]]) -> list[dict[str
     type_priority = {"audible.note": 3, "audible.clip": 2, "audible.bookmark": 1}
 
     for a in annotations:
-        pos = a.get("startPosition", "0")
+        pos = str(a.get("startPosition", 0))
         priority = type_priority.get(a.get("type", ""), 0)
         existing = by_position.get(pos)
         if not existing or priority > type_priority.get(existing.get("type", ""), 0):
