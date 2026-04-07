@@ -1596,7 +1596,7 @@
               };
               updateTimer();
             } catch (e) {
-              showToast('Microphone not available: ' + e.message, 'error');
+              showToast('Microphone error (' + e.name + '): ' + e.message, 'error');
             }
           }
         }
@@ -2247,7 +2247,7 @@
         recordingStartTime = Date.now();
         updateRecordingTimer();
       } catch (e) {
-        showToast('Microphone not available: ' + e.message, 'error');
+        showToast('Microphone error (' + e.name + '): ' + e.message, 'error');
       }
     }
 

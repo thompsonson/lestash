@@ -15,18 +15,23 @@ class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handleShareIntent(intent)
+        setupWebViewPermissions()
+    }
 
-        // Grant WebView permission for microphone (getUserMedia).
-        // Tauri creates the WebView asynchronously, so we post to find it
-        // after the view hierarchy is laid out.
-        findViewById<android.view.View>(android.R.id.content)?.post {
-            val webView = findWebView(findViewById(android.R.id.content))
-            webView?.webChromeClient = object : WebChromeClient() {
-                override fun onPermissionRequest(request: PermissionRequest) {
-                    runOnUiThread { request.grant(request.resources) }
+    private fun setupWebViewPermissions() {
+        val rootView = findViewById<android.view.View>(android.R.id.content) ?: return
+        rootView.viewTreeObserver.addOnGlobalLayoutListener(object :
+            android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                val webView = findWebView(rootView) ?: return
+                rootView.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                webView.webChromeClient = object : WebChromeClient() {
+                    override fun onPermissionRequest(request: PermissionRequest) {
+                        runOnUiThread { request.grant(request.resources) }
+                    }
                 }
             }
-        }
+        })
     }
 
     private fun findWebView(view: android.view.View?): WebView? {
