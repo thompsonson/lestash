@@ -444,7 +444,7 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
     import json
 
     metadata_json = json.dumps(item.metadata) if item.metadata else None
-    cursor = conn.execute(
+    conn.execute(
         """
         INSERT INTO items (
             source_type, source_id, url, title, content,
@@ -472,13 +472,11 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
     )
     conn.commit()
 
-    item_id = cursor.lastrowid
-    if not item_id:
-        row = conn.execute(
-            "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
-            (item.source_type, item.source_id),
-        ).fetchone()
-        item_id = row[0]
+    row = conn.execute(
+        "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+        (item.source_type, item.source_id),
+    ).fetchone()
+    item_id = row[0]
 
     # Insert any media attachments
     if item.media:

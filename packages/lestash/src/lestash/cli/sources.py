@@ -136,13 +136,11 @@ def sync_source(
                     if item.media:
                         from lestash.core.database import add_item_media
 
-                        item_id = cursor.lastrowid
-                        if not item_id:
-                            row = conn.execute(
-                                "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
-                                (item.source_type, item.source_id),
-                            ).fetchone()
-                            item_id = row[0] if row else None
+                        row = conn.execute(
+                            "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+                            (item.source_type, item.source_id),
+                        ).fetchone()
+                        item_id = row[0] if row else None
                         if item_id:
                             for media in item.media:
                                 add_item_media(
