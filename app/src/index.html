@@ -2706,6 +2706,8 @@
           showToast('Saved', 'ok');
         }
         closeCaptureDialog();
+        loadFeed();
+        loadRecent();
       } catch (e) {
         showToast('Save failed: ' + e.message, 'error');
       } finally {
@@ -2771,6 +2773,8 @@
         if (!res.ok) throw new Error(data.detail || res.status);
         showToast(`Imported ${data.items_added} items from ${data.source_type}`, 'ok');
         closeHtmlImportDialog();
+        loadFeed();
+        loadRecent();
       } catch (e) {
         showToast('Import failed: ' + e.message, 'error');
       } finally {
@@ -2898,6 +2902,8 @@
 
         showToast(mode === 'new' ? 'Image saved' : 'Image attached', 'ok');
         closeImageCaptureDialog();
+        loadFeed();
+        loadRecent();
       } catch (e) {
         showToast('Save failed: ' + e.message, 'error');
       } finally {
@@ -2934,12 +2940,23 @@
           const file = new File([bytes], fileData.fileName, { type: fileData.mimeType });
           addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
 
-          // Switch to Notes tab and use existing upload function
+          // Switch to Notes tab and show transcription UI
           document.querySelector('[data-tab="notes"]')?.click();
-          const data = await transcribeAudioFile(file);
-          if (data) {
-            showToast(`Saved: ${data.title}`, 'ok');
-            loadSavedNotes();
+          const uploadBtn = document.getElementById('upload-btn');
+          const recordStatus = document.getElementById('record-status');
+          if (uploadBtn) { uploadBtn.style.pointerEvents = 'none'; uploadBtn.style.opacity = '0.5'; uploadBtn.innerText = 'Transcribing...'; }
+          if (recordStatus) recordStatus.textContent = `Uploading ${file.name}...`;
+          try {
+            const data = await transcribeAudioFile(file);
+            if (data) {
+              if (recordStatus) recordStatus.textContent = `${data.text.split(' ').length} words transcribed`;
+              showToast(`Saved: ${data.title}`, 'ok');
+              loadSavedNotes();
+              loadFeed();
+              loadRecent();
+            }
+          } finally {
+            if (uploadBtn) { uploadBtn.style.pointerEvents = ''; uploadBtn.style.opacity = ''; uploadBtn.innerText = 'Upload File'; }
           }
         } else if (share.mimeType && share.mimeType.startsWith('image/') && share.filePath) {
           // Image shared — read and open image capture dialog
