@@ -118,6 +118,15 @@ pub async fn read_shared_file(
         "webm" => "audio/webm",
         "html" | "htm" => "text/html",
         "xhtml" => "application/xhtml+xml",
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "heic" => "image/heic",
+        "heif" => "image/heif",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
         _ => "application/octet-stream",
     };
 

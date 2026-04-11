@@ -418,6 +418,21 @@
       background: var(--surface); color: var(--text);
     }
 
+    /* ── Image capture search results ── */
+    .img-attach-result {
+      padding: 0.4rem 0.6rem; cursor: pointer;
+      font-size: 0.8rem; border-bottom: 1px solid var(--border);
+    }
+    .img-attach-result:last-child { border-bottom: none; }
+    .img-attach-result:hover, .img-attach-result.selected {
+      background: var(--accent); color: #fff;
+    }
+    .img-attach-result .result-meta {
+      font-size: 0.7rem; color: var(--muted);
+    }
+    .img-attach-result:hover .result-meta,
+    .img-attach-result.selected .result-meta { color: rgba(255,255,255,0.7); }
+
     /* ── Toasts ── */
     .toast-container {
       position: fixed;
@@ -945,6 +960,38 @@
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeHtmlImportDialog()">Cancel</button>
         <button class="btn-save" id="html-import-save-btn" onclick="saveHtmlImport()">Import</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image capture dialog (share / upload) -->
+  <div class="modal-overlay" id="image-capture-modal">
+    <div class="modal" style="max-width:500px">
+      <h2>Save Image</h2>
+      <div id="image-capture-preview" style="text-align:center;margin-bottom:0.75rem">
+        <img id="image-capture-img" style="max-width:100%;max-height:240px;border-radius:4px;border:1px solid var(--border);object-fit:contain" alt="Shared image preview">
+      </div>
+      <label for="image-capture-title">Title</label>
+      <input type="text" id="image-capture-title" placeholder="Image title...">
+      <label for="image-capture-notes">Notes</label>
+      <textarea id="image-capture-notes" style="width:100%;min-height:60px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical;margin-bottom:0.75rem" placeholder="Your notes..."></textarea>
+      <div style="margin-bottom:0.75rem">
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer;margin-bottom:0.25rem">
+          <input type="radio" name="image-capture-mode" value="new" checked onchange="toggleImageCaptureMode()"> Save as new item
+        </label>
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer">
+          <input type="radio" name="image-capture-mode" value="attach" onchange="toggleImageCaptureMode()"> Attach to existing item
+        </label>
+      </div>
+      <div id="image-capture-attach-section" style="display:none;margin-bottom:0.75rem">
+        <label for="image-capture-search">Search items</label>
+        <input type="text" id="image-capture-search" placeholder="Search by title..." oninput="searchItemsForImageAttach(this.value)">
+        <div id="image-capture-results" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
+        <div id="image-capture-selected" style="display:none;font-size:0.8rem;color:var(--accent);margin-top:0.25rem"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeImageCaptureDialog()">Cancel</button>
+        <button class="btn-save" id="image-capture-save-btn" onclick="saveImageCapture()">Save</button>
       </div>
     </div>
   </div>
@@ -2732,6 +2779,133 @@
       }
     }
 
+    /* ── Image Capture Dialog ── */
+    let _pendingImageFile = null;
+    let _pendingImageUrl = null;
+    let _imageAttachTargetId = null;
+    let _imageSearchTimer = null;
+
+    function openImageCaptureDialog(file) {
+      _pendingImageFile = file;
+      _imageAttachTargetId = null;
+      if (_pendingImageUrl) URL.revokeObjectURL(_pendingImageUrl);
+      _pendingImageUrl = URL.createObjectURL(file);
+      document.getElementById('image-capture-img').src = _pendingImageUrl;
+      document.getElementById('image-capture-title').value = file.name.replace(/\.\w+$/, '').replace(/[_-]/g, ' ');
+      document.getElementById('image-capture-notes').value = '';
+      document.querySelector('input[name="image-capture-mode"][value="new"]').checked = true;
+      toggleImageCaptureMode();
+      document.getElementById('image-capture-search').value = '';
+      document.getElementById('image-capture-results').style.display = 'none';
+      document.getElementById('image-capture-results').innerHTML = '';
+      document.getElementById('image-capture-selected').style.display = 'none';
+      document.getElementById('image-capture-save-btn').disabled = false;
+      document.getElementById('image-capture-save-btn').textContent = 'Save';
+      document.getElementById('image-capture-modal').classList.add('open');
+    }
+
+    function closeImageCaptureDialog() {
+      document.getElementById('image-capture-modal').classList.remove('open');
+      if (_pendingImageUrl) { URL.revokeObjectURL(_pendingImageUrl); _pendingImageUrl = null; }
+      _pendingImageFile = null;
+      _imageAttachTargetId = null;
+    }
+
+    function toggleImageCaptureMode() {
+      const mode = document.querySelector('input[name="image-capture-mode"]:checked').value;
+      document.getElementById('image-capture-attach-section').style.display = mode === 'attach' ? 'block' : 'none';
+    }
+
+    function searchItemsForImageAttach(query) {
+      clearTimeout(_imageSearchTimer);
+      const results = document.getElementById('image-capture-results');
+      if (!query || query.length < 2) { results.style.display = 'none'; return; }
+      _imageSearchTimer = setTimeout(async () => {
+        try {
+          const data = await api(`/api/items?q=${encodeURIComponent(query)}&limit=10`);
+          const items = data.items || data;
+          if (!items.length) {
+            results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">No items found</div>';
+            results.style.display = 'block';
+            return;
+          }
+          results.innerHTML = items.map(it => {
+            const date = it.created_at ? new Date(it.created_at).toLocaleDateString() : '';
+            return `<div class="img-attach-result" data-id="${it.id}" onclick="selectImageAttachTarget(${it.id}, this)">
+              <div>${escHtml(it.title || it.content?.substring(0, 60) || 'Untitled')}</div>
+              <div class="result-meta">${escHtml(it.source_type)}${date ? ' · ' + date : ''}</div>
+            </div>`;
+          }).join('');
+          results.style.display = 'block';
+        } catch (e) {
+          results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">Search failed</div>';
+          results.style.display = 'block';
+        }
+      }, 300);
+    }
+
+    function selectImageAttachTarget(itemId, el) {
+      _imageAttachTargetId = itemId;
+      document.querySelectorAll('#image-capture-results .img-attach-result').forEach(r => r.classList.remove('selected'));
+      el.classList.add('selected');
+      const title = el.querySelector('div')?.textContent || 'Item #' + itemId;
+      const sel = document.getElementById('image-capture-selected');
+      sel.textContent = 'Attaching to: ' + title;
+      sel.style.display = 'block';
+    }
+
+    async function saveImageCapture() {
+      if (!_pendingImageFile) { showToast('No image to save', 'error'); return; }
+      const mode = document.querySelector('input[name="image-capture-mode"]:checked').value;
+      const title = document.getElementById('image-capture-title').value.trim();
+      const notes = document.getElementById('image-capture-notes').value.trim();
+      const btn = document.getElementById('image-capture-save-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+
+      try {
+        let targetItemId;
+        if (mode === 'new') {
+          const item = await api('/api/items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              source_type: 'image',
+              source_id: 'image-' + Date.now(),
+              title: title || _pendingImageFile.name,
+              content: notes || '[Image]',
+              is_own_content: false,
+              metadata: { original_filename: _pendingImageFile.name, mime_type: _pendingImageFile.type },
+            }),
+          });
+          targetItemId = item.id;
+        } else {
+          if (!_imageAttachTargetId) { showToast('Select an item to attach to', 'error'); btn.disabled = false; btn.textContent = 'Save'; return; }
+          targetItemId = _imageAttachTargetId;
+        }
+
+        btn.textContent = 'Uploading...';
+        const formData = new FormData();
+        formData.append('file', _pendingImageFile);
+        const mediaRes = await fetch(`${getApiBase()}/api/items/${targetItemId}/media`, {
+          method: 'POST',
+          body: formData,
+        });
+        if (!mediaRes.ok) {
+          const err = await mediaRes.json().catch(() => ({}));
+          throw new Error(err.detail || mediaRes.status);
+        }
+
+        showToast(mode === 'new' ? 'Image saved' : 'Image attached', 'ok');
+        closeImageCaptureDialog();
+      } catch (e) {
+        showToast('Save failed: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save';
+      }
+    }
+
     /* ── Share Intent Handling (Android) ── */
     async function handlePendingShare() {
       if (!IS_TAURI || !tauriInvoke) return;
@@ -2767,6 +2941,20 @@
             showToast(`Saved: ${data.title}`, 'ok');
             loadSavedNotes();
           }
+        } else if (share.mimeType && share.mimeType.startsWith('image/') && share.filePath) {
+          // Image shared — read and open image capture dialog
+          const fileName = share.fileName || 'shared_image.jpg';
+          addDebugLog('SHARE', 'read_shared_file', 'START', null, `image: ${share.filePath}`);
+          const fileData = await tauriInvoke('read_shared_file', {
+            filePath: share.filePath,
+            fileName: fileName,
+          });
+          const byteStr = atob(fileData.base64);
+          const bytes = new Uint8Array(byteStr.length);
+          for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
+          const file = new File([bytes], fileData.fileName, { type: fileData.mimeType });
+          addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
+          openImageCaptureDialog(file);
         } else if (share.mimeType === 'text/html' && share.filePath) {
           // HTML file shared — read and open import dialog
           const fileName = share.fileName || 'shared_page.html';
