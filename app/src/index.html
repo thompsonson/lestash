@@ -935,15 +935,15 @@
       </div>
       <div style="margin-bottom:0.75rem">
         <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer;margin-bottom:0.25rem">
-          <input type="radio" name="capture-mode" value="new" checked onchange="toggleCaptureMode()"> Save as new item
+          <input type="radio" name="capture-mode" value="new" checked onchange="toggleAttachMode('capture')"> Save as new item
         </label>
         <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer">
-          <input type="radio" name="capture-mode" value="attach" onchange="toggleCaptureMode()"> Attach to existing item
+          <input type="radio" name="capture-mode" value="attach" onchange="toggleAttachMode('capture')"> Attach to existing item
         </label>
       </div>
       <div id="capture-attach-section" style="display:none;margin-bottom:0.75rem">
         <label for="capture-search">Search items</label>
-        <input type="text" id="capture-search" placeholder="Search by title..." oninput="searchItemsForCaptureAttach(this.value)">
+        <input type="text" id="capture-search" placeholder="Search by title..." oninput="attachPickerSearch('capture', this.value)">
         <div id="capture-results" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
         <div id="capture-selected" style="display:none;font-size:0.8rem;color:var(--accent);margin-top:0.25rem"></div>
       </div>
@@ -991,15 +991,15 @@
       <textarea id="image-capture-notes" style="width:100%;min-height:60px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical;margin-bottom:0.75rem" placeholder="Your notes..."></textarea>
       <div style="margin-bottom:0.75rem">
         <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer;margin-bottom:0.25rem">
-          <input type="radio" name="image-capture-mode" value="new" checked onchange="toggleImageCaptureMode()"> Save as new item
+          <input type="radio" name="image-capture-mode" value="new" checked onchange="toggleAttachMode('image-capture')"> Save as new item
         </label>
         <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer">
-          <input type="radio" name="image-capture-mode" value="attach" onchange="toggleImageCaptureMode()"> Attach to existing item
+          <input type="radio" name="image-capture-mode" value="attach" onchange="toggleAttachMode('image-capture')"> Attach to existing item
         </label>
       </div>
       <div id="image-capture-attach-section" style="display:none;margin-bottom:0.75rem">
         <label for="image-capture-search">Search items</label>
-        <input type="text" id="image-capture-search" placeholder="Search by title..." oninput="searchItemsForImageAttach(this.value)">
+        <input type="text" id="image-capture-search" placeholder="Search by title..." oninput="attachPickerSearch('image-capture', this.value)">
         <div id="image-capture-results" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
         <div id="image-capture-selected" style="display:none;font-size:0.8rem;color:var(--accent);margin-top:0.25rem"></div>
       </div>
@@ -1018,10 +1018,10 @@
       <div id="multi-image-count" style="font-size:0.75rem;color:var(--muted);margin-bottom:0.75rem"></div>
       <div style="margin-bottom:0.75rem">
         <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer;margin-bottom:0.25rem">
-          <input type="radio" name="multi-image-mode" value="new" checked onchange="toggleMultiImageMode()"> New note with images
+          <input type="radio" name="multi-image-mode" value="new" checked onchange="toggleAttachMode('multi-image', true)"> New note with images
         </label>
         <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer">
-          <input type="radio" name="multi-image-mode" value="attach" onchange="toggleMultiImageMode()"> Attach to existing item
+          <input type="radio" name="multi-image-mode" value="attach" onchange="toggleAttachMode('multi-image', true)"> Attach to existing item
         </label>
       </div>
       <div id="multi-image-new-section">
@@ -1032,7 +1032,7 @@
       </div>
       <div id="multi-image-attach-section" style="display:none;margin-bottom:0.75rem">
         <label for="multi-image-search">Search items</label>
-        <input type="text" id="multi-image-search" placeholder="Search by title..." oninput="searchItemsForMultiAttach(this.value)">
+        <input type="text" id="multi-image-search" placeholder="Search by title..." oninput="attachPickerSearch('multi-image', this.value)">
         <div id="multi-image-results" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
         <div id="multi-image-selected" style="display:none;font-size:0.8rem;color:var(--accent);margin-top:0.25rem"></div>
       </div>
@@ -2668,13 +2668,87 @@
       }
     }
 
+    /* ── Shared attach-to-existing item picker ──
+       Resolves elements by convention: {prefix}-search, {prefix}-results,
+       {prefix}-selected, {prefix}-mode, {prefix}-attach-section,
+       optional {prefix}-new-section. Used by capture-modal,
+       image-capture-modal, multi-image-capture-modal, and #113. */
+    const _attachPickerState = {};
+
+    function _pickerState(prefix) {
+      return _attachPickerState[prefix] || (_attachPickerState[prefix] = {});
+    }
+
+    function attachPickerReset(prefix) {
+      const state = _pickerState(prefix);
+      if (state.timer) { clearTimeout(state.timer); state.timer = null; }
+      state.selectedId = null;
+      const search = document.getElementById(`${prefix}-search`);
+      if (search) search.value = '';
+      const results = document.getElementById(`${prefix}-results`);
+      if (results) { results.style.display = 'none'; results.innerHTML = ''; }
+      const selected = document.getElementById(`${prefix}-selected`);
+      if (selected) selected.style.display = 'none';
+    }
+
+    function attachPickerSearch(prefix, query) {
+      const state = _pickerState(prefix);
+      if (state.timer) clearTimeout(state.timer);
+      const results = document.getElementById(`${prefix}-results`);
+      if (!query || query.length < 2) { results.style.display = 'none'; return; }
+      state.timer = setTimeout(async () => {
+        try {
+          const data = await api(`/api/items?q=${encodeURIComponent(query)}&limit=10`);
+          const items = data.items || data;
+          if (!items.length) {
+            results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">No items found</div>';
+          } else {
+            results.innerHTML = items.map(it => {
+              const date = it.created_at ? new Date(it.created_at).toLocaleDateString() : '';
+              const title = it.title || it.content?.substring(0, 60) || 'Untitled';
+              return `<div class="img-attach-result" data-id="${it.id}" data-title="${escHtml(title)}" onclick="attachPickerSelect('${prefix}', ${it.id})">
+                <div>${escHtml(title)}</div>
+                <div class="result-meta">${escHtml(it.source_type)}${date ? ' · ' + date : ''}</div>
+              </div>`;
+            }).join('');
+          }
+          results.style.display = 'block';
+        } catch (e) {
+          results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">Search failed</div>';
+          results.style.display = 'block';
+        }
+      }, 300);
+    }
+
+    function attachPickerSelect(prefix, itemId) {
+      _pickerState(prefix).selectedId = itemId;
+      const results = document.getElementById(`${prefix}-results`);
+      results.querySelectorAll('.img-attach-result').forEach(r => r.classList.remove('selected'));
+      const row = results.querySelector(`[data-id="${itemId}"]`);
+      if (row) row.classList.add('selected');
+      const selectedLabel = document.getElementById(`${prefix}-selected`);
+      selectedLabel.textContent = 'Attaching to: ' + (row?.dataset.title || 'Item #' + itemId);
+      selectedLabel.style.display = 'block';
+    }
+
+    function attachPickerGetId(prefix) {
+      return _pickerState(prefix).selectedId ?? null;
+    }
+
+    function toggleAttachMode(prefix, hasNewSection) {
+      const mode = document.querySelector(`input[name="${prefix}-mode"]:checked`).value;
+      const attachSection = document.getElementById(`${prefix}-attach-section`);
+      if (attachSection) attachSection.style.display = mode === 'attach' ? 'block' : 'none';
+      if (hasNewSection) {
+        const newSection = document.getElementById(`${prefix}-new-section`);
+        if (newSection) newSection.style.display = mode === 'new' ? 'block' : 'none';
+      }
+    }
+
     /* ── Capture Dialog (text/URL share) ── */
     function _isYouTubeUrl(url) {
       return /youtube\.com\/watch|youtu\.be\//.test(url || '');
     }
-
-    let _captureAttachTargetId = null;
-    let _captureSearchTimer = null;
 
     function openCaptureDialog(share) {
       const text = share.text || '';
@@ -2684,71 +2758,19 @@
       document.getElementById('capture-title').value = share.subject || '';
       document.getElementById('capture-notes').value = '';
       document.getElementById('capture-content').value = text;
-      // Show transcript option for YouTube URLs
-      const transcriptOpt = document.getElementById('capture-transcript-option');
-      transcriptOpt.style.display = _isYouTubeUrl(url) ? 'block' : 'none';
+      document.getElementById('capture-transcript-option').style.display = _isYouTubeUrl(url) ? 'block' : 'none';
       document.getElementById('capture-fetch-transcript').checked = true;
-      // Show Drive import option for Drive/Docs URLs
-      const driveOpt = document.getElementById('capture-drive-option');
-      driveOpt.style.display = _isDriveOrDocsUrl(url) ? 'block' : 'none';
+      document.getElementById('capture-drive-option').style.display = _isDriveOrDocsUrl(url) ? 'block' : 'none';
       document.getElementById('capture-drive-import').checked = true;
-      // Reset attach mode
-      _captureAttachTargetId = null;
       document.querySelector('input[name="capture-mode"][value="new"]').checked = true;
-      toggleCaptureMode();
-      document.getElementById('capture-search').value = '';
-      document.getElementById('capture-results').style.display = 'none';
-      document.getElementById('capture-results').innerHTML = '';
-      document.getElementById('capture-selected').style.display = 'none';
+      toggleAttachMode('capture');
+      attachPickerReset('capture');
       document.getElementById('capture-modal').classList.add('open');
     }
 
     function closeCaptureDialog() {
       document.getElementById('capture-modal').classList.remove('open');
-      _captureAttachTargetId = null;
-    }
-
-    function toggleCaptureMode() {
-      const mode = document.querySelector('input[name="capture-mode"]:checked').value;
-      document.getElementById('capture-attach-section').style.display = mode === 'attach' ? 'block' : 'none';
-    }
-
-    function searchItemsForCaptureAttach(query) {
-      clearTimeout(_captureSearchTimer);
-      const results = document.getElementById('capture-results');
-      if (!query || query.length < 2) { results.style.display = 'none'; return; }
-      _captureSearchTimer = setTimeout(async () => {
-        try {
-          const data = await api(`/api/items?q=${encodeURIComponent(query)}&limit=10`);
-          const items = data.items || data;
-          if (!items.length) {
-            results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">No items found</div>';
-            results.style.display = 'block';
-            return;
-          }
-          results.innerHTML = items.map(it => {
-            const date = it.created_at ? new Date(it.created_at).toLocaleDateString() : '';
-            return `<div class="img-attach-result" data-id="${it.id}" onclick="selectCaptureAttachTarget(${it.id}, this)">
-              <div>${escHtml(it.title || it.content?.substring(0, 60) || 'Untitled')}</div>
-              <div class="result-meta">${escHtml(it.source_type)}${date ? ' · ' + date : ''}</div>
-            </div>`;
-          }).join('');
-          results.style.display = 'block';
-        } catch (e) {
-          results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">Search failed</div>';
-          results.style.display = 'block';
-        }
-      }, 300);
-    }
-
-    function selectCaptureAttachTarget(itemId, el) {
-      _captureAttachTargetId = itemId;
-      document.querySelectorAll('#capture-results .img-attach-result').forEach(r => r.classList.remove('selected'));
-      el.classList.add('selected');
-      const title = el.querySelector('div')?.textContent || 'Item #' + itemId;
-      const sel = document.getElementById('capture-selected');
-      sel.textContent = 'Attaching to: ' + title;
-      sel.style.display = 'block';
+      attachPickerReset('capture');
     }
 
     async function saveCaptureItem() {
@@ -2758,7 +2780,8 @@
       const content = document.getElementById('capture-content').value.trim();
       if (!url && !content) { showToast('Nothing to save', 'error'); return; }
       const mode = document.querySelector('input[name="capture-mode"]:checked').value;
-      if (mode === 'attach' && !_captureAttachTargetId) {
+      const parentId = mode === 'attach' ? attachPickerGetId('capture') : null;
+      if (mode === 'attach' && !parentId) {
         showToast('Select an item to attach to', 'error');
         return;
       }
@@ -2776,14 +2799,12 @@
             title: title || null,
             content: notes ? notes + '\n\n---\n\n' + content : content,
             is_own_content: false,
-            parent_id: mode === 'attach' ? _captureAttachTargetId : null,
+            parent_id: parentId,
             metadata: notes ? { notes, shared_text: content } : { shared_text: content },
           }),
         });
-        // Import from Drive if Drive URL and checkbox checked
         const importDrive = _isDriveOrDocsUrl(url)
           && document.getElementById('capture-drive-import').checked;
-        // Fetch transcript if YouTube and checkbox checked
         const fetchTranscript = _isYouTubeUrl(url)
           && document.getElementById('capture-fetch-transcript').checked;
         if (importDrive) {
@@ -2894,23 +2915,17 @@
     /* ── Image Capture Dialog ── */
     let _pendingImageFile = null;
     let _pendingImageUrl = null;
-    let _imageAttachTargetId = null;
-    let _imageSearchTimer = null;
 
     function openImageCaptureDialog(file) {
       _pendingImageFile = file;
-      _imageAttachTargetId = null;
       if (_pendingImageUrl) URL.revokeObjectURL(_pendingImageUrl);
       _pendingImageUrl = URL.createObjectURL(file);
       document.getElementById('image-capture-img').src = _pendingImageUrl;
       document.getElementById('image-capture-title').value = file.name.replace(/\.\w+$/, '').replace(/[_-]/g, ' ');
       document.getElementById('image-capture-notes').value = '';
       document.querySelector('input[name="image-capture-mode"][value="new"]').checked = true;
-      toggleImageCaptureMode();
-      document.getElementById('image-capture-search').value = '';
-      document.getElementById('image-capture-results').style.display = 'none';
-      document.getElementById('image-capture-results').innerHTML = '';
-      document.getElementById('image-capture-selected').style.display = 'none';
+      toggleAttachMode('image-capture');
+      attachPickerReset('image-capture');
       document.getElementById('image-capture-save-btn').disabled = false;
       document.getElementById('image-capture-save-btn').textContent = 'Save';
       document.getElementById('image-capture-modal').classList.add('open');
@@ -2918,57 +2933,16 @@
 
     function closeImageCaptureDialog() {
       document.getElementById('image-capture-modal').classList.remove('open');
+      attachPickerReset('image-capture');
       if (_pendingImageUrl) { URL.revokeObjectURL(_pendingImageUrl); _pendingImageUrl = null; }
       _pendingImageFile = null;
-      _imageAttachTargetId = null;
-    }
-
-    function toggleImageCaptureMode() {
-      const mode = document.querySelector('input[name="image-capture-mode"]:checked').value;
-      document.getElementById('image-capture-attach-section').style.display = mode === 'attach' ? 'block' : 'none';
-    }
-
-    function searchItemsForImageAttach(query) {
-      clearTimeout(_imageSearchTimer);
-      const results = document.getElementById('image-capture-results');
-      if (!query || query.length < 2) { results.style.display = 'none'; return; }
-      _imageSearchTimer = setTimeout(async () => {
-        try {
-          const data = await api(`/api/items?q=${encodeURIComponent(query)}&limit=10`);
-          const items = data.items || data;
-          if (!items.length) {
-            results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">No items found</div>';
-            results.style.display = 'block';
-            return;
-          }
-          results.innerHTML = items.map(it => {
-            const date = it.created_at ? new Date(it.created_at).toLocaleDateString() : '';
-            return `<div class="img-attach-result" data-id="${it.id}" onclick="selectImageAttachTarget(${it.id}, this)">
-              <div>${escHtml(it.title || it.content?.substring(0, 60) || 'Untitled')}</div>
-              <div class="result-meta">${escHtml(it.source_type)}${date ? ' · ' + date : ''}</div>
-            </div>`;
-          }).join('');
-          results.style.display = 'block';
-        } catch (e) {
-          results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">Search failed</div>';
-          results.style.display = 'block';
-        }
-      }, 300);
-    }
-
-    function selectImageAttachTarget(itemId, el) {
-      _imageAttachTargetId = itemId;
-      document.querySelectorAll('#image-capture-results .img-attach-result').forEach(r => r.classList.remove('selected'));
-      el.classList.add('selected');
-      const title = el.querySelector('div')?.textContent || 'Item #' + itemId;
-      const sel = document.getElementById('image-capture-selected');
-      sel.textContent = 'Attaching to: ' + title;
-      sel.style.display = 'block';
     }
 
     async function saveImageCapture() {
       if (!_pendingImageFile) { showToast('No image to save', 'error'); return; }
       const mode = document.querySelector('input[name="image-capture-mode"]:checked').value;
+      const attachId = mode === 'attach' ? attachPickerGetId('image-capture') : null;
+      if (mode === 'attach' && !attachId) { showToast('Select an item to attach to', 'error'); return; }
       const title = document.getElementById('image-capture-title').value.trim();
       const notes = document.getElementById('image-capture-notes').value.trim();
       const btn = document.getElementById('image-capture-save-btn');
@@ -2992,8 +2966,7 @@
           });
           targetItemId = item.id;
         } else {
-          if (!_imageAttachTargetId) { showToast('Select an item to attach to', 'error'); btn.disabled = false; btn.textContent = 'Save'; return; }
-          targetItemId = _imageAttachTargetId;
+          targetItemId = attachId;
         }
 
         btn.textContent = 'Uploading...';
@@ -3023,12 +2996,9 @@
     /* ── Multi-Image Capture Dialog ── */
     let _pendingMultiImageFiles = null;
     let _pendingMultiImageUrls = [];
-    let _multiImageAttachTargetId = null;
-    let _multiImageSearchTimer = null;
 
     function openMultiImageCaptureDialog(files) {
       _pendingMultiImageFiles = files;
-      _multiImageAttachTargetId = null;
       _pendingMultiImageUrls.forEach(u => URL.revokeObjectURL(u));
       _pendingMultiImageUrls = files.map(f => URL.createObjectURL(f));
 
@@ -3040,11 +3010,8 @@
       document.getElementById('multi-image-title').value = '';
       document.getElementById('multi-image-notes').value = '';
       document.querySelector('input[name="multi-image-mode"][value="new"]').checked = true;
-      toggleMultiImageMode();
-      document.getElementById('multi-image-search').value = '';
-      document.getElementById('multi-image-results').style.display = 'none';
-      document.getElementById('multi-image-results').innerHTML = '';
-      document.getElementById('multi-image-selected').style.display = 'none';
+      toggleAttachMode('multi-image', true);
+      attachPickerReset('multi-image');
       document.getElementById('multi-image-save-btn').disabled = false;
       document.getElementById('multi-image-save-btn').textContent = 'Save';
       document.getElementById('multi-image-capture-modal').classList.add('open');
@@ -3052,59 +3019,21 @@
 
     function closeMultiImageCaptureDialog() {
       document.getElementById('multi-image-capture-modal').classList.remove('open');
+      attachPickerReset('multi-image');
       _pendingMultiImageUrls.forEach(u => URL.revokeObjectURL(u));
       _pendingMultiImageUrls = [];
       _pendingMultiImageFiles = null;
-      _multiImageAttachTargetId = null;
-    }
-
-    function toggleMultiImageMode() {
-      const mode = document.querySelector('input[name="multi-image-mode"]:checked').value;
-      document.getElementById('multi-image-new-section').style.display = mode === 'new' ? 'block' : 'none';
-      document.getElementById('multi-image-attach-section').style.display = mode === 'attach' ? 'block' : 'none';
-    }
-
-    function searchItemsForMultiAttach(query) {
-      clearTimeout(_multiImageSearchTimer);
-      const results = document.getElementById('multi-image-results');
-      if (!query || query.length < 2) { results.style.display = 'none'; return; }
-      _multiImageSearchTimer = setTimeout(async () => {
-        try {
-          const data = await api(`/api/items?q=${encodeURIComponent(query)}&limit=10`);
-          const items = data.items || data;
-          if (!items.length) {
-            results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">No items found</div>';
-            results.style.display = 'block';
-            return;
-          }
-          results.innerHTML = items.map(it => {
-            const date = it.created_at ? new Date(it.created_at).toLocaleDateString() : '';
-            return `<div class="img-attach-result" data-id="${it.id}" onclick="selectMultiImageAttachTarget(${it.id}, this)">
-              <div>${escHtml(it.title || it.content?.substring(0, 60) || 'Untitled')}</div>
-              <div class="result-meta">${escHtml(it.source_type)}${date ? ' · ' + date : ''}</div>
-            </div>`;
-          }).join('');
-          results.style.display = 'block';
-        } catch (e) {
-          results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">Search failed</div>';
-          results.style.display = 'block';
-        }
-      }, 300);
-    }
-
-    function selectMultiImageAttachTarget(itemId, el) {
-      _multiImageAttachTargetId = itemId;
-      document.querySelectorAll('#multi-image-results .img-attach-result').forEach(r => r.classList.remove('selected'));
-      el.classList.add('selected');
-      const title = el.querySelector('div')?.textContent || 'Item #' + itemId;
-      const sel = document.getElementById('multi-image-selected');
-      sel.textContent = 'Attaching to: ' + title;
-      sel.style.display = 'block';
     }
 
     async function saveMultiImageCapture() {
       if (!_pendingMultiImageFiles || !_pendingMultiImageFiles.length) { showToast('No images to save', 'error'); return; }
       const mode = document.querySelector('input[name="multi-image-mode"]:checked').value;
+      const attachId = mode === 'attach' ? attachPickerGetId('multi-image') : null;
+      if (mode === 'attach' && !attachId) { showToast('Select an item to attach to', 'error'); return; }
+      const title = mode === 'new' ? document.getElementById('multi-image-title').value.trim() : '';
+      const notes = mode === 'new' ? document.getElementById('multi-image-notes').value.trim() : '';
+      if (mode === 'new' && !title && !notes) { showToast('Add a title or note', 'error'); return; }
+
       const btn = document.getElementById('multi-image-save-btn');
       btn.disabled = true;
       btn.textContent = 'Saving...';
@@ -3112,9 +3041,6 @@
       try {
         let parentId;
         if (mode === 'new') {
-          const title = document.getElementById('multi-image-title').value.trim();
-          const notes = document.getElementById('multi-image-notes').value.trim();
-          if (!title && !notes) { showToast('Add a title or note', 'error'); btn.disabled = false; btn.textContent = 'Save'; return; }
           const parent = await api('/api/items', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3129,19 +3055,20 @@
           });
           parentId = parent.id;
         } else {
-          if (!_multiImageAttachTargetId) { showToast('Select an item to attach to', 'error'); btn.disabled = false; btn.textContent = 'Save'; return; }
-          parentId = _multiImageAttachTargetId;
+          parentId = attachId;
         }
 
-        for (let i = 0; i < _pendingMultiImageFiles.length; i++) {
-          const file = _pendingMultiImageFiles[i];
-          btn.textContent = `Uploading ${i + 1}/${_pendingMultiImageFiles.length}...`;
+        const total = _pendingMultiImageFiles.length;
+        let done = 0;
+        btn.textContent = `Uploading 0/${total}...`;
+        const batchId = Date.now();
+        await Promise.all(_pendingMultiImageFiles.map(async (file, i) => {
           const child = await api('/api/items', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               source_type: 'image',
-              source_id: 'image-' + Date.now() + '-' + i,
+              source_id: `image-${batchId}-${i}`,
               title: file.name,
               content: '[Image]',
               is_own_content: false,
@@ -3159,9 +3086,11 @@
             const err = await mediaRes.json().catch(() => ({}));
             throw new Error(`Image ${i + 1}: ${err.detail || mediaRes.status}`);
           }
-        }
+          done++;
+          btn.textContent = `Uploading ${done}/${total}...`;
+        }));
 
-        showToast(`Saved ${_pendingMultiImageFiles.length} images`, 'ok');
+        showToast(`Saved ${total} images`, 'ok');
         closeMultiImageCaptureDialog();
         loadFeed();
         loadRecent();
@@ -3193,8 +3122,6 @@
             filePath: share.filePath,
             fileName: fileName,
           });
-
-          // Convert base64 to File object
           const byteStr = atob(fileData.base64);
           const bytes = new Uint8Array(byteStr.length);
           for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
@@ -3220,24 +3147,20 @@
             if (uploadBtn) { uploadBtn.style.pointerEvents = ''; uploadBtn.style.opacity = ''; uploadBtn.innerText = 'Upload File'; }
           }
         } else if (share.mimeType && share.mimeType.startsWith('image/') && share.filePaths && share.filePaths.length) {
-          // Multiple images shared — read all and open multi-image dialog
           addDebugLog('SHARE', 'read_shared_files', 'START', null, `count: ${share.filePaths.length}`);
-          const files = [];
-          for (let i = 0; i < share.filePaths.length; i++) {
+          const settled = await Promise.allSettled(share.filePaths.map(async (filePath, i) => {
             const fileName = (share.fileNames && share.fileNames[i]) || `shared_image_${i}.jpg`;
-            try {
-              const fileData = await tauriInvoke('read_shared_file', {
-                filePath: share.filePaths[i],
-                fileName: fileName,
-              });
-              const byteStr = atob(fileData.base64);
-              const bytes = new Uint8Array(byteStr.length);
-              for (let j = 0; j < byteStr.length; j++) bytes[j] = byteStr.charCodeAt(j);
-              files.push(new File([bytes], fileData.fileName, { type: fileData.mimeType }));
-            } catch (err) {
-              addDebugLog('SHARE', 'read_shared_file', 'ERR', null, `${fileName}: ${err}`);
-            }
-          }
+            const fileData = await tauriInvoke('read_shared_file', { filePath, fileName });
+            const byteStr = atob(fileData.base64);
+            const bytes = new Uint8Array(byteStr.length);
+            for (let j = 0; j < byteStr.length; j++) bytes[j] = byteStr.charCodeAt(j);
+            return new File([bytes], fileData.fileName, { type: fileData.mimeType });
+          }));
+          const files = [];
+          settled.forEach((r, i) => {
+            if (r.status === 'fulfilled') files.push(r.value);
+            else addDebugLog('SHARE', 'read_shared_file', 'ERR', null, `idx ${i}: ${r.reason}`);
+          });
           if (!files.length) { showToast('Failed to read shared images', 'error'); return; }
           addDebugLog('SHARE', 'read_shared_files', 'OK', null, `loaded ${files.length}/${share.filePaths.length}`);
           openMultiImageCaptureDialog(files);
