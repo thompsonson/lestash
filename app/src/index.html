@@ -1043,6 +1043,24 @@
     </div>
   </div>
 
+  <!-- Link existing item dialog -->
+  <div class="modal-overlay" id="link-modal">
+    <div class="modal" style="max-width:500px">
+      <h2>Link Existing Item</h2>
+      <p style="font-size:0.8rem;color:var(--muted);margin-bottom:0.75rem">
+        Search for an existing item to attach as a child of the current item.
+      </p>
+      <label for="link-search">Search items</label>
+      <input type="text" id="link-search" placeholder="Search by title or content..." oninput="attachPickerSearch('link', this.value)">
+      <div id="link-results" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
+      <div id="link-selected" style="display:none;font-size:0.8rem;color:var(--accent);margin-top:0.25rem"></div>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeLinkDialog()">Cancel</button>
+        <button class="btn-save" id="link-save-btn" onclick="saveLink()">Link</button>
+      </div>
+    </div>
+  </div>
+
   <!-- New collection modal -->
   <div class="modal-overlay" id="new-collection-modal">
     <div class="modal">
@@ -1585,6 +1603,7 @@
       // Actions
       html += `<div class="item-detail-actions">
         <button class="sync-btn" data-action="show-note-form">+ Note</button>
+        <button class="sync-btn" data-action="link-item" data-id="${item.id}">+ Link</button>
         <button class="sync-btn" data-action="copy" data-id="${item.id}">Copy</button>
         <button class="sync-btn" data-action="copy-link" data-id="${item.id}">Copy Link</button>
         <button class="sync-btn" onclick="addToCollection(${item.id})">+ Collection</button>
@@ -1653,6 +1672,9 @@
           document.getElementById('note-form').style.display = 'block';
           document.getElementById('note-text').focus();
           btn.style.display = 'none';
+        }
+        if (btn.dataset.action === 'link-item') {
+          openLinkDialog(parseInt(btn.dataset.id));
         }
         if (btn.dataset.action === 'record-note') {
           // Toggle recording for item detail note form
@@ -2698,7 +2720,7 @@
       if (!query || query.length < 2) { results.style.display = 'none'; return; }
       state.timer = setTimeout(async () => {
         try {
-          const data = await api(`/api/items?q=${encodeURIComponent(query)}&limit=10`);
+          const data = await api(`/api/items/search?q=${encodeURIComponent(query)}&limit=10`);
           const items = data.items || data;
           if (!items.length) {
             results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">No items found</div>';
@@ -2842,6 +2864,51 @@
       } finally {
         btn.disabled = false;
         btn.textContent = 'Save';
+      }
+    }
+
+    /* ── Link Existing Item Dialog ── */
+    let _linkParentId = null;
+
+    function openLinkDialog(parentItemId) {
+      _linkParentId = parentItemId;
+      attachPickerReset('link');
+      const btn = document.getElementById('link-save-btn');
+      btn.disabled = false;
+      btn.textContent = 'Link';
+      document.getElementById('link-modal').classList.add('open');
+      setTimeout(() => document.getElementById('link-search').focus(), 50);
+    }
+
+    function closeLinkDialog() {
+      document.getElementById('link-modal').classList.remove('open');
+      attachPickerReset('link');
+      _linkParentId = null;
+    }
+
+    async function saveLink() {
+      const childId = attachPickerGetId('link');
+      if (!childId) { showToast('Select an item to link', 'error'); return; }
+      if (!_linkParentId) { showToast('No parent item', 'error'); return; }
+      if (childId === _linkParentId) { showToast('Cannot link item to itself', 'error'); return; }
+      const btn = document.getElementById('link-save-btn');
+      btn.disabled = true;
+      btn.textContent = 'Linking...';
+      try {
+        await api(`/api/items/${childId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parent_id: _linkParentId }),
+        });
+        const parentId = _linkParentId;
+        showToast('Item linked', 'ok');
+        closeLinkDialog();
+        const fresh = await api(`/api/items/${parentId}`);
+        renderItemView(fresh);
+      } catch (e) {
+        showToast('Link failed: ' + e.message, 'error');
+        btn.disabled = false;
+        btn.textContent = 'Link';
       }
     }
 
