@@ -996,6 +996,39 @@
     </div>
   </div>
 
+  <!-- Multi-image capture dialog -->
+  <div class="modal-overlay" id="multi-image-capture-modal">
+    <div class="modal" style="max-width:540px">
+      <h2>Save Images</h2>
+      <div id="multi-image-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px;margin-bottom:0.75rem;max-height:200px;overflow-y:auto"></div>
+      <div id="multi-image-count" style="font-size:0.75rem;color:var(--muted);margin-bottom:0.75rem"></div>
+      <div style="margin-bottom:0.75rem">
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer;margin-bottom:0.25rem">
+          <input type="radio" name="multi-image-mode" value="new" checked onchange="toggleMultiImageMode()"> New note with images
+        </label>
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer">
+          <input type="radio" name="multi-image-mode" value="attach" onchange="toggleMultiImageMode()"> Attach to existing item
+        </label>
+      </div>
+      <div id="multi-image-new-section">
+        <label for="multi-image-title">Note title</label>
+        <input type="text" id="multi-image-title" placeholder="Title for the parent note...">
+        <label for="multi-image-notes">Note body</label>
+        <textarea id="multi-image-notes" style="width:100%;min-height:80px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical;margin-bottom:0.75rem" placeholder="Your note..."></textarea>
+      </div>
+      <div id="multi-image-attach-section" style="display:none;margin-bottom:0.75rem">
+        <label for="multi-image-search">Search items</label>
+        <input type="text" id="multi-image-search" placeholder="Search by title..." oninput="searchItemsForMultiAttach(this.value)">
+        <div id="multi-image-results" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
+        <div id="multi-image-selected" style="display:none;font-size:0.8rem;color:var(--accent);margin-top:0.25rem"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeMultiImageCaptureDialog()">Cancel</button>
+        <button class="btn-save" id="multi-image-save-btn" onclick="saveMultiImageCapture()">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- New collection modal -->
   <div class="modal-overlay" id="new-collection-modal">
     <div class="modal">
@@ -2912,6 +2945,159 @@
       }
     }
 
+    /* ── Multi-Image Capture Dialog ── */
+    let _pendingMultiImageFiles = null;
+    let _pendingMultiImageUrls = [];
+    let _multiImageAttachTargetId = null;
+    let _multiImageSearchTimer = null;
+
+    function openMultiImageCaptureDialog(files) {
+      _pendingMultiImageFiles = files;
+      _multiImageAttachTargetId = null;
+      _pendingMultiImageUrls.forEach(u => URL.revokeObjectURL(u));
+      _pendingMultiImageUrls = files.map(f => URL.createObjectURL(f));
+
+      const grid = document.getElementById('multi-image-grid');
+      grid.innerHTML = _pendingMultiImageUrls.map((url, i) =>
+        `<img src="${url}" alt="Image ${i + 1}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;border:1px solid var(--border)">`
+      ).join('');
+      document.getElementById('multi-image-count').textContent = `${files.length} image${files.length === 1 ? '' : 's'} selected`;
+      document.getElementById('multi-image-title').value = '';
+      document.getElementById('multi-image-notes').value = '';
+      document.querySelector('input[name="multi-image-mode"][value="new"]').checked = true;
+      toggleMultiImageMode();
+      document.getElementById('multi-image-search').value = '';
+      document.getElementById('multi-image-results').style.display = 'none';
+      document.getElementById('multi-image-results').innerHTML = '';
+      document.getElementById('multi-image-selected').style.display = 'none';
+      document.getElementById('multi-image-save-btn').disabled = false;
+      document.getElementById('multi-image-save-btn').textContent = 'Save';
+      document.getElementById('multi-image-capture-modal').classList.add('open');
+    }
+
+    function closeMultiImageCaptureDialog() {
+      document.getElementById('multi-image-capture-modal').classList.remove('open');
+      _pendingMultiImageUrls.forEach(u => URL.revokeObjectURL(u));
+      _pendingMultiImageUrls = [];
+      _pendingMultiImageFiles = null;
+      _multiImageAttachTargetId = null;
+    }
+
+    function toggleMultiImageMode() {
+      const mode = document.querySelector('input[name="multi-image-mode"]:checked').value;
+      document.getElementById('multi-image-new-section').style.display = mode === 'new' ? 'block' : 'none';
+      document.getElementById('multi-image-attach-section').style.display = mode === 'attach' ? 'block' : 'none';
+    }
+
+    function searchItemsForMultiAttach(query) {
+      clearTimeout(_multiImageSearchTimer);
+      const results = document.getElementById('multi-image-results');
+      if (!query || query.length < 2) { results.style.display = 'none'; return; }
+      _multiImageSearchTimer = setTimeout(async () => {
+        try {
+          const data = await api(`/api/items?q=${encodeURIComponent(query)}&limit=10`);
+          const items = data.items || data;
+          if (!items.length) {
+            results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">No items found</div>';
+            results.style.display = 'block';
+            return;
+          }
+          results.innerHTML = items.map(it => {
+            const date = it.created_at ? new Date(it.created_at).toLocaleDateString() : '';
+            return `<div class="img-attach-result" data-id="${it.id}" onclick="selectMultiImageAttachTarget(${it.id}, this)">
+              <div>${escHtml(it.title || it.content?.substring(0, 60) || 'Untitled')}</div>
+              <div class="result-meta">${escHtml(it.source_type)}${date ? ' · ' + date : ''}</div>
+            </div>`;
+          }).join('');
+          results.style.display = 'block';
+        } catch (e) {
+          results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">Search failed</div>';
+          results.style.display = 'block';
+        }
+      }, 300);
+    }
+
+    function selectMultiImageAttachTarget(itemId, el) {
+      _multiImageAttachTargetId = itemId;
+      document.querySelectorAll('#multi-image-results .img-attach-result').forEach(r => r.classList.remove('selected'));
+      el.classList.add('selected');
+      const title = el.querySelector('div')?.textContent || 'Item #' + itemId;
+      const sel = document.getElementById('multi-image-selected');
+      sel.textContent = 'Attaching to: ' + title;
+      sel.style.display = 'block';
+    }
+
+    async function saveMultiImageCapture() {
+      if (!_pendingMultiImageFiles || !_pendingMultiImageFiles.length) { showToast('No images to save', 'error'); return; }
+      const mode = document.querySelector('input[name="multi-image-mode"]:checked').value;
+      const btn = document.getElementById('multi-image-save-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+
+      try {
+        let parentId;
+        if (mode === 'new') {
+          const title = document.getElementById('multi-image-title').value.trim();
+          const notes = document.getElementById('multi-image-notes').value.trim();
+          if (!title && !notes) { showToast('Add a title or note', 'error'); btn.disabled = false; btn.textContent = 'Save'; return; }
+          const parent = await api('/api/items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              source_type: 'note',
+              source_id: 'note-' + Date.now(),
+              title: title || null,
+              content: notes || title || '',
+              is_own_content: true,
+              metadata: { image_count: _pendingMultiImageFiles.length },
+            }),
+          });
+          parentId = parent.id;
+        } else {
+          if (!_multiImageAttachTargetId) { showToast('Select an item to attach to', 'error'); btn.disabled = false; btn.textContent = 'Save'; return; }
+          parentId = _multiImageAttachTargetId;
+        }
+
+        for (let i = 0; i < _pendingMultiImageFiles.length; i++) {
+          const file = _pendingMultiImageFiles[i];
+          btn.textContent = `Uploading ${i + 1}/${_pendingMultiImageFiles.length}...`;
+          const child = await api('/api/items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              source_type: 'image',
+              source_id: 'image-' + Date.now() + '-' + i,
+              title: file.name,
+              content: '[Image]',
+              is_own_content: false,
+              parent_id: parentId,
+              metadata: { original_filename: file.name, mime_type: file.type },
+            }),
+          });
+          const formData = new FormData();
+          formData.append('file', file);
+          const mediaRes = await fetch(`${getApiBase()}/api/items/${child.id}/media`, {
+            method: 'POST',
+            body: formData,
+          });
+          if (!mediaRes.ok) {
+            const err = await mediaRes.json().catch(() => ({}));
+            throw new Error(`Image ${i + 1}: ${err.detail || mediaRes.status}`);
+          }
+        }
+
+        showToast(`Saved ${_pendingMultiImageFiles.length} images`, 'ok');
+        closeMultiImageCaptureDialog();
+        loadFeed();
+        loadRecent();
+      } catch (e) {
+        showToast('Save failed: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save';
+      }
+    }
+
     /* ── Share Intent Handling (Android) ── */
     async function handlePendingShare() {
       if (!IS_TAURI || !tauriInvoke) return;
@@ -2958,8 +3144,30 @@
           } finally {
             if (uploadBtn) { uploadBtn.style.pointerEvents = ''; uploadBtn.style.opacity = ''; uploadBtn.innerText = 'Upload File'; }
           }
+        } else if (share.mimeType && share.mimeType.startsWith('image/') && share.filePaths && share.filePaths.length) {
+          // Multiple images shared — read all and open multi-image dialog
+          addDebugLog('SHARE', 'read_shared_files', 'START', null, `count: ${share.filePaths.length}`);
+          const files = [];
+          for (let i = 0; i < share.filePaths.length; i++) {
+            const fileName = (share.fileNames && share.fileNames[i]) || `shared_image_${i}.jpg`;
+            try {
+              const fileData = await tauriInvoke('read_shared_file', {
+                filePath: share.filePaths[i],
+                fileName: fileName,
+              });
+              const byteStr = atob(fileData.base64);
+              const bytes = new Uint8Array(byteStr.length);
+              for (let j = 0; j < byteStr.length; j++) bytes[j] = byteStr.charCodeAt(j);
+              files.push(new File([bytes], fileData.fileName, { type: fileData.mimeType }));
+            } catch (err) {
+              addDebugLog('SHARE', 'read_shared_file', 'ERR', null, `${fileName}: ${err}`);
+            }
+          }
+          if (!files.length) { showToast('Failed to read shared images', 'error'); return; }
+          addDebugLog('SHARE', 'read_shared_files', 'OK', null, `loaded ${files.length}/${share.filePaths.length}`);
+          openMultiImageCaptureDialog(files);
         } else if (share.mimeType && share.mimeType.startsWith('image/') && share.filePath) {
-          // Image shared — read and open image capture dialog
+          // Single image shared — read and open image capture dialog
           const fileName = share.fileName || 'shared_image.jpg';
           addDebugLog('SHARE', 'read_shared_file', 'START', null, `image: ${share.filePath}`);
           const fileData = await tauriInvoke('read_shared_file', {

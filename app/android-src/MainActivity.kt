@@ -51,11 +51,38 @@ class MainActivity : TauriActivity() {
     }
 
     private fun handleShareIntent(intent: Intent) {
-        if (intent.action != Intent.ACTION_SEND) return
+        val action = intent.action ?: return
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return
 
         val mimeType = intent.type ?: return
         val json = JSONObject()
         json.put("mimeType", mimeType)
+
+        if (action == Intent.ACTION_SEND_MULTIPLE && mimeType.startsWith("image/")) {
+            val uris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM) ?: return
+            val filePaths = org.json.JSONArray()
+            val fileNames = org.json.JSONArray()
+            for (uri in uris) {
+                val fileName = getFileName(uri) ?: "shared_image.jpg"
+                val ext = fileName.substringAfterLast('.', "jpg")
+                val tempFile = File(cacheDir, "shared_${System.currentTimeMillis()}_${filePaths.length()}.$ext")
+                try {
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        tempFile.outputStream().use { output -> input.copyTo(output) }
+                    } ?: continue
+                } catch (e: Exception) {
+                    continue
+                }
+                filePaths.put(tempFile.absolutePath)
+                fileNames.put(fileName)
+            }
+            if (filePaths.length() == 0) return
+            json.put("filePaths", filePaths)
+            json.put("fileNames", fileNames)
+            val pendingFile = File(cacheDir, "pending_share.json")
+            pendingFile.writeText(json.toString())
+            return
+        }
 
         if (mimeType.startsWith("audio/")) {
             val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) ?: return

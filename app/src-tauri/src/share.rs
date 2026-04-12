@@ -12,6 +12,10 @@ pub struct PendingShare {
     #[serde(default)]
     pub file_name: Option<String>,
     #[serde(default)]
+    pub file_paths: Option<Vec<String>>,
+    #[serde(default)]
+    pub file_names: Option<Vec<String>>,
+    #[serde(default)]
     pub text: Option<String>,
     #[serde(default)]
     pub subject: Option<String>,
