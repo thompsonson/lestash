@@ -2900,11 +2900,23 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ parent_id: _linkParentId }),
         });
-        const parentId = _linkParentId;
+        const linked = await api(`/api/items/${childId}`);
         showToast('Item linked', 'ok');
         closeLinkDialog();
-        const fresh = await api(`/api/items/${parentId}`);
-        renderItemView(fresh);
+        // Incrementally update the current detail view (matches save-note pattern)
+        const container = document.getElementById('item-view-content');
+        const list = container?.querySelector('#children-list');
+        if (list) {
+          const placeholder = list.querySelector('span');
+          if (placeholder) list.innerHTML = '';
+          list.appendChild(renderCard(linked));
+          const titleEl = container.querySelector('.item-view-children-title');
+          if (titleEl) {
+            const match = titleEl.textContent.match(/^(\d+)/);
+            const next = match ? parseInt(match[1]) + 1 : 1;
+            titleEl.textContent = next + ' items';
+          }
+        }
       } catch (e) {
         showToast('Link failed: ' + e.message, 'error');
         btn.disabled = false;
