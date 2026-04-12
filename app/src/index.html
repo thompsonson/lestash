@@ -933,6 +933,20 @@
           Import as document (convert to markdown)
         </label>
       </div>
+      <div style="margin-bottom:0.75rem">
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer;margin-bottom:0.25rem">
+          <input type="radio" name="capture-mode" value="new" checked onchange="toggleCaptureMode()"> Save as new item
+        </label>
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer">
+          <input type="radio" name="capture-mode" value="attach" onchange="toggleCaptureMode()"> Attach to existing item
+        </label>
+      </div>
+      <div id="capture-attach-section" style="display:none;margin-bottom:0.75rem">
+        <label for="capture-search">Search items</label>
+        <input type="text" id="capture-search" placeholder="Search by title..." oninput="searchItemsForCaptureAttach(this.value)">
+        <div id="capture-results" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
+        <div id="capture-selected" style="display:none;font-size:0.8rem;color:var(--accent);margin-top:0.25rem"></div>
+      </div>
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeCaptureDialog()">Cancel</button>
         <button class="btn-save" id="capture-save-btn" onclick="saveCaptureItem()">Save</button>
@@ -2659,6 +2673,9 @@
       return /youtube\.com\/watch|youtu\.be\//.test(url || '');
     }
 
+    let _captureAttachTargetId = null;
+    let _captureSearchTimer = null;
+
     function openCaptureDialog(share) {
       const text = share.text || '';
       const urlMatch = text.match(/https?:\/\/[^\s]+/);
@@ -2675,11 +2692,63 @@
       const driveOpt = document.getElementById('capture-drive-option');
       driveOpt.style.display = _isDriveOrDocsUrl(url) ? 'block' : 'none';
       document.getElementById('capture-drive-import').checked = true;
+      // Reset attach mode
+      _captureAttachTargetId = null;
+      document.querySelector('input[name="capture-mode"][value="new"]').checked = true;
+      toggleCaptureMode();
+      document.getElementById('capture-search').value = '';
+      document.getElementById('capture-results').style.display = 'none';
+      document.getElementById('capture-results').innerHTML = '';
+      document.getElementById('capture-selected').style.display = 'none';
       document.getElementById('capture-modal').classList.add('open');
     }
 
     function closeCaptureDialog() {
       document.getElementById('capture-modal').classList.remove('open');
+      _captureAttachTargetId = null;
+    }
+
+    function toggleCaptureMode() {
+      const mode = document.querySelector('input[name="capture-mode"]:checked').value;
+      document.getElementById('capture-attach-section').style.display = mode === 'attach' ? 'block' : 'none';
+    }
+
+    function searchItemsForCaptureAttach(query) {
+      clearTimeout(_captureSearchTimer);
+      const results = document.getElementById('capture-results');
+      if (!query || query.length < 2) { results.style.display = 'none'; return; }
+      _captureSearchTimer = setTimeout(async () => {
+        try {
+          const data = await api(`/api/items?q=${encodeURIComponent(query)}&limit=10`);
+          const items = data.items || data;
+          if (!items.length) {
+            results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">No items found</div>';
+            results.style.display = 'block';
+            return;
+          }
+          results.innerHTML = items.map(it => {
+            const date = it.created_at ? new Date(it.created_at).toLocaleDateString() : '';
+            return `<div class="img-attach-result" data-id="${it.id}" onclick="selectCaptureAttachTarget(${it.id}, this)">
+              <div>${escHtml(it.title || it.content?.substring(0, 60) || 'Untitled')}</div>
+              <div class="result-meta">${escHtml(it.source_type)}${date ? ' · ' + date : ''}</div>
+            </div>`;
+          }).join('');
+          results.style.display = 'block';
+        } catch (e) {
+          results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">Search failed</div>';
+          results.style.display = 'block';
+        }
+      }, 300);
+    }
+
+    function selectCaptureAttachTarget(itemId, el) {
+      _captureAttachTargetId = itemId;
+      document.querySelectorAll('#capture-results .img-attach-result').forEach(r => r.classList.remove('selected'));
+      el.classList.add('selected');
+      const title = el.querySelector('div')?.textContent || 'Item #' + itemId;
+      const sel = document.getElementById('capture-selected');
+      sel.textContent = 'Attaching to: ' + title;
+      sel.style.display = 'block';
     }
 
     async function saveCaptureItem() {
@@ -2688,6 +2757,11 @@
       const notes = document.getElementById('capture-notes').value.trim();
       const content = document.getElementById('capture-content').value.trim();
       if (!url && !content) { showToast('Nothing to save', 'error'); return; }
+      const mode = document.querySelector('input[name="capture-mode"]:checked').value;
+      if (mode === 'attach' && !_captureAttachTargetId) {
+        showToast('Select an item to attach to', 'error');
+        return;
+      }
       const btn = document.getElementById('capture-save-btn');
       btn.disabled = true;
       btn.textContent = 'Saving...';
@@ -2702,6 +2776,7 @@
             title: title || null,
             content: notes ? notes + '\n\n---\n\n' + content : content,
             is_own_content: false,
+            parent_id: mode === 'attach' ? _captureAttachTargetId : null,
             metadata: notes ? { notes, shared_text: content } : { shared_text: content },
           }),
         });
