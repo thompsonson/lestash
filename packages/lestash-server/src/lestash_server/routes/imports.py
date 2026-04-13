@@ -1,15 +1,18 @@
 """File import endpoint."""
 
 import contextlib
+import hashlib
 import json
 import logging
+import tempfile
 import zipfile
 from datetime import UTC
 from io import BytesIO
+from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile
 
-from lestash_server.deps import get_db
+from lestash_server.deps import get_config, get_db
 from lestash_server.models import (
     DriveImportRequest,
     DriveSyncRequest,
@@ -38,6 +41,7 @@ async def import_file(
     - JSON array of items (.json)
     - ZIP files with known structures (Google Takeout, Claude export)
     - HTML pages with auto-detection (Gemini, etc.)
+    - PDF documents (text extracted via Docling, original saved as media)
 
     Optional form fields for HTML imports:
     - page_type: "auto", "gemini", "chatgpt", "article", or "unknown"
@@ -69,6 +73,8 @@ async def import_file(
                 source_url=source_url,
                 notes=notes,
             )
+        elif filename.lower().endswith(".pdf"):
+            return _import_pdf(data, filename, errors)
         else:
             # Try JSON first, then fail
             try:
@@ -77,7 +83,9 @@ async def import_file(
             except ValueError:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Unsupported file format: {filename}. Use .json, .zip, or .html",
+                    detail=(
+                        f"Unsupported file format: {filename}. Use .json, .zip, .html, or .pdf"
+                    ),
                 ) from None
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
@@ -189,6 +197,58 @@ def _insert_items_with_parents(conn, items):
     # Also handle items without parent markers (flat items)
     conn.commit()
     return items_added, errors
+
+
+def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse:
+    """Import a PDF: extract markdown via Docling, save original as media."""
+    from lestash.core.database import add_item_media, save_media_file
+    from lestash.core.text_extract import extract_content
+    from lestash.models.item import ItemCreate
+
+    sha = hashlib.sha256(data).hexdigest()[:16]
+    display_name = filename.rsplit("/", 1)[-1]
+    title = display_name[:-4] if display_name.lower().endswith(".pdf") else display_name
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+        tf.write(data)
+        tmp_path = Path(tf.name)
+    try:
+        markdown = extract_content(tmp_path, "application/pdf")
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    item = ItemCreate(
+        source_type="pdf",
+        source_id=sha,
+        title=title,
+        content=markdown or f"[PDF: {display_name}]",
+        is_own_content=True,
+        metadata={"filename": display_name, "size_bytes": len(data)},
+    )
+
+    items_added = 0
+    with get_db() as conn:
+        item_id = _upsert_item(conn, item)
+        if item_id:
+            rel_path = save_media_file(item_id, data, display_name, get_config())
+            add_item_media(
+                conn,
+                item_id,
+                media_type="pdf",
+                local_path=rel_path,
+                mime_type="application/pdf",
+                source_origin="upload",
+            )
+            items_added = 1
+        conn.commit()
+
+    return ImportResponse(
+        status="completed",
+        source_type="pdf",
+        items_added=items_added,
+        items_updated=0,
+        errors=errors,
+    )
 
 
 @router.post("/api/import/drive", response_model=list[ImportResponse])

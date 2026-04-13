@@ -755,10 +755,10 @@
       <!-- Import section -->
       <div style="margin-bottom:1.5rem">
         <h3 style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Import</h3>
-        <input type="file" id="import-file" accept=".zip,.json,.html,.htm" style="display:none">
+        <input type="file" id="import-file" accept=".zip,.json,.html,.htm,.pdf" style="display:none">
         <div class="import-dropzone" id="import-dropzone">
           Drop a file here or <a href="#" onclick="document.getElementById('import-file').click();return false">browse</a>
-          <div style="font-size:0.75rem;margin-top:0.4rem">JSON, Google Takeout, HTML pages</div>
+          <div style="font-size:0.75rem;margin-top:0.4rem">JSON, Google Takeout, HTML pages, PDF</div>
         </div>
         <div id="import-progress" style="display:none;padding:0.75rem;color:var(--muted)">
           <span class="spinner"></span> Importing...
@@ -3268,6 +3268,20 @@
           addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${fileName} (${(fileData.base64.length * 0.75 / 1024).toFixed(0)} KB)`);
           const htmlText = atob(fileData.base64);
           openHtmlImportDialog(fileData, htmlText);
+        } else if (share.mimeType === 'application/pdf' && share.filePath) {
+          const fileName = share.fileName || 'shared.pdf';
+          addDebugLog('SHARE', 'read_shared_file', 'START', null, `pdf: ${share.filePath}`);
+          const fileData = await tauriInvoke('read_shared_file', {
+            filePath: share.filePath,
+            fileName: fileName,
+          });
+          const byteStr = atob(fileData.base64);
+          const bytes = new Uint8Array(byteStr.length);
+          for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
+          const file = new File([bytes], fileData.fileName, { type: 'application/pdf' });
+          addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
+          document.querySelector('[data-tab="sources"]')?.click();
+          await uploadImport(file);
         } else if (share.text) {
           openCaptureDialog(share);
         }
