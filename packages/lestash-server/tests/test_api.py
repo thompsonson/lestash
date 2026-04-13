@@ -257,6 +257,104 @@ class TestImport:
         )
         assert resp.status_code == 400
 
+    def test_import_pdf_extracts_and_attaches_media(self, client, test_config):
+        """PDF import should extract markdown via Docling and save the
+        original as a media attachment of type 'pdf'."""
+        from lestash.core.database import get_connection, get_media_dir
+
+        pdf_bytes = b"%PDF-1.4 fake pdf contents for test"
+        with patch(
+            "lestash.core.text_extract.convert_to_markdown",
+            return_value="# Extracted\n\nhello",
+        ) as mock_conv:
+            resp = client.post(
+                "/api/import",
+                files={
+                    "file": ("report.pdf", io.BytesIO(pdf_bytes), "application/pdf"),
+                },
+            )
+
+        assert resp.status_code == 200
+        result = resp.json()
+        assert result["status"] == "completed"
+        assert result["source_type"] == "pdf"
+        assert result["items_added"] == 1
+        mock_conv.assert_called_once()
+
+        with get_connection(test_config) as conn:
+            row = conn.execute(
+                "SELECT id, title, content, source_type FROM items WHERE source_type = 'pdf'"
+            ).fetchone()
+            assert row is not None
+            assert row["title"] == "report"
+            assert "# Extracted" in row["content"]
+
+            media = conn.execute(
+                "SELECT media_type, mime_type, local_path, source_origin "
+                "FROM item_media WHERE item_id = ?",
+                (row["id"],),
+            ).fetchone()
+            assert media is not None
+            assert media["media_type"] == "pdf"
+            assert media["mime_type"] == "application/pdf"
+            assert media["source_origin"] == "upload"
+
+            saved = get_media_dir(test_config) / media["local_path"]
+            assert saved.is_file()
+            assert saved.read_bytes() == pdf_bytes
+
+    def test_import_pdf_docling_failure_keeps_original(self, client, test_config):
+        """If Docling returns nothing, the item is still created with a
+        placeholder body and the PDF is still saved as media."""
+        from lestash.core.database import get_connection
+
+        pdf_bytes = b"%PDF-1.4 unreadable"
+        with patch(
+            "lestash.core.text_extract.convert_to_markdown",
+            return_value="",
+        ):
+            resp = client.post(
+                "/api/import",
+                files={
+                    "file": ("scan.pdf", io.BytesIO(pdf_bytes), "application/pdf"),
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["items_added"] == 1
+
+        with get_connection(test_config) as conn:
+            row = conn.execute("SELECT content FROM items WHERE source_type = 'pdf'").fetchone()
+            assert row is not None
+            assert row["content"] == "[PDF: scan.pdf]"
+
+    def test_import_pdf_idempotent_by_content_hash(self, client, test_config):
+        """Re-importing the same PDF bytes must not create a duplicate item."""
+        from lestash.core.database import get_connection
+
+        pdf_bytes = b"%PDF-1.4 same-content"
+        with patch(
+            "lestash.core.text_extract.convert_to_markdown",
+            return_value="# md",
+        ):
+            r1 = client.post(
+                "/api/import",
+                files={"file": ("a.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+            )
+            r2 = client.post(
+                "/api/import",
+                files={"file": ("b.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+            )
+
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+
+        with get_connection(test_config) as conn:
+            rows = conn.execute(
+                "SELECT COUNT(*) AS n FROM items WHERE source_type = 'pdf'"
+            ).fetchone()
+            assert rows["n"] == 1
+
 
 class TestVoiceRefine:
     """Test POST /api/voice/refine endpoint."""

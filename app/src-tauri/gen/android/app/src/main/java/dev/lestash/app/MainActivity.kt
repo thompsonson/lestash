@@ -116,6 +116,19 @@ class MainActivity : TauriActivity() {
 
             json.put("filePath", tempFile.absolutePath)
             json.put("fileName", fileName)
+        } else if (mimeType == "application/pdf") {
+            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) ?: return
+            val fileName = getFileName(uri) ?: "shared.pdf"
+            val tempFile = File(cacheDir, "shared_${System.currentTimeMillis()}.pdf")
+            try {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    tempFile.outputStream().use { output -> input.copyTo(output) }
+                } ?: return
+            } catch (e: Exception) {
+                return
+            }
+            json.put("filePath", tempFile.absolutePath)
+            json.put("fileName", fileName)
         } else if (mimeType == "text/html" || mimeType == "application/xhtml+xml") {
             // HTML file share: try file stream first, fall back to text
             val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
@@ -157,6 +170,18 @@ class MainActivity : TauriActivity() {
                         return
                     }
                     json.put("mimeType", "text/html")
+                    json.put("filePath", tempFile.absolutePath)
+                    json.put("fileName", fileName)
+                } else if (fileName.endsWith(".pdf", ignoreCase = true)) {
+                    val tempFile = File(cacheDir, "shared_${System.currentTimeMillis()}.pdf")
+                    try {
+                        contentResolver.openInputStream(uri)?.use { input ->
+                            tempFile.outputStream().use { output -> input.copyTo(output) }
+                        } ?: return
+                    } catch (e: Exception) {
+                        return
+                    }
+                    json.put("mimeType", "application/pdf")
                     json.put("filePath", tempFile.absolutePath)
                     json.put("fileName", fileName)
                 } else {

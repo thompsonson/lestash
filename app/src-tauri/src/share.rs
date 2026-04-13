@@ -131,6 +131,7 @@ pub async fn read_shared_file(
         "avif" => "image/avif",
         "bmp" => "image/bmp",
         "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
         _ => "application/octet-stream",
     };
 
