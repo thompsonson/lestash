@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>LeStash</title>
+  <script src="marked.min.js"></script>
+  <script src="purify.min.js"></script>
   <style>
     :root {
       --bg: #1a1a2e;
@@ -240,8 +242,30 @@
     .item-view-title { font-size: 1.1rem; font-weight: bold; margin-bottom: 0.3rem; }
     .item-view-meta { font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem; }
     .item-view-content {
-      white-space: pre-wrap; word-break: break-word;
-      line-height: 1.6; font-size: 0.9rem;
+      line-height: 1.6; font-size: 0.9rem; word-break: break-word;
+    }
+    .item-view-content h1, .item-view-content h2, .item-view-content h3 {
+      margin-top: 1rem; margin-bottom: 0.5rem;
+    }
+    .item-view-content h1 { font-size: 1.2rem; }
+    .item-view-content h2 { font-size: 1.1rem; }
+    .item-view-content h3 { font-size: 1rem; }
+    .item-view-content p { margin-bottom: 0.6rem; }
+    .item-view-content ul, .item-view-content ol {
+      margin-left: 1.5rem; margin-bottom: 0.6rem;
+    }
+    .item-view-content a { color: var(--accent); text-decoration: underline; }
+    .item-view-content code {
+      background: var(--surface); padding: 0.15rem 0.3rem; border-radius: 3px; font-size: 0.85em;
+    }
+    .item-view-content pre {
+      background: var(--surface); padding: 0.8rem; border-radius: 6px;
+      overflow-x: auto; margin-bottom: 0.6rem;
+    }
+    .item-view-content pre code { background: none; padding: 0; }
+    .item-view-content blockquote {
+      border-left: 3px solid var(--border); padding-left: 0.8rem;
+      color: var(--muted); margin-bottom: 0.6rem;
     }
     .item-view-children { margin-top: 1rem; }
     .item-view-children-title {
@@ -1424,7 +1448,7 @@
       const wrapper = document.createElement('div');
       wrapper.innerHTML = `
         <div class="chat-role ${roleClass}">${roleLabel}</div>
-        <div class="chat-bubble ${roleClass}">${escHtml(item.content)}</div>
+        <div class="chat-bubble ${roleClass}">${renderMarkdown(item.content)}</div>
       `;
       wrapper.querySelector('.chat-bubble').addEventListener('click', () => openItemView(item));
       return wrapper;
@@ -1500,7 +1524,7 @@
 
       let html = `<div class="item-view-title">${emoji}${escHtml(item.title || item.preview || '(untitled)')}</div>`;
       html += `<div class="item-view-meta">${sourceName(item.subtype)}${dateFmt ? ' &middot; ' + dateFmt : ''}${item.url ? ' &middot; <a href="' + escHtml(item.url) + '" target="_blank" rel="noopener" style="color:var(--accent)">link</a>' : ''}</div>`;
-      html += `<div class="item-view-content">${escHtml(item.content)}</div>`;
+      html += `<div class="item-view-content">${renderMarkdown(item.content)}</div>`;
 
       // Media gallery
       const visibleMedia = (item.media || []).filter(m => m.available || m.media_type === 'link' || m.media_type === 'pdf');
@@ -1934,6 +1958,20 @@
     function escHtml(s) {
       if (!s) return '';
       return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    marked.use({
+      renderer: {
+        link(token) {
+          return `<a href="${token.href}" target="_blank" rel="noopener">${token.text}</a>`;
+        }
+      }
+    });
+
+    function renderMarkdown(s) {
+      if (!s) return '';
+      const html = marked.parse(s);
+      return DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
     }
 
     /* ── Feed ── */
