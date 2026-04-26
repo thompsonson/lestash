@@ -102,6 +102,38 @@ def enrich_item(
         )
 
 
+def attach_source_pdf_and_enrich(
+    item_id: int,
+    pdf_bytes: bytes,
+    filename: str,
+    *,
+    drive_url: str | None = None,
+    config: Config | None = None,
+) -> EnrichmentResult:
+    """Inline import path: persist the source PDF as a media row and run the
+    enricher in one shot.
+
+    Called from `sync()` (Drive) and the Kobo backup ingestion paths after
+    the item has been upserted.
+    """
+    config = config or Config.load()
+    with get_connection(config) as conn:
+        rel_path = save_media_file(item_id, pdf_bytes, filename, config=config)
+        add_item_media(
+            conn,
+            item_id,
+            media_type=SOURCE_PDF_MEDIA_TYPE,
+            url=drive_url,
+            local_path=rel_path,
+            mime_type=PDF_MIME,
+            alt_text="original PDF",
+            position=0,
+            source_origin="sync",
+            _commit=True,
+        )
+    return enrich_item(item_id, config=config)
+
+
 def list_pdf_items(conn: sqlite3.Connection) -> list[int]:
     """Return IDs of items whose source is a PDF (Google Drive or otherwise).
 

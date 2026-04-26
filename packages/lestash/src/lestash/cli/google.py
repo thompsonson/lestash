@@ -175,24 +175,45 @@ def sync(
             console.print(f"  {name}  [dim]({size_str})[/dim]")
         return
 
+    from lestash.core.pdf_enrich import attach_source_pdf_and_enrich
+
     config = Config.load()
     added = 0
+    enriched = 0
     errors: list[str] = []
+    pdf_followups: list[tuple[int, bytes, str, str | None]] = []
 
     with (
         console.status("[bold]Syncing Google Drive folder...[/bold]") as status,
         get_connection(config) as conn,
     ):
-        for item in sync_drive_folder(folder_id, since=since, recursive=recursive):
+        for item, pdf_bytes, filename in sync_drive_folder(
+            folder_id, since=since, recursive=recursive
+        ):
             status.update(f"Processing: {item.title or 'unknown'}")
             try:
-                upsert_item(conn, item)
+                item_id = upsert_item(conn, item)
                 added += 1
+                if pdf_bytes:
+                    drive_url = (item.metadata or {}).get("drive_web_link")
+                    pdf_followups.append((item_id, pdf_bytes, filename, drive_url))
             except Exception as e:
                 errors.append(f"{item.title}: {e}")
         conn.commit()
 
+    for item_id, pdf_bytes, filename, drive_url in pdf_followups:
+        try:
+            result = attach_source_pdf_and_enrich(
+                item_id, pdf_bytes, filename, drive_url=drive_url, config=config
+            )
+            if result.status == "enriched":
+                enriched += 1
+        except Exception as e:
+            errors.append(f"enrich item {item_id}: {e}")
+
     console.print(f"\n[green]✓[/green] Imported {added} items from Google Drive")
+    if enriched:
+        console.print(f"[green]✓[/green] Enriched {enriched} PDFs")
     if errors:
         console.print(f"[yellow]  {len(errors)} errors:[/yellow]")
         for err in errors:

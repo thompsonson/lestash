@@ -4,6 +4,7 @@ from .extractor import enrich_pdf
 from .runner import (
     BackfillStats,
     EnrichmentResult,
+    attach_source_pdf_and_enrich,
     backfill_source_pdfs,
     enrich_item,
     list_pdf_items,
@@ -24,6 +25,7 @@ __all__ = [
     "EnrichmentResult",
     "ExtractedAnnotation",
     "ExtractedImage",
+    "attach_source_pdf_and_enrich",
     "backfill_source_pdfs",
     "enrich_item",
     "enrich_pdf",

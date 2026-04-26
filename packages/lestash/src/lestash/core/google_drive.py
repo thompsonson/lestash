@@ -213,8 +213,15 @@ def file_to_item(file_meta: dict, content: str) -> ItemCreate:
     )
 
 
-def _process_file(service, file_meta: dict) -> ItemCreate:
-    """Download/export a single file, convert to markdown, return ItemCreate."""
+def _process_file(service, file_meta: dict) -> tuple[ItemCreate, bytes | None, str]:
+    """Download/export a single file, convert to markdown, return the
+    ItemCreate together with the source PDF bytes (if applicable) and the
+    original filename.
+
+    PDF bytes are retained so the caller can persist them as a `source_pdf`
+    media row and run the enrichment pipeline. For non-PDF inputs the second
+    return value is `None`.
+    """
     from lestash.core.text_extract import extract_content
 
     file_id = file_meta["id"]
@@ -224,6 +231,7 @@ def _process_file(service, file_meta: dict) -> ItemCreate:
     logger.info("Processing %s (%s)", name, mime_type)
 
     content = ""
+    pdf_bytes: bytes | None = None
     try:
         # Google Workspace files need export, not download
         if mime_type in EXPORTABLE_MIMES:
@@ -235,12 +243,17 @@ def _process_file(service, file_meta: dict) -> ItemCreate:
 
         try:
             content = extract_content(path, export_mime)
+            if export_mime == "application/pdf":
+                try:
+                    pdf_bytes = path.read_bytes()
+                except Exception:
+                    logger.exception("Failed to read PDF bytes for %s", name)
         finally:
             path.unlink(missing_ok=True)
     except Exception:
         logger.exception("Failed to download/extract %s", name)
 
-    return file_to_item(file_meta, content)
+    return file_to_item(file_meta, content), pdf_bytes, name
 
 
 def _filter_syncable(files: list[dict]) -> list[dict]:
@@ -257,16 +270,12 @@ def sync_drive_folder(
     folder_id: str,
     since: str | None = None,
     recursive: bool = False,
-) -> Iterator[ItemCreate]:
-    """Sync files from a Google Drive folder, yielding ItemCreate objects.
+) -> Iterator[tuple[ItemCreate, bytes | None, str]]:
+    """Sync files from a Google Drive folder.
 
-    Args:
-        folder_id: Google Drive folder ID or URL.
-        since: Optional ISO timestamp for incremental sync.
-        recursive: If True, recurse into subfolders.
-
-    Yields:
-        ItemCreate objects ready for database upsert.
+    Yields `(ItemCreate, pdf_bytes_or_None, filename)` tuples. PDF bytes are
+    surfaced so the caller can attach the source PDF as a media row and
+    trigger enrichment after upsert.
     """
     from lestash.core.google_auth import get_drive_service
 
@@ -279,14 +288,10 @@ def sync_drive_folder(
         yield _process_file(service, file_meta)
 
 
-def sync_single_file(file_id: str) -> ItemCreate:
-    """Download/export a single Drive file and return an ItemCreate.
+def sync_single_file(file_id: str) -> tuple[ItemCreate, bytes | None, str]:
+    """Download/export a single Drive file.
 
-    Args:
-        file_id: Google Drive file ID.
-
-    Returns:
-        ItemCreate with markdown content.
+    Returns `(ItemCreate, pdf_bytes_or_None, filename)`.
     """
     from lestash.core.google_auth import get_drive_service
 

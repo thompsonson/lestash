@@ -259,7 +259,8 @@ class TestImport:
 
     def test_import_pdf_extracts_and_attaches_media(self, client, test_config):
         """PDF import should extract markdown via Docling and save the
-        original as a media attachment of type 'pdf'."""
+        original as a media attachment of type 'source_pdf' (so the enricher
+        can find it for re-runs)."""
         from lestash.core.database import get_connection, get_media_dir
 
         pdf_bytes = b"%PDF-1.4 fake pdf contents for test"
@@ -295,7 +296,7 @@ class TestImport:
                 (row["id"],),
             ).fetchone()
             assert media is not None
-            assert media["media_type"] == "pdf"
+            assert media["media_type"] == "source_pdf"
             assert media["mime_type"] == "application/pdf"
             assert media["source_origin"] == "upload"
 
