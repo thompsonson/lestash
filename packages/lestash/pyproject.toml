@@ -1,6 +1,6 @@
 [project]
 name = "lestash"
-version = "1.53.0"
+version = "1.54.0"
 description = "Personal knowledge base CLI - aggregate content from multiple sources"
 readme = "README.md"
 requires-python = ">=3.12"

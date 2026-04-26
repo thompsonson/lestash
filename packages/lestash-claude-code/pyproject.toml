@@ -1,6 +1,6 @@
 [project]
 name = "lestash-claude-code"
-version = "1.53.0"
+version = "1.54.0"
 description = "Claude Code session source plugin for Le Stash"
 requires-python = ">=3.12"
 dependencies = [
