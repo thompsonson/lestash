@@ -93,3 +93,36 @@ def backfill() -> BackfillResponse:
         already_present=stats.already_present,
         unavailable=stats.unavailable,
     )
+
+
+class OcrRequest(BaseModel):
+    item_id: int | None = None
+
+
+class OcrResponse(BaseModel):
+    total: int
+    ocrd: int
+    skipped: int
+    unavailable: int
+    failed: int
+
+
+@router.post("/api/enrich/ocr", response_model=OcrResponse)
+def run_ocr(body: OcrRequest | None = None) -> OcrResponse:
+    """Transcribe handwritten ink annotations via Claude vision. Requires
+    ANTHROPIC_API_KEY. Idempotent at the (stroke_geometry_hash, ocr_version)
+    granularity."""
+    from lestash.core.pdf_enrich import ocr_pending_annotations
+
+    item_id = body.item_id if body else None
+    results = ocr_pending_annotations(item_id=item_id)
+    counts: dict[str, int] = {"transcribed": 0, "skipped": 0, "unavailable": 0, "failed": 0}
+    for r in results:
+        counts[r.status] = counts.get(r.status, 0) + 1
+    return OcrResponse(
+        total=len(results),
+        ocrd=counts["transcribed"],
+        skipped=counts["skipped"],
+        unavailable=counts["unavailable"],
+        failed=counts["failed"],
+    )

@@ -61,6 +61,35 @@ def enrich_all(
     )
 
 
+@app.command("ocr")
+def ocr(
+    item_id: int | None = typer.Option(
+        None, "--item-id", help="Limit OCR to children of this parent (default: all)"
+    ),
+) -> None:
+    """Transcribe handwritten margin notes and unclassified ink via Claude
+    multimodal vision. Requires ANTHROPIC_API_KEY.
+
+    Idempotent: child items already OCR'd at the current ocr_version are
+    skipped.
+    """
+    from lestash.core.pdf_enrich import ocr_pending_annotations
+
+    results = ocr_pending_annotations(item_id=item_id)
+    counts: dict[str, int] = {}
+    for r in results:
+        counts[r.status] = counts.get(r.status, 0) + 1
+    if not results:
+        console.print("[blue]No annotations needing OCR.[/blue]")
+        return
+    console.print(
+        f"transcribed {counts.get('transcribed', 0)}, "
+        f"skipped {counts.get('skipped', 0)}, "
+        f"unavailable {counts.get('unavailable', 0)}, "
+        f"failed {counts.get('failed', 0)}."
+    )
+
+
 @app.command("backfill-sources")
 def backfill_sources() -> None:
     """One-shot: download any missing source PDFs from Google Drive and persist
