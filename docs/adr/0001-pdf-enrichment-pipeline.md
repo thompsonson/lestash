@@ -85,16 +85,18 @@ Classification of ink strokes uses pure geometric heuristics (no ML, no external
 
 **Safety valve**: any annotation that does not match a known classifier falls through to `kind='ink_unclassified'` with raw geometry preserved. We never drop an annotation. Adding new classifiers in a later extractor version promotes existing `ink_unclassified` items on the next re-run — D4's versioning handles this cleanly.
 
-### D10: Handwriting OCR — separate, opt-in pass via external API
+### D10: Handwriting OCR — separate, opt-in pass via Claude multimodal vision
 
-Handwritten text in margin notes and unclassified ink is not OCR'd locally. A separate enrichment pass calls an external API (Google Cloud Vision / Document AI or equivalent) on demand:
+Handwritten text in margin notes and unclassified ink is not OCR'd locally. A separate enrichment pass sends the rendered annotation image to the **Claude API** (multimodal vision) on demand:
 
 - Invoked via `lestash enrich --ocr [--item-id N | --all]`.
 - Operates only on child items where `metadata.annotation_kind IN ('margin_note', 'ink_unclassified')`.
-- Renders the stroke geometry to a PNG using PyMuPDF, sends to the API, writes the OCR'd text to the child item's `content` field.
+- Renders the stroke geometry to a PNG using PyMuPDF, sends to Claude with a fixed transcription prompt, writes the OCR'd text to the child item's `content` field.
 - Idempotency keyed on `(stroke_geometry_hash, ocr_extractor_version)` — re-running does not re-spend.
 
-Kept separate from the main enricher because: it requires network + credentials + may incur cost, the main enricher must stay offline-capable, and OCR is independently versionable from the geometric extractor.
+**Why Claude vision, not Google Vision / Document AI / RapidOCR**: prior testing on real Kobo annotation samples showed RapidOCR scoring 0.50–0.70 on handwriting while Claude vision transcribed the same samples cleanly (e.g. "Add a title page", "reword this."). The `anthropic` SDK is already a project dependency, so this adds no new vendor surface area.
+
+Kept separate from the main enricher because: it requires network + API credentials + per-call cost, the main enricher must stay offline-capable, and OCR is independently versionable from the geometric extractor.
 
 ## Consequences
 

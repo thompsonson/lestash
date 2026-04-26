@@ -60,6 +60,8 @@ class ExtractedAnnotation:
     anchor_text: str                      # text the annotation points at, '' if none
     color: str | None
     strokes: list[list[tuple[float, float]]]   # raw geometry, preserved for replay
+    annotation_id: str | None             # PDF /NM (annotation UUID) from annot.info["id"], used for cross-run dedup
+    created_at: str | None                # ISO-8601 from annot.info["creationDate"] (Kobo populates this)
 ```
 
 Internal layout:
@@ -67,7 +69,7 @@ Internal layout:
 - `pdf_enrich/links.py` — `extract_links(doc) -> list[Link]` and `apply_links(markdown, links) -> markdown`
 - `pdf_enrich/images.py` — `extract_images(doc) -> list[ExtractedImage]` with `xref_hash` dedup
 - `pdf_enrich/annotations.py` — `extract_annotations(doc) -> list[RawInk]` + `classify(strokes) -> ExtractedAnnotation`
-- `pdf_enrich/cleanup.py` — strip `·`/`◦` artifacts at list-item boundaries only
+- `pdf_enrich/cleanup.py` — strip `·`/`◦` artifacts when they appear as the **last** non-whitespace character of a line (Docling's actual output puts them at end-of-line, e.g. `"...and preprints. ·\n"`)
 - `pdf_enrich/version.py` — `EXTRACTOR_VERSION: int = 1`
 
 ### `lestash.core.pdf_enrich.persistence` (DB-aware glue)
@@ -90,15 +92,18 @@ Responsibilities:
 def ocr_annotation(child_item_id: int, ocr_version: int) -> str | None: ...
 ```
 
-Renders the stroke geometry to PNG via PyMuPDF, sends to Google Cloud Vision / Document AI, writes the result to the child item's `content`. Skipped if `metadata.ocr_version == current`. See "OCR pass" in flows.
+Renders the stroke geometry to PNG via PyMuPDF, sends to **Claude multimodal vision** via the existing `anthropic` SDK with a fixed transcription prompt, writes the result to the child item's `content`. Skipped if `metadata.ocr_version == current`. See "OCR pass" in flows.
+
+Claude was chosen over Google Cloud Vision / Document AI / RapidOCR because prior tests on real Kobo annotation samples showed RapidOCR scoring 0.50–0.70 on handwriting while Claude transcribed the same samples cleanly. The `anthropic` SDK is already a project dependency.
 
 ### Invocation surfaces
 
 - `lestash enrich [--item-id N | --all] [--ocr] [--force]` (CLI)
 - `POST /api/items/{item_id}/enrich` (server, idempotent body)
 - Inline call from `lestash.core.google_drive.sync()` after item insert
+- Inline call from the Kobo source plugin's sync path — Kobo-sourced PDFs arrive via either the differential USB backup (#133, dropping files into `~/.local/share/kobo-backup/pdfs/`) or the WiFi push (#134, hitting `POST /api/kobo/process-new`). Both create regular items and then call the same `enrich_item()`. Kobo PDFs are particularly valuable here because they typically carry the ink annotations the geometric classifier and OCR pass are designed for.
 
-All three resolve to the same `enrich_item(item_id)` function in `lestash.core.pdf_enrich.runner`.
+All surfaces resolve to the same `enrich_item(item_id)` function in `lestash.core.pdf_enrich.runner`. Source-of-PDF differences (Drive download, Kobo USB rsync, Kobo WiFi push, direct upload) only affect how the `source_pdf` `item_media` row is populated; the enricher itself is source-agnostic.
 
 ## Data Model Deltas
 
@@ -114,9 +119,13 @@ All three resolve to the same `enrich_item(item_id)` function in `lestash.core.p
 --   enriched_at         : ISO-8601 string
 --   enrichment_status   : 'ok' | 'source_unavailable' | 'failed'
 --
--- item_media.media_type new values:
+-- item_media.media_type new value:
 --   'source_pdf'        : the original PDF, either local_path or url+Drive file ID
---   'pdf_image'         : an image extracted from the PDF (existing 'image' continues for non-PDF media)
+--
+-- item_media.source_origin new value (existing column, default 'sync'):
+--   'enricher'          : marks an image extracted from a PDF by the enricher;
+--                         media_type stays 'image' (no new type needed — source_origin
+--                         already exists for exactly this kind of provenance distinction)
 --
 -- items.source_type new value for child annotations:
 --   'pdf_annotation'    : a child item created by the enricher
@@ -138,7 +147,7 @@ No DDL changes are strictly required — every field fits the existing schema. T
 
 - **`source_type='pdf_annotation'`** identifies child items produced by the enricher. The persistence layer deletes-then-inserts these on every successful run.
 - **`media_type='source_pdf'`** identifies the original PDF. The enricher reads from this row's `local_path` or `url` (Drive ID).
-- **`media_type='pdf_image'`** identifies an enricher-produced image. These are deleted-then-inserted on every successful run, just like child items.
+- **`media_type='image'` with `source_origin='enricher'`** identifies an enricher-produced image. These are deleted-then-inserted on every successful run, just like child items. The existing `source_origin` column already exists to distinguish provenance — no new media type is needed.
 - **`extractor_version`** is a single integer in `pdf_enrich/version.py`. Bump it when the extractor changes in a way that should trigger reprocessing.
 
 ## Sequence Flows
@@ -170,13 +179,41 @@ sequenceDiagram
     Enrich->>Enrich: apply_links + insert image placeholders + cleanup
     Enrich->>DB: BEGIN
     Enrich->>FS: write extracted images
-    Enrich->>DB: INSERT item_media (media_type='pdf_image') × N
+    Enrich->>DB: INSERT item_media (media_type='image', source_origin='enricher') × N
     Enrich->>DB: rewrite content with /api/media/{id}
     Enrich->>DB: DELETE child items WHERE parent_id=? AND source_type='pdf_annotation'
     Enrich->>DB: INSERT child items × M
     Enrich->>DB: UPDATE items SET content=?, metadata=? WHERE id=?
     Enrich->>DB: COMMIT
 ```
+
+### Flow 1.5: Source-PDF backfill for legacy items
+
+Approximately 250 PDF items already imported from Google Drive predate this pipeline and have no `source_pdf` `item_media` row. D5 makes that row mandatory, so a one-shot backfill is required before `enrich --all` can be run end-to-end.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CLI as lestash enrich-backfill-sources
+    participant DB
+    participant Drive as Google Drive API
+    participant FS as ~/.lestash/media
+
+    CLI->>DB: SELECT items WHERE source_type='google_drive'<br/>AND mime is PDF<br/>AND NOT EXISTS (item_media WHERE media_type='source_pdf')
+    loop per item
+        CLI->>DB: read drive_id from items.metadata
+        CLI->>Drive: download file by drive_id
+        alt Drive returns bytes
+            CLI->>FS: write to media dir
+            CLI->>DB: INSERT item_media (media_type='source_pdf', local_path=..., url=DriveURL)
+        else Drive 404 / no auth
+            CLI->>DB: UPDATE items SET metadata.enrichment_status='source_unavailable'
+            Note over CLI: log + continue
+        end
+    end
+```
+
+This command is idempotent (skips items that already have a `source_pdf` row) and runs once after the migration lands. After it completes, `enrich --all` is the canonical re-runner.
 
 ### Flow 2: Backfill (re-enrich existing item, same extractor version)
 
@@ -230,15 +267,15 @@ sequenceDiagram
     participant OCR as ocr_annotation()
     participant DB
     participant FS
-    participant API as Google Vision / Document AI
+    participant API as Claude API (anthropic SDK)
 
     CLI->>DB: SELECT children WHERE source_type='pdf_annotation'<br/>AND annotation_kind IN ('margin_note','ink_unclassified')<br/>AND (ocr_version IS NULL OR ocr_version < current)
     loop per child
         CLI->>OCR: ocr_annotation(child_id)
         OCR->>DB: load strokes + bbox + parent's source PDF
         OCR->>FS: render strokes to PNG via PyMuPDF
-        OCR->>API: POST image
-        API-->>OCR: text
+        OCR->>API: messages.create with image content block + transcription prompt
+        API-->>OCR: transcribed text
         OCR->>DB: UPDATE items SET content=?, metadata.ocr_text=?,<br/>metadata.ocr_version=current WHERE id=?
     end
 ```
@@ -251,16 +288,16 @@ sequenceDiagram
 | Docling crash | Fall through: keep prior `items.content` if any, set `enrichment_status='failed'`, log full exception. |
 | PyMuPDF crash on a single page | Page-level try/except; record empty results for that page, continue with others. |
 | Image upload fails | Roll back the entire enrichment transaction; item is left in its prior state. |
-| OCR API failure (rate limit, network, auth) | Skip child, leave its `content` unchanged, log; resumable on next `enrich --ocr` run. |
+| Claude API failure (rate limit, network, auth, content-policy refusal) | Skip child, leave its `content` unchanged, log; resumable on next `enrich --ocr` run. |
 | Image placeholder ↔ extracted-image count mismatch | Match by page-and-bbox order, not by global index; log unmatched placeholders as warnings. |
 | Stroke classifier disagreement on borderline cases | Default to `ink_unclassified` rather than guessing; safer than wrong classification. |
 
 ## Edge Cases the Implementation Must Handle
 
 1. **Same image referenced multiple times in a PDF** — dedup by `xref_hash` (sha256 of bytes); upload once, reference the same media id from multiple positions in the markdown.
-2. **Anchor text appears multiple times in the document** — link replacement walks the markdown left-to-right with a cursor, consuming each link in document order, never `str.replace()` globally.
+2. **Anchor text appears multiple times in the document** — link replacement walks the markdown left-to-right with a cursor, consuming each link in document order, never `str.replace()` globally. Comparison between the anchor text PyMuPDF reads from the link rect and the text Docling emitted is done on a normalised form (whitespace collapsed to single spaces, leading/trailing trimmed, soft hyphens removed) — Docling reflows lines and may insert line breaks the original PDF didn't have, so byte-exact matching would miss many real links.
 3. **Docling DOCX inputs** — only PDF inputs go through PyMuPDF post-processing. The `convert_to_markdown` mime check stays as the gate.
-4. **Cleanup `·` / `◦`** — only stripped when they appear as the first non-whitespace character of a line that Docling marked as a list item, never globally. `m·s⁻¹` stays intact.
+4. **Cleanup `·` / `◦`** — Docling emits these as trailing artifacts at end-of-line (e.g. `"...and preprints. ·\n"`, `"...E.W.Dijkstra Archive (PDF) ◦\n"`). Strip only when they are the last non-whitespace character of a line, never mid-line. `m·s⁻¹` and similar in-content uses stay intact.
 5. **Drive PDFs whose file ID changes** — Drive can re-id a file on move. The enricher computes sha256 on bytes, not on Drive ID, so identity remains stable across moves.
 6. **Heavily-annotated PDFs** — a textbook with 200 highlights produces 200 child items. Acceptable; the FTS5 index and `parent_id` filter keep them out of normal listings.
 
@@ -281,7 +318,7 @@ sequenceDiagram
 
 ### OCR tests
 
-- `ocr_annotation` mocked at the API client boundary; assert the rendered PNG bytes match a fixture for a known stroke set.
+- `ocr_annotation` mocked at the `anthropic` client boundary; assert the rendered PNG bytes match a fixture for a known stroke set, and that the prompt+image is constructed correctly.
 - Skip-when-version-matches behaviour.
 
 ### Manual verification
@@ -295,12 +332,7 @@ sequenceDiagram
 "pymupdf>=1.27.0",
 ```
 
-OCR is opt-in and lives in `pdf_enrich/ocr.py`. Its API client (e.g. `google-cloud-vision`) is added as an extra so users who don't want it don't pull it:
-
-```toml
-[project.optional-dependencies]
-ocr = ["google-cloud-vision>=3.0.0"]
-```
+OCR lives in `pdf_enrich/ocr.py` and uses the `anthropic` SDK, which is already a project dependency — so OCR adds no new optional-dependency group. The user supplies their `ANTHROPIC_API_KEY` via existing config and opts in by passing `--ocr` to the enrich command.
 
 ## Open Questions
 
