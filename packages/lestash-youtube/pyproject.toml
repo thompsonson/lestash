@@ -1,6 +1,6 @@
 [project]
 name = "lestash-youtube"
-version = "1.55.0"
+version = "1.55.1"
 description = "YouTube source plugin for Le Stash"
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}

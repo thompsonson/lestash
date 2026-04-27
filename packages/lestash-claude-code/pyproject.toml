@@ -1,6 +1,6 @@
 [project]
 name = "lestash-claude-code"
-version = "1.55.0"
+version = "1.55.1"
 description = "Claude Code session source plugin for Le Stash"
 license = {text = "AGPL-3.0-only"}
 requires-python = ">=3.12"
