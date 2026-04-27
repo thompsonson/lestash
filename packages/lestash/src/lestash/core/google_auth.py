@@ -37,6 +37,35 @@ def get_credentials_path() -> Path:
     return get_config_dir() / CREDENTIALS_FILE
 
 
+def get_web_client_config() -> dict:
+    """Read the `web` OAuth client section from google_client_secrets.json.
+
+    Returns the inner client config (not the {"web": ...} wrapper) so it can be
+    passed to google-auth-oauthlib's Flow.from_client_config under the same key.
+
+    Used by the Android auth flow, which obtains a server auth code via
+    Identity Services that must be exchanged with the project's Web OAuth
+    client (Android clients have no client_secret of their own).
+    """
+    path = get_client_secrets_path()
+    if not path.exists():
+        msg = (
+            f"Client secrets file not found at {path}.\n"
+            "Add a `web` section with the Web OAuth 2.0 client id + secret "
+            "from Google Cloud Console."
+        )
+        raise FileNotFoundError(msg)
+    data = json.loads(path.read_text())
+    web = data.get("web")
+    if not web or "client_id" not in web or "client_secret" not in web:
+        raise ValueError(
+            f"{path} is missing a `web` section with client_id/client_secret. "
+            "Create a Web OAuth 2.0 client in Google Cloud Console and merge "
+            "its JSON into this file."
+        )
+    return web
+
+
 def is_headless() -> bool:
     """Detect if running in a headless/SSH environment."""
     return bool(os.environ.get("SSH_TTY") or os.environ.get("SSH_CLIENT"))
