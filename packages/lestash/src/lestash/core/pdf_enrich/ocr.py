@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from lestash.core.config import Config
-from lestash.core.database import get_connection
+from lestash.core.database import get_connection, mark_recent_history, max_history_id
 
 OCR_EXTRACTOR_VERSION: int = 1
 OCR_TARGET_KINDS = ("margin_note", "ink_unclassified")
@@ -98,10 +98,12 @@ def ocr_annotation(child_id: int, *, config: Config | None = None) -> OcrResult:
 
         meta["ocr_text"] = text
         meta["ocr_version"] = OCR_EXTRACTOR_VERSION
+        pre_max = max_history_id(conn)
         conn.execute(
             "UPDATE items SET content = ?, metadata = ? WHERE id = ?",
             (text or row["metadata"], json.dumps(meta), child_id),
         )
+        mark_recent_history(conn, pre_max, "enricher")
         conn.commit()
         return OcrResult(child_id=child_id, status="transcribed", text=text)
 

@@ -8,7 +8,11 @@ from lestash.core.database import (
     get_connection,
     get_db_path,
     get_schema_version,
+    mark_recent_history,
+    max_history_id,
+    upsert_item,
 )
+from lestash.models.item import ItemCreate
 
 
 class TestSchemaMigrations:
@@ -281,6 +285,78 @@ class TestHistoryWithUpsert:
 
             cursor = conn.execute("SELECT COUNT(*) FROM item_history")
             assert cursor.fetchone()[0] == 0
+
+
+class TestChangeReason:
+    """Test that the change_reason taxonomy is wired through the right callers."""
+
+    def test_helper_marks_only_rows_after_snapshot(self, test_db):
+        with get_connection(test_db) as conn:
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
+                ("test", "id1", "v1"),
+            )
+            conn.commit()
+
+            conn.execute("UPDATE items SET content = 'v2' WHERE source_id = 'id1'")
+            conn.commit()
+            pre_max = max_history_id(conn)
+
+            conn.execute("UPDATE items SET content = 'v3' WHERE source_id = 'id1'")
+            conn.commit()
+
+            mark_recent_history(conn, pre_max, "custom-reason")
+            conn.commit()
+
+            rows = conn.execute(
+                "SELECT content_old, change_reason FROM item_history ORDER BY id"
+            ).fetchall()
+            assert rows[0]["content_old"] == "v1"
+            assert rows[0]["change_reason"] == "api-update"
+            assert rows[1]["content_old"] == "v2"
+            assert rows[1]["change_reason"] == "custom-reason"
+
+    def test_upsert_item_marks_history_as_sync(self, test_db):
+        with get_connection(test_db) as conn:
+            upsert_item(
+                conn,
+                ItemCreate(
+                    source_type="linkedin",
+                    source_id="post-1",
+                    content="original",
+                ),
+            )
+            upsert_item(
+                conn,
+                ItemCreate(
+                    source_type="linkedin",
+                    source_id="post-1",
+                    content="updated",
+                ),
+            )
+
+            rows = conn.execute("SELECT change_reason, content_old FROM item_history").fetchall()
+            assert len(rows) == 1
+            assert rows[0]["change_reason"] == "sync"
+            assert rows[0]["content_old"] == "original"
+
+    def test_pdf_enricher_marks_history_as_enricher(self, test_db):
+        from lestash.core.pdf_enrich.persistence import mark_source_unavailable
+
+        with get_connection(test_db) as conn:
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content, metadata) VALUES (?, ?, ?, ?)",
+                ("arxiv", "2401.0001", "abstract", '{"existing": "meta"}'),
+            )
+            conn.commit()
+
+            mark_source_unavailable(conn, 1)
+
+            rows = conn.execute(
+                "SELECT change_reason FROM item_history WHERE item_id = 1"
+            ).fetchall()
+            assert len(rows) == 1
+            assert rows[0]["change_reason"] == "enricher"
 
 
 class TestHistoryDuplicateCleanup:

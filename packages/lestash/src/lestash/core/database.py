@@ -361,6 +361,28 @@ def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     return any(row[1] == column for row in cursor.fetchall())
 
 
+def max_history_id(conn: sqlite3.Connection) -> int:
+    """Snapshot the latest item_history.id for a 'mark recent rows' bookkeeping pattern.
+
+    Pair with mark_recent_history() to tag rows that the capture_item_history
+    trigger writes during a subsequent UPDATE/UPSERT.
+    """
+    return conn.execute("SELECT COALESCE(MAX(id), 0) FROM item_history").fetchone()[0]
+
+
+def mark_recent_history(conn: sqlite3.Connection, since_id: int, change_reason: str) -> None:
+    """Re-tag history rows newer than `since_id` with the given change_reason.
+
+    SQLite triggers cannot receive parameters, so the trigger always writes
+    'api-update'. Callers (sync, enricher, user-edit) capture max_history_id()
+    before their write and call this after to overwrite the default.
+    """
+    conn.execute(
+        "UPDATE item_history SET change_reason = ? WHERE id > ?",
+        (change_reason, since_id),
+    )
+
+
 def apply_migrations(conn: sqlite3.Connection) -> int:
     """Apply any pending migrations.
 
@@ -516,6 +538,7 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
     import json
 
     metadata_json = json.dumps(item.metadata) if item.metadata else None
+    pre_max = max_history_id(conn)
     conn.execute(
         """
         INSERT INTO items (
@@ -547,6 +570,7 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
             item.parent_id,
         ),
     )
+    mark_recent_history(conn, pre_max, "sync")
     conn.commit()
 
     row = conn.execute(

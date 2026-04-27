@@ -15,6 +15,7 @@ from typing import Annotated, Any
 
 import httpx
 import typer
+from lestash.core.database import mark_recent_history, max_history_id
 from lestash.core.logging import get_plugin_logger
 from lestash.models.item import ItemCreate
 from lestash.plugins.base import SourcePlugin
@@ -76,6 +77,7 @@ def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
     Returns the number of items updated.
     """
     total = 0
+    pre_max = max_history_id(conn)
     for field in ("reacted_to", "commented_on"):
         match_sql = _parent_match_sql(field)
         cursor = conn.execute(
@@ -95,6 +97,7 @@ def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
             """,
         )
         total += cursor.rowcount
+    mark_recent_history(conn, pre_max, "sync")
     conn.commit()
     return total
 
@@ -1403,6 +1406,8 @@ class LinkedInSource(SourcePlugin):
                     if deleted:
                         console.print(f"[dim]Removed {deleted} duplicate items[/dim]")
 
+                    backfill_pre_max = max_history_id(conn)
+
                     # Step 2: Backfill snowflake_ts on posts
                     rows = conn.execute("""
                         SELECT id, json_extract(metadata, '$.post_id'), metadata
@@ -1450,6 +1455,7 @@ class LinkedInSource(SourcePlugin):
                                     "UPDATE items SET metadata = ? WHERE id = ?",
                                     (json.dumps(meta), row_id),
                                 )
+                    mark_recent_history(conn, backfill_pre_max, "sync")
                     conn.commit()
 
                     # Step 4: Resolve parents
