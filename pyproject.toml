@@ -1,6 +1,6 @@
 [project]
 name = "le-stash-workspace"
-version = "1.54.0"
+version = "1.55.0"
 description = "Le Stash monorepo workspace - personal knowledge base CLI"
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}
