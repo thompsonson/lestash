@@ -420,10 +420,21 @@ def update_item(item_id: int, body: ItemPatchRequest):
         if not updates:
             raise HTTPException(status_code=400, detail="No fields to update")
 
+        pre_max = conn.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM item_history WHERE item_id = ?",
+            (item_id,),
+        ).fetchone()[0]
+
         params.append(item_id)
         conn.execute(
             f"UPDATE items SET {', '.join(updates)} WHERE id = ?",
             params,
+        )
+
+        # Mark any history row the trigger just captured as a user edit.
+        conn.execute(
+            "UPDATE item_history SET change_reason = 'user-edit' WHERE item_id = ? AND id > ?",
+            (item_id, pre_max),
         )
         conn.commit()
 

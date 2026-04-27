@@ -1522,9 +1522,17 @@
         ? new Date(item.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
         : '';
 
-      let html = `<div class="item-view-title">${emoji}${escHtml(item.title || item.preview || '(untitled)')}</div>`;
+      let html = `<div class="item-view-title" id="item-title-display">${emoji}${escHtml(item.title || item.preview || '(untitled)')}</div>`;
       html += `<div class="item-view-meta">${sourceName(item.subtype)}${dateFmt ? ' &middot; ' + dateFmt : ''}${item.url ? ' &middot; <a href="' + escHtml(item.url) + '" target="_blank" rel="noopener" style="color:var(--accent)">link</a>' : ''}</div>`;
-      html += `<div class="item-view-content">${renderMarkdown(item.content)}</div>`;
+      html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(item.content)}</div>`;
+      html += `<div id="item-edit-form" style="display:none">
+        <input type="text" id="item-edit-title" placeholder="Title" style="width:100%;font-size:1.05rem;font-weight:bold;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
+        <textarea id="item-edit-content" rows="10" style="width:100%;resize:vertical;font-family:inherit;font-size:0.9rem;padding:0.5rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px"></textarea>
+        <div style="display:flex;gap:0.5rem;margin-top:0.4rem">
+          <button class="sync-btn" data-action="save-edit" data-id="${item.id}">Save</button>
+          <button class="sync-btn" data-action="cancel-edit">Cancel</button>
+        </div>
+      </div>`;
 
       // Media gallery
       const visibleMedia = (item.media || []).filter(m => m.available || m.media_type === 'link' || m.media_type === 'pdf');
@@ -1625,7 +1633,8 @@
       </div>`;
 
       // Actions
-      html += `<div class="item-detail-actions">
+      html += `<div class="item-detail-actions" id="item-detail-actions">
+        <button class="sync-btn" data-action="edit-item" data-id="${item.id}">Edit</button>
         <button class="sync-btn" data-action="show-note-form">+ Note</button>
         <button class="sync-btn" data-action="link-item" data-id="${item.id}">+ Link</button>
         <button class="sync-btn" data-action="copy" data-id="${item.id}">Copy</button>
@@ -1673,6 +1682,42 @@
         if (!btn) return;
         if (btn.dataset.action === 'copy') copyToClipboard(item.content, 'Copied to clipboard');
         if (btn.dataset.action === 'copy-link') copyToClipboard(`${getApiBase()}/items/${item.id}`, 'Link copied');
+        if (btn.dataset.action === 'edit-item') {
+          document.getElementById('item-title-display').style.display = 'none';
+          document.getElementById('item-content-display').style.display = 'none';
+          document.getElementById('item-detail-actions').style.display = 'none';
+          document.getElementById('item-edit-title').value = item.title || '';
+          document.getElementById('item-edit-content').value = item.content || '';
+          document.getElementById('item-edit-form').style.display = 'block';
+          document.getElementById('item-edit-title').focus();
+        }
+        if (btn.dataset.action === 'cancel-edit') {
+          document.getElementById('item-edit-form').style.display = 'none';
+          document.getElementById('item-title-display').style.display = '';
+          document.getElementById('item-content-display').style.display = '';
+          document.getElementById('item-detail-actions').style.display = '';
+        }
+        if (btn.dataset.action === 'save-edit') {
+          const newTitle = document.getElementById('item-edit-title').value;
+          const newContent = document.getElementById('item-edit-content').value;
+          btn.disabled = true;
+          btn.textContent = 'Saving...';
+          try {
+            const updated = await api(`/api/items/${btn.dataset.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ title: newTitle, content: newContent }),
+            });
+            Object.assign(item, updated);
+            renderItemView(item);
+            showToast('Saved');
+          } catch (err) {
+            showToast('Failed to save', 'error');
+          } finally {
+            btn.disabled = false;
+            btn.textContent = 'Save';
+          }
+        }
         if (btn.dataset.action === 'remove-tag') {
           await api(`/api/items/${btn.dataset.id}/tags/${encodeURIComponent(btn.dataset.tag)}`, { method: 'DELETE' });
           const updated = await api(`/api/items/${btn.dataset.id}`);

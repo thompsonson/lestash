@@ -127,6 +127,75 @@ class TestItems:
         assert len(data["items"]) == 0
 
 
+class TestItemPatch:
+    """Test PATCH /api/items/{id} — user edits create history rows tagged 'user-edit'."""
+
+    def _item_id(self, client, source: str = "linkedin", own: bool | None = None) -> int:
+        url = f"/api/items?source={source}&limit=1"
+        if own is not None:
+            url += f"&own={'true' if own else 'false'}"
+        items = client.get(url).json()["items"]
+        return items[0]["id"]
+
+    def _history(self, test_config, item_id: int):
+        from lestash.core.database import get_connection
+
+        with get_connection(test_config) as conn:
+            rows = conn.execute(
+                "SELECT change_reason, title_old, content_old, parent_id_old "
+                "FROM item_history WHERE item_id = ? ORDER BY id",
+                (item_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def test_patch_title_creates_user_edit_history(self, client, test_config):
+        item_id = self._item_id(client, own=True)
+        resp = client.patch(f"/api/items/{item_id}", json={"title": "Edited Title"})
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "Edited Title"
+
+        history = self._history(test_config, item_id)
+        assert len(history) == 1
+        assert history[0]["change_reason"] == "user-edit"
+        assert history[0]["title_old"] == "First Post"
+
+    def test_patch_content_creates_user_edit_history(self, client, test_config):
+        item_id = self._item_id(client, own=True)
+        resp = client.patch(f"/api/items/{item_id}", json={"content": "New body"})
+        assert resp.status_code == 200
+
+        history = self._history(test_config, item_id)
+        assert len(history) == 1
+        assert history[0]["change_reason"] == "user-edit"
+        assert history[0]["content_old"] == "My first LinkedIn post about Python"
+
+    def test_patch_parent_id_creates_user_edit_history(self, client, test_config):
+        # Use bluesky item; reparent under linkedin item
+        bluesky_id = self._item_id(client, "bluesky")
+        linkedin_id = self._item_id(client, "linkedin", own=True)
+
+        resp = client.patch(f"/api/items/{bluesky_id}", json={"parent_id": linkedin_id})
+        assert resp.status_code == 200
+
+        history = self._history(test_config, bluesky_id)
+        assert len(history) == 1
+        assert history[0]["change_reason"] == "user-edit"
+        assert history[0]["parent_id_old"] is None
+
+    def test_patch_no_change_creates_no_history(self, client, test_config):
+        item_id = self._item_id(client, own=True)
+        current = client.get(f"/api/items/{item_id}").json()
+
+        resp = client.patch(
+            f"/api/items/{item_id}",
+            json={"title": current["title"], "content": current["content"]},
+        )
+        assert resp.status_code == 200
+
+        history = self._history(test_config, item_id)
+        assert history == []
+
+
 class TestSources:
     """Test /api/sources endpoints."""
 

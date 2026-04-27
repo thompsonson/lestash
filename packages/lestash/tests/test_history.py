@@ -83,6 +83,7 @@ class TestHistoryTableCreation:
                 "url_old",
                 "metadata_old",
                 "is_own_content_old",
+                "parent_id_old",
                 "changed_at",
                 "change_reason",
                 "change_type",
@@ -173,6 +174,51 @@ class TestHistoryTrigger:
             cursor = conn.execute("SELECT COUNT(*) FROM item_history")
             assert cursor.fetchone()[0] == 0
 
+    def test_trigger_captures_title_change(self, test_db):
+        """Updating title should create history record with title_old."""
+        with get_connection(test_db) as conn:
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content, title) VALUES (?, ?, ?, ?)",
+                ("test", "id1", "content", "old title"),
+            )
+            conn.commit()
+
+            conn.execute(
+                "UPDATE items SET title = ? WHERE source_id = ?",
+                ("new title", "id1"),
+            )
+            conn.commit()
+
+            cursor = conn.execute("SELECT title_old FROM item_history WHERE item_id = 1")
+            assert cursor.fetchone()[0] == "old title"
+
+    def test_trigger_captures_parent_id_change(self, test_db):
+        """Updating parent_id should create history record with parent_id_old."""
+        with get_connection(test_db) as conn:
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
+                ("test", "parent-a", "parent A"),
+            )
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
+                ("test", "parent-b", "parent B"),
+            )
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content, parent_id) "
+                "VALUES (?, ?, ?, ?)",
+                ("test", "child", "child", 1),
+            )
+            conn.commit()
+
+            conn.execute(
+                "UPDATE items SET parent_id = ? WHERE source_id = ?",
+                (2, "child"),
+            )
+            conn.commit()
+
+            cursor = conn.execute("SELECT parent_id_old FROM item_history WHERE item_id = 3")
+            assert cursor.fetchone()[0] == 1
+
     def test_trigger_captures_changed_at_timestamp(self, test_db):
         """History record should have timestamp."""
         with get_connection(test_db) as conn:
@@ -235,6 +281,118 @@ class TestHistoryWithUpsert:
 
             cursor = conn.execute("SELECT COUNT(*) FROM item_history")
             assert cursor.fetchone()[0] == 0
+
+
+class TestHistoryDuplicateCleanup:
+    """Test the migration 9 cleanup query that removes duplicate sync history rows."""
+
+    CLEANUP_SQL = """
+        DELETE FROM item_history
+        WHERE id NOT IN (
+            SELECT MIN(ih.id) FROM item_history ih
+            JOIN items i ON i.id = ih.item_id
+            WHERE i.source_type IN ('linkedin', 'youtube', 'audible', 'bluesky')
+            GROUP BY ih.item_id,
+                     COALESCE(ih.content_old, ''),
+                     COALESCE(ih.title_old, ''),
+                     COALESCE(ih.metadata_old, '')
+        )
+        AND item_id IN (
+            SELECT id FROM items
+            WHERE source_type IN ('linkedin', 'youtube', 'audible', 'bluesky')
+        );
+    """
+
+    def test_cleanup_removes_duplicate_sync_rows_keeping_earliest(self, test_db):
+        with get_connection(test_db) as conn:
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
+                ("linkedin", "post-1", "current"),
+            )
+            conn.commit()
+            for _ in range(3):
+                conn.execute(
+                    """INSERT INTO item_history
+                       (item_id, content_old, title_old, metadata_old, change_reason)
+                       VALUES (1, 'same', 'same', '{}', 'api-update')""",
+                )
+            conn.commit()
+
+            conn.execute(self.CLEANUP_SQL)
+            conn.commit()
+
+            cursor = conn.execute("SELECT COUNT(*) FROM item_history WHERE item_id = 1")
+            assert cursor.fetchone()[0] == 1
+
+    def test_cleanup_preserves_distinct_versions(self, test_db):
+        with get_connection(test_db) as conn:
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
+                ("linkedin", "post-1", "current"),
+            )
+            conn.commit()
+            for content in ("v1", "v2", "v3"):
+                conn.execute(
+                    """INSERT INTO item_history
+                       (item_id, content_old, change_reason)
+                       VALUES (1, ?, 'api-update')""",
+                    (content,),
+                )
+            conn.commit()
+
+            conn.execute(self.CLEANUP_SQL)
+            conn.commit()
+
+            cursor = conn.execute("SELECT COUNT(*) FROM item_history WHERE item_id = 1")
+            assert cursor.fetchone()[0] == 3
+
+    def test_cleanup_does_not_touch_non_sync_sources(self, test_db):
+        with get_connection(test_db) as conn:
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
+                ("note", "n1", "current"),
+            )
+            conn.commit()
+            for _ in range(3):
+                conn.execute(
+                    """INSERT INTO item_history
+                       (item_id, content_old, change_reason)
+                       VALUES (1, 'same', 'api-update')""",
+                )
+            conn.commit()
+
+            conn.execute(self.CLEANUP_SQL)
+            conn.commit()
+
+            cursor = conn.execute("SELECT COUNT(*) FROM item_history WHERE item_id = 1")
+            assert cursor.fetchone()[0] == 3
+
+    def test_cleanup_is_idempotent(self, test_db):
+        with get_connection(test_db) as conn:
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
+                ("linkedin", "post-1", "current"),
+            )
+            conn.commit()
+            for _ in range(3):
+                conn.execute(
+                    """INSERT INTO item_history
+                       (item_id, content_old, change_reason)
+                       VALUES (1, 'same', 'api-update')""",
+                )
+            conn.commit()
+
+            conn.execute(self.CLEANUP_SQL)
+            conn.commit()
+            cursor = conn.execute("SELECT COUNT(*) FROM item_history WHERE item_id = 1")
+            first = cursor.fetchone()[0]
+
+            conn.execute(self.CLEANUP_SQL)
+            conn.commit()
+            cursor = conn.execute("SELECT COUNT(*) FROM item_history WHERE item_id = 1")
+            second = cursor.fetchone()[0]
+
+            assert first == second == 1
 
 
 class TestHistoryCascadeDelete:
