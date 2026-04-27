@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Tauri plugin exposing Android Identity Services (Credential Manager / AuthorizationClient) for Google OAuth on mobile."
 publish = false
+links = "tauri-plugin-google-auth"
 
 [dependencies]
 tauri = { version = "2", features = [] }
