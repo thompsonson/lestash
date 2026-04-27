@@ -428,6 +428,44 @@ Complete OAuth flow. **Request:** `{ "code": "...", "state": "..." }`
 
 ---
 
+### `GET /api/google/android-config`
+
+Public OAuth config for the Android app. Used by the Tauri plugin to call
+`AuthorizationClient.requestOfflineAccess()`.
+
+**Response:** `{ "web_client_id": "..." }`
+
+Requires a `web` section in `~/.config/lestash/google_client_secrets.json`.
+Both client types can live side-by-side in one file (the format Google
+Cloud Console emits when a project has both):
+
+```json
+{
+  "installed": { "client_id": "...desktop...", "client_secret": "...", ... },
+  "web":       { "client_id": "...web...",     "client_secret": "...", ... }
+}
+```
+
+The Android app additionally needs an **Android OAuth client** registered
+in Google Cloud Console with package `dev.lestash.app` and the SHA-1
+fingerprint of the signing keystore. That client has no secret and is
+identified implicitly by the package + signature, so it doesn't appear in
+this file.
+
+---
+
+### `POST /api/google/android-auth-complete`
+
+Exchange a server auth code from Android Identity Services for credentials.
+The Android app obtains the code via `AuthorizationClient.authorize()` (with
+the Web client id from `/android-config`) and posts it here. The server
+exchanges it using the Web client secret.
+
+**Request:** `{ "code": "...", "granted_scopes": ["..."] }`
+**Response:** `{ "status": "ok", "scopes": ["..."] }`
+
+---
+
 ## Audible OAuth
 
 ### `GET /api/audible/auth-status`
