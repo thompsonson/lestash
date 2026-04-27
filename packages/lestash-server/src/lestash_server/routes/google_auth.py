@@ -118,3 +118,62 @@ def complete_authentication(body: AuthCompleteRequest):
 
     save_credentials(flow.credentials, pending["scopes"])
     return AuthCompleteResponse(status="ok", scopes=pending["scopes"])
+
+
+class AndroidConfigResponse(BaseModel):
+    """Public OAuth configuration the Android app needs to start auth."""
+
+    web_client_id: str
+
+
+@router.get("/android-config", response_model=AndroidConfigResponse)
+def android_config():
+    """Expose the Web OAuth client id so the Android app can pass it to
+    AuthorizationClient.requestOfflineAccess(). The client id is public; the
+    matching client secret never leaves the server."""
+    from lestash.core.google_auth import get_web_client_config
+
+    try:
+        web = get_web_client_config()
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return AndroidConfigResponse(web_client_id=web["client_id"])
+
+
+class AndroidAuthCompleteRequest(BaseModel):
+    """Server auth code from Android Identity Services + scopes Google granted."""
+
+    code: str
+    granted_scopes: list[str] = []
+
+
+@router.post("/android-auth-complete", response_model=AuthCompleteResponse)
+def complete_android_authentication(body: AndroidAuthCompleteRequest):
+    """Exchange a server auth code from Android Identity Services for tokens.
+
+    The Android app obtains the code via AuthorizationClient.authorize() with
+    requestOfflineAccess(WEB_CLIENT_ID); we exchange it here using the matching
+    Web OAuth client secret. Empty redirect_uri is required for native auth-code
+    exchange.
+    """
+    from google_auth_oauthlib.flow import Flow
+    from lestash.core.google_auth import get_web_client_config, save_credentials
+
+    try:
+        web = get_web_client_config()
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    scopes = body.granted_scopes or None
+    flow = Flow.from_client_config({"web": web}, scopes=scopes, redirect_uri="")
+
+    try:
+        flow.fetch_token(code=body.code)
+    except Exception as e:
+        logger.error(f"Android auth-code exchange failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {e}") from e
+
+    credentials = flow.credentials
+    final_scopes = list(credentials.scopes) if credentials.scopes else (scopes or [])
+    save_credentials(credentials, final_scopes)
+    return AuthCompleteResponse(status="ok", scopes=final_scopes)
