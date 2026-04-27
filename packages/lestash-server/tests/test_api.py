@@ -196,6 +196,102 @@ class TestItemPatch:
         assert history == []
 
 
+class TestItemHistory:
+    """Test the GET/POST /api/items/{id}/history* endpoints."""
+
+    def _seeded_item(self, client) -> dict:
+        items = client.get("/api/items?source=linkedin&own=true&limit=1").json()["items"]
+        return items[0]
+
+    def test_history_list_empty_for_unedited_item(self, client):
+        item = self._seeded_item(client)
+        resp = client.get(f"/api/items/{item['id']}/history")
+        assert resp.status_code == 200
+        assert resp.json() == {"versions": []}
+
+    def test_history_list_returns_versions_newest_first(self, client):
+        item = self._seeded_item(client)
+        client.patch(f"/api/items/{item['id']}", json={"title": "Edit 1"})
+        client.patch(f"/api/items/{item['id']}", json={"title": "Edit 2"})
+
+        resp = client.get(f"/api/items/{item['id']}/history")
+        versions = resp.json()["versions"]
+        assert len(versions) == 2
+        assert versions[0]["title_old"] == "Edit 1"
+        assert versions[1]["title_old"] == item["title"]
+        assert all(v["change_reason"] == "user-edit" for v in versions)
+
+    def test_history_list_404_for_missing_item(self, client):
+        resp = client.get("/api/items/999999/history")
+        assert resp.status_code == 404
+
+    def test_history_detail_returns_full_snapshot(self, client):
+        item = self._seeded_item(client)
+        client.patch(f"/api/items/{item['id']}", json={"content": "Edited content"})
+
+        version_id = client.get(f"/api/items/{item['id']}/history").json()["versions"][0]["id"]
+
+        resp = client.get(f"/api/items/{item['id']}/history/{version_id}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["item_id"] == item["id"]
+        assert body["content_old"] == item["content"]
+        assert body["title_old"] == item["title"]
+        assert body["change_reason"] == "user-edit"
+        assert body["metadata_old"] == item["metadata"]
+
+    def test_history_detail_404_for_missing_version(self, client):
+        item = self._seeded_item(client)
+        resp = client.get(f"/api/items/{item['id']}/history/999999")
+        assert resp.status_code == 404
+
+    def test_history_detail_404_for_mismatched_item(self, client):
+        # Edit item A, then ask for that version under item B's ID.
+        a = self._seeded_item(client)
+        b_items = client.get("/api/items?source=bluesky&limit=1").json()["items"]
+        b_id = b_items[0]["id"]
+        client.patch(f"/api/items/{a['id']}", json={"title": "Edit"})
+        version_id = client.get(f"/api/items/{a['id']}/history").json()["versions"][0]["id"]
+
+        resp = client.get(f"/api/items/{b_id}/history/{version_id}")
+        assert resp.status_code == 404
+
+    def test_restore_reverts_to_snapshot(self, client):
+        item = self._seeded_item(client)
+        original_title = item["title"]
+        original_content = item["content"]
+
+        client.patch(
+            f"/api/items/{item['id']}",
+            json={"title": "Bad rename", "content": "Bad content"},
+        )
+        version_id = client.get(f"/api/items/{item['id']}/history").json()["versions"][0]["id"]
+
+        resp = client.post(f"/api/items/{item['id']}/history/{version_id}/restore")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["title"] == original_title
+        assert body["content"] == original_content
+
+    def test_restore_creates_new_history_row_tagged_restore(self, client):
+        item = self._seeded_item(client)
+        client.patch(f"/api/items/{item['id']}", json={"title": "Bad rename"})
+        version_id = client.get(f"/api/items/{item['id']}/history").json()["versions"][0]["id"]
+
+        client.post(f"/api/items/{item['id']}/history/{version_id}/restore")
+
+        versions = client.get(f"/api/items/{item['id']}/history").json()["versions"]
+        assert len(versions) == 2
+        # The newest version captures the pre-restore state ("Bad rename").
+        assert versions[0]["change_reason"] == "restore"
+        assert versions[0]["title_old"] == "Bad rename"
+
+    def test_restore_404_for_unknown_version(self, client):
+        item = self._seeded_item(client)
+        resp = client.post(f"/api/items/{item['id']}/history/999999/restore")
+        assert resp.status_code == 404
+
+
 class TestSources:
     """Test /api/sources endpoints."""
 

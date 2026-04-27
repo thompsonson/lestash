@@ -110,6 +110,34 @@ def search_similar(
     return [(r[0], r[1]) for r in rows]
 
 
+def re_embed_item(conn: sqlite3.Connection, item_id: int) -> bool:
+    """Re-compute and upsert the embedding for a single item.
+
+    Returns True on success, False if the item has no embeddable text or if
+    the vector backend is unavailable. Errors are logged but never raised so
+    callers (PATCH, restore) can continue without surfacing infra failures.
+    """
+    from lestash.models.item import Item
+
+    row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+    if not row:
+        return False
+    item = Item.from_row(row)
+    text = make_embed_text(item)
+    if not text:
+        return False
+    try:
+        load_vec_extension(conn)
+        ensure_vec_table(conn)
+        embedding = embed_text(text)
+        upsert_embedding(conn, item_id, embedding)
+        conn.commit()
+        return True
+    except Exception:
+        logger.warning("Re-embed failed for item %d", item_id, exc_info=True)
+        return False
+
+
 def get_embedding_stats(conn: sqlite3.Connection) -> dict:
     """Get embedding coverage statistics."""
     total_parents = conn.execute("SELECT COUNT(*) FROM items WHERE parent_id IS NULL").fetchone()[0]

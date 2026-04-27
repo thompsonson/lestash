@@ -4,13 +4,24 @@ import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
-from lestash.core.database import add_tag, get_item_media, get_tags, list_tags, remove_tag
+from lestash.core.database import (
+    add_tag,
+    get_item_media,
+    get_tags,
+    list_tags,
+    mark_recent_history,
+    max_history_id,
+    remove_tag,
+)
 from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
 from lestash.models.item import Item
 
 from lestash_server.deps import get_db
 from lestash_server.models import (
     _UNSET,
+    HistoryListResponse,
+    HistoryVersion,
+    HistoryVersionDetail,
     ItemCreateRequest,
     ItemListResponse,
     ItemPatchRequest,
@@ -420,23 +431,160 @@ def update_item(item_id: int, body: ItemPatchRequest):
         if not updates:
             raise HTTPException(status_code=400, detail="No fields to update")
 
-        pre_max = conn.execute(
-            "SELECT COALESCE(MAX(id), 0) FROM item_history WHERE item_id = ?",
-            (item_id,),
-        ).fetchone()[0]
+        text_changed = body.content is not None or body.title is not _UNSET
+        pre_max = max_history_id(conn)
 
         params.append(item_id)
         conn.execute(
             f"UPDATE items SET {', '.join(updates)} WHERE id = ?",
             params,
         )
-
-        # Mark any history row the trigger just captured as a user edit.
-        conn.execute(
-            "UPDATE item_history SET change_reason = 'user-edit' WHERE item_id = ? AND id > ?",
-            (item_id, pre_max),
-        )
+        mark_recent_history(conn, pre_max, "user-edit")
         conn.commit()
+
+        if text_changed:
+            from lestash.core.embeddings import re_embed_item
+
+            re_embed_item(conn, item_id)
+
+        row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        return _enrich_item(conn, Item.from_row(row))
+
+
+def _content_preview(content: str | None, max_length: int = 200) -> str | None:
+    if content is None:
+        return None
+    text = content.strip().replace("\n", " ")
+    return text[:max_length] + ("…" if len(text) > max_length else "")
+
+
+def _parse_metadata_old(metadata_old: str | None) -> dict | None:
+    if not metadata_old:
+        return None
+    try:
+        parsed = json.loads(metadata_old)
+        return parsed if isinstance(parsed, dict) else None
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+@router.get("/{item_id}/history", response_model=HistoryListResponse)
+def list_item_history(item_id: int):
+    """List all history versions for an item, newest first."""
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+
+        rows = conn.execute(
+            """SELECT id, changed_at, change_reason, change_type,
+                      title_old, content_old, parent_id_old
+               FROM item_history WHERE item_id = ? ORDER BY id DESC""",
+            (item_id,),
+        ).fetchall()
+
+        versions = [
+            HistoryVersion(
+                id=r["id"],
+                changed_at=r["changed_at"],
+                change_reason=r["change_reason"],
+                change_type=r["change_type"],
+                title_old=r["title_old"],
+                content_preview=_content_preview(r["content_old"]),
+                parent_id_old=r["parent_id_old"],
+            )
+            for r in rows
+        ]
+        return HistoryListResponse(versions=versions)
+
+
+@router.get("/{item_id}/history/{version_id}", response_model=HistoryVersionDetail)
+def get_item_history_version(item_id: int, version_id: int):
+    """Get the full snapshot for one history version."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM item_history WHERE id = ? AND item_id = ?",
+            (version_id, item_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Version {version_id} not found for item {item_id}",
+            )
+        return HistoryVersionDetail(
+            id=row["id"],
+            item_id=row["item_id"],
+            changed_at=row["changed_at"],
+            change_reason=row["change_reason"],
+            change_type=row["change_type"],
+            title_old=row["title_old"],
+            content_old=row["content_old"],
+            author_old=row["author_old"],
+            url_old=row["url_old"],
+            metadata_old=_parse_metadata_old(row["metadata_old"]),
+            is_own_content_old=bool(row["is_own_content_old"])
+            if row["is_own_content_old"] is not None
+            else None,
+            parent_id_old=row["parent_id_old"],
+        )
+
+
+@router.post("/{item_id}/history/{version_id}/restore", response_model=ItemResponse)
+def restore_item_history_version(item_id: int, version_id: int):
+    """Restore an item to a previous version.
+
+    Writes the snapshot fields back to items; the resulting UPDATE captures
+    the pre-restore state as a new history row tagged 'restore'. NULL values
+    in the snapshot are written through verbatim — note that history rows
+    captured before Migration 9 always have parent_id_old=NULL, so restoring
+    those will clear the current parent_id.
+    """
+    with get_db() as conn:
+        snapshot = conn.execute(
+            "SELECT * FROM item_history WHERE id = ? AND item_id = ?",
+            (version_id, item_id),
+        ).fetchone()
+        if not snapshot:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Version {version_id} not found for item {item_id}",
+            )
+
+        # content has NOT NULL on items, so refuse if snapshot's content_old is NULL
+        # (would be a pathological pre-trigger row).
+        if snapshot["content_old"] is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Snapshot is missing content; cannot restore",
+            )
+
+        pre_max = max_history_id(conn)
+        conn.execute(
+            """UPDATE items SET
+                   title = ?,
+                   content = ?,
+                   author = ?,
+                   url = ?,
+                   metadata = ?,
+                   is_own_content = ?,
+                   parent_id = ?
+               WHERE id = ?""",
+            (
+                snapshot["title_old"],
+                snapshot["content_old"],
+                snapshot["author_old"],
+                snapshot["url_old"],
+                snapshot["metadata_old"],
+                snapshot["is_own_content_old"],
+                snapshot["parent_id_old"],
+                item_id,
+            ),
+        )
+        mark_recent_history(conn, pre_max, "restore")
+        conn.commit()
+
+        from lestash.core.embeddings import re_embed_item
+
+        re_embed_item(conn, item_id)
 
         row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         return _enrich_item(conn, Item.from_row(row))

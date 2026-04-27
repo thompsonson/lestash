@@ -1515,6 +1515,51 @@
       }
     }
 
+    async function loadItemHistory(itemId) {
+      const list = document.getElementById('item-history-list');
+      list.textContent = 'Loading...';
+      try {
+        const data = await api(`/api/items/${itemId}/history`);
+        if (!data.versions.length) {
+          list.innerHTML = '<span style="color:var(--muted)">No versions yet — edits create history rows.</span>';
+          return;
+        }
+        const reasonColor = {
+          'user-edit': '#3b82f6',
+          'sync': '#6b7280',
+          'enricher': '#10b981',
+          'restore': '#f59e0b',
+          'api-update': '#9ca3af',
+        };
+        list.innerHTML = data.versions.map(v => {
+          const reason = v.change_reason || 'unknown';
+          const color = reasonColor[reason] || '#9ca3af';
+          const dateFmt = new Date(v.changed_at + 'Z').toLocaleString();
+          const titlePart = v.title_old !== null && v.title_old !== undefined
+            ? `<span style="margin-left:0.5rem">${escHtml(v.title_old)}</span>`
+            : '';
+          const previewPart = v.content_preview
+            ? `<div style="color:var(--muted);margin-top:0.15rem">${escHtml(v.content_preview)}</div>`
+            : '';
+          return `<div style="padding:0.4rem 0;border-top:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+              <span style="font-size:0.7rem;padding:0.1rem 0.35rem;border-radius:3px;background:${color};color:white">${escHtml(reason)}</span>
+              <span style="color:var(--muted);font-size:0.75rem">${dateFmt}</span>
+              ${titlePart}
+              <span style="margin-left:auto;display:flex;gap:0.3rem">
+                <button class="sync-btn" data-action="expand-version" data-id="${itemId}" data-version-id="${v.id}" style="font-size:0.7rem;padding:0.1rem 0.4rem">View</button>
+                <button class="sync-btn" data-action="restore-version" data-id="${itemId}" data-version-id="${v.id}" style="font-size:0.7rem;padding:0.1rem 0.4rem">Restore</button>
+              </span>
+            </div>
+            ${previewPart}
+            <div id="version-detail-${v.id}" style="display:none;margin-top:0.35rem;padding:0.35rem;background:var(--bg);border:1px solid var(--border);border-radius:3px"></div>
+          </div>`;
+        }).join('');
+      } catch (err) {
+        list.innerHTML = '<span style="color:var(--muted)">Failed to load history</span>';
+      }
+    }
+
     function renderItemView(item) {
       const container = document.getElementById('item-view-content');
       const emoji = item.metadata && item.metadata.emoji ? item.metadata.emoji + ' ' : '';
@@ -1635,12 +1680,17 @@
       // Actions
       html += `<div class="item-detail-actions" id="item-detail-actions">
         <button class="sync-btn" data-action="edit-item" data-id="${item.id}">Edit</button>
+        <button class="sync-btn" data-action="toggle-history" data-id="${item.id}">History</button>
         <button class="sync-btn" data-action="show-note-form">+ Note</button>
         <button class="sync-btn" data-action="link-item" data-id="${item.id}">+ Link</button>
         <button class="sync-btn" data-action="copy" data-id="${item.id}">Copy</button>
         <button class="sync-btn" data-action="copy-link" data-id="${item.id}">Copy Link</button>
         <button class="sync-btn" onclick="addToCollection(${item.id})">+ Collection</button>
         <select id="add-to-coll-select" style="display:none;font-size:0.75rem;padding:0.25rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px" onchange="confirmAddToCollection(this)"></select>
+      </div>`;
+      html += `<div id="item-history-panel" style="display:none;margin-top:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:4px">
+        <div style="font-size:0.85rem;font-weight:bold;margin-bottom:0.4rem">Version history</div>
+        <div id="item-history-list" style="font-size:0.8rem"></div>
       </div>`;
 
       // Children section (always shown so new notes appear immediately)
@@ -1716,6 +1766,64 @@
           } finally {
             btn.disabled = false;
             btn.textContent = 'Save';
+          }
+        }
+        if (btn.dataset.action === 'toggle-history') {
+          const panel = document.getElementById('item-history-panel');
+          if (panel.style.display === 'none') {
+            panel.style.display = 'block';
+            await loadItemHistory(btn.dataset.id);
+          } else {
+            panel.style.display = 'none';
+          }
+        }
+        if (btn.dataset.action === 'expand-version') {
+          const detailDiv = container.querySelector(`#version-detail-${btn.dataset.versionId}`);
+          if (detailDiv.style.display === 'none') {
+            if (!detailDiv.dataset.loaded) {
+              detailDiv.textContent = 'Loading...';
+              try {
+                const detail = await api(`/api/items/${btn.dataset.id}/history/${btn.dataset.versionId}`);
+                detailDiv.textContent = '';
+                const titleLine = document.createElement('div');
+                titleLine.style.fontWeight = 'bold';
+                titleLine.style.marginBottom = '0.25rem';
+                titleLine.textContent = detail.title_old || '(no title)';
+                const contentBlock = document.createElement('pre');
+                contentBlock.style.whiteSpace = 'pre-wrap';
+                contentBlock.style.wordBreak = 'break-word';
+                contentBlock.style.margin = '0';
+                contentBlock.style.fontSize = '0.75rem';
+                contentBlock.textContent = detail.content_old || '(no content)';
+                detailDiv.appendChild(titleLine);
+                detailDiv.appendChild(contentBlock);
+                detailDiv.dataset.loaded = '1';
+              } catch (err) {
+                detailDiv.textContent = 'Failed to load version';
+              }
+            }
+            detailDiv.style.display = 'block';
+            btn.textContent = 'Hide';
+          } else {
+            detailDiv.style.display = 'none';
+            btn.textContent = 'View';
+          }
+        }
+        if (btn.dataset.action === 'restore-version') {
+          if (!confirm('Restore this version? The current state will be saved as a new version.')) return;
+          btn.disabled = true;
+          btn.textContent = 'Restoring...';
+          try {
+            const updated = await api(`/api/items/${btn.dataset.id}/history/${btn.dataset.versionId}/restore`, {
+              method: 'POST',
+            });
+            Object.assign(item, updated);
+            renderItemView(item);
+            showToast('Restored');
+          } catch (err) {
+            showToast('Failed to restore', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Restore';
           }
         }
         if (btn.dataset.action === 'remove-tag') {
