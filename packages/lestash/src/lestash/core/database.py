@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -264,6 +264,32 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_item_media_item ON item_media(item_id);
         """,
     ),
+    (
+        8,
+        "Fix history trigger: add title check and use IS NOT for NULL safety",
+        """
+        DROP TRIGGER IF EXISTS capture_item_history;
+
+        CREATE TRIGGER capture_item_history
+        BEFORE UPDATE ON items
+        FOR EACH ROW
+        WHEN OLD.content IS NOT NEW.content
+          OR OLD.title IS NOT NEW.title
+          OR OLD.author IS NOT NEW.author
+          OR OLD.metadata IS NOT NEW.metadata
+        BEGIN
+            INSERT INTO item_history (
+                item_id, content_old, title_old, author_old,
+                url_old, metadata_old, is_own_content_old,
+                change_reason, change_type
+            ) VALUES (
+                OLD.id, OLD.content, OLD.title, OLD.author,
+                OLD.url, OLD.metadata, OLD.is_own_content,
+                'api-update', 'update'
+            );
+        END;
+        """,
+    ),
 ]
 
 
@@ -456,6 +482,11 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
             author = excluded.author,
             metadata = excluded.metadata,
             parent_id = excluded.parent_id
+        WHERE excluded.title IS NOT items.title
+           OR excluded.content IS NOT items.content
+           OR excluded.author IS NOT items.author
+           OR excluded.metadata IS NOT items.metadata
+           OR excluded.parent_id IS NOT items.parent_id
         """,
         (
             item.source_type,
