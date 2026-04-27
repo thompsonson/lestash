@@ -1,6 +1,6 @@
 [project]
 name = "lestash"
-version = "1.56.0"
+version = "1.56.1"
 description = "Personal knowledge base CLI - aggregate content from multiple sources"
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}
