@@ -121,24 +121,35 @@ def _store_images(
 ) -> dict[int, str]:
     """Save image bytes to media storage and create item_media rows.
 
+    Dedups by `xref_hash`: a header image appearing on N pages becomes one
+    media row whose media_id is reused for all N placeholder replacements.
+    Without this, only the first placeholder would be replaced — see #143.
+
     Returns a map {placeholder_index: markdown-link} for `apply_images`.
     """
     replacements: dict[int, str] = {}
+    hash_to_media_id: dict[str, int] = {}
+
     for image in images:
-        ext = _ext_for_mime(image.mime_type)
-        filename = f"{image.xref_hash[:12]}{ext}"
-        rel_path = save_media_file(item_id, image.bytes_, filename, config=config)
-        media_id = add_item_media(
-            conn,
-            item_id,
-            media_type="image",
-            local_path=rel_path,
-            mime_type=image.mime_type,
-            alt_text=f"PDF image (page {image.page + 1})",
-            position=image.placeholder_index,
-            source_origin=ENRICHER_ORIGIN,
-            _commit=False,
-        )
+        if image.xref_hash in hash_to_media_id:
+            media_id = hash_to_media_id[image.xref_hash]
+        else:
+            ext = _ext_for_mime(image.mime_type)
+            filename = f"{image.xref_hash[:12]}{ext}"
+            rel_path = save_media_file(item_id, image.bytes_, filename, config=config)
+            media_id = add_item_media(
+                conn,
+                item_id,
+                media_type="image",
+                local_path=rel_path,
+                mime_type=image.mime_type,
+                alt_text=f"PDF image (page {image.page + 1})",
+                position=image.placeholder_index,
+                source_origin=ENRICHER_ORIGIN,
+                _commit=False,
+            )
+            hash_to_media_id[image.xref_hash] = media_id
+
         replacements[image.placeholder_index] = (
             f"![PDF image (page {image.page + 1})](/api/media/{media_id})"
         )

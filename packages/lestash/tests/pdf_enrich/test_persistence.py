@@ -160,6 +160,46 @@ def test_idempotent_rerun_replaces_prior_artifacts(config, parent_pdf_item):
     assert json.loads(children[0]["metadata"])["annotation_kind"] == "circle"
 
 
+def test_repeated_image_dedups_to_one_media_row_but_replaces_all_placeholders(
+    config, parent_pdf_item
+):
+    """Regression for #143: the same image (same xref_hash) appearing on
+    multiple pages must produce one media row whose ID is reused for every
+    placeholder, not just the first.
+    """
+    shared_hash = "share" * 12 + "share1234"  # 64 chars
+    images = [
+        ExtractedImage(
+            placeholder_index=i,
+            page=i,
+            bbox=(0, 0, 10, 10),
+            bytes_=b"identical-png-bytes",
+            mime_type="image/png",
+            xref_hash=shared_hash,
+        )
+        for i in range(3)
+    ]
+    enriched = _enriched(
+        content="<!-- image -->\nA\n<!-- image -->\nB\n<!-- image -->\n",
+        images=images,
+    )
+
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, enriched)
+        media_rows = conn.execute(
+            "SELECT id FROM item_media WHERE item_id = ? AND source_origin = 'enricher'",
+            (parent_pdf_item,),
+        ).fetchall()
+        item = conn.execute("SELECT content FROM items WHERE id = ?", (parent_pdf_item,)).fetchone()
+
+    assert len(media_rows) == 1
+    media_id = media_rows[0]["id"]
+    # All three placeholders should have been substituted with the same
+    # media_id link, leaving zero `<!-- image -->` markers behind.
+    assert "<!-- image -->" not in item["content"]
+    assert item["content"].count(f"/api/media/{media_id}") == 3
+
+
 def test_persist_does_not_delete_source_pdf_media_row(config, parent_pdf_item):
     with get_connection(config) as conn:
         add_item_media(

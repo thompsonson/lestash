@@ -60,3 +60,41 @@ def test_soft_hyphen_is_ignored_in_match():
     links = [_link("https://x", "Dijkstra Archive")]
     out = apply_links(md, links)
     assert "(https://x)" in out
+
+
+# --- Aggressive fallback (regression for #143) -------------------------------
+
+
+def test_aggressive_match_recovers_ampersand_anchor():
+    """Anchor 'Barnes & Noble' should match Docling's reformatted output
+    where the ampersand was rendered or escaped differently."""
+    md = "available at Barnes  Noble (online)"
+    links = [_link("https://barnes-noble.example", "Barnes & Noble")]
+    out = apply_links(md, links)
+    assert "(https://barnes-noble.example)" in out
+    assert "<!-- unmatched-links -->" not in out
+
+
+def test_aggressive_match_recovers_doi_with_punctuation():
+    """A DOI anchor 'DOI: 10.1007/11568285_9' should match a stripped form."""
+    md = "see DOI 10 1007 11568285 9 in the references"
+    links = [_link("https://doi.example/x", "DOI: 10.1007/11568285_9")]
+    out = apply_links(md, links)
+    assert "(https://doi.example/x)" in out
+
+
+def test_aggressive_match_handles_smart_quotes():
+    """O’Reilly (curly apostrophe) → O'Reilly via NFKC."""
+    md = "the O’Reilly handbook"
+    links = [_link("https://oreilly.example", "O'Reilly")]
+    out = apply_links(md, links)
+    assert "(https://oreilly.example)" in out
+
+
+def test_strict_match_still_wins_when_both_pass():
+    """If a strict match exists, the strict span (not the aggressive one) is
+    used so we don't accidentally widen the rewritten anchor."""
+    md = "click here for docs"
+    links = [_link("https://x", "click here")]
+    out = apply_links(md, links)
+    assert out == "[click here](https://x) for docs"

@@ -66,8 +66,11 @@ def test_enrich_pdf_extracts_image_bytes(make_pdf, red_dot_png):
     assert len(img.xref_hash) == 64
 
 
-def test_enrich_pdf_dedups_repeated_image_xref(make_pdf, red_dot_png):
-    # Same PNG inserted twice — should appear once in the output
+def test_enrich_pdf_emits_one_entry_per_image_occurrence(make_pdf, red_dot_png):
+    """Same PNG used twice should produce two ExtractedImage entries (so each
+    Docling placeholder gets a replacement) but they share an xref_hash —
+    persistence dedups by hash to a single media row. See #143.
+    """
     pdf = make_pdf(
         [
             {
@@ -82,7 +85,8 @@ def test_enrich_pdf_dedups_repeated_image_xref(make_pdf, red_dot_png):
 
     with _stub_docling("<!-- image -->\n<!-- image -->\n"):
         result = enrich_pdf(pdf)
-    assert len(result.images) == 1
+    assert len(result.images) == 2
+    assert result.images[0].xref_hash == result.images[1].xref_hash
 
 
 def test_enrich_pdf_extracts_ink_annotation(make_pdf):

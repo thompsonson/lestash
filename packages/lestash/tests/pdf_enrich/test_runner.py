@@ -23,6 +23,7 @@ from lestash.core.pdf_enrich.types import (
     ExtractedAnnotation,
     ExtractedImage,
 )
+from lestash.core.pdf_enrich.version import EXTRACTOR_VERSION
 from lestash.models.item import ItemCreate
 
 
@@ -71,7 +72,7 @@ def test_enrich_item_happy_path(config, item_with_local_source_pdf):
     enriched = EnrichedPdf(
         content="enriched content with [link](http://x)",
         pdf_sha256="a" * 64,
-        extractor_version=1,
+        extractor_version=EXTRACTOR_VERSION,
         images=[],
         annotations=[
             ExtractedAnnotation(
@@ -106,7 +107,7 @@ def test_enrich_item_skips_when_already_enriched(config, item_with_local_source_
     enriched = EnrichedPdf(
         content="run-1",
         pdf_sha256="b" * 64,
-        extractor_version=1,
+        extractor_version=EXTRACTOR_VERSION,
     )
     with _stub_extractor(enriched):
         first = enrich_item(item_with_local_source_pdf, config=config)
@@ -119,7 +120,7 @@ def test_enrich_item_force_reruns_even_when_match(config, item_with_local_source
     enriched = EnrichedPdf(
         content="run-1",
         pdf_sha256="b" * 64,
-        extractor_version=1,
+        extractor_version=EXTRACTOR_VERSION,
     )
     with _stub_extractor(enriched):
         enrich_item(item_with_local_source_pdf, config=config)
@@ -167,7 +168,7 @@ def test_extracted_image_count_propagates(config, item_with_local_source_pdf):
     enriched = EnrichedPdf(
         content="<!-- image -->",
         pdf_sha256="c" * 64,
-        extractor_version=1,
+        extractor_version=EXTRACTOR_VERSION,
         images=[
             ExtractedImage(
                 placeholder_index=0,

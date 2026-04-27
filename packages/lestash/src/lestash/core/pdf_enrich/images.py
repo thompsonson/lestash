@@ -1,8 +1,10 @@
 """Extract embedded images from a PDF.
 
 PyMuPDF returns image refs per page; the same xref may be referenced multiple
-times in a doc. We dedup by xref and by content hash (sha256 of bytes) so an
-image used as a header on every page becomes one stored asset.
+times in a doc. We emit **one ExtractedImage per page-occurrence** so each
+Docling `<!-- image -->` placeholder gets replaced — but the bytes are the
+same across occurrences (carry the same `xref_hash`) so the persistence layer
+can dedup the on-disk media row and reuse a single media_id for all copies.
 
 Images are matched to Docling's `<!-- image -->` placeholders later in
 `apply_images`. The matching is by reading order — Docling emits placeholders
@@ -28,9 +30,12 @@ _IMAGE_PLACEHOLDER = re.compile(r"<!-- image -->", re.IGNORECASE)
 
 
 def extract_images(doc: pymupdf.Document) -> list[ExtractedImage]:
-    """Return one ExtractedImage per (page, xref) tuple, deduped by content
-    hash within a document."""
-    seen_hashes: set[str] = set()
+    """Return one ExtractedImage per page-occurrence.
+
+    Repeated xrefs (e.g. a header image on every page) appear once per page
+    and carry the same `xref_hash`. Persistence dedups by hash and shares
+    the resulting media row across placeholder substitutions.
+    """
     placeholder_idx = 0
     images: list[ExtractedImage] = []
 
@@ -48,10 +53,6 @@ def extract_images(doc: pymupdf.Document) -> list[ExtractedImage]:
             data: bytes = extracted["image"]
             ext: str = extracted.get("ext", "png")
             xref_hash = hashlib.sha256(data).hexdigest()
-
-            if xref_hash in seen_hashes:
-                continue
-            seen_hashes.add(xref_hash)
 
             try:
                 rects = page.get_image_rects(xref)
