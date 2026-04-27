@@ -2309,7 +2309,14 @@
       }
     }
 
+    function _isAndroid() {
+      return IS_TAURI && /Android/i.test(navigator.userAgent);
+    }
+
     async function startGoogleAuth() {
+      if (_isAndroid() && tauriInvoke) {
+        return startGoogleAuthAndroid();
+      }
       const statusEl = document.getElementById('google-auth-status');
       const flowEl = document.getElementById('google-auth-flow');
       try {
@@ -2321,6 +2328,36 @@
         document.getElementById('google-auth-code').focus();
       } catch (e) {
         showToast(`Failed to start auth: ${e.message}`, 'error');
+      }
+    }
+
+    async function startGoogleAuthAndroid() {
+      const statusEl = document.getElementById('google-auth-status');
+      const scopes = [
+        'https://www.googleapis.com/auth/youtube.readonly',
+        'https://www.googleapis.com/auth/drive.readonly',
+      ];
+      try {
+        statusEl.innerHTML = '<span style="color:var(--muted)">Opening Google sign-in...</span>';
+        const cfg = await api('/api/google/android-config');
+        const result = await tauriInvoke('plugin:google-auth|start_google_auth', {
+          payload: { scopes, webClientId: cfg.web_client_id },
+        });
+        statusEl.innerHTML = '<span style="color:var(--muted)">Exchanging credentials...</span>';
+        await api('/api/google/android-auth-complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: result.serverAuthCode,
+            granted_scopes: result.grantedScopes || scopes,
+          }),
+        });
+        showToast('Google connected!', 'ok');
+        loadGoogleAuth();
+      } catch (e) {
+        const msg = typeof e === 'string' ? e : (e && e.message) || String(e);
+        showToast(`Auth failed: ${msg}`, 'error');
+        loadGoogleAuth();
       }
     }
 

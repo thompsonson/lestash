@@ -120,6 +120,26 @@ def complete_authentication(body: AuthCompleteRequest):
     return AuthCompleteResponse(status="ok", scopes=pending["scopes"])
 
 
+class AndroidConfigResponse(BaseModel):
+    """Public OAuth configuration the Android app needs to start auth."""
+
+    web_client_id: str
+
+
+@router.get("/android-config", response_model=AndroidConfigResponse)
+def android_config():
+    """Expose the Web OAuth client id so the Android app can pass it to
+    AuthorizationClient.requestOfflineAccess(). The client id is public; the
+    matching client secret never leaves the server."""
+    from lestash.core.google_auth import get_web_client_config
+
+    try:
+        web = get_web_client_config()
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return AndroidConfigResponse(web_client_id=web["client_id"])
+
+
 class AndroidAuthCompleteRequest(BaseModel):
     """Server auth code from Android Identity Services + scopes Google granted."""
 
