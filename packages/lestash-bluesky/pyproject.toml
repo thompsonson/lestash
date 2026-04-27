@@ -1,6 +1,6 @@
 [project]
 name = "lestash-bluesky"
-version = "1.55.1"
+version = "1.56.0"
 description = "Bluesky source plugin for Le Stash"
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}
