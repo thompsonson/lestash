@@ -98,3 +98,33 @@ def test_strict_match_still_wins_when_both_pass():
     links = [_link("https://x", "click here")]
     out = apply_links(md, links)
     assert out == "[click here](https://x) for docs"
+
+
+def test_aggressive_match_decodes_html_entities_in_haystack():
+    """Docling sometimes encodes ampersands as &amp; in its markdown output.
+    The aggressive pass must decode entities so the anchor 'Barnes & Noble'
+    matches a 'Barnes &amp; Noble' span. Regression for #143."""
+    md = "available at Barnes &amp; Noble (online)"
+    links = [_link("https://barnes-noble.example", "Barnes & Noble")]
+    out = apply_links(md, links)
+    assert "[Barnes &amp; Noble](https://barnes-noble.example)" in out
+    assert "<!-- unmatched-links -->" not in out
+
+
+def test_aggressive_match_decodes_numeric_entity():
+    """`&#39;` (numeric entity for `'`) should also decode and match."""
+    md = "the O&#39;Reilly handbook"
+    links = [_link("https://oreilly.example", "O'Reilly")]
+    out = apply_links(md, links)
+    assert "(https://oreilly.example)" in out
+    # Span must wrap the original entity-encoded source, not just the apostrophe
+    assert "[O&#39;Reilly]" in out
+
+
+def test_aggressive_span_covers_full_entity_run():
+    """When the matched span starts inside a multi-char entity, the rewrite
+    must wrap the whole entity (so we never split `&amp;` mid-token)."""
+    md = "AT&amp;T inside"
+    links = [_link("https://att.example", "AT&T")]
+    out = apply_links(md, links)
+    assert out == "[AT&amp;T](https://att.example) inside"

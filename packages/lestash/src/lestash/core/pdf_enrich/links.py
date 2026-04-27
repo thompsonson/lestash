@@ -10,14 +10,21 @@ link in document order. Comparison is two-pass:
 
 1. **Strict normalisation** — collapse whitespace, drop soft hyphens, casefold.
    Catches the common case where Docling reflowed the anchor across newlines.
-2. **Aggressive fallback** (only if strict misses) — NFKC unicode normalise
-   then treat any non-alphanumeric character as whitespace. Catches Barnes &
-   Noble, DOIs with internal punctuation, smart-quoted apostrophes, and other
-   reformatting Docling does to surrounding markup. See #143.
+2. **Aggressive fallback** (only if strict misses) — HTML entity decode (so
+   `&amp;` matches `&`), NFKC unicode normalise (so smart-quoted `O’Reilly`
+   matches `O'Reilly`), then treat all non-alphanumeric chars as whitespace.
+   See #143.
+
+The matcher uses a span-aware stream — every normalised char carries the
+original `(orig_start, orig_end)` half-open span in the markdown that
+produced it, so the rewrite always wraps the correct source text even when
+the normalisation step expanded or collapsed character counts (e.g. `&amp;`
+collapsing 5 chars to 1, or NFKC expanding `ﬁ` to two).
 """
 
 from __future__ import annotations
 
+import html
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -36,29 +43,16 @@ class Link:
 
 
 _WS = re.compile(r"\s+")
+_ENTITY_RE = re.compile(r"&(?:#x?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);")
 
 
-def _normalise(text: str, *, aggressive: bool = False) -> str:
-    """Canonicalise text for fuzzy comparison.
+@dataclass
+class _StreamChar:
+    """A single normalised character carrying back its source span."""
 
-    Strict mode: collapse whitespace, drop soft hyphens, casefold.
-    Aggressive mode: NFKC normalise (smart quotes/ligatures/&amp;), then
-    treat all non-alphanumeric chars as whitespace before collapsing.
-    """
-    if aggressive:
-        text = unicodedata.normalize("NFKC", text)
-        text = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in text)
-    text = text.replace("­", "")  # soft hyphen
-    text = _WS.sub(" ", text).strip()
-    return text.casefold()
-
-
-def _is_kept(ch: str, *, aggressive: bool) -> bool:
-    """True if `ch` should appear in the normalised stream as itself (vs being
-    treated as whitespace or dropped)."""
-    if ch == "­" or ch.isspace():
-        return False
-    return not (aggressive and not ch.isalnum())
+    orig_start: int
+    orig_end: int
+    char: str
 
 
 def extract_links(doc: pymupdf.Document) -> list[Link]:
@@ -97,18 +91,14 @@ def apply_links(markdown: str, links: list[Link]) -> str:
             unmatched.append(link)
             continue
 
-        match_start = _find_normalised(markdown, anchor, cursor, aggressive=False)
-        if match_start is None:
-            match_start = _find_normalised(markdown, anchor, cursor, aggressive=True)
-        if match_start is None:
+        span = _locate(markdown, anchor, cursor, aggressive=False)
+        if span is None:
+            span = _locate(markdown, anchor, cursor, aggressive=True)
+        if span is None:
             unmatched.append(link)
             continue
 
-        # Use aggressive end-finder iff strict didn't find a start. This keeps
-        # the fast/precise path on the strict-match cases and only relaxes for
-        # the awkward ones.
-        used_aggressive = _find_normalised(markdown, anchor, cursor, aggressive=False) is None
-        match_end = _find_normalised_end(markdown, anchor, match_start, aggressive=used_aggressive)
+        match_start, match_end = span
         out.append(markdown[cursor:match_start])
         out.append(f"[{markdown[match_start:match_end]}]({link.uri})")
         cursor = match_end
@@ -127,75 +117,99 @@ def apply_links(markdown: str, links: list[Link]) -> str:
     return rewritten
 
 
-def _find_normalised(haystack: str, needle: str, start: int, *, aggressive: bool) -> int | None:
-    """Locate `needle` in `haystack[start:]` using normalised comparison.
+# --- Internal: matching --------------------------------------------------
 
-    Returns the byte offset in `haystack` where the match begins, or None.
+
+def _normalise(text: str, *, aggressive: bool) -> str:
+    """Canonicalise text for comparison.
+
+    Strict: collapse whitespace, drop soft hyphens, casefold.
+    Aggressive: also HTML-entity-decode + NFKC normalise + treat all
+    non-alphanumeric chars as whitespace.
     """
+    if aggressive:
+        text = html.unescape(text)
+        text = unicodedata.normalize("NFKC", text)
+        text = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in text)
+    text = text.replace("­", "")  # soft hyphen
+    text = _WS.sub(" ", text).strip()
+    return text.casefold()
+
+
+def _is_kept(ch: str, *, aggressive: bool) -> bool:
+    """True if `ch` should appear in the normalised stream as itself."""
+    if ch == "­" or ch.isspace():
+        return False
+    return not (aggressive and not ch.isalnum())
+
+
+def _locate(haystack: str, needle: str, cursor: int, *, aggressive: bool) -> tuple[int, int] | None:
+    """Find the first occurrence of `needle` in `haystack[cursor:]` under the
+    chosen normalisation. Returns the (start, end) half-open span in the
+    *original* haystack covering the matched source text, or None."""
     norm_needle = _normalise(needle, aggressive=aggressive)
     if not norm_needle:
         return None
-
-    if aggressive:
-        haystack_for_chars = unicodedata.normalize("NFKC", haystack[start:])
-        offset_to_orig = _build_nfkc_offset_map(haystack, start)
-    else:
-        haystack_for_chars = haystack[start:]
-        offset_to_orig = list(range(start, len(haystack)))
-
-    norm_chars: list[tuple[int, str]] = []
-    prev_was_space = True
-    for local_idx, ch in enumerate(haystack_for_chars):
-        orig_idx = offset_to_orig[local_idx] if local_idx < len(offset_to_orig) else len(haystack)
-        if not _is_kept(ch, aggressive=aggressive):
-            if not prev_was_space:
-                norm_chars.append((orig_idx, " "))
-            prev_was_space = True
-        else:
-            norm_chars.append((orig_idx, ch.casefold()))
-            prev_was_space = False
-
-    while norm_chars and norm_chars[0][1] == " ":
-        norm_chars.pop(0)
-    while norm_chars and norm_chars[-1][1] == " ":
-        norm_chars.pop()
-    norm_str = "".join(c for _, c in norm_chars)
-
+    stream = _normalise_stream(
+        _build_stream(haystack, cursor, aggressive=aggressive), aggressive=aggressive
+    )
+    norm_str = "".join(s.char for s in stream)
     idx = norm_str.find(norm_needle)
     if idx < 0:
         return None
-    return norm_chars[idx][0]
+    start_orig = stream[idx].orig_start
+    end_orig = stream[idx + len(norm_needle) - 1].orig_end
+    return (start_orig, end_orig)
 
 
-def _find_normalised_end(haystack: str, needle: str, match_start: int, *, aggressive: bool) -> int:
-    """Given a match start in `haystack`, return the end offset that covers
-    enough characters to span the normalised `needle`."""
-    norm_needle = _normalise(needle, aggressive=aggressive)
-    consumed_norm = 0
-    i = match_start
+def _build_stream(haystack: str, start: int, *, aggressive: bool) -> list[_StreamChar]:
+    """Produce a stream of (orig_start, orig_end, char) triples from
+    `haystack[start:]`. In aggressive mode, HTML entities are decoded into
+    their target characters and NFKC normalisation is applied — the
+    `(orig_start, orig_end)` span always covers the source text in the
+    original haystack so a downstream rewrite hits the right region.
+    """
+    out: list[_StreamChar] = []
+    i = start
+    end = len(haystack)
+    while i < end:
+        if aggressive:
+            m = _ENTITY_RE.match(haystack, i)
+            if m:
+                decoded = html.unescape(m.group())
+                if decoded != m.group():
+                    nfkc = unicodedata.normalize("NFKC", decoded)
+                    span_end = i + len(m.group())
+                    for ch in nfkc:
+                        out.append(_StreamChar(i, span_end, ch))
+                    i = span_end
+                    continue
+            ch = haystack[i]
+            nfkc = unicodedata.normalize("NFKC", ch)
+            for n_ch in nfkc:
+                out.append(_StreamChar(i, i + 1, n_ch))
+        else:
+            out.append(_StreamChar(i, i + 1, haystack[i]))
+        i += 1
+    return out
+
+
+def _normalise_stream(stream: list[_StreamChar], *, aggressive: bool) -> list[_StreamChar]:
+    """Apply whitespace-collapse / soft-hyphen-drop / casefold (and in
+    aggressive mode treat non-alphanumeric as whitespace), preserving the
+    source spans on each kept char."""
+    out: list[_StreamChar] = []
     prev_was_space = True
-    while i < len(haystack) and consumed_norm < len(norm_needle):
-        ch = haystack[i]
-        if not _is_kept(ch, aggressive=aggressive):
+    for sc in stream:
+        if not _is_kept(sc.char, aggressive=aggressive):
             if not prev_was_space:
-                consumed_norm += 1
+                out.append(_StreamChar(sc.orig_start, sc.orig_end, " "))
             prev_was_space = True
         else:
-            consumed_norm += 1
+            out.append(_StreamChar(sc.orig_start, sc.orig_end, sc.char.casefold()))
             prev_was_space = False
-        i += 1
-    return i
-
-
-def _build_nfkc_offset_map(haystack: str, start: int) -> list[int]:
-    """For each character index in `NFKC(haystack[start:])`, return the
-    corresponding original byte offset in `haystack`. NFKC may expand single
-    code points (e.g. ligatures `ﬁ` → `fi`); we map every expanded char back
-    to the original source position so the markdown rewrite hits the right
-    span."""
-    out: list[int] = []
-    for orig_local, ch in enumerate(haystack[start:]):
-        nfkc = unicodedata.normalize("NFKC", ch)
-        for _ in nfkc:
-            out.append(start + orig_local)
+    while out and out[0].char == " ":
+        out.pop(0)
+    while out and out[-1].char == " ":
+        out.pop()
     return out

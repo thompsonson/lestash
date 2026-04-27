@@ -6,4 +6,4 @@ re-processing of previously enriched items via `lestash enrich --all`.
 The OCR pass has its own version (see `ocr.py`) so it can evolve independently.
 """
 
-EXTRACTOR_VERSION: int = 2
+EXTRACTOR_VERSION: int = 3
