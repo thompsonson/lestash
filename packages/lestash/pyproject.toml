@@ -3,6 +3,7 @@ name = "lestash"
 version = "1.54.0"
 description = "Personal knowledge base CLI - aggregate content from multiple sources"
 readme = "README.md"
+license = {text = "AGPL-3.0-only"}
 requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12.0",
@@ -16,6 +17,8 @@ dependencies = [
     "sqlite-vec>=0.1.6",
     "sentence-transformers>=3.0.0",
     "docling>=2.84.0",
+    "pymupdf>=1.27.0",
+    "anthropic>=0.40.0",
 ]
 
 [project.scripts]

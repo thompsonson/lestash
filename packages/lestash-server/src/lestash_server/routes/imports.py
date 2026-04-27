@@ -227,6 +227,7 @@ def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse
     )
 
     items_added = 0
+    enrich_item_id: int | None = None
     with get_db() as conn:
         item_id = _upsert_item(conn, item)
         if item_id:
@@ -234,13 +235,23 @@ def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse
             add_item_media(
                 conn,
                 item_id,
-                media_type="pdf",
+                media_type="source_pdf",
                 local_path=rel_path,
                 mime_type="application/pdf",
                 source_origin="upload",
             )
             items_added = 1
+            enrich_item_id = item_id
         conn.commit()
+
+    if enrich_item_id is not None:
+        from lestash.core.pdf_enrich import enrich_item
+
+        try:
+            enrich_item(enrich_item_id)
+        except Exception as e:
+            logger.exception("Failed to enrich uploaded PDF item %d", enrich_item_id)
+            errors.append(f"enrich: {e}")
 
     return ImportResponse(
         status="completed",
@@ -332,10 +343,12 @@ async def sync_from_drive(body: DriveSyncRequest):
         sync_drive_folder,
         sync_single_file,
     )
+    from lestash.core.pdf_enrich import attach_source_pdf_and_enrich
 
     items_added = 0
     items_skipped = 0
     errors: list[str] = []
+    pdf_followups: list[tuple[int, bytes, str, str | None]] = []
 
     for url in body.urls:
         try:
@@ -343,25 +356,38 @@ async def sync_from_drive(body: DriveSyncRequest):
 
             if url_type == "folder":
                 with get_db() as conn:
-                    for item in sync_drive_folder(file_id, recursive=True):
+                    for item, pdf_bytes, filename in sync_drive_folder(file_id, recursive=True):
                         try:
-                            upsert_item(conn, item)
+                            item_id = upsert_item(conn, item)
                             items_added += 1
+                            if pdf_bytes:
+                                drive_url = (item.metadata or {}).get("drive_web_link")
+                                pdf_followups.append((item_id, pdf_bytes, filename, drive_url))
                         except Exception as e:
                             errors.append(f"{item.title}: {e}")
                     conn.commit()
             elif url_type == "file":
-                item = sync_single_file(file_id)
+                item, pdf_bytes, filename = sync_single_file(file_id)
                 with get_db() as conn:
-                    upsert_item(conn, item)
+                    item_id = upsert_item(conn, item)
                     conn.commit()
                 items_added += 1
+                if pdf_bytes:
+                    drive_url = (item.metadata or {}).get("drive_web_link")
+                    pdf_followups.append((item_id, pdf_bytes, filename, drive_url))
             else:
                 errors.append(f"Could not parse URL: {url}")
                 items_skipped += 1
         except Exception as e:
             logger.exception("Failed to sync %s", url)
             errors.append(f"{url}: {e}")
+
+    for item_id, pdf_bytes, filename, drive_url in pdf_followups:
+        try:
+            attach_source_pdf_and_enrich(item_id, pdf_bytes, filename, drive_url=drive_url)
+        except Exception as e:
+            logger.exception("Failed to enrich item %d", item_id)
+            errors.append(f"enrich item {item_id}: {e}")
 
     return DriveSyncResponse(
         status="completed" if not errors else "completed_with_errors",

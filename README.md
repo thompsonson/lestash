@@ -216,4 +216,8 @@ level = "INFO"
 
 ## License
 
-[MIT](LICENSE)
+[GNU Affero General Public License v3.0 only](LICENSE) (AGPL-3.0-only).
+
+Copyright (C) 2025–2026 Matthew Thompson.
+
+LeStash uses [PyMuPDF](https://pymupdf.readthedocs.io/) (AGPL) for PDF enrichment, which obliges the project to use a compatible license. Practical implication of AGPL §13: if you run a *modified* copy of LeStash as a network service that other people interact with, you must offer those users access to the source. Personal single-user deployments are unaffected.
