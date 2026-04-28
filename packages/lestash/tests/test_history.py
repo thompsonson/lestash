@@ -199,29 +199,32 @@ class TestHistoryTrigger:
     def test_trigger_captures_parent_id_change(self, test_db):
         """Updating parent_id should create history record with parent_id_old."""
         with get_connection(test_db) as conn:
-            conn.execute(
+            parent_a_id = conn.execute(
                 "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
                 ("test", "parent-a", "parent A"),
-            )
-            conn.execute(
+            ).lastrowid
+            parent_b_id = conn.execute(
                 "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
                 ("test", "parent-b", "parent B"),
-            )
-            conn.execute(
+            ).lastrowid
+            child_id = conn.execute(
                 "INSERT INTO items (source_type, source_id, content, parent_id) "
                 "VALUES (?, ?, ?, ?)",
-                ("test", "child", "child", 1),
-            )
+                ("test", "child", "child", parent_a_id),
+            ).lastrowid
             conn.commit()
 
             conn.execute(
                 "UPDATE items SET parent_id = ? WHERE source_id = ?",
-                (2, "child"),
+                (parent_b_id, "child"),
             )
             conn.commit()
 
-            cursor = conn.execute("SELECT parent_id_old FROM item_history WHERE item_id = 3")
-            assert cursor.fetchone()[0] == 1
+            cursor = conn.execute(
+                "SELECT parent_id_old FROM item_history WHERE item_id = ?",
+                (child_id,),
+            )
+            assert cursor.fetchone()[0] == parent_a_id
 
     def test_trigger_captures_changed_at_timestamp(self, test_db):
         """History record should have timestamp."""
@@ -316,6 +319,55 @@ class TestChangeReason:
             assert rows[1]["content_old"] == "v2"
             assert rows[1]["change_reason"] == "custom-reason"
 
+    def test_helper_with_item_ids_scopes_update(self, test_db):
+        """mark_recent_history(..., item_ids=[X]) must not touch other items' rows."""
+        with get_connection(test_db) as conn:
+            a_id = conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
+                ("test", "a", "a-v1"),
+            ).lastrowid
+            b_id = conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
+                ("test", "b", "b-v1"),
+            ).lastrowid
+            conn.commit()
+
+            pre_max = max_history_id(conn)
+            conn.execute("UPDATE items SET content = ? WHERE id = ?", ("a-v2", a_id))
+            conn.execute("UPDATE items SET content = ? WHERE id = ?", ("b-v2", b_id))
+            conn.commit()
+
+            mark_recent_history(conn, pre_max, "scoped", item_ids=[a_id])
+            conn.commit()
+
+            a_reason = conn.execute(
+                "SELECT change_reason FROM item_history WHERE item_id = ?", (a_id,)
+            ).fetchone()[0]
+            b_reason = conn.execute(
+                "SELECT change_reason FROM item_history WHERE item_id = ?", (b_id,)
+            ).fetchone()[0]
+            assert a_reason == "scoped"
+            assert b_reason == "api-update"
+
+    def test_helper_with_empty_item_ids_is_noop(self, test_db):
+        with get_connection(test_db) as conn:
+            item_id = conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
+                ("test", "a", "v1"),
+            ).lastrowid
+            conn.commit()
+            pre_max = max_history_id(conn)
+            conn.execute("UPDATE items SET content = ? WHERE id = ?", ("v2", item_id))
+            conn.commit()
+
+            mark_recent_history(conn, pre_max, "scoped", item_ids=[])
+            conn.commit()
+
+            reason = conn.execute(
+                "SELECT change_reason FROM item_history WHERE item_id = ?", (item_id,)
+            ).fetchone()[0]
+            assert reason == "api-update"
+
     def test_upsert_item_marks_history_as_sync(self, test_db):
         with get_connection(test_db) as conn:
             upsert_item(
@@ -344,16 +396,17 @@ class TestChangeReason:
         from lestash.core.pdf_enrich.persistence import mark_source_unavailable
 
         with get_connection(test_db) as conn:
-            conn.execute(
+            item_id = conn.execute(
                 "INSERT INTO items (source_type, source_id, content, metadata) VALUES (?, ?, ?, ?)",
                 ("arxiv", "2401.0001", "abstract", '{"existing": "meta"}'),
-            )
+            ).lastrowid
             conn.commit()
 
-            mark_source_unavailable(conn, 1)
+            mark_source_unavailable(conn, item_id)
 
             rows = conn.execute(
-                "SELECT change_reason FROM item_history WHERE item_id = 1"
+                "SELECT change_reason FROM item_history WHERE item_id = ?",
+                (item_id,),
             ).fetchall()
             assert len(rows) == 1
             assert rows[0]["change_reason"] == "enricher"

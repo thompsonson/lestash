@@ -103,7 +103,7 @@ def ocr_annotation(child_id: int, *, config: Config | None = None) -> OcrResult:
             "UPDATE items SET content = ?, metadata = ? WHERE id = ?",
             (text or row["metadata"], json.dumps(meta), child_id),
         )
-        mark_recent_history(conn, pre_max, "enricher")
+        mark_recent_history(conn, pre_max, "enricher", item_ids=[child_id])
         conn.commit()
         return OcrResult(child_id=child_id, status="transcribed", text=text)
 

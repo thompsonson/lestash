@@ -92,7 +92,7 @@ def mark_source_unavailable(conn: sqlite3.Connection, item_id: int) -> None:
     meta["enriched_at"] = _now_iso()
     pre_max = max_history_id(conn)
     conn.execute("UPDATE items SET metadata = ? WHERE id = ?", (json.dumps(meta), item_id))
-    mark_recent_history(conn, pre_max, "enricher")
+    mark_recent_history(conn, pre_max, "enricher", item_ids=[item_id])
     conn.commit()
 
 
@@ -232,7 +232,7 @@ def _update_parent_item(
         "UPDATE items SET content = ?, metadata = ? WHERE id = ?",
         (content, json.dumps(meta), item_id),
     )
-    mark_recent_history(conn, pre_max, "enricher")
+    mark_recent_history(conn, pre_max, "enricher", item_ids=[item_id])
 
 
 def _annotation_title(ann: ExtractedAnnotation) -> str:

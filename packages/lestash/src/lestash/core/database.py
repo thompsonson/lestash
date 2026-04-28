@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -370,16 +370,37 @@ def max_history_id(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COALESCE(MAX(id), 0) FROM item_history").fetchone()[0]
 
 
-def mark_recent_history(conn: sqlite3.Connection, since_id: int, change_reason: str) -> None:
+def mark_recent_history(
+    conn: sqlite3.Connection,
+    since_id: int,
+    change_reason: str,
+    *,
+    item_ids: Iterable[int] | None = None,
+) -> None:
     """Re-tag history rows newer than `since_id` with the given change_reason.
 
     SQLite triggers cannot receive parameters, so the trigger always writes
     'api-update'. Callers (sync, enricher, user-edit) capture max_history_id()
     before their write and call this after to overwrite the default.
+
+    Pass `item_ids` when the caller knows exactly which items it touched —
+    this prevents re-tagging rows produced by an unrelated concurrent writer
+    that interleaved between the snapshot and the mark. Sync/enricher paths
+    that touch many items by design should leave it None.
     """
+    if item_ids is None:
+        conn.execute(
+            "UPDATE item_history SET change_reason = ? WHERE id > ?",
+            (change_reason, since_id),
+        )
+        return
+    ids = list(item_ids)
+    if not ids:
+        return
+    placeholders = ",".join("?" * len(ids))
     conn.execute(
-        "UPDATE item_history SET change_reason = ? WHERE id > ?",
-        (change_reason, since_id),
+        f"UPDATE item_history SET change_reason = ? WHERE id > ? AND item_id IN ({placeholders})",
+        (change_reason, since_id, *ids),
     )
 
 

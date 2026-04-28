@@ -1548,7 +1548,7 @@
               ${titlePart}
               <span style="margin-left:auto;display:flex;gap:0.3rem">
                 <button class="sync-btn" data-action="expand-version" data-id="${itemId}" data-version-id="${v.id}" style="font-size:0.7rem;padding:0.1rem 0.4rem">View</button>
-                <button class="sync-btn" data-action="restore-version" data-id="${itemId}" data-version-id="${v.id}" style="font-size:0.7rem;padding:0.1rem 0.4rem">Restore</button>
+                <button class="sync-btn" data-action="restore-version" data-id="${itemId}" data-version-id="${v.id}" data-parent-null="${v.parent_id_old === null || v.parent_id_old === undefined ? '1' : '0'}" style="font-size:0.7rem;padding:0.1rem 0.4rem">Restore</button>
               </span>
             </div>
             ${previewPart}
@@ -1761,9 +1761,10 @@
             Object.assign(item, updated);
             renderItemView(item);
             showToast('Saved');
+            // No finally block — renderItemView() detached btn from the DOM,
+            // so resetting its state would mutate a stale element.
           } catch (err) {
             showToast('Failed to save', 'error');
-          } finally {
             btn.disabled = false;
             btn.textContent = 'Save';
           }
@@ -1810,16 +1811,27 @@
           }
         }
         if (btn.dataset.action === 'restore-version') {
-          if (!confirm('Restore this version? The current state will be saved as a new version.')) return;
+          // Pre-Migration-9 history rows have parent_id_old=NULL by default. If
+          // the current item still has a parent, restoring would silently detach
+          // it. Detect and pass restore_parent=false to keep the current parent.
+          const versionParentNull = btn.dataset.parentNull === '1';
+          const currentHasParent = item.parent_id !== null && item.parent_id !== undefined;
+          let restoreParent = true;
+          let prompt = 'Restore this version? The current state will be saved as a new version.';
+          if (versionParentNull && currentHasParent) {
+            restoreParent = false;
+            prompt = 'This version was captured before parent tracking. Restore content but keep the current parent attachment?';
+          }
+          if (!confirm(prompt)) return;
           btn.disabled = true;
           btn.textContent = 'Restoring...';
           try {
-            const updated = await api(`/api/items/${btn.dataset.id}/history/${btn.dataset.versionId}/restore`, {
-              method: 'POST',
-            });
+            const url = `/api/items/${btn.dataset.id}/history/${btn.dataset.versionId}/restore?restore_parent=${restoreParent}`;
+            const updated = await api(url, { method: 'POST' });
             Object.assign(item, updated);
             renderItemView(item);
             showToast('Restored');
+            // No finally — renderItemView detached btn from the DOM.
           } catch (err) {
             showToast('Failed to restore', 'error');
             btn.disabled = false;

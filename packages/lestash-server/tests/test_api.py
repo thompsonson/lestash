@@ -291,6 +291,112 @@ class TestItemHistory:
         resp = client.post(f"/api/items/{item['id']}/history/999999/restore")
         assert resp.status_code == 404
 
+    def test_restore_parent_false_keeps_current_parent(self, client):
+        """restore_parent=false must leave the current parent_id alone."""
+        # Build child with a parent. Edit child to capture a history row with
+        # parent_id_old pointing at the parent. Then null out parent_id_old in
+        # that row to simulate a pre-Migration-9 snapshot, and reparent the
+        # child to a different parent so we can detect whether restore clears it.
+        from lestash.core.database import get_connection
+
+        # Two seeded linkedin items will serve as parents.
+        parents = client.get("/api/items?source=linkedin&limit=2").json()["items"]
+        parent_a, parent_b = parents[0]["id"], parents[1]["id"]
+
+        # Create a child via POST.
+        new_child = client.post(
+            "/api/items",
+            json={
+                "source_type": "note",
+                "source_id": f"restore-test-{parent_a}",
+                "content": "child v1",
+                "parent_id": parent_a,
+            },
+        ).json()
+        child_id = new_child["id"]
+
+        # Edit content to create a history row.
+        client.patch(f"/api/items/{child_id}", json={"content": "child v2"})
+
+        # Simulate a pre-Migration-9 row: null out parent_id_old.
+        from lestash_server.deps import _config
+
+        with get_connection(_config) as conn:
+            conn.execute(
+                "UPDATE item_history SET parent_id_old = NULL WHERE item_id = ?",
+                (child_id,),
+            )
+            conn.commit()
+
+        version_id = client.get(f"/api/items/{child_id}/history").json()["versions"][0]["id"]
+
+        # Reparent to B, then restore the (parent-null) version with restore_parent=false.
+        client.patch(f"/api/items/{child_id}", json={"parent_id": parent_b})
+        resp = client.post(
+            f"/api/items/{child_id}/history/{version_id}/restore?restore_parent=false"
+        )
+        assert resp.status_code == 200
+        assert resp.json()["parent_id"] == parent_b  # unchanged
+        assert resp.json()["content"] == "child v1"  # content restored
+
+    def test_restore_parent_default_writes_snapshot_value(self, client):
+        """restore_parent=true (default) writes parent_id_old verbatim."""
+        parents = client.get("/api/items?source=linkedin&limit=2").json()["items"]
+        parent_a, parent_b = parents[0]["id"], parents[1]["id"]
+
+        new_child = client.post(
+            "/api/items",
+            json={
+                "source_type": "note",
+                "source_id": f"restore-default-{parent_a}",
+                "content": "child v1",
+                "parent_id": parent_a,
+            },
+        ).json()
+        child_id = new_child["id"]
+
+        # Trigger a history row (this captures parent_id_old=parent_a).
+        client.patch(f"/api/items/{child_id}", json={"content": "child v2"})
+        version_id = client.get(f"/api/items/{child_id}/history").json()["versions"][0]["id"]
+
+        # Reparent to B, then restore the version (default restore_parent=true).
+        client.patch(f"/api/items/{child_id}", json={"parent_id": parent_b})
+        resp = client.post(f"/api/items/{child_id}/history/{version_id}/restore")
+        assert resp.status_code == 200
+        assert resp.json()["parent_id"] == parent_a  # restored from snapshot
+
+    def test_patch_unchanged_title_skips_re_embed(self, client, monkeypatch):
+        """Sending the same title back must not call re_embed_item."""
+        from lestash_server.routes import items as items_route
+
+        called: list[int] = []
+
+        def fake_re_embed(conn, item_id):
+            called.append(item_id)
+            return True
+
+        monkeypatch.setattr(items_route, "re_embed_item", fake_re_embed)
+
+        item = self._seeded_item(client)
+        resp = client.patch(f"/api/items/{item['id']}", json={"title": item["title"]})
+        assert resp.status_code == 200
+        assert called == []  # no-op title → no re-embed
+
+    def test_patch_changed_title_triggers_re_embed(self, client, monkeypatch):
+        from lestash_server.routes import items as items_route
+
+        called: list[int] = []
+
+        def fake_re_embed(conn, item_id):
+            called.append(item_id)
+            return True
+
+        monkeypatch.setattr(items_route, "re_embed_item", fake_re_embed)
+
+        item = self._seeded_item(client)
+        client.patch(f"/api/items/{item['id']}", json={"title": "Real change"})
+        assert called == [item["id"]]
+
 
 class TestSources:
     """Test /api/sources endpoints."""

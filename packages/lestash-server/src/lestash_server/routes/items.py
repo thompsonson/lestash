@@ -13,6 +13,7 @@ from lestash.core.database import (
     max_history_id,
     remove_tag,
 )
+from lestash.core.embeddings import re_embed_item
 from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
 from lestash.models.item import Item
 
@@ -431,7 +432,11 @@ def update_item(item_id: int, body: ItemPatchRequest):
         if not updates:
             raise HTTPException(status_code=400, detail="No fields to update")
 
-        text_changed = body.content is not None or body.title is not _UNSET
+        # Only re-embed when title or content actually differ from current row,
+        # not just because the client sent the field with the same value.
+        text_changed = (body.content is not None and body.content != row["content"]) or (
+            body.title is not _UNSET and body.title != row["title"]
+        )
         pre_max = max_history_id(conn)
 
         params.append(item_id)
@@ -439,12 +444,10 @@ def update_item(item_id: int, body: ItemPatchRequest):
             f"UPDATE items SET {', '.join(updates)} WHERE id = ?",
             params,
         )
-        mark_recent_history(conn, pre_max, "user-edit")
+        mark_recent_history(conn, pre_max, "user-edit", item_ids=[item_id])
         conn.commit()
 
         if text_changed:
-            from lestash.core.embeddings import re_embed_item
-
             re_embed_item(conn, item_id)
 
         row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
@@ -454,8 +457,11 @@ def update_item(item_id: int, body: ItemPatchRequest):
 def _content_preview(content: str | None, max_length: int = 200) -> str | None:
     if content is None:
         return None
-    text = content.strip().replace("\n", " ")
-    return text[:max_length] + ("…" if len(text) > max_length else "")
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:max_length] + ("…" if len(stripped) > max_length else "")
+    return None
 
 
 def _parse_metadata_old(metadata_old: str | None) -> dict | None:
@@ -529,14 +535,27 @@ def get_item_history_version(item_id: int, version_id: int):
 
 
 @router.post("/{item_id}/history/{version_id}/restore", response_model=ItemResponse)
-def restore_item_history_version(item_id: int, version_id: int):
+def restore_item_history_version(
+    item_id: int,
+    version_id: int,
+    restore_parent: bool = Query(
+        True,
+        description=(
+            "If False, leave the item's current parent_id alone instead of "
+            "writing the snapshot's parent_id_old. Use this for history rows "
+            "captured before Migration 9, where parent_id_old is always NULL "
+            "but the item may currently have a real parent."
+        ),
+    ),
+):
     """Restore an item to a previous version.
 
     Writes the snapshot fields back to items; the resulting UPDATE captures
     the pre-restore state as a new history row tagged 'restore'. NULL values
     in the snapshot are written through verbatim — note that history rows
-    captured before Migration 9 always have parent_id_old=NULL, so restoring
-    those will clear the current parent_id.
+    captured before Migration 9 always have parent_id_old=NULL, so callers
+    should pass `restore_parent=false` for those rows to avoid silently
+    detaching a still-parented item.
     """
     with get_db() as conn:
         snapshot = conn.execute(
@@ -558,31 +577,50 @@ def restore_item_history_version(item_id: int, version_id: int):
             )
 
         pre_max = max_history_id(conn)
-        conn.execute(
-            """UPDATE items SET
-                   title = ?,
-                   content = ?,
-                   author = ?,
-                   url = ?,
-                   metadata = ?,
-                   is_own_content = ?,
-                   parent_id = ?
-               WHERE id = ?""",
-            (
-                snapshot["title_old"],
-                snapshot["content_old"],
-                snapshot["author_old"],
-                snapshot["url_old"],
-                snapshot["metadata_old"],
-                snapshot["is_own_content_old"],
-                snapshot["parent_id_old"],
-                item_id,
-            ),
-        )
-        mark_recent_history(conn, pre_max, "restore")
+        if restore_parent:
+            conn.execute(
+                """UPDATE items SET
+                       title = ?,
+                       content = ?,
+                       author = ?,
+                       url = ?,
+                       metadata = ?,
+                       is_own_content = ?,
+                       parent_id = ?
+                   WHERE id = ?""",
+                (
+                    snapshot["title_old"],
+                    snapshot["content_old"],
+                    snapshot["author_old"],
+                    snapshot["url_old"],
+                    snapshot["metadata_old"],
+                    snapshot["is_own_content_old"],
+                    snapshot["parent_id_old"],
+                    item_id,
+                ),
+            )
+        else:
+            conn.execute(
+                """UPDATE items SET
+                       title = ?,
+                       content = ?,
+                       author = ?,
+                       url = ?,
+                       metadata = ?,
+                       is_own_content = ?
+                   WHERE id = ?""",
+                (
+                    snapshot["title_old"],
+                    snapshot["content_old"],
+                    snapshot["author_old"],
+                    snapshot["url_old"],
+                    snapshot["metadata_old"],
+                    snapshot["is_own_content_old"],
+                    item_id,
+                ),
+            )
+        mark_recent_history(conn, pre_max, "restore", item_ids=[item_id])
         conn.commit()
-
-        from lestash.core.embeddings import re_embed_item
 
         re_embed_item(conn, item_id)
 
