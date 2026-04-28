@@ -25,6 +25,8 @@ from datetime import UTC, datetime
 from lestash.core.config import Config
 from lestash.core.database import (
     add_item_media,
+    mark_recent_history,
+    max_history_id,
     save_media_file,
 )
 
@@ -88,7 +90,9 @@ def mark_source_unavailable(conn: sqlite3.Connection, item_id: int) -> None:
             meta = {}
     meta["enrichment_status"] = "source_unavailable"
     meta["enriched_at"] = _now_iso()
+    pre_max = max_history_id(conn)
     conn.execute("UPDATE items SET metadata = ? WHERE id = ?", (json.dumps(meta), item_id))
+    mark_recent_history(conn, pre_max, "enricher", item_ids=[item_id])
     conn.commit()
 
 
@@ -223,10 +227,12 @@ def _update_parent_item(
     meta["extractor_version"] = enriched.extractor_version
     meta["enrichment_status"] = status
     meta["enriched_at"] = _now_iso()
+    pre_max = max_history_id(conn)
     conn.execute(
         "UPDATE items SET content = ?, metadata = ? WHERE id = ?",
         (content, json.dumps(meta), item_id),
     )
+    mark_recent_history(conn, pre_max, "enricher", item_ids=[item_id])
 
 
 def _annotation_title(ann: ExtractedAnnotation) -> str:

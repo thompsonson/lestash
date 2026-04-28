@@ -1515,6 +1515,51 @@
       }
     }
 
+    async function loadItemHistory(itemId) {
+      const list = document.getElementById('item-history-list');
+      list.textContent = 'Loading...';
+      try {
+        const data = await api(`/api/items/${itemId}/history`);
+        if (!data.versions.length) {
+          list.innerHTML = '<span style="color:var(--muted)">No versions yet — edits create history rows.</span>';
+          return;
+        }
+        const reasonColor = {
+          'user-edit': '#3b82f6',
+          'sync': '#6b7280',
+          'enricher': '#10b981',
+          'restore': '#f59e0b',
+          'api-update': '#9ca3af',
+        };
+        list.innerHTML = data.versions.map(v => {
+          const reason = v.change_reason || 'unknown';
+          const color = reasonColor[reason] || '#9ca3af';
+          const dateFmt = new Date(v.changed_at + 'Z').toLocaleString();
+          const titlePart = v.title_old !== null && v.title_old !== undefined
+            ? `<span style="margin-left:0.5rem">${escHtml(v.title_old)}</span>`
+            : '';
+          const previewPart = v.content_preview
+            ? `<div style="color:var(--muted);margin-top:0.15rem">${escHtml(v.content_preview)}</div>`
+            : '';
+          return `<div style="padding:0.4rem 0;border-top:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+              <span style="font-size:0.7rem;padding:0.1rem 0.35rem;border-radius:3px;background:${color};color:white">${escHtml(reason)}</span>
+              <span style="color:var(--muted);font-size:0.75rem">${dateFmt}</span>
+              ${titlePart}
+              <span style="margin-left:auto;display:flex;gap:0.3rem">
+                <button class="sync-btn" data-action="expand-version" data-id="${itemId}" data-version-id="${v.id}" style="font-size:0.7rem;padding:0.1rem 0.4rem">View</button>
+                <button class="sync-btn" data-action="restore-version" data-id="${itemId}" data-version-id="${v.id}" data-parent-null="${v.parent_id_old === null || v.parent_id_old === undefined ? '1' : '0'}" style="font-size:0.7rem;padding:0.1rem 0.4rem">Restore</button>
+              </span>
+            </div>
+            ${previewPart}
+            <div id="version-detail-${v.id}" style="display:none;margin-top:0.35rem;padding:0.35rem;background:var(--bg);border:1px solid var(--border);border-radius:3px"></div>
+          </div>`;
+        }).join('');
+      } catch (err) {
+        list.innerHTML = '<span style="color:var(--muted)">Failed to load history</span>';
+      }
+    }
+
     function renderItemView(item) {
       const container = document.getElementById('item-view-content');
       const emoji = item.metadata && item.metadata.emoji ? item.metadata.emoji + ' ' : '';
@@ -1522,9 +1567,17 @@
         ? new Date(item.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
         : '';
 
-      let html = `<div class="item-view-title">${emoji}${escHtml(item.title || item.preview || '(untitled)')}</div>`;
+      let html = `<div class="item-view-title" id="item-title-display">${emoji}${escHtml(item.title || item.preview || '(untitled)')}</div>`;
       html += `<div class="item-view-meta">${sourceName(item.subtype)}${dateFmt ? ' &middot; ' + dateFmt : ''}${item.url ? ' &middot; <a href="' + escHtml(item.url) + '" target="_blank" rel="noopener" style="color:var(--accent)">link</a>' : ''}</div>`;
-      html += `<div class="item-view-content">${renderMarkdown(item.content)}</div>`;
+      html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(item.content)}</div>`;
+      html += `<div id="item-edit-form" style="display:none">
+        <input type="text" id="item-edit-title" placeholder="Title" style="width:100%;font-size:1.05rem;font-weight:bold;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
+        <textarea id="item-edit-content" rows="10" style="width:100%;resize:vertical;font-family:inherit;font-size:0.9rem;padding:0.5rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px"></textarea>
+        <div style="display:flex;gap:0.5rem;margin-top:0.4rem">
+          <button class="sync-btn" data-action="save-edit" data-id="${item.id}">Save</button>
+          <button class="sync-btn" data-action="cancel-edit">Cancel</button>
+        </div>
+      </div>`;
 
       // Media gallery
       const visibleMedia = (item.media || []).filter(m => m.available || m.media_type === 'link' || m.media_type === 'pdf');
@@ -1625,13 +1678,19 @@
       </div>`;
 
       // Actions
-      html += `<div class="item-detail-actions">
+      html += `<div class="item-detail-actions" id="item-detail-actions">
+        <button class="sync-btn" data-action="edit-item" data-id="${item.id}">Edit</button>
+        <button class="sync-btn" data-action="toggle-history" data-id="${item.id}">History</button>
         <button class="sync-btn" data-action="show-note-form">+ Note</button>
         <button class="sync-btn" data-action="link-item" data-id="${item.id}">+ Link</button>
         <button class="sync-btn" data-action="copy" data-id="${item.id}">Copy</button>
         <button class="sync-btn" data-action="copy-link" data-id="${item.id}">Copy Link</button>
         <button class="sync-btn" onclick="addToCollection(${item.id})">+ Collection</button>
         <select id="add-to-coll-select" style="display:none;font-size:0.75rem;padding:0.25rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px" onchange="confirmAddToCollection(this)"></select>
+      </div>`;
+      html += `<div id="item-history-panel" style="display:none;margin-top:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:4px">
+        <div style="font-size:0.85rem;font-weight:bold;margin-bottom:0.4rem">Version history</div>
+        <div id="item-history-list" style="font-size:0.8rem"></div>
       </div>`;
 
       // Children section (always shown so new notes appear immediately)
@@ -1673,6 +1732,112 @@
         if (!btn) return;
         if (btn.dataset.action === 'copy') copyToClipboard(item.content, 'Copied to clipboard');
         if (btn.dataset.action === 'copy-link') copyToClipboard(`${getApiBase()}/items/${item.id}`, 'Link copied');
+        if (btn.dataset.action === 'edit-item') {
+          document.getElementById('item-title-display').style.display = 'none';
+          document.getElementById('item-content-display').style.display = 'none';
+          document.getElementById('item-detail-actions').style.display = 'none';
+          document.getElementById('item-edit-title').value = item.title || '';
+          document.getElementById('item-edit-content').value = item.content || '';
+          document.getElementById('item-edit-form').style.display = 'block';
+          document.getElementById('item-edit-title').focus();
+        }
+        if (btn.dataset.action === 'cancel-edit') {
+          document.getElementById('item-edit-form').style.display = 'none';
+          document.getElementById('item-title-display').style.display = '';
+          document.getElementById('item-content-display').style.display = '';
+          document.getElementById('item-detail-actions').style.display = '';
+        }
+        if (btn.dataset.action === 'save-edit') {
+          const newTitle = document.getElementById('item-edit-title').value;
+          const newContent = document.getElementById('item-edit-content').value;
+          btn.disabled = true;
+          btn.textContent = 'Saving...';
+          try {
+            const updated = await api(`/api/items/${btn.dataset.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ title: newTitle, content: newContent }),
+            });
+            Object.assign(item, updated);
+            renderItemView(item);
+            showToast('Saved');
+            // No finally block — renderItemView() detached btn from the DOM,
+            // so resetting its state would mutate a stale element.
+          } catch (err) {
+            showToast('Failed to save', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Save';
+          }
+        }
+        if (btn.dataset.action === 'toggle-history') {
+          const panel = document.getElementById('item-history-panel');
+          if (panel.style.display === 'none') {
+            panel.style.display = 'block';
+            await loadItemHistory(btn.dataset.id);
+          } else {
+            panel.style.display = 'none';
+          }
+        }
+        if (btn.dataset.action === 'expand-version') {
+          const detailDiv = container.querySelector(`#version-detail-${btn.dataset.versionId}`);
+          if (detailDiv.style.display === 'none') {
+            if (!detailDiv.dataset.loaded) {
+              detailDiv.textContent = 'Loading...';
+              try {
+                const detail = await api(`/api/items/${btn.dataset.id}/history/${btn.dataset.versionId}`);
+                detailDiv.textContent = '';
+                const titleLine = document.createElement('div');
+                titleLine.style.fontWeight = 'bold';
+                titleLine.style.marginBottom = '0.25rem';
+                titleLine.textContent = detail.title_old || '(no title)';
+                const contentBlock = document.createElement('pre');
+                contentBlock.style.whiteSpace = 'pre-wrap';
+                contentBlock.style.wordBreak = 'break-word';
+                contentBlock.style.margin = '0';
+                contentBlock.style.fontSize = '0.75rem';
+                contentBlock.textContent = detail.content_old || '(no content)';
+                detailDiv.appendChild(titleLine);
+                detailDiv.appendChild(contentBlock);
+                detailDiv.dataset.loaded = '1';
+              } catch (err) {
+                detailDiv.textContent = 'Failed to load version';
+              }
+            }
+            detailDiv.style.display = 'block';
+            btn.textContent = 'Hide';
+          } else {
+            detailDiv.style.display = 'none';
+            btn.textContent = 'View';
+          }
+        }
+        if (btn.dataset.action === 'restore-version') {
+          // Pre-Migration-9 history rows have parent_id_old=NULL by default. If
+          // the current item still has a parent, restoring would silently detach
+          // it. Detect and pass restore_parent=false to keep the current parent.
+          const versionParentNull = btn.dataset.parentNull === '1';
+          const currentHasParent = item.parent_id !== null && item.parent_id !== undefined;
+          let restoreParent = true;
+          let prompt = 'Restore this version? The current state will be saved as a new version.';
+          if (versionParentNull && currentHasParent) {
+            restoreParent = false;
+            prompt = 'This version was captured before parent tracking. Restore content but keep the current parent attachment?';
+          }
+          if (!confirm(prompt)) return;
+          btn.disabled = true;
+          btn.textContent = 'Restoring...';
+          try {
+            const url = `/api/items/${btn.dataset.id}/history/${btn.dataset.versionId}/restore?restore_parent=${restoreParent}`;
+            const updated = await api(url, { method: 'POST' });
+            Object.assign(item, updated);
+            renderItemView(item);
+            showToast('Restored');
+            // No finally — renderItemView detached btn from the DOM.
+          } catch (err) {
+            showToast('Failed to restore', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Restore';
+          }
+        }
         if (btn.dataset.action === 'remove-tag') {
           await api(`/api/items/${btn.dataset.id}/tags/${encodeURIComponent(btn.dataset.tag)}`, { method: 'DELETE' });
           const updated = await api(`/api/items/${btn.dataset.id}`);

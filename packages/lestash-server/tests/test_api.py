@@ -127,6 +127,277 @@ class TestItems:
         assert len(data["items"]) == 0
 
 
+class TestItemPatch:
+    """Test PATCH /api/items/{id} — user edits create history rows tagged 'user-edit'."""
+
+    def _item_id(self, client, source: str = "linkedin", own: bool | None = None) -> int:
+        url = f"/api/items?source={source}&limit=1"
+        if own is not None:
+            url += f"&own={'true' if own else 'false'}"
+        items = client.get(url).json()["items"]
+        return items[0]["id"]
+
+    def _history(self, test_config, item_id: int):
+        from lestash.core.database import get_connection
+
+        with get_connection(test_config) as conn:
+            rows = conn.execute(
+                "SELECT change_reason, title_old, content_old, parent_id_old "
+                "FROM item_history WHERE item_id = ? ORDER BY id",
+                (item_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def test_patch_title_creates_user_edit_history(self, client, test_config):
+        item_id = self._item_id(client, own=True)
+        resp = client.patch(f"/api/items/{item_id}", json={"title": "Edited Title"})
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "Edited Title"
+
+        history = self._history(test_config, item_id)
+        assert len(history) == 1
+        assert history[0]["change_reason"] == "user-edit"
+        assert history[0]["title_old"] == "First Post"
+
+    def test_patch_content_creates_user_edit_history(self, client, test_config):
+        item_id = self._item_id(client, own=True)
+        resp = client.patch(f"/api/items/{item_id}", json={"content": "New body"})
+        assert resp.status_code == 200
+
+        history = self._history(test_config, item_id)
+        assert len(history) == 1
+        assert history[0]["change_reason"] == "user-edit"
+        assert history[0]["content_old"] == "My first LinkedIn post about Python"
+
+    def test_patch_parent_id_creates_user_edit_history(self, client, test_config):
+        # Use bluesky item; reparent under linkedin item
+        bluesky_id = self._item_id(client, "bluesky")
+        linkedin_id = self._item_id(client, "linkedin", own=True)
+
+        resp = client.patch(f"/api/items/{bluesky_id}", json={"parent_id": linkedin_id})
+        assert resp.status_code == 200
+
+        history = self._history(test_config, bluesky_id)
+        assert len(history) == 1
+        assert history[0]["change_reason"] == "user-edit"
+        assert history[0]["parent_id_old"] is None
+
+    def test_patch_no_change_creates_no_history(self, client, test_config):
+        item_id = self._item_id(client, own=True)
+        current = client.get(f"/api/items/{item_id}").json()
+
+        resp = client.patch(
+            f"/api/items/{item_id}",
+            json={"title": current["title"], "content": current["content"]},
+        )
+        assert resp.status_code == 200
+
+        history = self._history(test_config, item_id)
+        assert history == []
+
+
+class TestItemHistory:
+    """Test the GET/POST /api/items/{id}/history* endpoints."""
+
+    def _seeded_item(self, client) -> dict:
+        items = client.get("/api/items?source=linkedin&own=true&limit=1").json()["items"]
+        return items[0]
+
+    def test_history_list_empty_for_unedited_item(self, client):
+        item = self._seeded_item(client)
+        resp = client.get(f"/api/items/{item['id']}/history")
+        assert resp.status_code == 200
+        assert resp.json() == {"versions": []}
+
+    def test_history_list_returns_versions_newest_first(self, client):
+        item = self._seeded_item(client)
+        client.patch(f"/api/items/{item['id']}", json={"title": "Edit 1"})
+        client.patch(f"/api/items/{item['id']}", json={"title": "Edit 2"})
+
+        resp = client.get(f"/api/items/{item['id']}/history")
+        versions = resp.json()["versions"]
+        assert len(versions) == 2
+        assert versions[0]["title_old"] == "Edit 1"
+        assert versions[1]["title_old"] == item["title"]
+        assert all(v["change_reason"] == "user-edit" for v in versions)
+
+    def test_history_list_404_for_missing_item(self, client):
+        resp = client.get("/api/items/999999/history")
+        assert resp.status_code == 404
+
+    def test_history_detail_returns_full_snapshot(self, client):
+        item = self._seeded_item(client)
+        client.patch(f"/api/items/{item['id']}", json={"content": "Edited content"})
+
+        version_id = client.get(f"/api/items/{item['id']}/history").json()["versions"][0]["id"]
+
+        resp = client.get(f"/api/items/{item['id']}/history/{version_id}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["item_id"] == item["id"]
+        assert body["content_old"] == item["content"]
+        assert body["title_old"] == item["title"]
+        assert body["change_reason"] == "user-edit"
+        assert body["metadata_old"] == item["metadata"]
+
+    def test_history_detail_404_for_missing_version(self, client):
+        item = self._seeded_item(client)
+        resp = client.get(f"/api/items/{item['id']}/history/999999")
+        assert resp.status_code == 404
+
+    def test_history_detail_404_for_mismatched_item(self, client):
+        # Edit item A, then ask for that version under item B's ID.
+        a = self._seeded_item(client)
+        b_items = client.get("/api/items?source=bluesky&limit=1").json()["items"]
+        b_id = b_items[0]["id"]
+        client.patch(f"/api/items/{a['id']}", json={"title": "Edit"})
+        version_id = client.get(f"/api/items/{a['id']}/history").json()["versions"][0]["id"]
+
+        resp = client.get(f"/api/items/{b_id}/history/{version_id}")
+        assert resp.status_code == 404
+
+    def test_restore_reverts_to_snapshot(self, client):
+        item = self._seeded_item(client)
+        original_title = item["title"]
+        original_content = item["content"]
+
+        client.patch(
+            f"/api/items/{item['id']}",
+            json={"title": "Bad rename", "content": "Bad content"},
+        )
+        version_id = client.get(f"/api/items/{item['id']}/history").json()["versions"][0]["id"]
+
+        resp = client.post(f"/api/items/{item['id']}/history/{version_id}/restore")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["title"] == original_title
+        assert body["content"] == original_content
+
+    def test_restore_creates_new_history_row_tagged_restore(self, client):
+        item = self._seeded_item(client)
+        client.patch(f"/api/items/{item['id']}", json={"title": "Bad rename"})
+        version_id = client.get(f"/api/items/{item['id']}/history").json()["versions"][0]["id"]
+
+        client.post(f"/api/items/{item['id']}/history/{version_id}/restore")
+
+        versions = client.get(f"/api/items/{item['id']}/history").json()["versions"]
+        assert len(versions) == 2
+        # The newest version captures the pre-restore state ("Bad rename").
+        assert versions[0]["change_reason"] == "restore"
+        assert versions[0]["title_old"] == "Bad rename"
+
+    def test_restore_404_for_unknown_version(self, client):
+        item = self._seeded_item(client)
+        resp = client.post(f"/api/items/{item['id']}/history/999999/restore")
+        assert resp.status_code == 404
+
+    def test_restore_parent_false_keeps_current_parent(self, client):
+        """restore_parent=false must leave the current parent_id alone."""
+        # Build child with a parent. Edit child to capture a history row with
+        # parent_id_old pointing at the parent. Then null out parent_id_old in
+        # that row to simulate a pre-Migration-9 snapshot, and reparent the
+        # child to a different parent so we can detect whether restore clears it.
+        from lestash.core.database import get_connection
+
+        # Two seeded linkedin items will serve as parents.
+        parents = client.get("/api/items?source=linkedin&limit=2").json()["items"]
+        parent_a, parent_b = parents[0]["id"], parents[1]["id"]
+
+        # Create a child via POST.
+        new_child = client.post(
+            "/api/items",
+            json={
+                "source_type": "note",
+                "source_id": f"restore-test-{parent_a}",
+                "content": "child v1",
+                "parent_id": parent_a,
+            },
+        ).json()
+        child_id = new_child["id"]
+
+        # Edit content to create a history row.
+        client.patch(f"/api/items/{child_id}", json={"content": "child v2"})
+
+        # Simulate a pre-Migration-9 row: null out parent_id_old.
+        from lestash_server.deps import _config
+
+        with get_connection(_config) as conn:
+            conn.execute(
+                "UPDATE item_history SET parent_id_old = NULL WHERE item_id = ?",
+                (child_id,),
+            )
+            conn.commit()
+
+        version_id = client.get(f"/api/items/{child_id}/history").json()["versions"][0]["id"]
+
+        # Reparent to B, then restore the (parent-null) version with restore_parent=false.
+        client.patch(f"/api/items/{child_id}", json={"parent_id": parent_b})
+        resp = client.post(
+            f"/api/items/{child_id}/history/{version_id}/restore?restore_parent=false"
+        )
+        assert resp.status_code == 200
+        assert resp.json()["parent_id"] == parent_b  # unchanged
+        assert resp.json()["content"] == "child v1"  # content restored
+
+    def test_restore_parent_default_writes_snapshot_value(self, client):
+        """restore_parent=true (default) writes parent_id_old verbatim."""
+        parents = client.get("/api/items?source=linkedin&limit=2").json()["items"]
+        parent_a, parent_b = parents[0]["id"], parents[1]["id"]
+
+        new_child = client.post(
+            "/api/items",
+            json={
+                "source_type": "note",
+                "source_id": f"restore-default-{parent_a}",
+                "content": "child v1",
+                "parent_id": parent_a,
+            },
+        ).json()
+        child_id = new_child["id"]
+
+        # Trigger a history row (this captures parent_id_old=parent_a).
+        client.patch(f"/api/items/{child_id}", json={"content": "child v2"})
+        version_id = client.get(f"/api/items/{child_id}/history").json()["versions"][0]["id"]
+
+        # Reparent to B, then restore the version (default restore_parent=true).
+        client.patch(f"/api/items/{child_id}", json={"parent_id": parent_b})
+        resp = client.post(f"/api/items/{child_id}/history/{version_id}/restore")
+        assert resp.status_code == 200
+        assert resp.json()["parent_id"] == parent_a  # restored from snapshot
+
+    def test_patch_unchanged_title_skips_re_embed(self, client, monkeypatch):
+        """Sending the same title back must not call re_embed_item."""
+        from lestash_server.routes import items as items_route
+
+        called: list[int] = []
+
+        def fake_re_embed(conn, item_id):
+            called.append(item_id)
+            return True
+
+        monkeypatch.setattr(items_route, "re_embed_item", fake_re_embed)
+
+        item = self._seeded_item(client)
+        resp = client.patch(f"/api/items/{item['id']}", json={"title": item["title"]})
+        assert resp.status_code == 200
+        assert called == []  # no-op title → no re-embed
+
+    def test_patch_changed_title_triggers_re_embed(self, client, monkeypatch):
+        from lestash_server.routes import items as items_route
+
+        called: list[int] = []
+
+        def fake_re_embed(conn, item_id):
+            called.append(item_id)
+            return True
+
+        monkeypatch.setattr(items_route, "re_embed_item", fake_re_embed)
+
+        item = self._seeded_item(client)
+        client.patch(f"/api/items/{item['id']}", json={"title": "Real change"})
+        assert called == [item["id"]]
+
+
 class TestSources:
     """Test /api/sources endpoints."""
 

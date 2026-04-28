@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -290,6 +290,50 @@ MIGRATIONS = [
         END;
         """,
     ),
+    (
+        9,
+        "Capture parent_id in item_history; cleanup duplicate sync history rows",
+        # Note: ALTER TABLE ADD COLUMN parent_id_old is handled in apply_migrations()
+        # because SQLite has no IF NOT EXISTS for ALTER TABLE.
+        """
+        DROP TRIGGER IF EXISTS capture_item_history;
+
+        CREATE TRIGGER capture_item_history
+        BEFORE UPDATE ON items
+        FOR EACH ROW
+        WHEN OLD.content IS NOT NEW.content
+          OR OLD.title IS NOT NEW.title
+          OR OLD.author IS NOT NEW.author
+          OR OLD.metadata IS NOT NEW.metadata
+          OR OLD.parent_id IS NOT NEW.parent_id
+        BEGIN
+            INSERT INTO item_history (
+                item_id, content_old, title_old, author_old,
+                url_old, metadata_old, is_own_content_old,
+                parent_id_old, change_reason, change_type
+            ) VALUES (
+                OLD.id, OLD.content, OLD.title, OLD.author,
+                OLD.url, OLD.metadata, OLD.is_own_content,
+                OLD.parent_id, 'api-update', 'update'
+            );
+        END;
+
+        DELETE FROM item_history
+        WHERE id NOT IN (
+            SELECT MIN(ih.id) FROM item_history ih
+            JOIN items i ON i.id = ih.item_id
+            WHERE i.source_type IN ('linkedin', 'youtube', 'audible', 'bluesky')
+            GROUP BY ih.item_id,
+                     COALESCE(ih.content_old, ''),
+                     COALESCE(ih.title_old, ''),
+                     COALESCE(ih.metadata_old, '')
+        )
+        AND item_id IN (
+            SELECT id FROM items
+            WHERE source_type IN ('linkedin', 'youtube', 'audible', 'bluesky')
+        );
+        """,
+    ),
 ]
 
 
@@ -317,6 +361,49 @@ def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     return any(row[1] == column for row in cursor.fetchall())
 
 
+def max_history_id(conn: sqlite3.Connection) -> int:
+    """Snapshot the latest item_history.id for a 'mark recent rows' bookkeeping pattern.
+
+    Pair with mark_recent_history() to tag rows that the capture_item_history
+    trigger writes during a subsequent UPDATE/UPSERT.
+    """
+    return conn.execute("SELECT COALESCE(MAX(id), 0) FROM item_history").fetchone()[0]
+
+
+def mark_recent_history(
+    conn: sqlite3.Connection,
+    since_id: int,
+    change_reason: str,
+    *,
+    item_ids: Iterable[int] | None = None,
+) -> None:
+    """Re-tag history rows newer than `since_id` with the given change_reason.
+
+    SQLite triggers cannot receive parameters, so the trigger always writes
+    'api-update'. Callers (sync, enricher, user-edit) capture max_history_id()
+    before their write and call this after to overwrite the default.
+
+    Pass `item_ids` when the caller knows exactly which items it touched —
+    this prevents re-tagging rows produced by an unrelated concurrent writer
+    that interleaved between the snapshot and the mark. Sync/enricher paths
+    that touch many items by design should leave it None.
+    """
+    if item_ids is None:
+        conn.execute(
+            "UPDATE item_history SET change_reason = ? WHERE id > ?",
+            (change_reason, since_id),
+        )
+        return
+    ids = list(item_ids)
+    if not ids:
+        return
+    placeholders = ",".join("?" * len(ids))
+    conn.execute(
+        f"UPDATE item_history SET change_reason = ? WHERE id > ? AND item_id IN ({placeholders})",
+        (change_reason, since_id, *ids),
+    )
+
+
 def apply_migrations(conn: sqlite3.Connection) -> int:
     """Apply any pending migrations.
 
@@ -333,6 +420,8 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
             # because ALTER TABLE ADD COLUMN has no IF NOT EXISTS in SQLite)
             if version == 5 and not _column_exists(conn, "items", "parent_id"):
                 conn.execute("ALTER TABLE items ADD COLUMN parent_id INTEGER")
+            if version == 9 and not _column_exists(conn, "item_history", "parent_id_old"):
+                conn.execute("ALTER TABLE item_history ADD COLUMN parent_id_old INTEGER")
             conn.executescript(sql)
             set_schema_version(conn, version)
             conn.commit()
@@ -470,6 +559,7 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
     import json
 
     metadata_json = json.dumps(item.metadata) if item.metadata else None
+    pre_max = max_history_id(conn)
     conn.execute(
         """
         INSERT INTO items (
@@ -501,13 +591,15 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
             item.parent_id,
         ),
     )
-    conn.commit()
 
     row = conn.execute(
         "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
         (item.source_type, item.source_id),
     ).fetchone()
     item_id = row[0]
+
+    mark_recent_history(conn, pre_max, "sync", item_ids=[item_id])
+    conn.commit()
 
     # Insert any media attachments
     if item.media:

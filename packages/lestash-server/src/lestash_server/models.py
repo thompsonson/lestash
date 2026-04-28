@@ -120,6 +120,39 @@ class ItemPatchRequest(BaseModel):
     parent_id: int | None | object = _UNSET
 
 
+class HistoryVersion(BaseModel):
+    """One version snapshot in an item's history (list view)."""
+
+    id: int
+    changed_at: datetime
+    change_reason: str | None
+    change_type: str | None
+    title_old: str | None
+    content_preview: str | None
+    parent_id_old: int | None
+
+
+class HistoryVersionDetail(BaseModel):
+    """Full snapshot of a single version (detail view)."""
+
+    id: int
+    item_id: int
+    changed_at: datetime
+    change_reason: str | None
+    change_type: str | None
+    title_old: str | None
+    content_old: str | None
+    author_old: str | None
+    url_old: str | None
+    metadata_old: dict[str, Any] | None
+    is_own_content_old: bool | None
+    parent_id_old: int | None
+
+
+class HistoryListResponse(BaseModel):
+    versions: list[HistoryVersion]
+
+
 class CollectionCreate(BaseModel):
     """Request to create a collection."""
 
