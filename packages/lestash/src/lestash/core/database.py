@@ -591,14 +591,15 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
             item.parent_id,
         ),
     )
-    mark_recent_history(conn, pre_max, "sync")
-    conn.commit()
 
     row = conn.execute(
         "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
         (item.source_type, item.source_id),
     ).fetchone()
     item_id = row[0]
+
+    mark_recent_history(conn, pre_max, "sync", item_ids=[item_id])
+    conn.commit()
 
     # Insert any media attachments
     if item.media:
