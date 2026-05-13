@@ -1573,9 +1573,11 @@
       html += `<div id="item-edit-form" style="display:none">
         <input type="text" id="item-edit-title" placeholder="Title" style="width:100%;font-size:1.05rem;font-weight:bold;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
         <textarea id="item-edit-content" rows="10" style="width:100%;resize:vertical;font-family:inherit;font-size:0.9rem;padding:0.5rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px"></textarea>
-        <div style="display:flex;gap:0.5rem;margin-top:0.4rem">
+        <div style="display:flex;gap:0.5rem;margin-top:0.4rem;align-items:center;flex-wrap:wrap">
           <button class="sync-btn" data-action="save-edit" data-id="${item.id}">Save</button>
           <button class="sync-btn" data-action="cancel-edit">Cancel</button>
+          <button class="sync-btn" data-action="attach-image" type="button">Attach image</button>
+          <input type="file" id="item-edit-image-input" accept="image/*" multiple style="display:none">
         </div>
       </div>`;
 
@@ -1725,6 +1727,56 @@
 
       container.innerHTML = html;
 
+      // Wire up image paste + file-input upload on the edit textarea
+      const editTextarea = container.querySelector('#item-edit-content');
+      if (editTextarea) {
+        let uploadSeq = 0;
+        const uploadAndInsert = async (blob, filename) => {
+          const placeholder = `![Uploading…${++uploadSeq}]()`;
+          const start = editTextarea.selectionStart;
+          const end = editTextarea.selectionEnd;
+          editTextarea.value = editTextarea.value.slice(0, start) + placeholder + '\n' + editTextarea.value.slice(end);
+          editTextarea.selectionStart = editTextarea.selectionEnd = start + placeholder.length + 1;
+          try {
+            const fd = new FormData();
+            fd.append('file', blob, filename);
+            const res = await api(`/api/items/${item.id}/media`, { method: 'POST', body: fd });
+            editTextarea.value = editTextarea.value.replace(placeholder, `![](${res.serve_url})`);
+          } catch (err) {
+            editTextarea.value = editTextarea.value.replace(placeholder, '');
+            showToast('Image upload failed', 'error');
+          }
+        };
+
+        editTextarea.addEventListener('paste', async (e) => {
+          const items = e.clipboardData?.items || [];
+          const images = [];
+          for (const it of items) {
+            if (it.kind === 'file' && it.type.startsWith('image/')) {
+              const f = it.getAsFile();
+              if (f) images.push(f);
+            }
+          }
+          if (images.length === 0) return;
+          e.preventDefault();
+          for (const f of images) {
+            const ext = (f.type.split('/')[1] || 'png').split('+')[0];
+            const name = f.name || `pasted-${Date.now()}.${ext}`;
+            await uploadAndInsert(f, name);
+          }
+        });
+
+        const fileInput = container.querySelector('#item-edit-image-input');
+        if (fileInput) {
+          fileInput.addEventListener('change', async () => {
+            for (const f of fileInput.files) {
+              await uploadAndInsert(f, f.name || `upload-${Date.now()}.png`);
+            }
+            fileInput.value = '';
+          });
+        }
+      }
+
       // Event delegation for actions — remove previous listener to prevent stacking
       if (container._actionHandler) container.removeEventListener('click', container._actionHandler);
       container._actionHandler = async (e) => {
@@ -1746,6 +1798,9 @@
           document.getElementById('item-title-display').style.display = '';
           document.getElementById('item-content-display').style.display = '';
           document.getElementById('item-detail-actions').style.display = '';
+        }
+        if (btn.dataset.action === 'attach-image') {
+          document.getElementById('item-edit-image-input')?.click();
         }
         if (btn.dataset.action === 'save-edit') {
           const newTitle = document.getElementById('item-edit-title').value;
@@ -2129,6 +2184,11 @@
       renderer: {
         link(token) {
           return `<a href="${token.href}" target="_blank" rel="noopener">${token.text}</a>`;
+        },
+        image(token) {
+          let href = token.href || '';
+          if (href.startsWith('/api/')) href = getApiBase() + href;
+          return `<img src="${href}" alt="${token.text || ''}" style="max-width:100%;height:auto">`;
         }
       }
     });
