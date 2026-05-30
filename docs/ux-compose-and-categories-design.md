@@ -46,42 +46,31 @@ A non-goal here: replacing collections with tags or vice versa. They earn their 
 [youtu.be/-X6YzlY…](https://youtu.be/-X6YzlY_8tM?is=i1Qr7bQuRiXhd9-G)
 ```
 
-The blog has the [`micro-blog-lite-youtube`](https://github.com/rknightuk/micro-blog-lite-youtube) plugin installed — see §2.4. That plugin scans every rendered `<a href>` for a YouTube URL and appends a `<lite-youtube videoid="…">` at the end of the post. Wrapping in `[]()` is *not* the problem.
+The link was emitted as a markdown anchor with a `?is=…` tracking parameter. On the SpaceX post that rendered to anchor-only — no embed. After comparing the available micro.blog YouTube plugins (see §2.4), this design targets [`flschr/mbplugin-youtube-nocookie`](https://github.com/flschr/mbplugin-youtube-nocookie). That plugin doesn't take URLs at all — it takes a Hugo shortcode `{{< yt "VIDEOID" >}}` and emits a build-time, no-cookie, lazy-loaded embed inline.
 
-The problem is the **trailing `?is=…` tracking parameter**. The plugin's video-ID regex captures everything after the slash as non-whitespace, so `videoid` gets set to `-X6YzlY_8tM?is=i1Qr7bQuRiXhd9-G`. The lite-youtube web component then builds an embed URL like `…/embed/-X6YzlY_8tM?is=…?autoplay=…` — two `?` characters, malformed, YouTube returns nothing.
+Fix in the compose pipeline: **extract the 11-char video ID and emit `{{< yt "ID" >}}`** rather than a raw URL or a markdown link. The whole "did the URL keep a tracking param" class of failure disappears because the shortcode only accepts IDs.
 
-Fix in the compose pipeline: **strip YouTube query params and normalise to `https://youtu.be/<id>`** before publish. The lint rule isn't `YT_NOT_BARE`, it's `YT_TRACKING_PARAM`.
+### 2.4 Plugin choice — flschr over rknightuk
 
-### 2.4 The rknightuk plugin (installed)
+The blog currently runs [`rknightuk/micro-blog-lite-youtube`](https://github.com/rknightuk/micro-blog-lite-youtube). This design targets [`flschr/mbplugin-youtube-nocookie`](https://github.com/flschr/mbplugin-youtube-nocookie) instead — install swap recommended.
 
-[`micro-blog-lite-youtube`](https://github.com/rknightuk/micro-blog-lite-youtube) is a Hugo partial that ships JS + CSS to every page. On `DOMContentLoaded`:
-
-```js
-const links = [...p.getElementsByTagName('a')]
-links.forEach(l => {
-  const m = l.href.match(/…(youtube.com|youtu.be)\/(watch|embed)?(\?v=|\/)?(\S+)?/)
-  const ytId = m ? m[7] : null
-  if (ytId && article) {
-    const video = document.createElement('lite-youtube')
-    video.setAttribute('videoid', ytId)
-    article.appendChild(video)
-  }
-})
-```
-
-Three behaviours that shape our design:
-
-| Behaviour | Implication for compose |
-| --- | --- |
-| Matches **any** `<a href>` with youtube.com / youtu.be | Wrapped `[label](url)` markdown links are fine — no need to force bare URLs |
-| Appends embeds **at the end of `.post-content`**, not inline | The link's text position is purely visual; the player will always be at the bottom |
-| Regex captures rest-of-URL into video ID | Tracking params (`?si=`, `?is=`, `&t=`, etc.) break the embed silently |
+| Dimension | rknightuk (today) | flschr (target) |
+| --- | --- | --- |
+| Trigger | runtime JS body scan for `<a href>` | Hugo shortcode `{{< yt "ID" >}}` |
+| Render moment | browser runtime | **build-time** (HTML + small inline JS) |
+| Input form | URL (regex-parsed, fragile) | **11-char ID only** (v1.3.5 dropped URL parsing for "instability") |
+| Position | appended to end of `.post-content` | **inline** at shortcode site |
+| Privacy | `youtube.com` | `youtube-nocookie.com` |
+| RSS / Mastodon | empty — JS doesn't run in feed readers | iframe + `.yt-text-link` text fallback |
+| Tracking-param failure | `?si=` / `?is=` silently breaks the embed | structurally impossible (input is ID, not URL) |
+| Lazy load | yes (lite-yt-embed via CDN) | yes (thumbnail + click-to-play, no CDN) |
 
 What this means for the architecture:
 
-- **No `YT_NOT_BARE` lint.** Replaced by `YT_TRACKING_PARAM` (warn + offer normalise).
-- **Compose doesn't need to render YouTube embeds for "WYSIWYG parity with micro.blog"** — the rknightuk plugin owns that. LeStash's own EmbedRenderer (§3.3, §7.4) is still useful inside the LeStash detail view, but its output doesn't need to match micro.blog's rendered HTML, only its *intent*.
-- **One open question** — see §8.7 — should we also send a fix upstream to rknightuk so the regex strips query strings? Independent of our compose-side fix, it would help others.
+- **`YT_TRACKING_PARAM` lint — deleted.** The class of failure doesn't exist when input is an ID.
+- **EmbedRenderer's compose-side job becomes URL→ID extraction** — parse any of `youtu.be/<id>`, `youtube.com/watch?v=<id>`, `youtube.com/embed/<id>`, `m.youtube.com/…`, `youtube-nocookie.com/embed/<id>`, plus `?list=<id>` playlists — and emit `{{< yt "<id>" >}}` (optionally `{{< yt "<id>" "" "<title>" >}}` for the 3rd-arg title used in aria-label, iframe title, and the feed fallback link).
+- **EmbedRenderer's LeStash-side job (preview / detail-view rendering) unchanged in intent** — render an inline embed so the user sees what they're publishing. It can render an `<iframe>` directly; doesn't need to mimic flschr's button-thumbnail-then-iframe UX.
+- **Action required**: install flschr plugin on the blog, uninstall rknightuk. See §9 slice 0.
 
 ### 2.3 Capability gaps (the short list)
 
@@ -119,8 +108,8 @@ Three flows, each kept narrow on purpose.
 │         │ Reusable rockets, satellite comms, and the  │  │
 │         │ AI-hype refrain.                            │  │
 │         │                                             │  │
-│         │ https://youtu.be/-X6YzlY_8tM    ⟵ bare URL  │  │
-│         │                                  auto-embeds│  │
+│         │ {{< yt "-X6YzlY_8tM" "" "SpaceX IPO" >}}    │  │
+│         │            ⟵ flschr shortcode (build-time)  │  │
 │         └─────────────────────────────────────────────┘  │
 │  Image  [thumb] screenshot-20260530.png   [Remove]       │
 │  Tags   ⊞ spacex   ⊞ ipo                                 │
@@ -136,26 +125,26 @@ Three flows, each kept narrow on purpose.
 └──────────────────────────────────────────────────────────┘
 ```
 
-**Pre-fill rules**, ordered by source kind. "Canonical YT URL" = `https://youtu.be/<id>` with no query string (see §2.4):
+**Pre-fill rules**, ordered by source kind:
 
-| Source | Title | Body seed | Link form | Image |
+| Source | Title | Body seed | Embed form | Image |
 | --- | --- | --- | --- | --- |
-| YouTube | video title | empty (cursor here) + blank line + `[<title>](<canonical YT URL>)` | canonical YT URL | thumbnail (optional) |
-| LinkedIn | first 80 chars of post or empty | `> …quote…` blockquote + blank line + source link | source URL | first attached image |
-| Bluesky | empty | `> …quote…` + source link | source URL | attached image |
-| arXiv | paper title | `> abstract…` + source link | source URL | (none) |
-| micro.blog (reshare) | original title | `> …quote…` + source link | source URL | first photo |
+| YouTube | video title | empty (cursor here) + blank line + `{{< yt "<id>" "" "<title>" >}}` | flschr shortcode | thumbnail (optional, the shortcode renders one) |
+| LinkedIn | first 80 chars of post or empty | `> …quote…` blockquote + blank line + source link | bare link | first attached image |
+| Bluesky | empty | `> …quote…` + source link | bare link | attached image |
+| arXiv | paper title | `> abstract…` + source link | bare link | (none) |
+| micro.blog (reshare) | original title | `> …quote…` + source link | bare link | first photo |
 | Note (own) | first line | rest of body | (none) | (none) |
 
-The composer never silently strips formatting — what you see is what gets POSTed. The one exception: tracking params on known-fragile URLs (YouTube) are stripped at prefill time, and shown in the lint panel as `info` so the user sees what happened.
+The composer never silently strips formatting — what you see is what gets POSTed. YouTube prefill resolves the source URL to its video ID at prefill time, and the lint panel shows what was extracted (`ℹ extracted videoid "-X6YzlY_8tM" from saved URL`).
 
 **Embed-rule guard.** A lint pass on the body, surfaced inline:
 
-- `ℹ Line 4: stripped tracking param ?is=…G from YouTube URL (rknightuk plugin needs a clean ID).`
-- `⚠ Line 6: YouTube URL with query string — embed will break. [Normalise]`
+- `ℹ Line 4: extracted videoid "-X6YzlY_8tM" from saved URL — shortcode {{< yt "…" >}} will embed at build time.`
+- `⚠ Line 6: raw YouTube URL detected — the flschr plugin only embeds via shortcode. [Convert to {{< yt "…" >}}]`
 - `⚠ Image referenced as <img>; micro.blog prefers ![]() markdown.`
 
-One-click "fix" for each warning. No silent rewrites — even the prefill-time strip is surfaced as `info` so the user can revert it (e.g. if the param matters for an unlisted/private link).
+One-click "fix" for each warning. No silent rewrites.
 
 ### 3.2 Quick-category
 
@@ -465,12 +454,13 @@ sequenceDiagram
 3. `publish()` twice with same body is **not** automatically idempotent — caller must opt-in via `if_not_already_published=True`; default raises `AlreadyPublished` to surface the choice.
 4. `publish()` failure (5xx from provider) leaves no `syndications` row, raises `PublishFailed` with the provider response attached.
 5. `publish()` failure (4xx with body) raises `PublishRejected` with provider message — caller shows it to user verbatim.
-6. `lint()` on a body with `https://youtu.be/X` (clean) returns no YouTube findings.
-7. `lint()` on a body with `https://youtu.be/X?si=abc` returns one `YT_TRACKING_PARAM` finding, with `fix_hint` containing the normalised URL `https://youtu.be/X`.
-8. `lint()` on a body with `https://www.youtube.com/watch?v=X&t=30` returns `YT_TRACKING_PARAM` (the `&t=30` breaks the rknightuk regex), `fix_hint` proposes `https://youtu.be/X`.
-9. `lint()` on a body with `[label](https://youtu.be/X?si=abc)` returns `YT_TRACKING_PARAM` — the lint walks anchor hrefs too, since that's what the rknightuk plugin inspects.
-10. `lint()` on a body with an `<img src="…">` returns `IMG_NOT_MARKDOWN`.
-11. `lint()` is pure — no IO, no network.
+6. `lint()` on a body with `{{< yt "X" >}}` (clean shortcode) returns no YouTube findings.
+7. `lint()` on a body with `https://youtu.be/X` returns one `YT_RAW_URL` finding, `fix_hint = '{{< yt "X" >}}'`.
+8. `lint()` on a body with `https://www.youtube.com/watch?v=X&t=30` returns `YT_RAW_URL`, `fix_hint = '{{< yt "X" >}}'` — tracking params dropped during extraction.
+9. `lint()` on a body with `[label](https://youtu.be/X?si=abc)` returns `YT_RAW_URL` with `fix_hint = '{{< yt "X" "" "label" >}}'` — anchor text is preserved as the title arg.
+10. `lint()` on a body with `https://www.youtube.com/playlist?list=PLabc` returns `YT_RAW_URL`, `fix_hint = '{{< yt "PLabc" >}}'` — playlists ride the same shortcode.
+11. `lint()` on a body with an `<img src="…">` returns `IMG_NOT_MARKDOWN`.
+12. `lint()` is pure — no IO, no network.
 
 ### 7.2 Interface that falls out
 
@@ -481,7 +471,7 @@ from dataclasses import dataclass
 from typing import Protocol, Literal
 
 LintCode = Literal[
-    "YT_TRACKING_PARAM",   # query string on YouTube URL breaks rknightuk plugin
+    "YT_RAW_URL",          # raw URL where {{< yt "ID" >}} shortcode is expected
     "IMG_NOT_MARKDOWN",
     "SOFT_CHAR_LIMIT",
 ]
@@ -532,9 +522,10 @@ class Publisher(Protocol):
 
 Notice what the test list forced into the interface:
 
-- **`lint` is sync + pure** (tests 6–11) — no `async`, no IO. Pure function, trivial to unit-test, can run on every keystroke.
-- **`fix_hint` carries a concrete replacement** (tests 7–9) — not just "fix this", but "replace with `<this>`". The UI's one-click fix is then a string replace, no extra logic in the frontend.
-- **`lint` walks anchor hrefs, not just bare URLs** (test 9) — mirrors what the rknightuk plugin inspects. The test forces this.
+- **`lint` is sync + pure** (tests 6–12) — no `async`, no IO. Pure function, trivial to unit-test, can run on every keystroke.
+- **`fix_hint` carries a concrete replacement** (tests 7–10) — not just "fix this", but "replace with `<this>`". The UI's one-click fix is then a string replace, no extra logic in the frontend.
+- **`lint` walks anchor hrefs and preserves anchor text** (test 9) — the anchor's label becomes the shortcode's title arg, so the click-to-play button and feed fallback link carry it through.
+- **Playlists share the shortcode** (test 10) — same lint code, same fix shape, no separate playlist machinery.
 - **Three distinct exception classes** (tests 3–5) — collapsing them to one `PublishError` would lose the calling-code distinctions the tests already require (re-publish flag, show-to-user, retry).
 - **`if_not_already_published` is an explicit boolean** (test 3) — not a global config, not implicit-by-default. The default surfaces the decision.
 - **`raw_response` returned** (test 1+2) — so the route can store it in `syndications.response_body` without the Publisher having to know about the DB.
@@ -551,18 +542,27 @@ Notice what the test list forced into the interface:
 
 ### 7.4 `EmbedRenderer`
 
-Scope: LeStash detail view + compose preview only. The rknightuk plugin owns rendering on micro.blog. We're showing the user what they *intend* to publish.
+Scope: LeStash detail view + compose preview only. The flschr plugin owns rendering on micro.blog. We're showing the user what they *intend* to publish.
+
+The renderer has two halves:
+
+- **Extract** — `extract_video_id(url) -> str | None`, accepts any of `youtu.be/<id>`, `youtube.com/watch?v=<id>`, `youtube.com/embed/<id>`, `m.youtube.com/…`, `youtube-nocookie.com/embed/<id>`, `?list=<id>` (playlists). Tracking params discarded.
+- **Render** — `render_body(body) -> EmbedRenderResult`, walks the body, replaces YouTube URLs / anchors / `{{< yt … >}}` shortcodes with inline `<iframe>`s on `youtube-nocookie.com`.
 
 Test list:
 
-1. `render("https://youtu.be/X")` returns an `<iframe>` with `youtube-nocookie.com` host.
-2. `render("[label](https://youtu.be/X)")` *also* renders the embed (matches rknightuk plugin behaviour — anchor hrefs are detected).
-3. `render("https://www.youtube.com/watch?v=X")` and `render("https://youtu.be/X")` produce the same embed.
-4. `render("https://youtu.be/X?si=abc")` produces an embed for ID `X` — query strings ignored at render time (defensive). The lint pass still flags it so the user is aware.
-5. Multiple YouTube URLs in one body → multiple embeds, appended at end of body (matches rknightuk's append-at-end semantics).
-6. `render` is sync, pure, no fetch.
-7. `render` escapes user content in surrounding text — no XSS.
-8. Unknown video host falls back to plain `<a>`.
+1. `extract_video_id("https://youtu.be/X")` returns `"X"`.
+2. `extract_video_id("https://youtu.be/X?si=abc")` returns `"X"`.
+3. `extract_video_id("https://www.youtube.com/watch?v=X&t=30")` returns `"X"`.
+4. `extract_video_id("https://www.youtube.com/playlist?list=PLabc")` returns `"PLabc"`.
+5. `extract_video_id("https://example.com/x")` returns `None`.
+6. `render_body("{{< yt \"X\" >}}")` returns an `<iframe>` with `youtube-nocookie.com` host.
+7. `render_body("https://youtu.be/X")` *also* renders the embed inline (LeStash is more permissive than flschr — we render intent).
+8. `render_body("[label](https://youtu.be/X)")` *also* renders the embed inline.
+9. Multiple YouTube refs → multiple inline embeds at each ref's position (LeStash chooses inline; flschr already does the same).
+10. `render_body` is sync, pure, no fetch.
+11. `render_body` escapes user content in surrounding text — no XSS.
+12. Unknown video host falls back to plain `<a>`.
 
 Interface:
 
@@ -620,9 +620,9 @@ Why snapshot semantics in test 4: live "view" semantics would require running th
 2. **Draft vs publish.** Micropub supports `post-status=draft`. UI exposes this as visibility radio. → Yes, ship from day one (low cost, lets user proof).
 3. **Image upload path.** micro.blog config advertises a `media-endpoint`. For initial slice: only support items whose `media[0]` is already a URL we can pass through; defer multipart upload to v2. → Documented limit in composer ("Local images coming soon").
 4. **Tag normalization on autocomplete.** Show `sophies-work` and `sophie work` as separate? They *are* separate today. → Add a "suggest merge?" hint when prefix matches multiple near-duplicates (`Levenshtein ≤ 2`). Defer the actual merge UI; surface the smell.
-5. **`lint` rule extensibility.** Per-target rule sets or one shared set? → One shared set lives in core; targets opt in by listing codes. micro.blog opts into `YT_TRACKING_PARAM`, `IMG_NOT_MARKDOWN`, `SOFT_CHAR_LIMIT(300)`. LinkedIn opts into `SOFT_CHAR_LIMIT(3000)` only.
+5. **`lint` rule extensibility.** Per-target rule sets or one shared set? → One shared set lives in core; targets opt in by listing codes. micro.blog opts into `YT_RAW_URL`, `IMG_NOT_MARKDOWN`, `SOFT_CHAR_LIMIT(300)`. LinkedIn opts into `SOFT_CHAR_LIMIT(3000)` only.
 6. **Two-app pattern (project memory: LinkedIn dual-app, see [[project_linkedin_posting]]):** does micro.blog need anything similar? → No. Single app token, single endpoint. Simpler.
-7. **Upstream fix to rknightuk plugin?** The video-ID regex (§2.4) captures query strings into the ID. We work around it by stripping client-side; a one-line regex fix upstream would help anyone using the plugin. → Open a PR to `rknightuk/micro-blog-lite-youtube` proposing `match(/…\/(?:watch\?v=|embed\/)?([^?&\s]+)/)`. Independent of our compose-side fix; both belt and braces.
+7. **Blog plugin swap timing.** flschr (target) vs rknightuk (today). When the swap happens, any old posts that contain raw YouTube URLs will lose their embeds (flschr won't pick them up — only shortcodes embed). Two options: (a) one-off migration pass over old posts (rewrite URLs into shortcodes via Micropub update); (b) leave history as plain links. → Prefer (a) for last 12 months only; cost low, payoff is consistent feed/Mastodon rendering on recent reshared posts. Older posts: leave alone.
 
 ---
 
@@ -632,12 +632,13 @@ Each slice is independently mergeable + demo-able. PR titles in the suggested co
 
 | # | Slice | Slice value | Touches |
 | - | --- | --- | --- |
+| 0 | Install `flschr/mbplugin-youtube-nocookie` on the blog; uninstall `rknightuk/micro-blog-lite-youtube` | Unblocks the rest; standalone blog change | blog plugins (no code) |
 | 1 | `feat(lestash): add Publisher protocol + ComposeRequest/PublishResult/LintFinding schemas` | Foundation; no user-visible change | `packages/lestash` |
 | 2 | `feat(microblog): implement MicropubClient.create_entry()` | Backend can post; tested via CLI | `lestash-microblog` |
 | 3 | `feat(microblog): expose POST /api/microblog/publish` | API-first publish | `lestash-server` |
 | 4 | `feat(app): micro.blog compose modal (YouTube prefill)` | First end-to-end user flow | `app/` |
-| 5 | `feat(lestash): compose.lint with YT_NOT_BARE + IMG_NOT_MARKDOWN` | Embed warnings | `packages/lestash` |
-| 6 | `feat(app): EmbedRenderer extraction + iframe rendering in detail view` | YouTube embeds everywhere | `app/` |
+| 5 | `feat(lestash): compose.lint with YT_RAW_URL + IMG_NOT_MARKDOWN` | Embed warnings | `packages/lestash` |
+| 6 | `feat(app): EmbedRenderer (extract + render) + iframe in detail view` | YouTube embeds inline in LeStash | `app/` |
 | 7 | `feat(server): GET /api/items/tags?prefix=` | Autocomplete backend | `lestash-server` |
 | 8 | `feat(app): TagTypeahead + "t" shortcut` | Path B faster tag | `app/` |
 | 9 | `feat(server): POST /api/items/tags/bulk` | Bulk endpoint | `lestash-server` |
