@@ -37,6 +37,18 @@ class TestSchemaMigrations:
             # Version should still be current
             assert get_schema_version(conn) == SCHEMA_VERSION
 
+    def test_tags_kind_column_exists_with_default(self, test_db):
+        """Migration 10: tags.kind column exists and defaults to 'ad-hoc'."""
+        with get_connection(test_db) as conn:
+            cols = {row[1]: row for row in conn.execute("PRAGMA table_info(tags)")}
+            assert "kind" in cols
+            conn.execute("INSERT INTO tags (name) VALUES ('foo')")
+            row = conn.execute("SELECT kind FROM tags WHERE name='foo'").fetchone()
+            assert row[0] == "ad-hoc"
+            conn.execute("INSERT INTO tags (name, kind) VALUES ('bar', 'category')")
+            row = conn.execute("SELECT kind FROM tags WHERE name='bar'").fetchone()
+            assert row[0] == "category"
+
     def test_migrations_applied_on_connection(self, test_db):
         """get_connection should automatically apply pending migrations."""
         # Manually reset version to 0 (simulating old database)

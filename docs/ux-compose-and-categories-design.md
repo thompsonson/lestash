@@ -325,9 +325,18 @@ ALTER TABLE collections ADD COLUMN filter_spec TEXT;                      -- JSO
 
 `syndications` lets the item detail show "Published to micro.blog ⤴" and prevents accidental double-posting. Storing `request_body` makes "re-publish with edits" trivially safe — we have the prior text.
 
-### 5.4 Tag input — no schema change
+### 5.4 Tag input — minimal schema change
 
-Tag normalization is already lowercase; autocomplete just needs a `prefix=` query (small server change, see [§7.5](#75-tag-autocomplete-api)).
+```sql
+-- migration 10: distinguish curated category tags from ad-hoc free tags
+ALTER TABLE tags ADD COLUMN kind TEXT NOT NULL DEFAULT 'ad-hoc';
+-- values: 'category' (curated, shown in composer Cats autocomplete)
+--        | 'ad-hoc'   (free tags, shown in composer Tags autocomplete)
+```
+
+Tag normalization is already lowercase. Autocomplete uses a `prefix=` query + a `kind=` filter so the composer can ask for category candidates and tag candidates separately from the same endpoint (see [§7.5](#75-tag-autocomplete-api)).
+
+The 11 categories from [`blog-categories-consolidation.md`](blog-categories-consolidation.md) are seeded into the live DB with `kind='category'`. Future renames / additions happen via the same UI affordance as any tag — there's no separate "categories admin" surface.
 
 ---
 
@@ -578,9 +587,11 @@ export function detectEmbeds(body: string): Array<{ line: number; url: string; p
 ### 7.5 Tag autocomplete API
 
 ```
-GET /api/items/tags?prefix=<str>&limit=<int>
-→ 200 { results: [{name, count}], total: int }
+GET /api/items/tags?prefix=<str>&kind=<category|ad-hoc>&limit=<int>
+→ 200 { results: [{name, kind, count}], total: int }
 ```
+
+`kind` is optional — omitted returns both, useful for legacy callers and the filter dropdown. Composer's `Cats` field passes `kind=category`; `Tags` field passes `kind=ad-hoc`. Curated categories always rank ahead of ad-hoc tags within a prefix match when `kind` is omitted.
 
 ### 7.6 Bulk-tag API
 
