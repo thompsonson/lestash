@@ -253,13 +253,26 @@ erDiagram
     TEXT content
     TEXT url
     INTEGER parent_id FK
-    TEXT metadata "JSON"
+    TEXT metadata
     TIMESTAMP created_at
   }
-  tags { INTEGER id PK; TEXT name UK }
-  item_tags { INTEGER item_id FK; INTEGER tag_id FK }
-  collections { INTEGER id PK; TEXT name; TEXT description }
-  collection_items { INTEGER collection_id FK; INTEGER item_id FK }
+  tags {
+    INTEGER id PK
+    TEXT name UK
+  }
+  item_tags {
+    INTEGER item_id FK
+    INTEGER tag_id FK
+  }
+  collections {
+    INTEGER id PK
+    TEXT name
+    TEXT description
+  }
+  collection_items {
+    INTEGER collection_id FK
+    INTEGER item_id FK
+  }
 ```
 
 ### 5.2 Tags vs. collections — keep both
@@ -333,7 +346,7 @@ sequenceDiagram
   API->>DB: INSERT syndications(item_id, target='microblog', url, request_body, response_body)
   API->>DB: add_tag(item_id, 'published-to-microblog')  // if opt-in checked
   API-->>UI: 200 {url}
-  UI-->>U: toast "Published ⤴ open"; modal closes
+  UI-->>U: toast "Published ⤴ open" — modal closes
 ```
 
 Notes on step 4 (lint findings): findings render inline (yellow underline + tooltip) rather than blocking submit. Submit is blocked only on `severity=error` — currently none of the embed rules are errors, all warnings.
@@ -359,7 +372,7 @@ sequenceDiagram
   UI->>UI: render list + bottom row: "Create 'sop'"
   U->>UI: ↓ to "sophie", Enter
   UI->>API: POST /api/items/{id}/tags {tag:"sophie"}
-  API->>DB: INSERT OR IGNORE tags; INSERT item_tags
+  API->>DB: INSERT OR IGNORE tags · INSERT item_tags
   API-->>UI: 200
   UI-->>U: chip appears
 ```
@@ -381,9 +394,9 @@ sequenceDiagram
   U->>Bar: press "t" → typeahead opens
   U->>Bar: pick "sophie"
   Bar->>API: POST {item_ids:[3,7,12], tag:"sophie"}
-  API->>DB: BEGIN; INSERT OR IGNORE tag; bulk INSERT item_tags; COMMIT
+  API->>DB: BEGIN · INSERT OR IGNORE tag · bulk INSERT item_tags · COMMIT
   API-->>Bar: {applied:3, skipped:0}
-  Bar-->>U: toast "Tagged 3 items"; selection cleared
+  Bar-->>U: toast "Tagged 3 items" — selection cleared
 ```
 
 ### 6.4 Smart collection (Path A)
