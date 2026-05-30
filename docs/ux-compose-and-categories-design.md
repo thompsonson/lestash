@@ -663,7 +663,96 @@ Slices 1–4 unlock the SpaceX-IPO use case. Slices 7–10 unlock the Sophie's-w
 
 ---
 
-## 10. What this design deliberately leaves out
+## 10. Shipping cadence — staggered waves
+
+§9 is the granular slice list. This section answers "what do I merge first, what waits, what can run in parallel, and where do I stop to reassess." Waves are mergeable on their own — each leaves the app in a coherent state and ships value even if no later wave ever lands.
+
+### Dependency graph
+
+```mermaid
+graph LR
+  W0["Wave 0 done<br/>docs + tags.kind"]
+  W1["Wave 1<br/>blog plugin swap"]
+  W2a["Wave 2a<br/>Publisher + Micropub<br/>+ publish API"]
+  W2b["Wave 2b<br/>compose modal UI"]
+  W3["Wave 3<br/>lint + EmbedRenderer"]
+  W4["Wave 4<br/>tag autocomplete + typeahead"]
+  W5a["Wave 5a<br/>bulk-tag API + UI"]
+  W5b["Wave 5b<br/>smart collections"]
+  W6a["Wave 6a<br/>LinkedIn → Publisher refactor"]
+  W6b["Wave 6b<br/>draft visibility + destination picker"]
+
+  W0 --> W1
+  W0 --> W2a
+  W0 --> W4
+  W1 -.-> W2b
+  W2a --> W2b
+  W2b --> W3
+  W2a --> W6a
+  W2b --> W6b
+  W4 --> W5a
+  W4 --> W5b
+```
+
+Dashed line = soft dependency (Wave 2b is more useful once Wave 1 is done, but doesn't strictly require it).
+
+### Wave-by-wave
+
+| Wave | Contains | Ships independently? | Risk | Stop-point value |
+| --- | --- | --- | --- | --- |
+| **0 ✓** | docs, `tags.kind` migration, 11 categories seeded | yes | none — column is additive, no caller yet | DB now has a structured place for categories |
+| **1** | slice 0 — install flschr, uninstall rknightuk | yes | cosmetic regression on old posts with raw YouTube URLs (lose embed until backfilled) | new posts get inline nocookie embeds; RSS/Mastodon syndication finally carries them |
+| **2a** | slices 1, 2, 3 — Publisher protocol + `MicropubClient.create_entry()` + `POST /api/microblog/publish` | yes — CLI / curl callable | live blog gets test posts during dev — use `visibility=draft` | publishing works end-to-end from a script, no UI needed |
+| **2b** | slice 4 — compose modal | depends on 2a | UI gate it behind a `settings.compose_microblog_enabled` flag while shaking it down | the SpaceX-IPO use case works |
+| **3** | slices 5, 6 — `compose.lint` + `EmbedRenderer` extract+render | yes — purely additive UI | low | inline YouTube in LeStash; raw-URL warnings in composer |
+| **4** | slices 7, 8 — tag autocomplete API + TagTypeahead + `t` shortcut | yes — useful for any tag, not just categories | low | the "Sophie's work" tagging case is fast |
+| **5a** | slices 9, 10 — bulk-tag API + BulkSelectionBar | yes | low — operation is atomic per request | shift-click → `t` → tag many items at once |
+| **5b** | slices 11, 12 — smart collections backend + "Save filter as collection" UI | yes | medium — the item-insert hook adds work to every sync write; gate behind feature flag initially, default new collections to `kind='manual'` | filters become persistent |
+| **6a** | slice 13 — LinkedIn migrates to Publisher protocol | yes — refactor only, behaviour unchanged | medium — touches working production code; need parity tests before/after | one Publisher abstraction; deletes duplicate plumbing |
+| **6b** | slice 14 — draft visibility + destination picker polish | yes | low | nicer composer UX |
+
+### Recommended order
+
+1. **Wave 1 next** — zero-code, immediate visible win on the blog. Decouples everything that follows from blog plugin choice.
+2. **Then Wave 2a + Wave 4 in parallel** — independent tracks, no shared files. 2a is the publish backend (no UI), 4 is the tag UX (small backend + small UI).
+3. **Then Wave 2b** — UI to drive 2a. Stop here, use it for a week, decide if Wave 3 lint matters before building it.
+4. **Wave 3 only if Wave 2b shows raw-URL or `<img>` slip-ups happening in real use** — otherwise defer; the lint is insurance, not foundation.
+5. **Wave 5a** — bulk-tag once Wave 4 is in muscle memory. Wave 5b (smart collections) only if a saved filter survives in the user's head for more than a week — otherwise YAGNI.
+6. **Wave 6a + 6b** — last, both small. Refactor 6a only after Wave 2 has shaken the Publisher contract enough to know it's right.
+
+### Parallel tracks
+
+These pairs touch no shared code and can land in either order from the same starting point:
+
+- **Wave 2a ‖ Wave 4** — Publisher/publish backend vs tag autocomplete backend. Different files.
+- **Wave 5a ‖ Wave 5b** — bulk-tag vs smart collections, after Wave 4. Share the BulkSelectionBar component but on different code paths.
+- **Wave 6a ‖ Wave 6b** — independent polish.
+
+### Feature gating
+
+Add one boolean per in-progress wave to `~/.config/lestash/config.toml` (or `settings.toml`) under `[features]`. Default `false`; the user flips it when ready to dogfood. Surfaces:
+
+- `compose_microblog_enabled` — gates Wave 2b composer UI + the `Share to micro.blog` button.
+- `tag_typeahead_enabled` — gates Wave 4 typeahead (falls back to current type-and-add).
+- `bulk_select_enabled` — gates Wave 5a shift-click selection.
+- `smart_collections_enabled` — gates Wave 5b hook registration *and* the UI button. Critical for 5b because the insert hook touches every sync write.
+
+The gate lives in the frontend for UI waves and in the backend for backend waves (refuse the call if disabled). This lets you merge to `main` long before you're ready to use the feature, and roll forward without reverting.
+
+### Rollback story
+
+- Wave 0: `ALTER TABLE tags DROP COLUMN kind` — schema-only revert. Categories stay (as `ad-hoc`).
+- Wave 1: reinstall rknightuk plugin on the blog.
+- Wave 2: disable `compose_microblog_enabled`, then revert PR. `syndications` rows are harmless if left.
+- Wave 3: revert PR; no schema, no state.
+- Wave 4: disable `tag_typeahead_enabled`, revert PR.
+- Wave 5a: revert PR.
+- Wave 5b: disable `smart_collections_enabled` (stops the hook from firing), then revert. `collections.kind/filter_spec` columns can stay or be dropped.
+- Wave 6: revert; LinkedIn behaviour is unchanged by 6a, 6b is additive.
+
+---
+
+## 11. What this design deliberately leaves out
 
 - Local image upload to micro.blog media-endpoint (v2).
 - Cross-target compose ("publish to both micro.blog AND LinkedIn in one click") — additive later.
