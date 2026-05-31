@@ -648,7 +648,7 @@ Each slice is independently mergeable + demo-able. PR titles in the suggested co
 | 2 | `feat(microblog): implement MicropubClient.create_entry()` | Backend can post; tested via CLI | `lestash-microblog` |
 | 3 | `feat(microblog): expose POST /api/microblog/publish` | API-first publish | `lestash-server` |
 | 4 | `feat(app): micro.blog compose modal (YouTube prefill)` | First end-to-end user flow | `app/` |
-| 5 | `feat(lestash): compose.lint with YT_RAW_URL + IMG_NOT_MARKDOWN` | Embed warnings | `packages/lestash` |
+| 5 | `feat(lestash): compose.lint with YT_RAW_URL + IMG_NOT_MARKDOWN` | Embed warnings | `lestash/plugins/lint_rules.py` (shared helpers, next to `publisher.py`) + `lestash-microblog/.../source.py` (`lint()` method). No new submodule — defer a `compose/` namespace until something beyond lint earns it. |
 | 6 | `feat(app): EmbedRenderer (extract + render) + iframe in detail view` | YouTube embeds inline in LeStash | `app/` |
 | 7 | `feat(server): GET /api/items/tags?prefix=` | Autocomplete backend | `lestash-server` |
 | 8 | `feat(app): TagTypeahead + "t" shortcut` | Path B faster tag | `app/` |
