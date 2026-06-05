@@ -140,7 +140,12 @@ def run_auth_flow(
         raise FileNotFoundError(msg)
 
     effective_scopes = scopes or DEFAULT_SCOPES
-    flow = InstalledAppFlow.from_client_secrets_file(str(secrets_path), effective_scopes)
+    # Explicitly load the `installed` client config — from_client_secrets_file checks
+    # for `web` before `installed`, so a file with both sections always picks web.
+    # OOB redirect (used by the headless flow) is not allowed for web client types.
+    raw = json.loads(secrets_path.read_text())
+    installed_config = raw.get("installed") or raw
+    flow = InstalledAppFlow.from_client_config({"installed": installed_config}, effective_scopes)
 
     use_headless = headless if headless is not None else is_headless()
     credentials = _run_manual_flow(flow) if use_headless else flow.run_local_server(port=0)
