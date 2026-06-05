@@ -2,6 +2,7 @@
 
 import sqlite3
 
+import pytest
 from lestash.core.database import (
     SCHEMA_VERSION,
     apply_migrations,
@@ -48,6 +49,48 @@ class TestSchemaMigrations:
             conn.execute("INSERT INTO tags (name, kind) VALUES ('bar', 'category')")
             row = conn.execute("SELECT kind FROM tags WHERE name='bar'").fetchone()
             assert row[0] == "category"
+
+    def test_syndications_table_exists_with_unique_constraint(self, test_db):
+        """Migration 11: syndications table + (item_id, target, target_url) unique."""
+        with get_connection(test_db) as conn:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(syndications)")}
+            assert {
+                "id",
+                "item_id",
+                "target",
+                "target_url",
+                "published_at",
+                "request_body",
+                "response_body",
+            }.issubset(cols)
+
+            # Cascade delete: dropping the parent item drops its syndications.
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES (?, ?, ?)",
+                ("test", "t1", "x"),
+            )
+            (item_id,) = conn.execute("SELECT last_insert_rowid()").fetchone()
+            conn.execute(
+                "INSERT INTO syndications (item_id, target, target_url) VALUES (?, ?, ?)",
+                (item_id, "microblog", "https://example.com/p"),
+            )
+            # UNIQUE(item_id, target, target_url) blocks exact dupes.
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO syndications (item_id, target, target_url) VALUES (?, ?, ?)",
+                    (item_id, "microblog", "https://example.com/p"),
+                )
+            # Same item, same target, different URL → allowed (republish to a
+            # different post URL is a legitimate sequence).
+            conn.execute(
+                "INSERT INTO syndications (item_id, target, target_url) VALUES (?, ?, ?)",
+                (item_id, "microblog", "https://example.com/p2"),
+            )
+            conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
+            (cnt,) = conn.execute(
+                "SELECT COUNT(*) FROM syndications WHERE item_id = ?", (item_id,)
+            ).fetchone()
+            assert cnt == 0  # cascade fired
 
     def test_migrations_applied_on_connection(self, test_db):
         """get_connection should automatically apply pending migrations."""

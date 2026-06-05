@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -116,6 +116,22 @@ CREATE TABLE IF NOT EXISTS log_entries (
 
 CREATE INDEX IF NOT EXISTS idx_log_timestamp ON log_entries(timestamp);
 CREATE INDEX IF NOT EXISTS idx_log_level ON log_entries(level);
+
+-- Syndications: audit row per (item, target, target_url). Wave 2a slice 3.
+-- The Publisher protocol returns a PublishResult; the route writes one row
+-- here so subsequent publish() calls can short-circuit via AlreadyPublished
+-- (unless the caller opts in to re-publish).
+CREATE TABLE IF NOT EXISTS syndications (
+    id INTEGER PRIMARY KEY,
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    target TEXT NOT NULL,
+    target_url TEXT NOT NULL,
+    published_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    request_body TEXT,
+    response_body TEXT,
+    UNIQUE(item_id, target, target_url)
+);
+CREATE INDEX IF NOT EXISTS idx_syndications_item ON syndications(item_id);
 """
 
 # Migrations: list of (version, description, sql) tuples
@@ -345,6 +361,23 @@ MIGRATIONS = [
         # No data backfill in the migration: which tags are categories is a
         # user-curation decision, not a schema concern.
         "",
+    ),
+    (
+        11,
+        "Add syndications table (Wave 2a slice 3 — Publisher audit)",
+        """
+        CREATE TABLE IF NOT EXISTS syndications (
+            id INTEGER PRIMARY KEY,
+            item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            target TEXT NOT NULL,
+            target_url TEXT NOT NULL,
+            published_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            request_body TEXT,
+            response_body TEXT,
+            UNIQUE(item_id, target, target_url)
+        );
+        CREATE INDEX IF NOT EXISTS idx_syndications_item ON syndications(item_id);
+        """,
     ),
 ]
 
@@ -920,3 +953,46 @@ def delete_item_media(conn: sqlite3.Connection, media_id: int) -> bool:
     cursor = conn.execute("DELETE FROM item_media WHERE id = ?", (media_id,))
     conn.commit()
     return cursor.rowcount > 0
+
+
+# --- syndications (Wave 2a slice 3) ---
+
+
+def get_syndication(conn: sqlite3.Connection, item_id: int, target: str) -> dict | None:
+    """Return the most recent syndication for (item, target), or None."""
+    row = conn.execute(
+        """SELECT id, item_id, target, target_url, published_at,
+                  request_body, response_body
+           FROM syndications
+           WHERE item_id = ? AND target = ?
+           ORDER BY published_at DESC LIMIT 1""",
+        (item_id, target),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def record_syndication(
+    conn: sqlite3.Connection,
+    *,
+    item_id: int,
+    target: str,
+    target_url: str,
+    request_body: str | None = None,
+    response_body: str | None = None,
+) -> int:
+    """Insert a syndication audit row. Returns the new row id.
+
+    Caller is expected to JSON-serialise request_body / response_body if they
+    want structured data persisted. The columns are TEXT so anything else
+    works too (e.g. provider returned plain text).
+    """
+    cursor = conn.execute(
+        """INSERT INTO syndications
+           (item_id, target, target_url, request_body, response_body)
+           VALUES (?, ?, ?, ?, ?)""",
+        (item_id, target, target_url, request_body, response_body),
+    )
+    conn.commit()
+    rid = cursor.lastrowid
+    assert rid is not None
+    return rid

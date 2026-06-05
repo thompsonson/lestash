@@ -1,8 +1,9 @@
 """Micropub API client wrapper for Micro.blog."""
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -293,6 +294,83 @@ class MicropubClient:
             httpx.HTTPStatusError: If token is invalid.
         """
         return self.get_config()
+
+    def create_entry(
+        self,
+        *,
+        content: str,
+        name: str | None = None,
+        categories: Sequence[str] = (),
+        photo_urls: Sequence[str] = (),
+        post_status: Literal["published", "draft"] = "published",
+        destination: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """POST an h-entry to Micropub.
+
+        Returns the new post URL (from the Location header) plus the parsed
+        JSON response body if any. The caller (slice 3 MicroblogPublisher)
+        wraps these into a PublishResult and translates errors into the
+        Publisher protocol's three exception classes.
+
+        Per the Micropub spec, all property values are arrays, even single
+        values. `mp-destination` is a top-level key alongside `type` and
+        `properties`, not a property.
+
+        Args:
+            content: Post body (markdown or plain text). Required.
+            name: Optional title. micro.blog treats posts without a title as
+                short-form notes.
+            categories: Optional list of category slugs.
+            photo_urls: Optional list of already-uploaded image URLs.
+                Multipart upload of local images is deferred (see design §8.3).
+            post_status: "published" (default) or "draft".
+            destination: Optional blog UID for multi-blog accounts. If None,
+                micro.blog uses the user's default blog.
+
+        Returns:
+            (post_url, raw_response) — post_url is the canonical URL from the
+            Location header; raw_response is the parsed JSON body (may be {}).
+
+        Raises:
+            httpx.HTTPStatusError: on 4xx/5xx.
+            ValueError: on a 2xx response with no Location header.
+        """
+        properties: dict[str, list[str]] = {
+            "content": [content],
+            "post-status": [post_status],
+        }
+        if name:
+            properties["name"] = [name]
+        if categories:
+            properties["category"] = list(categories)
+        if photo_urls:
+            properties["photo"] = list(photo_urls)
+
+        body: dict[str, Any] = {
+            "type": ["h-entry"],
+            "properties": properties,
+        }
+        if destination:
+            body["mp-destination"] = destination
+
+        response = self._client.post(
+            self.endpoint,
+            json=body,
+            headers={"Content-Type": "application/json"},
+        )
+        response.raise_for_status()
+
+        location = response.headers.get("Location") or response.headers.get("location")
+        if not location:
+            raise ValueError(
+                f"Micropub server returned {response.status_code} but no Location header"
+            )
+
+        try:
+            raw = response.json()
+        except (ValueError, json.JSONDecodeError):
+            raw = {}
+        return location, raw
 
 
 def create_client(token: str | None = None) -> MicropubClient:

@@ -1,7 +1,7 @@
 """Pydantic response models for the API."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -277,3 +277,30 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     version: str
     items: int
+
+
+# --- micro.blog publish (Wave 2a slice 3) ---
+
+
+class MicroblogPublishRequest(BaseModel):
+    """Payload to POST /api/microblog/publish.
+
+    Mirrors `lestash.plugins.ComposeRequest` but as a Pydantic model so
+    FastAPI validates the wire format. The route converts to ComposeRequest
+    before handing to the publisher.
+    """
+
+    item_id: int
+    title: str | None = None
+    body: str
+    image_url: str | None = None
+    categories: list[str] = []
+    visibility: Literal["public", "draft"] = "public"
+    if_not_already_published: bool = False
+
+
+class MicroblogPublishResponse(BaseModel):
+    """Response from a successful publish — the canonical URL of the new post."""
+
+    url: str
+    target: Literal["microblog"] = "microblog"
