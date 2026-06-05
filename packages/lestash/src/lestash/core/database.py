@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -69,10 +69,12 @@ CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE ON items BEGIN
     VALUES (new.id, new.title, new.content, new.author);
 END;
 
--- Tags for organization
+-- Tags for organization. `kind` distinguishes curated 'category' tags
+-- (the composer's autocomplete list) from free-form 'ad-hoc' tags.
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL
+    name TEXT UNIQUE NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'ad-hoc'
 );
 
 CREATE TABLE IF NOT EXISTS item_tags (
@@ -334,6 +336,16 @@ MIGRATIONS = [
         );
         """,
     ),
+    (
+        10,
+        "Add tags.kind column (category vs ad-hoc)",
+        # Note: ALTER TABLE ADD COLUMN tags.kind is handled in apply_migrations()
+        # because SQLite has no IF NOT EXISTS for ALTER TABLE.
+        # The column is purely additive — existing rows get the DEFAULT 'ad-hoc'.
+        # No data backfill in the migration: which tags are categories is a
+        # user-curation decision, not a schema concern.
+        "",
+    ),
 ]
 
 
@@ -422,6 +434,8 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                 conn.execute("ALTER TABLE items ADD COLUMN parent_id INTEGER")
             if version == 9 and not _column_exists(conn, "item_history", "parent_id_old"):
                 conn.execute("ALTER TABLE item_history ADD COLUMN parent_id_old INTEGER")
+            if version == 10 and not _column_exists(conn, "tags", "kind"):
+                conn.execute("ALTER TABLE tags ADD COLUMN kind TEXT NOT NULL DEFAULT 'ad-hoc'")
             conn.executescript(sql)
             set_schema_version(conn, version)
             conn.commit()
