@@ -89,7 +89,7 @@ def save_credentials(credentials: Credentials, scopes: list[str] | None = None) 
 
 def load_credentials() -> Credentials | None:
     """Load OAuth credentials from config file."""
-    from datetime import UTC, datetime
+    from datetime import datetime
 
     path = get_credentials_path()
     if not path.exists():
@@ -99,8 +99,9 @@ def load_credentials() -> Credentials | None:
         creds_data = json.loads(path.read_text())
         expiry_str = creds_data.get("expiry")
         expiry = datetime.fromisoformat(expiry_str) if expiry_str else None
-        if expiry and expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=UTC)
+        # google-auth uses naive UTC datetimes internally; strip tzinfo if present
+        if expiry and expiry.tzinfo is not None:
+            expiry = expiry.replace(tzinfo=None)
         return Credentials(
             token=creds_data.get("token"),
             refresh_token=creds_data.get("refresh_token"),
