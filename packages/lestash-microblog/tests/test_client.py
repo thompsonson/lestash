@@ -531,3 +531,183 @@ class TestCreateClient:
 
         with pytest.raises(ValueError, match="No token provided"):
             create_client()
+
+
+def _make_post_response(
+    status_code: int = 201,
+    location: str | None = "https://matt.thompson.gr/2026/06/05/post.html",
+    json_body: dict | None = None,
+) -> MagicMock:
+    """Build a fake httpx response for use as `_client.post` return value."""
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = status_code
+    resp.headers = {"Location": location} if location else {}
+    resp.json.return_value = json_body if json_body is not None else {}
+    if status_code >= 400:
+        resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            f"HTTP {status_code}", request=MagicMock(), response=resp
+        )
+    else:
+        resp.raise_for_status.return_value = None
+    return resp
+
+
+class TestCreateEntry:
+    """Slice 2 of Wave 2a — POST an h-entry to Micropub."""
+
+    def _client(self, tmp_path, monkeypatch) -> MicropubClient:
+        monkeypatch.setattr(
+            "lestash_microblog.client.get_token_path",
+            lambda: tmp_path / "token.json",
+        )
+        return MicropubClient(token="test-token")
+
+    def test_minimal_post_returns_location_url(self, tmp_path, monkeypatch):
+        client = self._client(tmp_path, monkeypatch)
+        client._client = MagicMock()
+        client._client.post.return_value = _make_post_response()
+
+        url, raw = client.create_entry(content="hello world")
+
+        assert url == "https://matt.thompson.gr/2026/06/05/post.html"
+        assert raw == {}
+        client.close()
+
+    def test_posts_h_entry_json_shape(self, tmp_path, monkeypatch):
+        """Body must be h-entry per Micropub spec — properties as arrays."""
+        client = self._client(tmp_path, monkeypatch)
+        client._client = MagicMock()
+        client._client.post.return_value = _make_post_response()
+
+        client.create_entry(
+            content="body text",
+            name="my title",
+            categories=["life", "reading"],
+            photo_urls=["https://x/y.png"],
+            post_status="draft",
+        )
+
+        _, kwargs = client._client.post.call_args
+        body = kwargs["json"]
+        assert body["type"] == ["h-entry"]
+        # All Micropub properties are arrays, even singletons.
+        assert body["properties"]["content"] == ["body text"]
+        assert body["properties"]["name"] == ["my title"]
+        assert body["properties"]["category"] == ["life", "reading"]
+        assert body["properties"]["photo"] == ["https://x/y.png"]
+        assert body["properties"]["post-status"] == ["draft"]
+        assert kwargs["headers"]["Content-Type"] == "application/json"
+        client.close()
+
+    def test_optional_fields_omitted_when_not_set(self, tmp_path, monkeypatch):
+        """name/category/photo absent when caller doesn't pass them."""
+        client = self._client(tmp_path, monkeypatch)
+        client._client = MagicMock()
+        client._client.post.return_value = _make_post_response()
+
+        client.create_entry(content="just content")
+
+        body = client._client.post.call_args.kwargs["json"]
+        props = body["properties"]
+        assert "name" not in props
+        assert "category" not in props
+        assert "photo" not in props
+        assert props["post-status"] == ["published"]  # default
+        client.close()
+
+    def test_destination_is_top_level_not_property(self, tmp_path, monkeypatch):
+        """mp-destination sits alongside type/properties, not inside."""
+        client = self._client(tmp_path, monkeypatch)
+        client._client = MagicMock()
+        client._client.post.return_value = _make_post_response()
+
+        client.create_entry(content="x", destination="https://example.com/")
+
+        body = client._client.post.call_args.kwargs["json"]
+        assert body["mp-destination"] == "https://example.com/"
+        assert "mp-destination" not in body["properties"]
+        client.close()
+
+    def test_destination_omitted_when_none(self, tmp_path, monkeypatch):
+        client = self._client(tmp_path, monkeypatch)
+        client._client = MagicMock()
+        client._client.post.return_value = _make_post_response()
+
+        client.create_entry(content="x")
+
+        body = client._client.post.call_args.kwargs["json"]
+        assert "mp-destination" not in body
+        client.close()
+
+    def test_returns_parsed_json_body_when_present(self, tmp_path, monkeypatch):
+        """Some servers return a JSON body alongside the Location header."""
+        client = self._client(tmp_path, monkeypatch)
+        client._client = MagicMock()
+        client._client.post.return_value = _make_post_response(
+            json_body={"url": "https://matt.thompson.gr/post.html", "ok": True},
+        )
+
+        _, raw = client.create_entry(content="x")
+
+        assert raw == {"url": "https://matt.thompson.gr/post.html", "ok": True}
+        client.close()
+
+    def test_lowercase_location_header_accepted(self, tmp_path, monkeypatch):
+        """HTTP headers are case-insensitive — handle either casing defensively."""
+        client = self._client(tmp_path, monkeypatch)
+        client._client = MagicMock()
+        resp = _make_post_response(location=None)
+        resp.headers = {"location": "https://lc.example/p"}
+        client._client.post.return_value = resp
+
+        url, _ = client.create_entry(content="x")
+        assert url == "https://lc.example/p"
+        client.close()
+
+    def test_missing_location_raises_value_error(self, tmp_path, monkeypatch):
+        """A 2xx response with no Location is a server bug — surface it."""
+        client = self._client(tmp_path, monkeypatch)
+        client._client = MagicMock()
+        client._client.post.return_value = _make_post_response(location=None)
+
+        with pytest.raises(ValueError, match="no Location header"):
+            client.create_entry(content="x")
+        client.close()
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 422])
+    def test_4xx_raises_http_status_error(self, status, tmp_path, monkeypatch):
+        """Slice 3 translates these to PublishRejected; here we just propagate."""
+        client = self._client(tmp_path, monkeypatch)
+        client._client = MagicMock()
+        client._client.post.return_value = _make_post_response(status_code=status)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            client.create_entry(content="x")
+        client.close()
+
+    @pytest.mark.parametrize("status", [500, 502, 503])
+    def test_5xx_raises_http_status_error(self, status, tmp_path, monkeypatch):
+        """Slice 3 translates these to PublishFailed; here we just propagate."""
+        client = self._client(tmp_path, monkeypatch)
+        client._client = MagicMock()
+        client._client.post.return_value = _make_post_response(status_code=status)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            client.create_entry(content="x")
+        client.close()
+
+    def test_categories_accepts_tuple_or_list(self, tmp_path, monkeypatch):
+        """The Sequence type accepts both — verify both work and serialise the same."""
+        client = self._client(tmp_path, monkeypatch)
+        client._client = MagicMock()
+        client._client.post.return_value = _make_post_response()
+
+        client.create_entry(content="x", categories=("life", "reading"))
+        body_a = client._client.post.call_args.kwargs["json"]
+
+        client.create_entry(content="x", categories=["life", "reading"])
+        body_b = client._client.post.call_args.kwargs["json"]
+
+        assert body_a["properties"]["category"] == ["life", "reading"]
+        assert body_b["properties"]["category"] == ["life", "reading"]
+        client.close()
