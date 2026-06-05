@@ -89,7 +89,7 @@ def save_credentials(credentials: Credentials, scopes: list[str] | None = None) 
 
 def load_credentials() -> Credentials | None:
     """Load OAuth credentials from config file."""
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
 
     path = get_credentials_path()
     if not path.exists():
@@ -100,7 +100,7 @@ def load_credentials() -> Credentials | None:
         expiry_str = creds_data.get("expiry")
         expiry = datetime.fromisoformat(expiry_str) if expiry_str else None
         if expiry and expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
+            expiry = expiry.replace(tzinfo=UTC)
         return Credentials(
             token=creds_data.get("token"),
             refresh_token=creds_data.get("refresh_token"),
