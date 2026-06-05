@@ -70,7 +70,7 @@ What this means for the architecture:
 - **`YT_TRACKING_PARAM` lint — deleted.** The class of failure doesn't exist when input is an ID.
 - **EmbedRenderer's compose-side job becomes URL→ID extraction** — parse any of `youtu.be/<id>`, `youtube.com/watch?v=<id>`, `youtube.com/embed/<id>`, `m.youtube.com/…`, `youtube-nocookie.com/embed/<id>`, plus `?list=<id>` playlists — and emit `{{< yt "<id>" >}}` (optionally `{{< yt "<id>" "" "<title>" >}}` for the 3rd-arg title used in aria-label, iframe title, and the feed fallback link).
 - **EmbedRenderer's LeStash-side job (preview / detail-view rendering) unchanged in intent** — render an inline embed so the user sees what they're publishing. It can render an `<iframe>` directly; doesn't need to mimic flschr's button-thumbnail-then-iframe UX.
-- **Action required**: install flschr plugin on the blog, uninstall rknightuk. See §9 slice 0.
+- **Status**: done (2026-06-05). flschr installed, rknightuk removed. See §9 slice 0.
 
 ### 2.3 Capability gaps (the short list)
 
@@ -633,7 +633,7 @@ Why snapshot semantics in test 4: live "view" semantics would require running th
 4. **Tag normalization on autocomplete.** Show `sophies-work` and `sophie work` as separate? They *are* separate today. → Add a "suggest merge?" hint when prefix matches multiple near-duplicates (`Levenshtein ≤ 2`). Defer the actual merge UI; surface the smell.
 5. **`lint` rule extensibility.** Per-target rule sets or one shared set? → One shared set lives in core; targets opt in by listing codes. micro.blog opts into `YT_RAW_URL`, `IMG_NOT_MARKDOWN`, `SOFT_CHAR_LIMIT(300)`. LinkedIn opts into `SOFT_CHAR_LIMIT(3000)` only.
 6. **Two-app pattern (project memory: LinkedIn dual-app, see [[project_linkedin_posting]]):** does micro.blog need anything similar? → No. Single app token, single endpoint. Simpler.
-7. **Blog plugin swap timing.** flschr (target) vs rknightuk (today). When the swap happens, any old posts that contain raw YouTube URLs will lose their embeds (flschr won't pick them up — only shortcodes embed). Two options: (a) one-off migration pass over old posts (rewrite URLs into shortcodes via Micropub update); (b) leave history as plain links. → Prefer (a) for last 12 months only; cost low, payoff is consistent feed/Mastodon rendering on recent reshared posts. Older posts: leave alone.
+7. **Blog plugin swap — done, no backfill.** flschr installed; rknightuk removed (2026-06-05). Posts published *before* the swap that contain raw YouTube URLs render as plain anchors with no embed — decision: leave them. The cost-of-mistake on mutating already-published content outweighs the payoff of a few back-catalogue embeds. Going forward, every post composed through the LeStash composer (Wave 2b) emits `{{< yt "ID" >}}` shortcodes so new posts embed correctly. No migration pass.
 
 ---
 
@@ -643,7 +643,7 @@ Each slice is independently mergeable + demo-able. PR titles in the suggested co
 
 | # | Slice | Slice value | Touches |
 | - | --- | --- | --- |
-| 0 | Install `flschr/mbplugin-youtube-nocookie` on the blog; uninstall `rknightuk/micro-blog-lite-youtube` | Unblocks the rest; standalone blog change | blog plugins (no code) |
+| 0 ✓ | Install `flschr/mbplugin-youtube-nocookie` on the blog; uninstall `rknightuk/micro-blog-lite-youtube` (done 2026-06-05) | Unblocks the rest; standalone blog change | blog plugins (no code) |
 | 1 | `feat(lestash): add Publisher protocol + ComposeRequest/PublishResult/LintFinding schemas` | Foundation; no user-visible change | `packages/lestash` |
 | 2 | `feat(microblog): implement MicropubClient.create_entry()` | Backend can post; tested via CLI | `lestash-microblog` |
 | 3 | `feat(microblog): expose POST /api/microblog/publish` | API-first publish | `lestash-server` |
@@ -672,7 +672,7 @@ Slices 1–4 unlock the SpaceX-IPO use case. Slices 7–10 unlock the Sophie's-w
 ```mermaid
 graph LR
   W0["Wave 0 done<br/>docs + tags.kind"]
-  W1["Wave 1<br/>blog plugin swap"]
+  W1["Wave 1 done<br/>blog plugin swap"]
   W2a["Wave 2a<br/>Publisher + Micropub<br/>+ publish API"]
   W2b["Wave 2b<br/>compose modal UI"]
   W3["Wave 3<br/>lint + EmbedRenderer"]
@@ -701,7 +701,7 @@ Dashed line = soft dependency (Wave 2b is more useful once Wave 1 is done, but d
 | Wave | Contains | Ships independently? | Risk | Stop-point value |
 | --- | --- | --- | --- | --- |
 | **0 ✓** | docs, `tags.kind` migration, 11 categories seeded | yes | none — column is additive, no caller yet | DB now has a structured place for categories |
-| **1** | slice 0 — install flschr, uninstall rknightuk | yes | cosmetic regression on old posts with raw YouTube URLs (lose embed until backfilled) | new posts get inline nocookie embeds; RSS/Mastodon syndication finally carries them |
+| **1 ✓** | slice 0 — install flschr, uninstall rknightuk (done 2026-06-05) | yes | cosmetic regression on old posts with raw YouTube URLs — accepted; no backfill (§8.7) | new posts get inline nocookie embeds; RSS/Mastodon syndication finally carries them |
 | **2a** | slices 1, 2, 3 — Publisher protocol + `MicropubClient.create_entry()` + `POST /api/microblog/publish` | yes — CLI / curl callable | live blog gets test posts during dev — use `visibility=draft` | publishing works end-to-end from a script, no UI needed |
 | **2b** | slice 4 — compose modal | depends on 2a | UI gate it behind a `settings.compose_microblog_enabled` flag while shaking it down | the SpaceX-IPO use case works |
 | **3** | slices 5, 6 — `compose.lint` + `EmbedRenderer` extract+render | yes — purely additive UI | low | inline YouTube in LeStash; raw-URL warnings in composer |
