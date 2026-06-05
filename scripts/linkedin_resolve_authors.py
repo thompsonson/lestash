@@ -87,8 +87,35 @@ def load_person_profiles(conn: sqlite3.Connection) -> dict[str, str]:
     return {urn: name for urn, name in rows}
 
 
+def harvest_impersonator_bridges(conn: sqlite3.Connection) -> dict[str, set[str]]:
+    """For company-URN actors, map company URN → set of impersonator (admin) person URNs.
+
+    LinkedIn likes/reactions done "as the company" carry the human URN in
+    `raw.activity.created.impersonator`. This lets us label a company-URN
+    actor with the human(s) who admin it without inventing a person/company
+    relationship in person_profiles.
+    """
+    rows = conn.execute(
+        """
+        SELECT DISTINCT author,
+               json_extract(metadata, '$.raw.activity.created.impersonator')
+        FROM items
+        WHERE source_type='linkedin'
+          AND author LIKE 'urn:li:company:%'
+          AND json_extract(metadata, '$.raw.activity.created.impersonator') IS NOT NULL
+        """
+    ).fetchall()
+    bridges: dict[str, set[str]] = defaultdict(set)
+    for company_urn, impersonator_urn in rows:
+        bridges[company_urn].add(impersonator_urn)
+    return bridges
+
+
 def top_authors_with_names(
-    conn: sqlite3.Connection, urn_to_name: dict[str, str], top_n: int = 25
+    conn: sqlite3.Connection,
+    urn_to_name: dict[str, str],
+    impersonator_bridges: dict[str, set[str]],
+    top_n: int = 25,
 ) -> list[tuple[str, int, str | None]]:
     rows = conn.execute(
         """
@@ -99,7 +126,19 @@ def top_authors_with_names(
         ORDER BY n DESC
         """
     ).fetchall()
-    return [(urn, n, urn_to_name.get(urn)) for urn, n in rows[:top_n]]
+
+    def resolve(urn: str) -> str | None:
+        direct = urn_to_name.get(urn)
+        if direct:
+            return direct
+        if urn in impersonator_bridges:
+            admin_names = sorted(
+                {urn_to_name.get(p) or p for p in impersonator_bridges[urn]}
+            )
+            return f"(company · admin: {', '.join(admin_names)})"
+        return None
+
+    return [(urn, n, resolve(urn)) for urn, n in rows[:top_n]]
 
 
 def main() -> int:
@@ -117,6 +156,7 @@ def main() -> int:
     try:
         from_profiles = load_person_profiles(conn)
         from_mentions = harvest_names_from_mentions(conn)
+        impersonator_bridges = harvest_impersonator_bridges(conn)
         # person_profiles wins over @-mention disagreements (manual review > heuristic)
         urn_to_name: dict[str, str] = {**from_mentions, **from_profiles}
 
@@ -126,9 +166,10 @@ def main() -> int:
         print(f"# person_profiles rows loaded     : {len(from_profiles)}")
         print(f"# @-mention pairs harvested       : {len(from_mentions)}")
         print(f"# new pairs from mentions (no row): {len(new_from_mentions)}")
-        print(f"# merged URN→name map size        : {len(urn_to_name)}\n")
+        print(f"# merged URN→name map size        : {len(urn_to_name)}")
+        print(f"# company-URN → admin bridges     : {len(impersonator_bridges)}\n")
 
-        top = top_authors_with_names(conn, urn_to_name, top_n=args.top)
+        top = top_authors_with_names(conn, urn_to_name, impersonator_bridges, top_n=args.top)
         print(f"## Top {args.top} person URNs by activity count in items.author")
         print(f"{'rank':>4}  {'count':>5}  urn                            name")
         for i, (urn, n, name) in enumerate(top, 1):
