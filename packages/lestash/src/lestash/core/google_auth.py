@@ -175,10 +175,10 @@ def get_credentials(scopes: list[str] | None = None) -> Credentials:
     """
     credentials = load_credentials()
 
-    if credentials and credentials.valid:
+    if credentials and credentials.valid and credentials.expiry is not None:
         return credentials
 
-    if credentials and credentials.expired and credentials.refresh_token:
+    if credentials and credentials.refresh_token:
         try:
             credentials.refresh(Request())
             save_credentials(credentials, scopes)
@@ -205,9 +205,11 @@ def check_auth_status() -> dict:
     credentials = load_credentials()
     if credentials:
         result["scopes"] = list(credentials.scopes) if credentials.scopes else []
-        if credentials.valid:
+        # Treat missing expiry as expired — legacy credentials saved without expiry
+        # would otherwise appear valid indefinitely even after revocation.
+        if credentials.valid and credentials.expiry is not None:
             result["authenticated"] = True
-        elif credentials.expired and credentials.refresh_token:
+        elif credentials.refresh_token:
             try:
                 credentials.refresh(Request())
                 save_credentials(credentials)
