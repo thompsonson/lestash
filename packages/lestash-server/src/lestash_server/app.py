@@ -80,6 +80,14 @@ def create_app(static_dir: str | None = None) -> FastAPI:
     except ImportError:
         pass
 
+    # Optional micro.blog routes (only if lestash-microblog is installed)
+    try:
+        from lestash_server.routes import microblog
+
+        app.include_router(microblog.router)
+    except ImportError:
+        pass
+
     # Optional YouTube routes (only if lestash-youtube is installed)
     try:
         from lestash_server.routes import youtube
