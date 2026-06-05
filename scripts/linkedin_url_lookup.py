@@ -55,9 +55,14 @@ def extract_activity_id(url_or_urn: str) -> str | None:
     return None
 
 
-def fetch_preview(activity_id: str) -> dict[str, str | None]:
-    """Fetch /feed/update/urn:li:activity:<id>/ unauthenticated; return og fields."""
-    url = f"https://www.linkedin.com/feed/update/urn:li:activity:{activity_id}/"
+def fetch_preview(activity_id: str, urn_kind: str = "activity") -> dict[str, str | None]:
+    """Fetch /feed/update/urn:li:<kind>:<id>/ unauthenticated; return og fields.
+
+    `urn_kind` selects the URN namespace: 'activity' (default), 'ugcPost',
+    'share'. LinkedIn redirects all three to the canonical /posts/ URL when
+    public; the og:* meta tags are the same.
+    """
+    url = f"https://www.linkedin.com/feed/update/urn:li:{urn_kind}:{activity_id}/"
     req = Request(url, headers={"User-Agent": UA})
     try:
         with urlopen(req, timeout=15) as resp:

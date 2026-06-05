@@ -167,8 +167,8 @@ def main() -> int:
         for i, (urn, kind) in enumerate(worklist, 1):
             kind_id = urn_to_fetchable_id(urn)
             assert kind_id is not None  # filtered above
-            _, fid = kind_id
-            preview = fetch_preview(fid)
+            urn_kind, fid = kind_id
+            preview = fetch_preview(fid, urn_kind=urn_kind)
             status = preview.get("status")
             if status == "ERR":
                 err += 1
