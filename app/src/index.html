@@ -1137,6 +1137,44 @@
     </div>
   </div>
 
+  <!-- micro.blog compose modal (Wave 2b) -->
+  <div class="modal-overlay" id="microblog-compose-modal">
+    <div class="modal" style="max-width:560px">
+      <h2>Share to micro.blog</h2>
+      <input type="hidden" id="mb-item-id" value="">
+      <div style="margin-bottom:0.6rem">
+        <label for="mb-title" style="font-size:0.8rem;color:var(--muted)">Title (optional — short notes don't need one)</label>
+        <input type="text" id="mb-title" style="width:100%;font-size:0.85rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.5rem;margin-top:0.2rem">
+      </div>
+      <div style="margin-bottom:0.6rem">
+        <label for="mb-body" style="font-size:0.8rem;color:var(--muted)">Body</label>
+        <textarea id="mb-body" style="width:100%;min-height:160px;font-family:inherit;font-size:0.85rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.5rem 0.6rem;resize:vertical;margin-top:0.2rem" placeholder="Markdown is welcome. YouTube URLs become {{< yt &quot;ID&quot; >}} shortcodes."></textarea>
+      </div>
+      <div style="margin-bottom:0.6rem">
+        <label for="mb-categories" style="font-size:0.8rem;color:var(--muted)">Categories <span style="font-size:0.7rem">(Ctrl/Cmd-click to multi-select)</span></label>
+        <select id="mb-categories" multiple size="4" style="width:100%;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem;margin-top:0.2rem"></select>
+      </div>
+      <div style="display:flex;gap:1rem;align-items:center;margin-bottom:0.6rem;flex-wrap:wrap">
+        <div>
+          <label for="mb-visibility" style="font-size:0.8rem;color:var(--muted)">Visibility</label>
+          <select id="mb-visibility" style="font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;margin-left:0.4rem">
+            <option value="public">Public</option>
+            <option value="draft">Draft</option>
+          </select>
+        </div>
+        <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem">
+          <input type="checkbox" id="mb-tag-source" checked>
+          Tag source as "published-to-microblog"
+        </label>
+      </div>
+      <div id="mb-error" style="display:none;font-size:0.8rem;color:var(--accent);margin-bottom:0.4rem"></div>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeMicroblogCompose()">Cancel</button>
+        <button class="btn-save" id="mb-publish-btn" onclick="submitMicroblogPublish()">Publish</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toasts -->
   <div class="toast-container" id="toasts"></div>
 
@@ -1700,6 +1738,7 @@
         <button class="sync-btn" data-action="copy" data-id="${item.id}">Copy</button>
         <button class="sync-btn" data-action="copy-link" data-id="${item.id}">Copy Link</button>
         <button class="sync-btn" onclick="addToCollection(${item.id})">+ Collection</button>
+        <button class="sync-btn" onclick="openMicroblogCompose(${item.id})">Share to micro.blog</button>
         <select id="add-to-coll-select" style="display:none;font-size:0.75rem;padding:0.25rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px" onchange="confirmAddToCollection(this)"></select>
       </div>`;
       html += `<div id="item-history-panel" style="display:none;margin-top:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:4px">
@@ -4071,6 +4110,169 @@
       } finally {
         btn.disabled = false;
         btn.textContent = 'Post';
+      }
+    }
+
+    /* ── micro.blog Compose (Wave 2b) ── */
+
+    // Stopgap until Wave 4 ships ?kind=category autocomplete from /api/items/tags.
+    // Matches docs/blog-categories-consolidation.md and the rows seeded into
+    // the tags table with kind='category' (DB migration 10).
+    const MICROBLOG_CATEGORIES = [
+      'being-human', 'intelligent-agents', 'agentic-ai', 'learning',
+      'ml-research', 'responsible-ai', 'vibe-engineering', 'software-craft',
+      'reading', 'life', 'commentary',
+    ];
+
+    function extractYouTubeId(url) {
+      if (!url) return null;
+      // youtu.be/<id>, watch?v=<id>, embed/<id>, m.youtube.com/...,
+      // youtube-nocookie.com/embed/<id>. Strip query/fragment after the ID.
+      const patterns = [
+        /youtu\.be\/([A-Za-z0-9_-]{11})/,
+        /[?&]v=([A-Za-z0-9_-]{11})/,
+        /\/embed\/([A-Za-z0-9_-]{11})/,
+        /\/shorts\/([A-Za-z0-9_-]{11})/,
+      ];
+      for (const re of patterns) {
+        const m = url.match(re);
+        if (m) return m[1];
+      }
+      return null;
+    }
+
+    function prefillMicroblogCompose(item) {
+      // Source-aware prefill per design §3.1.
+      const sub = item.subtype || item.source_type || '';
+      let title = '';
+      let body = '';
+
+      if (sub.startsWith('youtube') || /youtube\.com|youtu\.be/.test(item.url || '')) {
+        const vid = extractYouTubeId(item.url);
+        title = item.title || '';
+        if (vid) {
+          // flschr/mbplugin-youtube-nocookie shortcode form
+          const titleArg = (item.title || '').replace(/"/g, '\\"');
+          body = `\n\n{{< yt "${vid}" "" "${titleArg}" >}}\n`;
+        } else {
+          body = `\n\n${item.url || ''}\n`;
+        }
+      } else if (sub.startsWith('linkedin') || sub.startsWith('bluesky') ||
+                 sub.startsWith('arxiv') || sub.startsWith('microblog')) {
+        // Quote-share shape: blockquoted preview + source link.
+        const preview = (item.content || '').slice(0, 280).replace(/\n+/g, ' ');
+        title = (item.title || preview).slice(0, 80);
+        body = `> ${preview}\n\n${item.url || ''}\n`;
+      } else {
+        // Own note or unknown source — first line as title, rest as body.
+        const lines = (item.content || '').split('\n');
+        title = item.title || lines[0].slice(0, 80);
+        body = item.title ? (item.content || '') : lines.slice(1).join('\n').trim();
+      }
+
+      document.getElementById('mb-title').value = title;
+      document.getElementById('mb-body').value = body.trimStart();
+    }
+
+    async function openMicroblogCompose(itemId) {
+      // Populate categories dropdown each open (cheap, keeps stopgap in sync).
+      const sel = document.getElementById('mb-categories');
+      sel.innerHTML = MICROBLOG_CATEGORIES.map(
+        c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`
+      ).join('');
+
+      document.getElementById('mb-item-id').value = itemId;
+      document.getElementById('mb-visibility').value = 'public';
+      document.getElementById('mb-tag-source').checked = true;
+      document.getElementById('mb-error').style.display = 'none';
+      document.getElementById('mb-publish-btn').disabled = false;
+      document.getElementById('mb-publish-btn').textContent = 'Publish';
+
+      // Fetch the item fresh so prefill sees the canonical title/url/content,
+      // not whatever the calling card had cached.
+      try {
+        const item = await api(`/api/items/${itemId}`);
+        prefillMicroblogCompose(item);
+      } catch (e) {
+        showToast(`Could not load item: ${e.message}`, 'error');
+        return;
+      }
+
+      document.getElementById('microblog-compose-modal').classList.add('open');
+      document.getElementById('mb-body').focus();
+    }
+
+    function closeMicroblogCompose() {
+      document.getElementById('microblog-compose-modal').classList.remove('open');
+    }
+
+    async function submitMicroblogPublish() {
+      const itemId = parseInt(document.getElementById('mb-item-id').value, 10);
+      const body = document.getElementById('mb-body').value.trim();
+      if (!body) {
+        showToast('Body is required', 'error');
+        return;
+      }
+      const title = document.getElementById('mb-title').value.trim() || null;
+      const visibility = document.getElementById('mb-visibility').value;
+      const categories = Array.from(
+        document.getElementById('mb-categories').selectedOptions
+      ).map(o => o.value);
+      const tagSource = document.getElementById('mb-tag-source').checked;
+
+      const errEl = document.getElementById('mb-error');
+      errEl.style.display = 'none';
+      const btn = document.getElementById('mb-publish-btn');
+      btn.disabled = true;
+      btn.textContent = 'Publishing…';
+
+      try {
+        const result = await api('/api/microblog/publish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            item_id: itemId,
+            title,
+            body,
+            image_url: null,
+            categories,
+            visibility,
+            if_not_already_published: false,
+          }),
+        });
+
+        if (tagSource) {
+          // Best-effort — don't fail the publish if the tag write fails.
+          try {
+            await api(`/api/items/${itemId}/tags`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: 'published-to-microblog' }),
+            });
+          } catch (tagErr) {
+            console.warn('Tag-source failed:', tagErr);
+          }
+        }
+
+        closeMicroblogCompose();
+        showToast(`Published! ${result.url}`, 'ok');
+      } catch (e) {
+        // Map API errors to a friendly inline message.
+        let msg = e.message || 'Publish failed';
+        if (/409/.test(msg) || /already published/i.test(msg)) {
+          msg = 'Already published. Open this URL to re-publish: ' + msg;
+        } else if (/401/.test(msg) || /not authenticated/i.test(msg)) {
+          msg = 'micro.blog isn\'t authenticated. Run `lestash microblog auth --token …` on the server.';
+        } else if (/422/.test(msg)) {
+          msg = 'micro.blog rejected the post: ' + msg;
+        } else if (/502/.test(msg)) {
+          msg = 'micro.blog upstream error — try again in a moment. ' + msg;
+        }
+        errEl.textContent = msg;
+        errEl.style.display = '';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Publish';
       }
     }
 
