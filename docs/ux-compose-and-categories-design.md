@@ -30,7 +30,7 @@ A non-goal here: replacing collections with tags or vice versa. They earn their 
 | Tags global | `routes/items.py:375` `GET /api/items/tags` | Lists tags w/ counts (used in filter dropdown) |
 | Collections | `app/src/index.html:3852-3939` · `/api/collections` | Modal create, manual add |
 | LinkedIn publish | `app/src/index.html:3943-4063` · `/api/linkedin/post` | Works — proves the publish pattern |
-| micro.blog publish | — | **Missing** |
+| micro.blog publish | `app/src/index.html` modal · `/api/microblog/publish` | Shipped (PR #159) — item-detail "Share to micro.blog" button, source-aware prefill, syndications audit |
 | Share/capture | `app/src/index.html:3070-3168` | URL ingest + YouTube transcript fetch |
 | Bear-style notes | `Notes` tab | Voice + text |
 
@@ -74,12 +74,17 @@ What this means for the architecture:
 
 ### 2.3 Capability gaps (the short list)
 
-- `MicropubClient` has no `create_entry()` — read-only.
-- `SourcePlugin` base class has no `publish()` contract — every publisher (LinkedIn, future micro.blog) reinvents it.
-- No "compose from existing item" flow. The share modal goes inbound only.
-- No tag autocomplete; no bulk-tag selection.
-- No "save current filter as a category."
-- No CLI tag commands (precludes batch grooming).
+Closed by PR #159:
+
+- ~~`MicropubClient` has no `create_entry()`~~ — slice 2.
+- ~~`SourcePlugin` base class has no `publish()` contract~~ — replaced by the `Publisher` Protocol (slice 1). LinkedIn migration is Wave 6a.
+- ~~No "compose from existing item" flow~~ — slice 4 ships the modal.
+
+Still open:
+
+- No tag autocomplete; no bulk-tag selection. → Wave 4 + 5a.
+- No "save current filter as a category." → Wave 5b.
+- No CLI tag commands (precludes batch grooming). → not in any wave; small follow-up.
 
 ---
 
@@ -116,7 +121,7 @@ Three flows, each kept narrow on purpose.
 │  Cats   ⊞ tech-watch   [+ add]                           │
 │  Visibility: ● Public  ○ Draft                           │
 │                                                          │
-│  ☑ Save syndication link back to source item             │
+│  (syndication audit row always written — slice 3)        │
 │  ☑ Tag source item as "published-to-microblog"           │
 │                                                          │
 │  Preview ─────────────────────────────────────  [Open ⤴] │
@@ -507,17 +512,17 @@ class LintFinding:
 @dataclass(frozen=True)
 class PublishResult:
     url: str
-    target: str               # 'microblog' | 'linkedin' | …
-    raw_response: dict
+    target: str               # per-publish — what the route persists
+    raw_response: Mapping[str, Any]  # read-only view; route serialises verbatim
 
 class AlreadyPublished(Exception): ...
 class PublishRejected(Exception):  # 4xx
-    def __init__(self, message: str, raw: dict) -> None: ...
+    def __init__(self, message: str, raw: Mapping[str, Any]) -> None: ...
 class PublishFailed(Exception):    # 5xx / network
-    def __init__(self, message: str, raw: dict | None) -> None: ...
+    def __init__(self, message: str, raw: Mapping[str, Any] | None) -> None: ...
 
 class Publisher(Protocol):
-    target: str
+    target: ClassVar[str]     # class-level constant — registry looks up by name
 
     def lint(self, compose: ComposeRequest) -> list[LintFinding]: ...
 
@@ -644,10 +649,10 @@ Each slice is independently mergeable + demo-able. PR titles in the suggested co
 | # | Slice | Slice value | Touches |
 | - | --- | --- | --- |
 | 0 ✓ | Install `flschr/mbplugin-youtube-nocookie` on the blog; uninstall `rknightuk/micro-blog-lite-youtube` (done 2026-06-05) | Unblocks the rest; standalone blog change | blog plugins (no code) |
-| 1 | `feat(lestash): add Publisher protocol + ComposeRequest/PublishResult/LintFinding schemas` | Foundation; no user-visible change | `packages/lestash` |
-| 2 | `feat(microblog): implement MicropubClient.create_entry()` | Backend can post; tested via CLI | `lestash-microblog` |
-| 3 | `feat(microblog): expose POST /api/microblog/publish` | API-first publish | `lestash-server` |
-| 4 | `feat(app): micro.blog compose modal (YouTube prefill)` | First end-to-end user flow | `app/` |
+| 1 ✓ | `feat(lestash): add Publisher protocol + ComposeRequest/PublishResult/LintFinding schemas` (done 2026-06-05, PR #159) | Foundation; no user-visible change | `packages/lestash` |
+| 2 ✓ | `feat(microblog): implement MicropubClient.create_entry()` (done 2026-06-05, PR #159) | Backend can post; tested via CLI | `lestash-microblog` |
+| 3 ✓ | `feat(microblog): expose POST /api/microblog/publish` (done 2026-06-05, PR #159) | API-first publish | `lestash-server` |
+| 4 ✓ | `feat(app): micro.blog compose modal (YouTube prefill)` (done 2026-06-05, PR #159) | First end-to-end user flow | `app/` |
 | 5 | `feat(lestash): compose.lint with YT_RAW_URL + IMG_NOT_MARKDOWN` | Embed warnings | `lestash/plugins/lint_rules.py` (shared helpers, next to `publisher.py`) + `lestash-microblog/.../source.py` (`lint()` method). No new submodule — defer a `compose/` namespace until something beyond lint earns it. |
 | 6 | `feat(app): EmbedRenderer (extract + render) + iframe in detail view` | YouTube embeds inline in LeStash | `app/` |
 | 7 | `feat(server): GET /api/items/tags?prefix=` | Autocomplete backend | `lestash-server` |
@@ -673,8 +678,8 @@ Slices 1–4 unlock the SpaceX-IPO use case. Slices 7–10 unlock the Sophie's-w
 graph LR
   W0["Wave 0 done<br/>docs + tags.kind"]
   W1["Wave 1 done<br/>blog plugin swap"]
-  W2a["Wave 2a<br/>Publisher + Micropub<br/>+ publish API"]
-  W2b["Wave 2b<br/>compose modal UI"]
+  W2a["Wave 2a done<br/>Publisher + Micropub<br/>+ publish API"]
+  W2b["Wave 2b done<br/>compose modal UI"]
   W3["Wave 3<br/>lint + EmbedRenderer"]
   W4["Wave 4<br/>tag autocomplete + typeahead"]
   W5a["Wave 5a<br/>bulk-tag API + UI"]
@@ -702,8 +707,8 @@ Dashed line = soft dependency (Wave 2b is more useful once Wave 1 is done, but d
 | --- | --- | --- | --- | --- |
 | **0 ✓** | docs, `tags.kind` migration, 11 categories seeded | yes | none — column is additive, no caller yet | DB now has a structured place for categories |
 | **1 ✓** | slice 0 — install flschr, uninstall rknightuk (done 2026-06-05) | yes | cosmetic regression on old posts with raw YouTube URLs — accepted; no backfill (§8.7) | new posts get inline nocookie embeds; RSS/Mastodon syndication finally carries them |
-| **2a** | slices 1, 2, 3 — Publisher protocol + `MicropubClient.create_entry()` + `POST /api/microblog/publish` | yes — CLI / curl callable | live blog gets test posts during dev — use `visibility=draft` | publishing works end-to-end from a script, no UI needed |
-| **2b** | slice 4 — compose modal | depends on 2a | UI gate it behind a `settings.compose_microblog_enabled` flag while shaking it down | the SpaceX-IPO use case works |
+| **2a ✓** | slices 1, 2, 3 — Publisher protocol + `MicropubClient.create_entry()` + `POST /api/microblog/publish` (done 2026-06-05, PR #159) | yes — CLI / curl callable | live blog gets test posts during dev — use `visibility=draft` | publishing works end-to-end from a script, no UI needed |
+| **2b ✓** | slice 4 — compose modal (done 2026-06-05, PR #159) | depends on 2a | shipped *without* a feature flag — kept the diff small; rollback path is "revert the PR" if it misbehaves | the SpaceX-IPO use case works |
 | **3** | slices 5, 6 — `compose.lint` + `EmbedRenderer` extract+render | yes — purely additive UI | low | inline YouTube in LeStash; raw-URL warnings in composer |
 | **4** | slices 7, 8 — tag autocomplete API + TagTypeahead + `t` shortcut | yes — useful for any tag, not just categories | low | the "Sophie's work" tagging case is fast |
 | **5a** | slices 9, 10 — bulk-tag API + BulkSelectionBar | yes | low — operation is atomic per request | shift-click → `t` → tag many items at once |
@@ -713,12 +718,14 @@ Dashed line = soft dependency (Wave 2b is more useful once Wave 1 is done, but d
 
 ### Recommended order
 
-1. **Wave 1 next** — zero-code, immediate visible win on the blog. Decouples everything that follows from blog plugin choice.
-2. **Then Wave 2a + Wave 4 in parallel** — independent tracks, no shared files. 2a is the publish backend (no UI), 4 is the tag UX (small backend + small UI).
-3. **Then Wave 2b** — UI to drive 2a. Stop here, use it for a week, decide if Wave 3 lint matters before building it.
+Updated 2026-06-05 after Waves 0, 1, 2a, 2b shipped:
+
+1. ✓ **Wave 1** — done. Blog plugin swap (flschr, no rknightuk).
+2. ✓ **Wave 2a + 2b** — done in PR #159. Bundled to save pipeline runs; the original plan was 2a/4 parallel, but no UI work was happening on 4 so we kept 2 contiguous instead.
+3. **Wave 4 next** — tag autocomplete + typeahead + `t` shortcut. Independent of the rest of Wave 2/3. Unblocks the composer's category field (today it's a hard-coded stopgap of the 11 categories).
 4. **Wave 3 only if Wave 2b shows raw-URL or `<img>` slip-ups happening in real use** — otherwise defer; the lint is insurance, not foundation.
 5. **Wave 5a** — bulk-tag once Wave 4 is in muscle memory. Wave 5b (smart collections) only if a saved filter survives in the user's head for more than a week — otherwise YAGNI.
-6. **Wave 6a + 6b** — last, both small. Refactor 6a only after Wave 2 has shaken the Publisher contract enough to know it's right.
+6. **Wave 6a + 6b** — last, both small. 6a (LinkedIn → Publisher) is the natural follow-up now that the Publisher contract has been exercised end-to-end and we know the shape is right.
 
 ### Parallel tracks
 
@@ -730,20 +737,18 @@ These pairs touch no shared code and can land in either order from the same star
 
 ### Feature gating
 
-Add one boolean per in-progress wave to `~/.config/lestash/config.toml` (or `settings.toml`) under `[features]`. Default `false`; the user flips it when ready to dogfood. Surfaces:
+Original plan: add one boolean per in-progress wave to `~/.config/lestash/config.toml` under `[features]`. Wave 2 shipped *without* a flag — the diff was small, the rollback was "revert the PR," and adding a flag for a single-blog single-user app added noise without value. The gate option stays available for future waves where the blast radius is bigger:
 
-- `compose_microblog_enabled` — gates Wave 2b composer UI + the `Share to micro.blog` button.
-- `tag_typeahead_enabled` — gates Wave 4 typeahead (falls back to current type-and-add).
-- `bulk_select_enabled` — gates Wave 5a shift-click selection.
-- `smart_collections_enabled` — gates Wave 5b hook registration *and* the UI button. Critical for 5b because the insert hook touches every sync write.
-
-The gate lives in the frontend for UI waves and in the backend for backend waves (refuse the call if disabled). This lets you merge to `main` long before you're ready to use the feature, and roll forward without reverting.
+- ~~`compose_microblog_enabled`~~ — not used; Wave 2b shipped unflagged in PR #159.
+- `tag_typeahead_enabled` — would gate Wave 4 typeahead (falls back to current type-and-add). Re-evaluate when Wave 4 lands.
+- `bulk_select_enabled` — would gate Wave 5a shift-click selection.
+- `smart_collections_enabled` — should gate Wave 5b. Critical because the insert hook touches every sync write.
 
 ### Rollback story
 
 - Wave 0: `ALTER TABLE tags DROP COLUMN kind` — schema-only revert. Categories stay (as `ad-hoc`).
 - Wave 1: reinstall rknightuk plugin on the blog.
-- Wave 2: disable `compose_microblog_enabled`, then revert PR. `syndications` rows are harmless if left.
+- Wave 2: revert PR #159 — no feature flag to disable first. `syndications` rows and the `syndications` table itself are harmless if left (no callers in pre-Wave-2 code). To roll back the schema cleanly, also drop migration 11: `DROP TABLE syndications; PRAGMA user_version = 10`.
 - Wave 3: revert PR; no schema, no state.
 - Wave 4: disable `tag_typeahead_enabled`, revert PR.
 - Wave 5a: revert PR.
