@@ -76,6 +76,57 @@ class TestCommentExtraction:
         item = extract_changelog_item(comment_event)
         assert item.url == "https://www.linkedin.com/feed/update/urn:li:activity:123456"
 
+    def test_falls_back_to_resource_uri_when_object_missing_ugcpost(self):
+        """activity.object can be absent live (observed June 2026). Recover
+        the parent URN from resourceUri so commented_on stays populated."""
+        event = {
+            "resourceName": "socialActions/comments",
+            "resourceId": "7468021750157713409",
+            "resourceUri": (
+                "/socialActions/urn:li:ugcPost:7468004947981217792/comments/7468021750157713409"
+            ),
+            "method": "CREATE",
+            "processedAt": 1780515143951,
+            "activity": {
+                "message": {"text": "reply text"},
+                "actor": "urn:li:person:xu59iSkkD6",
+                # NOTE: no "object" field
+            },
+        }
+        item = extract_changelog_item(event)
+        assert item.metadata["commented_on"] == "urn:li:ugcPost:7468004947981217792"
+
+    def test_falls_back_to_resource_uri_for_compound_comment_urn(self):
+        """Reply-to-a-comment shape: parent URN includes parens."""
+        event = {
+            "resourceName": "socialActions/comments",
+            "resourceUri": "/socialActions/urn:li:comment:(activity:111,222)/comments/333",
+            "method": "CREATE",
+            "processedAt": 1780000000000,
+            "activity": {
+                "message": {"text": "reply"},
+                "actor": "urn:li:person:abc",
+            },
+        }
+        item = extract_changelog_item(event)
+        assert item.metadata["commented_on"] == "urn:li:comment:(activity:111,222)"
+
+    def test_object_takes_precedence_over_resource_uri(self):
+        """When both are present, the explicit activity.object wins."""
+        event = {
+            "resourceName": "socialActions/comments",
+            "resourceUri": "/socialActions/urn:li:ugcPost:999/comments/1",
+            "method": "CREATE",
+            "processedAt": 1780000000000,
+            "activity": {
+                "message": {"text": "hi"},
+                "actor": "urn:li:person:abc",
+                "object": "urn:li:activity:42",
+            },
+        }
+        item = extract_changelog_item(event)
+        assert item.metadata["commented_on"] == "urn:li:activity:42"
+
 
 class TestReactionExtraction:
     """Test extraction of reactions to ItemCreate."""
@@ -99,6 +150,24 @@ class TestReactionExtraction:
     def test_generates_url_to_reacted_post(self, reaction_event):
         item = extract_changelog_item(reaction_event)
         assert item.url == "https://www.linkedin.com/feed/update/urn:li:activity:789012"
+
+    def test_reaction_falls_back_to_resource_uri_when_object_missing(self):
+        """Same fallback as comments — parent URN parsed out of resourceUri."""
+        event = {
+            "resourceName": "socialActions/likes",
+            "resourceUri": (
+                "/socialActions/urn:li:ugcPost:7421481531749187585/likes/urn:li:person:xyz"
+            ),
+            "method": "CREATE",
+            "processedAt": 1769434436256,
+            "activity": {
+                "reactionType": "LIKE",
+                "actor": "urn:li:person:xyz",
+            },
+        }
+        item = extract_changelog_item(event)
+        assert item.metadata["reacted_to"] == "urn:li:ugcPost:7421481531749187585"
+        assert "ugcPost:7421481531749187585" in item.content
 
 
 class TestInvitationExtraction:

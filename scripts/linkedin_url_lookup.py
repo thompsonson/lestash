@@ -19,17 +19,19 @@ ToS caveat: this scrapes a public preview, no auth bypass. Don't rate-grind.
 
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
 import sys
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 from urllib.request import Request, urlopen
 
 DB_PATH = Path.home() / ".config/lestash/lestash.db"
-UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+)
 
 ACTIVITY_URN_RE = re.compile(r"urn:li:activity:(\d+)")
 ACTIVITY_FROM_SLUG_RE = re.compile(r"activity-(\d+)")
@@ -55,16 +57,27 @@ def extract_activity_id(url_or_urn: str) -> str | None:
     return None
 
 
-def fetch_preview(activity_id: str) -> dict[str, str | None]:
-    """Fetch /feed/update/urn:li:activity:<id>/ unauthenticated; return og fields."""
-    url = f"https://www.linkedin.com/feed/update/urn:li:activity:{activity_id}/"
+def fetch_preview(activity_id: str, urn_kind: str = "activity") -> dict[str, str | None]:
+    """Fetch /feed/update/urn:li:<kind>:<id>/ unauthenticated; return og fields.
+
+    `urn_kind` selects the URN namespace: 'activity' (default), 'ugcPost',
+    'share'. LinkedIn redirects all three to the canonical /posts/ URL when
+    public; the og:* meta tags are the same.
+    """
+    url = f"https://www.linkedin.com/feed/update/urn:li:{urn_kind}:{activity_id}/"
     req = Request(url, headers={"User-Agent": UA})
     try:
         with urlopen(req, timeout=15) as resp:
             html = resp.read().decode("utf-8", errors="replace")
             status = resp.status
     except Exception as e:
-        return {"status": "ERR", "error": str(e), "title": None, "author": None, "description": None}
+        return {
+            "status": "ERR",
+            "error": str(e),
+            "title": None,
+            "author": None,
+            "description": None,
+        }
 
     def _g(r: re.Pattern[str]) -> str | None:
         m = r.search(html)
@@ -100,7 +113,8 @@ def _extract_author(title: str | None, handle: str | None) -> str | None:
         # and "LinkedIn", keep candidates that look like a person name (1-4 words).
         segments = [s.strip() for s in PIPE_SEGMENT_RE.split(clean) if s.strip()]
         cands = [
-            s for s in segments
+            s
+            for s in segments
             if 1 <= len(s.split()) <= 4
             and not s.lower().endswith("comments")
             and not s.lower().endswith("reactions")
