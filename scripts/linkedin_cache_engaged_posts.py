@@ -66,10 +66,7 @@ def collect_target_urns(conn: sqlite3.Connection) -> dict[str, list[str]]:
               AND json_extract(metadata, '$.raw.activity.repostedContent.ugcPost') IS NOT NULL
         """,
     }
-    return {
-        kind: [r[0] for r in conn.execute(sql).fetchall()]
-        for kind, sql in queries.items()
-    }
+    return {kind: [r[0] for r in conn.execute(sql).fetchall()] for kind, sql in queries.items()}
 
 
 def urn_to_fetchable_id(urn: str) -> tuple[str, str] | None:
@@ -150,21 +147,25 @@ def main() -> int:
             print(f"  {kind:14s} distinct in DB: {len(targets[kind])}")
         print(f"  already in post_cache       : {len(cached)}")
         print(f"  skipped (unfetchable URN)   : {skipped_unfetchable}")
-        print(f"  to fetch this run           : {len(worklist)}"
-              + (f"  (--limit {args.limit})" if args.limit else ""))
+        print(
+            f"  to fetch this run           : {len(worklist)}"
+            + (f"  (--limit {args.limit})" if args.limit else "")
+        )
         if args.limit:
             worklist = worklist[: args.limit]
 
         if not args.write:
-            print(f"\n# Dry run. Re-run with --write to fetch + cache "
-                  f"{len(worklist)} URN(s). Estimated wall-time: "
-                  f"~{int(len(worklist) * args.sleep)}s.")
+            print(
+                f"\n# Dry run. Re-run with --write to fetch + cache "
+                f"{len(worklist)} URN(s). Estimated wall-time: "
+                f"~{int(len(worklist) * args.sleep)}s."
+            )
             return 0
 
         from lestash.core.database import upsert_post_cache
 
         ok = miss = err = 0
-        for i, (urn, kind) in enumerate(worklist, 1):
+        for i, (urn, _kind) in enumerate(worklist, 1):
             kind_id = urn_to_fetchable_id(urn)
             assert kind_id is not None  # filtered above
             urn_kind, fid = kind_id
@@ -172,7 +173,7 @@ def main() -> int:
             status = preview.get("status")
             if status == "ERR":
                 err += 1
-                print(f"[{i}/{len(worklist)}] ERR {preview.get('error','?')} {urn}")
+                print(f"[{i}/{len(worklist)}] ERR {preview.get('error', '?')} {urn}")
             elif status != "200":
                 miss += 1
                 print(f"[{i}/{len(worklist)}] {status} {urn}")
@@ -202,8 +203,10 @@ def main() -> int:
 
         conn.commit()
         print(f"\n# done. ok={ok}  miss={miss}  err={err}")
-        print(f"# post_cache rows after: "
-              f"{conn.execute('SELECT COUNT(*) FROM post_cache').fetchone()[0]}")
+        print(
+            f"# post_cache rows after: "
+            f"{conn.execute('SELECT COUNT(*) FROM post_cache').fetchone()[0]}"
+        )
         return 0
     finally:
         conn.close()
