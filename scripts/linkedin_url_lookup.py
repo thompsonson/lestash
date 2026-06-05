@@ -35,8 +35,14 @@ ACTIVITY_URN_RE = re.compile(r"urn:li:activity:(\d+)")
 ACTIVITY_FROM_SLUG_RE = re.compile(r"activity-(\d+)")
 OG_TITLE_RE = re.compile(r'<meta property="og:title" content="([^"]+)"')
 OG_DESC_RE = re.compile(r'<meta property="og:description" content="([^"]+)"')
-# og:title pattern: "<title> | <Author Name> posted on the topic | LinkedIn"
-AUTHOR_FROM_TITLE_RE = re.compile(r"\|\s*([^|]+?)\s+posted on", re.IGNORECASE)
+OG_URL_RE = re.compile(r'<meta property="og:url" content="([^"]+)"')
+# /posts/<handle>_<slug>-activity-<id>-<suffix>  — handle is the author's vanity URL
+HANDLE_FROM_OGURL_RE = re.compile(r"linkedin\.com/posts/([^_/]+)_")
+# Title shape A: "… | <Author> posted on the topic | LinkedIn"
+AUTHOR_POSTED_ON_RE = re.compile(r"\|\s*([^|]+?)\s+posted on", re.IGNORECASE)
+# Title shape B/C: "<title> [—|] <Author> | <Author> | N comments" — author appears as a
+# standalone pipe segment, typically TWICE. Pick the most-repeated short segment.
+PIPE_SEGMENT_RE = re.compile(r"\s*\|\s*")
 
 
 def extract_activity_id(url_or_urn: str) -> str | None:
@@ -60,16 +66,59 @@ def fetch_preview(activity_id: str) -> dict[str, str | None]:
     except Exception as e:
         return {"status": "ERR", "error": str(e), "title": None, "author": None, "description": None}
 
-    title = (OG_TITLE_RE.search(html) or [None, None])[1] if OG_TITLE_RE.search(html) else None
-    desc = (OG_DESC_RE.search(html) or [None, None])[1] if OG_DESC_RE.search(html) else None
-    author = None
-    if title:
-        # HTML-decode the apostrophe entity LinkedIn uses, then match
-        title_clean = title.replace("&amp;#39;", "'").replace("&#39;", "'")
-        m = AUTHOR_FROM_TITLE_RE.search(title_clean)
+    def _g(r: re.Pattern[str]) -> str | None:
+        m = r.search(html)
+        return m.group(1) if m else None
+
+    title = _g(OG_TITLE_RE)
+    desc = _g(OG_DESC_RE)
+    og_url = _g(OG_URL_RE)
+    handle = None
+    if og_url:
+        m = HANDLE_FROM_OGURL_RE.search(og_url)
         if m:
-            author = m.group(1).strip()
-    return {"status": str(status), "title": title, "author": author, "description": desc}
+            handle = m.group(1)
+    author = _extract_author(title, handle)
+    return {
+        "status": str(status),
+        "title": title,
+        "author": author,
+        "handle": handle,
+        "og_url": og_url,
+        "description": desc,
+    }
+
+
+def _extract_author(title: str | None, handle: str | None) -> str | None:
+    """Pull a human author name out of og:title, with og:url's handle as fallback."""
+    if title:
+        clean = title.replace("&amp;#39;", "'").replace("&#39;", "'").replace("&amp;", "&")
+        m = AUTHOR_POSTED_ON_RE.search(clean)
+        if m:
+            return m.group(1).strip()
+        # Pipe-segment heuristic: split, drop empties, drop suffixes like "N comments"
+        # and "LinkedIn", keep candidates that look like a person name (1-4 words).
+        segments = [s.strip() for s in PIPE_SEGMENT_RE.split(clean) if s.strip()]
+        cands = [
+            s for s in segments
+            if 1 <= len(s.split()) <= 4
+            and not s.lower().endswith("comments")
+            and not s.lower().endswith("reactions")
+            and s.lower() != "linkedin"
+        ]
+        # Prefer one that appears more than once (author is repeated in B/C forms)
+        for s in cands:
+            if cands.count(s) >= 2:
+                return s
+        # Fallback to the em-dash-then-name pattern: "<title> — <Name>"
+        for sep in (" — ", " – ", " - "):
+            if sep in clean:
+                tail = clean.split(sep, 1)[1]
+                tail_first = PIPE_SEGMENT_RE.split(tail, 1)[0].strip()
+                if 1 <= len(tail_first.split()) <= 4:
+                    return tail_first
+    # Last resort: derive from the URL handle (e.g. "benedictevans" → "benedictevans")
+    return handle
 
 
 def query_db_for_engagement(activity_id: str) -> list[dict[str, object]]:
@@ -126,6 +175,8 @@ def process(urls: Iterable[str]) -> None:
         print(f"## activity {aid}")
         print(f"  preview status: {preview['status']}")
         print(f"  author        : {preview['author'] or '—'}")
+        if preview.get("handle"):
+            print(f"  handle        : {preview['handle']}")
         if preview.get("title"):
             print(f"  title         : {preview['title'][:120]}")
         if preview.get("description"):
