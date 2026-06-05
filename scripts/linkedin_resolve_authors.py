@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
 """Resolve LinkedIn person URNs → human names from data already in the DB.
 
-LinkedIn comments use a `MemberAttributedEntity` annotation: when a commenter
-@-mentions someone, the message text contains the rendered name and an
-attribute records the mention range + the URN. That means every @-mention
-across the DB is a URN→name pair we can harvest without any fetch.
+Two name sources are merged:
+  1. `person_profiles` table — existing URN → display_name rows (sources:
+     'manual', 'web', 'api', ...). Authoritative when present.
+  2. `MemberAttributedEntity` annotations on comments — when someone
+     @-mentions a person, the rendered name and URN are both in the
+     metadata. Harvest gives URN → name pairs for free, no fetch.
 
-This script walks every linkedin item, collects MemberAttributedEntity
-annotations, and prints:
-  1. A URN→name map
-  2. The top N person URNs by activity count in `items.author`, resolved to
-     names where possible
-  3. Unresolved URNs (no name found anywhere) so you can decide if they're
-     worth fetching one-by-one with linkedin_url_lookup.py
-
-Read-only on the DB.
+Without --write: prints a report. The on-disk DB is not modified.
+With    --write: upserts any newly-discovered pairs into `person_profiles`
+                 with source='mention'. Existing rows are preserved
+                 (COALESCE in upsert_person_profile).
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sqlite3
 from collections import Counter, defaultdict
@@ -69,8 +67,8 @@ def walk_attributes(meta_raw: str) -> list[tuple[str, str]]:
     return out
 
 
-def harvest_names(conn: sqlite3.Connection) -> dict[str, str]:
-    """Collect URN→name across the whole DB. Picks the most common name per URN."""
+def harvest_names_from_mentions(conn: sqlite3.Connection) -> dict[str, str]:
+    """Collect URN→name across the whole DB from @-mentions. Most common name per URN."""
     name_counts: dict[str, Counter[str]] = defaultdict(Counter)
     cursor = conn.execute(
         "SELECT metadata FROM items WHERE source_type='linkedin' AND metadata IS NOT NULL"
@@ -79,6 +77,14 @@ def harvest_names(conn: sqlite3.Connection) -> dict[str, str]:
         for urn, name in walk_attributes(meta_raw):
             name_counts[urn][name] += 1
     return {urn: counts.most_common(1)[0][0] for urn, counts in name_counts.items()}
+
+
+def load_person_profiles(conn: sqlite3.Connection) -> dict[str, str]:
+    """Read the existing URN → display_name map from person_profiles."""
+    rows = conn.execute(
+        "SELECT urn, display_name FROM person_profiles WHERE display_name IS NOT NULL"
+    ).fetchall()
+    return {urn: name for urn, name in rows}
 
 
 def top_authors_with_names(
@@ -97,25 +103,52 @@ def top_authors_with_names(
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument(
+        "--write",
+        action="store_true",
+        help="Upsert newly-discovered (URN, name) pairs into person_profiles "
+        "with source='mention'. Existing rows are preserved.",
+    )
+    ap.add_argument("--top", type=int, default=30, help="Top-N person URNs to display")
+    args = ap.parse_args()
+
     conn = sqlite3.connect(DB_PATH)
     try:
-        urn_to_name = harvest_names(conn)
-        print(f"# URN→name pairs harvested from @-mentions: {len(urn_to_name)}\n")
+        from_profiles = load_person_profiles(conn)
+        from_mentions = harvest_names_from_mentions(conn)
+        # person_profiles wins over @-mention disagreements (manual review > heuristic)
+        urn_to_name: dict[str, str] = {**from_mentions, **from_profiles}
 
-        top = top_authors_with_names(conn, urn_to_name, top_n=30)
-        print("## Top 30 person URNs by activity count in items.author")
+        new_from_mentions = {
+            urn: name for urn, name in from_mentions.items() if urn not in from_profiles
+        }
+        print(f"# person_profiles rows loaded     : {len(from_profiles)}")
+        print(f"# @-mention pairs harvested       : {len(from_mentions)}")
+        print(f"# new pairs from mentions (no row): {len(new_from_mentions)}")
+        print(f"# merged URN→name map size        : {len(urn_to_name)}\n")
+
+        top = top_authors_with_names(conn, urn_to_name, top_n=args.top)
+        print(f"## Top {args.top} person URNs by activity count in items.author")
         print(f"{'rank':>4}  {'count':>5}  urn                            name")
         for i, (urn, n, name) in enumerate(top, 1):
             print(f"{i:>4}  {n:>5}  {urn:<30} {name or '— unresolved —'}")
 
         unresolved = [(urn, n) for urn, n, name in top if not name]
         if unresolved:
-            print(f"\n## Unresolved in the top 30: {len(unresolved)}")
+            print(f"\n## Unresolved in the top {args.top}: {len(unresolved)}")
             print("Run linkedin_url_lookup.py against any post URLs you know they wrote.")
 
-        print(f"\n## Sample of 20 URN→name pairs harvested:")
-        for urn, name in list(urn_to_name.items())[:20]:
-            print(f"  {urn:<30} {name}")
+        if args.write:
+            from lestash.core.database import upsert_person_profile
+            written = 0
+            for urn, name in new_from_mentions.items():
+                upsert_person_profile(conn, urn, display_name=name, source="mention")
+                written += 1
+            print(f"\n## Wrote {written} new rows to person_profiles (source='mention')")
+        else:
+            print(f"\n## Dry run. Re-run with --write to upsert "
+                  f"{len(new_from_mentions)} new pair(s) into person_profiles.")
         return 0
     finally:
         conn.close()
