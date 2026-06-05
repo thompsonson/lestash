@@ -7,6 +7,7 @@ of structured content from the rendered DOM using BeautifulSoup.
 import hashlib
 import logging
 import re
+from datetime import UTC, datetime, timedelta
 
 from bs4 import BeautifulSoup
 from lestash.models.item import ItemCreate
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Page type constants
 TYPE_GEMINI = "gemini"
+TYPE_GEMINI_SEARCH = "gemini-search"
 TYPE_CHATGPT = "chatgpt"
 TYPE_ARTICLE = "article"
 TYPE_UNKNOWN = "unknown"
@@ -28,11 +30,49 @@ def _clean_html(html: str) -> str:
     return str(soup)
 
 
+def _parse_search_date(date_str: str) -> datetime | None:
+    """Parse a Gemini search page date like '2 Apr', '31 Aug 2025', '30 Sept 2025'.
+
+    Dates without a year are assumed to be in the current year.
+    Returns datetime at noon UTC for day-level precision.
+    """
+    date_str = date_str.strip()
+    if not date_str:
+        return None
+
+    now = datetime.now(UTC)
+
+    # Handle relative dates
+    if date_str.lower() == "today":
+        return now.replace(hour=12, minute=0, second=0, microsecond=0)
+    if date_str.lower() == "yesterday":
+        return (now - timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
+
+    # Normalise abbreviated months (Sept → Sep)
+    date_str = re.sub(r"\bSept\b", "Sep", date_str)
+
+    for fmt in ("%d %b %Y", "%d %b"):
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            if dt.year == 1900:  # no year in format
+                dt = dt.replace(year=now.year)
+            return dt.replace(hour=12, tzinfo=UTC)
+        except ValueError:
+            continue
+
+    logger.warning("Could not parse Gemini search date: %s", date_str)
+    return None
+
+
 def detect_html_type(html: str) -> str:
     """Detect the type of HTML page from its content.
 
     Uses lightweight string checks before full parsing.
     """
+    # Gemini search/history page: conversation list with dates
+    if "recent-conversations-container" in html:
+        return TYPE_GEMINI_SEARCH
+
     # Gemini: custom elements used in the Angular app
     if "user-query" in html and "model-response" in html:
         return TYPE_GEMINI
@@ -46,6 +86,56 @@ def detect_html_type(html: str) -> str:
         return TYPE_ARTICLE
 
     return TYPE_UNKNOWN
+
+
+def parse_gemini_search_page(html: str) -> list[ItemCreate]:
+    """Parse a Gemini search/history page into parent stub items.
+
+    Each conversation entry becomes a stub parent item with title and date,
+    ready to be filled in later when the full conversation is captured
+    via the Chrome extension.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    containers = soup.select(".conversation-container")
+    if not containers:
+        logger.warning("No .conversation-container elements found in Gemini search HTML")
+        return []
+
+    items: list[ItemCreate] = []
+    for container in containers:
+        title_el = container.select_one(".title")
+        date_el = container.select_one(".date")
+        if not title_el:
+            continue
+
+        title = title_el.get_text(strip=True)
+        if not title:
+            continue
+
+        date_str = date_el.get_text(strip=True) if date_el else ""
+        created_at = _parse_search_date(date_str)
+
+        content_hash = hashlib.sha256(title.encode()).hexdigest()[:12]
+        source_id = f"gemini-search-{content_hash}"
+
+        items.append(
+            ItemCreate(
+                source_type="gemini",
+                source_id=source_id,
+                title=title,
+                content="Gemini conversation (pending import).",
+                created_at=created_at,
+                is_own_content=True,
+                metadata={
+                    "source": "search_page_import",
+                    "import_status": "stub",
+                    "search_date": date_str,
+                },
+            )
+        )
+
+    logger.info("Parsed %d conversation stubs from Gemini search page", len(items))
+    return items
 
 
 def parse_gemini_html(
@@ -227,7 +317,9 @@ def parse_html_page(
     """
     detected = detect_html_type(html) if page_type == "auto" else page_type
 
-    if detected == TYPE_GEMINI:
+    if detected == TYPE_GEMINI_SEARCH:
+        items = parse_gemini_search_page(html)
+    elif detected == TYPE_GEMINI:
         items = parse_gemini_html(html, source_url, notes)
     elif detected == TYPE_CHATGPT:
         # Stub: fall back to generic for now
