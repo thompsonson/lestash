@@ -1404,7 +1404,19 @@
       const card = document.createElement('div');
       card.className = 'item-card';
       const emoji = item.metadata && item.metadata.emoji ? item.metadata.emoji + ' ' : '';
-      const displayTitle = item.title || item.preview || '(untitled)';
+      // For engagement items (likes, reactions, comments), the post body lives
+      // in item.preview and item.title is null. Synthesise an "actor → author"
+      // header so the preview can render in its own block below.
+      const isEngagement = item.subtype && (
+        item.subtype.includes('reaction') || item.subtype === 'linkedin/comment'
+      );
+      const hasAuthor = item.author_display && item.author_display !== '-';
+      const hasActor = item.actor_display && item.actor_display !== '-';
+      const engagementHeader = (isEngagement && hasAuthor && hasActor)
+        ? `${item.actor_display} → ${item.author_display}`
+        : null;
+      const displayTitle = item.title || engagementHeader || item.preview || '(untitled)';
+      const showPreviewBlock = item.preview && item.preview !== displayTitle;
       const firstImg = (item.media || []).find(m => (m.media_type === 'image' || m.media_type === 'thumbnail') && m.available);
       const thumbHtml = firstImg ? `<img src="${getApiBase()}${escHtml(firstImg.serve_url)}" alt="${escHtml(firstImg.alt_text || '')}" class="item-card-thumb" loading="lazy">` : '';
       card.innerHTML = `
@@ -1414,7 +1426,7 @@
           <span class="item-date">${relTime(item.created_at)}</span>
         </div>
         ${thumbHtml}
-        ${item.title && item.preview ? `<div class="item-preview">${escHtml(item.preview)}</div>` : ''}
+        ${showPreviewBlock ? `<div class="item-preview">${escHtml(item.preview)}</div>` : ''}
         <div class="item-footer">
           <span>${sourceName(item.subtype)}</span>
           ${item.child_count ? `<span class="child-count">${item.child_count} children</span>` : ''}
