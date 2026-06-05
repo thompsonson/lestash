@@ -150,6 +150,12 @@ def main() -> int:
         "with source='mention'. Existing rows are preserved.",
     )
     ap.add_argument("--top", type=int, default=30, help="Top-N person URNs to display")
+    ap.add_argument(
+        "--dms",
+        action="store_true",
+        help="Print unresolved person URNs that sent DMs, with body snippets, "
+        "so you can recognise them and add via /api/profiles.",
+    )
     args = ap.parse_args()
 
     conn = sqlite3.connect(DB_PATH)
@@ -179,6 +185,40 @@ def main() -> int:
         if unresolved:
             print(f"\n## Unresolved in the top {args.top}: {len(unresolved)}")
             print("Run linkedin_url_lookup.py against any post URLs you know they wrote.")
+
+        if args.dms:
+            print("\n## Unresolved DM senders (most recent body snippets)\n")
+            dm_rows = conn.execute(
+                """
+                SELECT author, COUNT(*) AS n
+                FROM items
+                WHERE source_type='linkedin'
+                  AND json_extract(metadata, '$.resource_name')='messages'
+                  AND author LIKE 'urn:li:person:%'
+                GROUP BY author ORDER BY n DESC
+                """
+            ).fetchall()
+            shown = 0
+            for urn, n in dm_rows:
+                if urn in urn_to_name:
+                    continue
+                shown += 1
+                print(f"### {urn}  ({n} DMs)")
+                snippets = conn.execute(
+                    """
+                    SELECT substr(replace(content, char(10), ' '), 1, 180)
+                    FROM items
+                    WHERE source_type='linkedin' AND author = ?
+                      AND json_extract(metadata, '$.resource_name')='messages'
+                    ORDER BY created_at DESC LIMIT 2
+                    """,
+                    (urn,),
+                ).fetchall()
+                for (snip,) in snippets:
+                    print(f"  - {snip}")
+                print()
+            if not shown:
+                print("  (none — all DM senders are already resolved)")
 
         if args.write:
             from lestash.core.database import upsert_person_profile
