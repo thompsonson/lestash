@@ -5,6 +5,7 @@ Unknown resource types are preserved with generic content for discovery.
 """
 
 import logging
+import re
 from datetime import datetime
 
 from lestash.models.item import ItemCreate, MediaCreate
@@ -61,6 +62,25 @@ def _activity_urn_to_url(urn: str | None) -> str | None:
     if not urn or not urn.startswith("urn:li:activity:"):
         return None
     return f"{LINKEDIN_BASE_URL}/{urn}"
+
+
+# resourceUri shape: /socialActions/<PARENT-URN>/(comments|likes)/<id>
+# Parent URN may be activity:, ugcPost:, share:, comment:(...), groupPost:NN-MM, etc.
+_RESOURCE_URI_PARENT_RE = re.compile(r"/socialActions/(urn:li:[^/]+)/(?:comments|likes)/")
+
+
+def _parent_urn_from_resource_uri(event: ChangelogEvent) -> str | None:
+    """Pull the parent post/comment URN out of `resourceUri` as a fallback.
+
+    LinkedIn's changelog occasionally omits `activity.object` even though the
+    parent URN sits right there in `resourceUri`. Without this fallback the
+    item lands with `commented_on`/`reacted_to` set to None and downstream
+    enrichment (post_cache lookups, parent resolution) breaks.
+    """
+    if not event.resource_uri:
+        return None
+    m = _RESOURCE_URI_PARENT_RE.search(event.resource_uri)
+    return m.group(1) if m else None
 
 
 def extract_changelog_item(event_data: dict) -> ItemCreate:
@@ -178,8 +198,8 @@ def _extract_comment(event: ChangelogEvent) -> ItemCreate:
     if activity.created and activity.created.get("time"):
         created_at = datetime.fromtimestamp(activity.created["time"] / 1000)
 
-    # Generate URL to the commented post
-    url = _activity_urn_to_url(activity.object)
+    parent_urn = activity.object or _parent_urn_from_resource_uri(event)
+    url = _activity_urn_to_url(parent_urn)
 
     return _create_item(
         event=event,
@@ -187,8 +207,8 @@ def _extract_comment(event: ChangelogEvent) -> ItemCreate:
         author=activity.actor or activity.author,
         created_at=created_at,
         extra_metadata={
-            "commented_on": activity.object,
-            "target_snowflake_ts": _urn_to_snowflake_ts(activity.object),
+            "commented_on": parent_urn,
+            "target_snowflake_ts": _urn_to_snowflake_ts(parent_urn),
         },
         url=url,
     )
@@ -222,18 +242,20 @@ def _extract_reaction(event: ChangelogEvent) -> ItemCreate:
     emoji = REACTION_EMOJIS.get(activity.reaction_type, "👍")
     reaction_type = activity.reaction_type or "LIKE"
 
+    parent_urn = activity.object or _parent_urn_from_resource_uri(event)
+
     # Include target reference if available
     target_ref = ""
-    if activity.object:
+    if parent_urn:
         # Extract short ID from URN (e.g., "urn:li:activity:123" -> "activity:123")
-        parts = activity.object.split(":")
+        parts = parent_urn.split(":")
         if len(parts) >= 3:
             target_ref = f" on {parts[-2]}:{parts[-1]}"
 
     content = f"{emoji} {reaction_type}{target_ref}"
 
     # Generate URL to the reacted post
-    url = _activity_urn_to_url(activity.object)
+    url = _activity_urn_to_url(parent_urn)
 
     return _create_item(
         event=event,
@@ -242,8 +264,8 @@ def _extract_reaction(event: ChangelogEvent) -> ItemCreate:
         created_at=created_at,
         extra_metadata={
             "reaction_type": activity.reaction_type,
-            "reacted_to": activity.object,
-            "target_snowflake_ts": _urn_to_snowflake_ts(activity.object),
+            "reacted_to": parent_urn,
+            "target_snowflake_ts": _urn_to_snowflake_ts(parent_urn),
         },
         url=url,
     )
