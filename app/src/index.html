@@ -2569,7 +2569,7 @@
         const hasYoutube = data.scopes.some(s => s.includes('youtube'));
         const hasDrive = data.scopes.some(s => s.includes('drive'));
         if (data.authenticated && hasYoutube && hasDrive) {
-          statusEl.innerHTML = `<span style="color:var(--ok)">Connected</span> <span style="color:var(--muted);font-size:0.75rem">(YouTube + Drive)</span>`;
+          statusEl.innerHTML = `<span style="color:var(--ok)">Connected</span> <span style="color:var(--muted);font-size:0.75rem">(YouTube + Drive)</span> <button class="sync-btn" onclick="startGoogleAuth()" style="margin-left:0.5rem;font-size:0.75rem;padding:0.15rem 0.5rem">Reconnect</button>`;
           flowEl.style.display = 'none';
           driveSection.style.display = '';
         } else {

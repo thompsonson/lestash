@@ -80,6 +80,7 @@ def save_credentials(credentials: Credentials, scopes: list[str] | None = None) 
         "client_id": credentials.client_id,
         "client_secret": credentials.client_secret,
         "scopes": list(credentials.scopes) if credentials.scopes else (scopes or DEFAULT_SCOPES),
+        "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
     }
     path = get_credentials_path()
     path.write_text(json.dumps(creds_data, indent=2))
@@ -88,12 +89,18 @@ def save_credentials(credentials: Credentials, scopes: list[str] | None = None) 
 
 def load_credentials() -> Credentials | None:
     """Load OAuth credentials from config file."""
+    from datetime import datetime, timezone
+
     path = get_credentials_path()
     if not path.exists():
         return None
 
     try:
         creds_data = json.loads(path.read_text())
+        expiry_str = creds_data.get("expiry")
+        expiry = datetime.fromisoformat(expiry_str) if expiry_str else None
+        if expiry and expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
         return Credentials(
             token=creds_data.get("token"),
             refresh_token=creds_data.get("refresh_token"),
@@ -101,6 +108,7 @@ def load_credentials() -> Credentials | None:
             client_id=creds_data.get("client_id"),
             client_secret=creds_data.get("client_secret"),
             scopes=creds_data.get("scopes", DEFAULT_SCOPES),
+            expiry=expiry,
         )
     except (json.JSONDecodeError, OSError, KeyError):
         return None
@@ -175,8 +183,12 @@ def get_credentials(scopes: list[str] | None = None) -> Credentials:
             credentials.refresh(Request())
             save_credentials(credentials, scopes)
             return credentials
-        except Exception:
-            pass
+        except Exception as e:
+            if "invalid_grant" in str(e).lower():
+                get_credentials_path().unlink(missing_ok=True)
+            raise ValueError(
+                f"Google credentials are no longer valid ({e}). Re-authenticate via the UI."
+            ) from e
 
     raise ValueError("No valid Google credentials. Run 'lestash google auth' to authenticate.")
 
@@ -202,6 +214,8 @@ def check_auth_status() -> dict:
                 result["authenticated"] = True
             except Exception as e:
                 result["refresh_error"] = str(e)
+                if "invalid_grant" in str(e).lower():
+                    get_credentials_path().unlink(missing_ok=True)
 
     return result
 
