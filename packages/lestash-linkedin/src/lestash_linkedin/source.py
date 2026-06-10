@@ -1195,6 +1195,75 @@ class LinkedInSource(SourcePlugin):
             if skipped_count > 0:
                 console.print(f"[dim]Skipped {skipped_count} already cached items[/dim]")
 
+        @app.command("enrich-feed")
+        def enrich_feed_cmd(
+            limit: Annotated[
+                int,
+                typer.Option("--limit", "-n", help="Max URNs to fetch (0 = all)"),
+            ] = 0,
+            sleep: Annotated[
+                float,
+                typer.Option("--sleep", help="Seconds between fetches"),
+            ] = 1.0,
+            dry_run: Annotated[
+                bool,
+                typer.Option("--dry-run", help="Report scope without fetching/writing"),
+            ] = False,
+            kinds: Annotated[
+                list[str] | None,
+                typer.Option(
+                    "--kinds",
+                    help="Engagement kinds to process (default: all). "
+                    "Choices: reacted_to, commented_on, reposted_ugc",
+                ),
+            ] = None,
+        ) -> None:
+            """Cache previews of posts you've engaged with (liked/commented/reposted).
+
+            Scrapes the public /feed/update preview for each engagement target that
+            isn't cached yet and stores author + preview in post_cache. Idempotent —
+            re-running only fills gaps. This is the same job that runs (bounded) on
+            every sync; use this for the initial backfill or a manual top-up.
+            """
+            from lestash.core.config import Config
+            from lestash.core.database import get_connection
+
+            from lestash_linkedin.feed_preview import DEFAULT_KINDS, cache_engaged_posts
+
+            selected_kinds = tuple(kinds) if kinds else DEFAULT_KINDS
+            invalid = [k for k in selected_kinds if k not in DEFAULT_KINDS]
+            if invalid:
+                console.print(f"[red]Unknown --kinds: {', '.join(invalid)}[/red]")
+                raise typer.Exit(1)
+
+            config = Config.load()
+            with get_connection(config) as conn:
+                stats = cache_engaged_posts(
+                    conn,
+                    limit=limit,
+                    sleep=sleep,
+                    kinds=selected_kinds,
+                    dry_run=dry_run,
+                    on_progress=lambda msg: console.print(f"[dim]{msg}[/dim]"),
+                )
+
+            console.print(
+                f"\n[dim]Already cached: {stats['already_cached']} · "
+                f"unfetchable: {stats['skipped_unfetchable']} · "
+                f"to fetch: {stats['to_fetch']}[/dim]"
+            )
+            if dry_run:
+                est = int(stats["fetched"] * sleep)
+                console.print(
+                    f"[yellow]Dry run: would fetch {stats['fetched']} URN(s) "
+                    f"(~{est}s).[/yellow] Re-run without --dry-run to cache."
+                )
+            else:
+                console.print(
+                    f"[green]Cached {stats['ok']} preview(s)[/green] "
+                    f"[dim](miss={stats['miss']} err={stats['err']})[/dim]"
+                )
+
         @app.command("enrich-all")
         def enrich_all_cmd(
             limit: Annotated[

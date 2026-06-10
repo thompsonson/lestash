@@ -170,6 +170,16 @@ def sync_source(
                         if resolved:
                             console.print(f"  [dim]Resolved {resolved} parent references[/dim]")
 
+                        # Cache previews of posts you've engaged with (bounded per
+                        # run so the sync stays quick; the rest catch up next run).
+                        from lestash_linkedin.feed_preview import run_during_sync
+
+                        run_during_sync(
+                            conn,
+                            plugin_config,
+                            on_message=lambda msg: console.print(f"  [dim]{msg}[/dim]"),
+                        )
+
                         # Try to download LinkedIn images
                         from lestash_linkedin.api import load_token
 
