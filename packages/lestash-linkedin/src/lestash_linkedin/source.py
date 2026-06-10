@@ -1209,6 +1209,14 @@ class LinkedInSource(SourcePlugin):
                 bool,
                 typer.Option("--dry-run", help="Report scope without fetching/writing"),
             ] = False,
+            kinds: Annotated[
+                list[str] | None,
+                typer.Option(
+                    "--kinds",
+                    help="Engagement kinds to process (default: all). "
+                    "Choices: reacted_to, commented_on, reposted_ugc",
+                ),
+            ] = None,
         ) -> None:
             """Cache previews of posts you've engaged with (liked/commented/reposted).
 
@@ -1220,7 +1228,13 @@ class LinkedInSource(SourcePlugin):
             from lestash.core.config import Config
             from lestash.core.database import get_connection
 
-            from lestash_linkedin.feed_preview import cache_engaged_posts
+            from lestash_linkedin.feed_preview import DEFAULT_KINDS, cache_engaged_posts
+
+            selected_kinds = tuple(kinds) if kinds else DEFAULT_KINDS
+            invalid = [k for k in selected_kinds if k not in DEFAULT_KINDS]
+            if invalid:
+                console.print(f"[red]Unknown --kinds: {', '.join(invalid)}[/red]")
+                raise typer.Exit(1)
 
             config = Config.load()
             with get_connection(config) as conn:
@@ -1228,6 +1242,7 @@ class LinkedInSource(SourcePlugin):
                     conn,
                     limit=limit,
                     sleep=sleep,
+                    kinds=selected_kinds,
                     dry_run=dry_run,
                     on_progress=lambda msg: console.print(f"[dim]{msg}[/dim]"),
                 )

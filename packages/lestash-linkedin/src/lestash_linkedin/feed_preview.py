@@ -6,10 +6,12 @@ serves an *unauthenticated* public preview with Open Graph meta tags. That's
 enough to recover the author and a short preview for posts you liked, commented
 on, or reposted — which otherwise render as opaque URN stubs.
 
-`cache_engaged_posts()` walks engagement-target URNs that aren't cached yet,
-fetches each preview, and upserts a `post_cache` row with ``source='feed_preview'``.
-It is idempotent: already-cached URNs are skipped, so it's safe to run on every
-sync (bounded by ``limit``) and again as a one-off backfill.
+`cache_engaged_posts()` walks engagement-target URNs that aren't cached yet
+(newest engagement first), fetches each preview, and upserts a `post_cache` row
+with ``source='feed_preview'``. It is idempotent: already-cached URNs are
+skipped, so it's safe to run on every sync (bounded by ``limit``) and again as a
+one-off backfill. Deleted/private posts are recorded with a sentinel
+``source='feed_preview_gone'`` so they aren't re-fetched on every run.
 
 ToS caveat: this scrapes the public preview. No auth bypass. Rate-limited by
 ``sleep`` seconds per URL; stops early on HTTP 429.
@@ -24,7 +26,9 @@ import logging
 import re
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, TypedDict
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
@@ -46,7 +50,40 @@ PIPE_SEGMENT_RE = re.compile(r"\s*\|\s*")
 # Extract the underlying activity ID from a urn:li:comment:(activity:X,Y) compound URN
 COMMENT_ACTIVITY_RE = re.compile(r"urn:li:comment:\(activity:(\d+),\d+\)")
 
-DEFAULT_KINDS = ("reacted_to", "commented_on", "reposted_ugc")
+DEFAULT_KINDS: tuple[str, ...] = ("reacted_to", "commented_on", "reposted_ugc")
+
+CACHE_SOURCE = "feed_preview"
+# Sentinel for deleted/private posts: keeps them out of future worklists without
+# pretending we have a real preview (content_preview stays NULL).
+GONE_SOURCE = "feed_preview_gone"
+
+# Defaults for the bounded job that runs inside each sync.
+SYNC_DEFAULT_LIMIT = 40
+SYNC_DEFAULT_SLEEP = 1.0
+
+
+class Preview(TypedDict):
+    """Result of scraping a post's public OG preview. Keys are always present."""
+
+    status: str  # "200", an HTTP error code like "429", or "ERR" for transport errors
+    title: str | None
+    author: str | None
+    handle: str | None
+    og_url: str | None
+    description: str | None
+    error: str | None
+
+
+class CacheStats(TypedDict):
+    """Outcome counts from a cache_engaged_posts() run."""
+
+    already_cached: int
+    skipped_unfetchable: int
+    to_fetch: int  # full backlog before `limit`
+    fetched: int  # actually attempted this run (after `limit`)
+    ok: int
+    miss: int
+    err: int
 
 
 def _extract_author(title: str | None, handle: str | None) -> str | None:
@@ -82,15 +119,28 @@ def _extract_author(title: str | None, handle: str | None) -> str | None:
     return handle
 
 
-def fetch_preview(activity_id: str, urn_kind: str = "activity") -> dict[str, str | None]:
+def _preview(status: str, **fields: str | None) -> Preview:
+    """Build a Preview with every key present (missing fields default to None)."""
+    return Preview(
+        status=status,
+        title=fields.get("title"),
+        author=fields.get("author"),
+        handle=fields.get("handle"),
+        og_url=fields.get("og_url"),
+        description=fields.get("description"),
+        error=fields.get("error"),
+    )
+
+
+def fetch_preview(activity_id: str, urn_kind: str = "activity") -> Preview:
     """Fetch /feed/update/urn:li:<kind>:<id>/ unauthenticated; return og fields.
 
     `urn_kind` selects the URN namespace: 'activity' (default), 'ugcPost',
     'share'. LinkedIn redirects all three to the canonical /posts/ URL when
     public; the og:* meta tags are the same.
 
-    Returns a dict with: status ("200"/"ERR"/other), title, author, handle,
-    og_url, description.
+    The ``status`` field is the HTTP status as a string ("200"), the HTTP error
+    code for a 4xx/5xx ("429", "404", …), or "ERR" for a transport-level failure.
     """
     url = f"https://www.linkedin.com/feed/update/urn:li:{urn_kind}:{activity_id}/"
     req = Request(url, headers={"User-Agent": UA})
@@ -98,63 +148,66 @@ def fetch_preview(activity_id: str, urn_kind: str = "activity") -> dict[str, str
         with urlopen(req, timeout=15) as resp:  # noqa: S310 (https URL only)
             html = resp.read().decode("utf-8", errors="replace")
             status = resp.status
+    except HTTPError as e:
+        # urlopen raises for 4xx/5xx (incl. 429) — surface the code so callers
+        # can act on rate limits instead of treating them as generic errors.
+        return _preview(str(e.code), error=str(e))
     except Exception as e:
-        return {
-            "status": "ERR",
-            "error": str(e),
-            "title": None,
-            "author": None,
-            "description": None,
-        }
+        return _preview("ERR", error=str(e))
 
     def _g(r: re.Pattern[str]) -> str | None:
         m = r.search(html)
         return m.group(1) if m else None
 
     title = _g(OG_TITLE_RE)
-    desc = _g(OG_DESC_RE)
     og_url = _g(OG_URL_RE)
     handle = None
     if og_url:
         m = HANDLE_FROM_OGURL_RE.search(og_url)
         if m:
             handle = m.group(1)
-    return {
-        "status": str(status),
-        "title": title,
-        "author": _extract_author(title, handle),
-        "handle": handle,
-        "og_url": og_url,
-        "description": desc,
-    }
+    return _preview(
+        str(status),
+        title=title,
+        author=_extract_author(title, handle),
+        handle=handle,
+        og_url=og_url,
+        description=_g(OG_DESC_RE),
+    )
 
 
-def _collect_target_urns(conn: sqlite3.Connection, kinds: tuple[str, ...]) -> dict[str, list[str]]:
-    """Return distinct engagement-target URNs grouped by engagement kind."""
+def _collect_targets(
+    conn: sqlite3.Connection, kinds: Sequence[str]
+) -> dict[str, list[tuple[str, str | None]]]:
+    """Return engagement-target URNs (with latest engagement time) grouped by kind."""
     queries = {
         "reacted_to": """
-            SELECT DISTINCT json_extract(metadata, '$.reacted_to')
+            SELECT json_extract(metadata, '$.reacted_to') AS urn, MAX(created_at) AS ts
             FROM items
             WHERE source_type='linkedin' AND is_own_content=1
               AND json_extract(metadata, '$.resource_name')='socialActions/likes'
               AND json_extract(metadata, '$.reacted_to') IS NOT NULL
+            GROUP BY urn
         """,
         "commented_on": """
-            SELECT DISTINCT json_extract(metadata, '$.commented_on')
+            SELECT json_extract(metadata, '$.commented_on') AS urn, MAX(created_at) AS ts
             FROM items
             WHERE source_type='linkedin' AND is_own_content=1
               AND json_extract(metadata, '$.resource_name')='socialActions/comments'
               AND json_extract(metadata, '$.commented_on') IS NOT NULL
+            GROUP BY urn
         """,
         "reposted_ugc": """
-            SELECT DISTINCT json_extract(metadata, '$.raw.activity.repostedContent.ugcPost')
+            SELECT json_extract(metadata, '$.raw.activity.repostedContent.ugcPost') AS urn,
+                   MAX(created_at) AS ts
             FROM items
             WHERE source_type='linkedin' AND is_own_content=1
               AND json_extract(metadata, '$.resource_name')='instantReposts'
               AND json_extract(metadata, '$.raw.activity.repostedContent.ugcPost') IS NOT NULL
+            GROUP BY urn
         """,
     }
-    return {k: [r[0] for r in conn.execute(queries[k]).fetchall()] for k in kinds}
+    return {k: [(r[0], r[1]) for r in conn.execute(queries[k]).fetchall()] for k in kinds}
 
 
 def _urn_to_fetchable_id(urn: str) -> tuple[str, str] | None:
@@ -176,38 +229,44 @@ def _urn_to_fetchable_id(urn: str) -> tuple[str, str] | None:
 
 
 def _already_cached_urns(conn: sqlite3.Connection) -> set[str]:
+    """URNs already in post_cache — includes 'gone' sentinels, so they're skipped."""
     return {row[0] for row in conn.execute("SELECT urn FROM post_cache").fetchall()}
 
 
 def build_worklist(
-    conn: sqlite3.Connection, kinds: tuple[str, ...] = DEFAULT_KINDS
+    conn: sqlite3.Connection, kinds: Sequence[str] = DEFAULT_KINDS
 ) -> tuple[list[tuple[str, str]], dict[str, int]]:
-    """Build the deduplicated list of (urn, kind) still needing a cached preview.
+    """Build the (urn, kind) list still needing a preview, newest engagement first.
 
-    Returns (worklist, scope) where scope summarises counts for reporting.
+    Ordering by recency means a bounded run fetches your latest engagements first,
+    so a backlog of older/dead URNs can't starve fresh ones. Returns
+    (worklist, scope) where scope summarises counts for reporting.
     """
-    targets = _collect_target_urns(conn, kinds)
+    targets = _collect_targets(conn, kinds)
     cached = _already_cached_urns(conn)
 
     seen: set[str] = set()
-    worklist: list[tuple[str, str]] = []
+    candidates: list[tuple[str, str, str]] = []  # (urn, kind, ts)
     skipped_unfetchable = 0
     for kind in kinds:
-        for urn in targets[kind]:
+        for urn, ts in targets[kind]:
             if urn in seen or urn in cached:
                 continue
             if _urn_to_fetchable_id(urn) is None:
                 skipped_unfetchable += 1
                 continue
             seen.add(urn)
-            worklist.append((urn, kind))
+            candidates.append((urn, kind, ts or ""))
+
+    # Newest engagement first (ISO timestamps sort lexically; NULLs sort last).
+    candidates.sort(key=lambda c: c[2], reverse=True)
+    worklist = [(urn, kind) for urn, kind, _ in candidates]
 
     scope = {
         "already_cached": len(cached),
         "skipped_unfetchable": skipped_unfetchable,
         "to_fetch": len(worklist),
     }
-    scope.update({f"distinct_{k}": len(targets[k]) for k in kinds})
     return worklist, scope
 
 
@@ -216,14 +275,14 @@ def cache_engaged_posts(
     *,
     limit: int = 0,
     sleep: float = 1.0,
-    kinds: tuple[str, ...] = DEFAULT_KINDS,
+    kinds: Sequence[str] = DEFAULT_KINDS,
     dry_run: bool = False,
     on_progress: Callable[[str], None] | None = None,
-) -> dict[str, int]:
+) -> CacheStats:
     """Fetch and cache previews for engaged-with posts that aren't cached yet.
 
     Idempotent: only fetches URNs absent from ``post_cache``. Bounded by ``limit``
-    (0 = no cap). Stops early on HTTP 429. Safe to call inside a sync hook.
+    (0 = all). Stops early on HTTP 429. Safe to call inside a sync hook.
 
     Args:
         conn: Open DB connection (post_cache + items live here).
@@ -234,7 +293,7 @@ def cache_engaged_posts(
         on_progress: Optional callback for human-readable progress lines.
 
     Returns:
-        Dict of counts: to_fetch, ok, miss, err, skipped_unfetchable, already_cached.
+        CacheStats with the run's outcome counts.
     """
     from lestash.core.database import upsert_post_cache
 
@@ -246,47 +305,87 @@ def cache_engaged_posts(
     if limit:
         worklist = worklist[:limit]
 
-    result = {**scope, "ok": 0, "miss": 0, "err": 0, "fetched": len(worklist)}
+    stats = CacheStats(
+        already_cached=scope["already_cached"],
+        skipped_unfetchable=scope["skipped_unfetchable"],
+        to_fetch=scope["to_fetch"],
+        fetched=len(worklist),
+        ok=0,
+        miss=0,
+        err=0,
+    )
     if dry_run or not worklist:
-        return result
+        return stats
 
-    ok = miss = err = 0
+    n = len(worklist)
     for i, (urn, _kind) in enumerate(worklist, 1):
         kind_id = _urn_to_fetchable_id(urn)
         assert kind_id is not None  # filtered in build_worklist
         urn_kind, fid = kind_id
         preview = fetch_preview(fid, urn_kind=urn_kind)
-        status = preview.get("status")
+        status = preview["status"]
 
         if status == "429":
-            _emit(f"[{i}/{len(worklist)}] 429 rate-limited — stopping early")
+            _emit(f"[{i}/{n}] 429 rate-limited — stopping early")
             break
-        if status == "ERR":
-            err += 1
-            _emit(f"[{i}/{len(worklist)}] ERR {preview.get('error', '?')} {urn}")
-        elif status != "200":
-            miss += 1
-            _emit(f"[{i}/{len(worklist)}] {status} {urn}")
+        if status != "200":
+            # Transport error or non-OK HTTP — transient, leave uncached to retry.
+            stats["err"] += 1
+            _emit(f"[{i}/{n}] {status} {preview['error'] or ''} {urn}".rstrip())
         else:
-            og_url = preview.get("og_url") or ""
-            # When the post is deleted/private/inaccessible, LinkedIn serves the
-            # generic home page meta (og:url without /posts/). Leave it uncached
-            # rather than fill it with "500 million+ members | …".
+            og_url = preview["og_url"] or ""
+            # Deleted/private/inaccessible posts return LinkedIn's generic home meta
+            # (og:url without /posts/). Record a sentinel so we don't re-fetch them
+            # every run, rather than caching "500 million+ members | …".
             if "/posts/" not in og_url:
-                miss += 1
-                _emit(f"[{i}/{len(worklist)}] generic-fallback {urn}")
+                stats["miss"] += 1
+                upsert_post_cache(conn, urn=urn, source=GONE_SOURCE)
+                _emit(f"[{i}/{n}] gone/private {urn}")
             else:
                 upsert_post_cache(
                     conn,
                     urn=urn,
-                    author_name=preview.get("author"),
-                    content_preview=preview.get("description"),
+                    author_name=preview["author"],
+                    content_preview=preview["description"],
                     url=og_url,
-                    source="feed_preview",
+                    source=CACHE_SOURCE,
                 )
-                ok += 1
+                stats["ok"] += 1
         time.sleep(sleep)
 
-    result.update(ok=ok, miss=miss, err=err)
-    logger.info("feed_preview cache: ok=%d miss=%d err=%d", ok, miss, err)
-    return result
+    logger.info(
+        "feed_preview cache: ok=%d miss=%d err=%d", stats["ok"], stats["miss"], stats["err"]
+    )
+    return stats
+
+
+def run_during_sync(
+    conn: sqlite3.Connection,
+    plugin_config: Mapping[str, Any],
+    on_message: Callable[[str], None] | None = None,
+) -> CacheStats | None:
+    """Run the bounded feed-preview job as part of a LinkedIn sync.
+
+    Reads the optional ``[linkedin.feed_preview]`` config (``enabled`` default
+    True, ``limit`` default 40, ``sleep`` default 1.0). Never raises — a scrape
+    failure must not fail the sync — returns None when skipped or on error.
+    """
+    cfg = plugin_config.get("feed_preview", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    if not cfg.get("enabled", True):
+        return None
+    try:
+        stats = cache_engaged_posts(
+            conn,
+            limit=int(cfg.get("limit", SYNC_DEFAULT_LIMIT)),
+            sleep=float(cfg.get("sleep", SYNC_DEFAULT_SLEEP)),
+        )
+    except Exception:
+        logger.warning("feed_preview caching skipped due to error", exc_info=True)
+        if on_message:
+            on_message("Feed-preview caching skipped (see logs)")
+        return None
+    if on_message and stats["ok"]:
+        on_message(f"Cached {stats['ok']} engaged post preview(s)")
+    return stats

@@ -172,26 +172,13 @@ def sync_source(
 
                         # Cache previews of posts you've engaged with (bounded per
                         # run so the sync stays quick; the rest catch up next run).
-                        fp_cfg = plugin_config.get("feed_preview", {})
-                        if not isinstance(fp_cfg, dict):
-                            fp_cfg = {}
-                        if fp_cfg.get("enabled", True):
-                            try:
-                                from lestash_linkedin.feed_preview import cache_engaged_posts
+                        from lestash_linkedin.feed_preview import run_during_sync
 
-                                stats = cache_engaged_posts(
-                                    conn,
-                                    limit=int(fp_cfg.get("limit", 40)),
-                                    sleep=float(fp_cfg.get("sleep", 1.0)),
-                                )
-                                if stats["ok"]:
-                                    console.print(
-                                        f"  [dim]Cached {stats['ok']} engaged post preview(s)[/dim]"
-                                    )
-                            except Exception as fp_err:  # never fail sync on scrape errors
-                                console.print(
-                                    f"  [yellow]Feed-preview caching skipped: {fp_err}[/yellow]"
-                                )
+                        run_during_sync(
+                            conn,
+                            plugin_config,
+                            on_message=lambda msg: console.print(f"  [dim]{msg}[/dim]"),
+                        )
 
                         # Try to download LinkedIn images
                         from lestash_linkedin.api import load_token
