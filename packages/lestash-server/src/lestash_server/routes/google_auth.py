@@ -65,13 +65,19 @@ def get_auth_url(
             "Download from Google Cloud Console.",
         )
 
+    import json
+
     from google_auth_oauthlib.flow import InstalledAppFlow
 
     scope_list = [s.strip() for s in scopes.split(",")]
     state = secrets.token_urlsafe(16)
 
-    flow = InstalledAppFlow.from_client_secrets_file(str(secrets_path), scope_list)
-    # Use OOB redirect — user will paste the code
+    # Explicitly load the `installed` client config — from_client_secrets_file checks
+    # for `web` before `installed`, so a file with both sections always picks web.
+    # OOB redirect is not allowed for web client types.
+    raw = json.loads(secrets_path.read_text())
+    installed_config = raw.get("installed") or raw
+    flow = InstalledAppFlow.from_client_config({"installed": installed_config}, scope_list)
     flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
     auth_url, _ = flow.authorization_url(prompt="consent", state=state)
 

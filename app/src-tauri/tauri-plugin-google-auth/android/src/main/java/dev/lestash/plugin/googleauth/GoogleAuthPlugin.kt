@@ -95,9 +95,10 @@ class GoogleAuthPlugin(private val activity: Activity) : Plugin(activity) {
             )
             return
         }
+        val scopeStrings = result.grantedScopes?.map { it.scopeUri } ?: emptyList()
         val payload = JSObject()
         payload.put("serverAuthCode", code)
-        payload.put("grantedScopes", result.grantedScopes ?: emptyList<String>())
+        payload.put("grantedScopes", org.json.JSONArray(scopeStrings))
         invoke.resolve(payload)
     }
 

@@ -89,7 +89,7 @@ def save_credentials(credentials: Credentials, scopes: list[str] | None = None) 
 
 def load_credentials() -> Credentials | None:
     """Load OAuth credentials from config file."""
-    from datetime import UTC, datetime
+    from datetime import datetime
 
     path = get_credentials_path()
     if not path.exists():
@@ -99,8 +99,9 @@ def load_credentials() -> Credentials | None:
         creds_data = json.loads(path.read_text())
         expiry_str = creds_data.get("expiry")
         expiry = datetime.fromisoformat(expiry_str) if expiry_str else None
-        if expiry and expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=UTC)
+        # google-auth uses naive UTC datetimes internally; strip tzinfo if present
+        if expiry and expiry.tzinfo is not None:
+            expiry = expiry.replace(tzinfo=None)
         return Credentials(
             token=creds_data.get("token"),
             refresh_token=creds_data.get("refresh_token"),
@@ -140,7 +141,12 @@ def run_auth_flow(
         raise FileNotFoundError(msg)
 
     effective_scopes = scopes or DEFAULT_SCOPES
-    flow = InstalledAppFlow.from_client_secrets_file(str(secrets_path), effective_scopes)
+    # Explicitly load the `installed` client config — from_client_secrets_file checks
+    # for `web` before `installed`, so a file with both sections always picks web.
+    # OOB redirect (used by the headless flow) is not allowed for web client types.
+    raw = json.loads(secrets_path.read_text())
+    installed_config = raw.get("installed") or raw
+    flow = InstalledAppFlow.from_client_config({"installed": installed_config}, effective_scopes)
 
     use_headless = headless if headless is not None else is_headless()
     credentials = _run_manual_flow(flow) if use_headless else flow.run_local_server(port=0)
@@ -175,10 +181,10 @@ def get_credentials(scopes: list[str] | None = None) -> Credentials:
     """
     credentials = load_credentials()
 
-    if credentials and credentials.valid:
+    if credentials and credentials.valid and credentials.expiry is not None:
         return credentials
 
-    if credentials and credentials.expired and credentials.refresh_token:
+    if credentials and credentials.refresh_token:
         try:
             credentials.refresh(Request())
             save_credentials(credentials, scopes)
@@ -205,9 +211,11 @@ def check_auth_status() -> dict:
     credentials = load_credentials()
     if credentials:
         result["scopes"] = list(credentials.scopes) if credentials.scopes else []
-        if credentials.valid:
+        # Treat missing expiry as expired — legacy credentials saved without expiry
+        # would otherwise appear valid indefinitely even after revocation.
+        if credentials.valid and credentials.expiry is not None:
             result["authenticated"] = True
-        elif credentials.expired and credentials.refresh_token:
+        elif credentials.refresh_token:
             try:
                 credentials.refresh(Request())
                 save_credentials(credentials)
