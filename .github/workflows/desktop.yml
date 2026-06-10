@@ -73,7 +73,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
           else
-            VERSION="0.1.0-dev.$(date -u +%Y%m%d.%H%M)"
+            VERSION="0.1.0-dev.$(date -u +%Y%m%d%H%M)"
           fi
           jq --arg v "$VERSION" '.version = $v' app/src-tauri/tauri.conf.json > tmp.json && mv tmp.json app/src-tauri/tauri.conf.json
           echo "App version: ${VERSION}"
@@ -133,7 +133,7 @@ jobs:
       - name: Extract dev version from artifacts
         if: github.ref == 'refs/heads/main'
         run: |
-          DEV_VERSION=$(ls release-files/*.AppImage 2>/dev/null | head -1 | grep -oP '\d+\.\d+\.\d+-dev\.\d+\.\d+' || echo "0.1.0-dev")
+          DEV_VERSION=$(ls release-files/*.AppImage 2>/dev/null | head -1 | grep -oP '\d+\.\d+\.\d+-dev\.\d+' || echo "0.1.0-dev")
           echo "DEV_VERSION=${DEV_VERSION}" >> "$GITHUB_ENV"
 
       - name: Delete old dev-desktop release
