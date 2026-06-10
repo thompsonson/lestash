@@ -75,3 +75,8 @@ version_toml = [
 ]
 branch = "main"
 commit_parser = "angular"
+# Keep uv.lock in sync with the version bumps PSR writes into the pyproject
+# files above, and include it in the release commit. Without this the lock
+# drifts every release and CI's `uv sync --locked` would fail.
+build_command = "uv lock"
+assets = ["uv.lock"]

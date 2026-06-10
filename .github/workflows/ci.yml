@@ -38,7 +38,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --frozen --dev
+        run: uv sync --locked --dev
 
       - name: Run ruff linting
         run: uv run ruff check packages/
@@ -63,7 +63,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --frozen --dev
+        run: uv sync --locked --dev
 
       - name: Run mypy
         run: uv run mypy packages/
@@ -90,7 +90,7 @@ jobs:
           allow-prereleases: true
 
       - name: Install dependencies
-        run: uv sync --frozen --dev
+        run: uv sync --locked --dev
 
       - name: Run tests
         run: |
