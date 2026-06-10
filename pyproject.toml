@@ -78,5 +78,7 @@ commit_parser = "angular"
 # Keep uv.lock in sync with the version bumps PSR writes into the pyproject
 # files above, and include it in the release commit. Without this the lock
 # drifts every release and CI's `uv sync --locked` would fail.
-build_command = "uv lock"
+# python-semantic-release runs in its own container where uv is NOT on PATH
+# (the setup-uv step only installs it on the runner host), so install it here.
+build_command = "pip install uv && uv lock"
 assets = ["uv.lock"]
