@@ -1389,6 +1389,8 @@
 
     /* ── Tabs ── */
     function switchTab(tab, skipHistory) {
+      // If an item/collection view is open, close it first before switching tabs
+      if (viewStack.length > 0) { viewStack.length = 0; _restoreListView(); }
       document.querySelectorAll('#tabs button').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
       const btn = document.querySelector(`#tabs [data-tab="${tab}"]`);
@@ -1404,7 +1406,7 @@
       if (tab === 'collections') loadCollections();
       if (tab === 'debug') { renderDebugInfo(); renderDebugLog(); }
       if (!IS_TAURI && !skipHistory) {
-        history.pushState({ tab }, '', '/#' + tab);
+        history.pushState({ tab }, '', '#' + tab);
       }
     }
 
@@ -3956,7 +3958,7 @@
         });
 
         mainEl.scrollTop = 0;
-        if (!IS_TAURI) history.pushState({ collectionId: coll.id }, '', '/#collection/' + coll.id);
+        if (!IS_TAURI) history.pushState({ collectionId: coll.id }, '', '#collection/' + coll.id);
       } catch (e) {
         showToast('Failed to load collection: ' + e.message, 'error');
       }
@@ -4041,28 +4043,26 @@
     }
 
     // Character counter
-    document.addEventListener('DOMContentLoaded', () => {
-      const ta = document.getElementById('li-post-text');
-      if (ta) ta.addEventListener('input', () => {
-        const len = ta.value.length;
-        const counter = document.getElementById('li-char-count');
-        counter.textContent = len.toLocaleString() + ' / 3,000';
-        counter.style.color = len > 2900 ? 'var(--accent)' : 'var(--muted)';
-      });
-      const imgInput = document.getElementById('li-post-image');
-      if (imgInput) imgInput.addEventListener('change', () => {
-        const preview = document.getElementById('li-image-preview');
-        const file = imgInput.files[0];
-        if (file) {
-          const img = document.createElement('img');
-          img.src = URL.createObjectURL(file);
-          img.style.cssText = 'max-width:100%;max-height:150px;border-radius:4px';
-          preview.innerHTML = '';
-          preview.appendChild(img);
-        } else {
-          preview.innerHTML = '';
-        }
-      });
+    const ta = document.getElementById('li-post-text');
+    if (ta) ta.addEventListener('input', () => {
+      const len = ta.value.length;
+      const counter = document.getElementById('li-char-count');
+      counter.textContent = len.toLocaleString() + ' / 3,000';
+      counter.style.color = len > 2900 ? 'var(--accent)' : 'var(--muted)';
+    });
+    const imgInput = document.getElementById('li-post-image');
+    if (imgInput) imgInput.addEventListener('change', () => {
+      const preview = document.getElementById('li-image-preview');
+      const file = imgInput.files[0];
+      if (file) {
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(file);
+        img.style.cssText = 'max-width:100%;max-height:150px;border-radius:4px';
+        preview.innerHTML = '';
+        preview.appendChild(img);
+      } else {
+        preview.innerHTML = '';
+      }
     });
 
     async function submitLinkedInPost() {
@@ -4374,12 +4374,16 @@
       window.addEventListener('popstate', (e) => {
         if (e.state && e.state.itemId) {
           api(`/api/items/${e.state.itemId}`).then(item => openItemView(item, true)).catch(() => {});
+        } else if (e.state && e.state.tab) {
+          // Always clear any stale view stack before switching tabs
+          if (viewStack.length > 0) { viewStack.length = 0; _restoreListView(); }
+          switchTab(e.state.tab, true);
         } else if (viewStack.length > 0) {
           _doCloseItemView();
-        } else if (e.state && e.state.tab) {
-          switchTab(e.state.tab, true);
         } else {
-          // Restore filter state from URL params
+          // Null state (hash change, manual URL edit, etc.) — always restore nav
+          viewStack.length = 0;
+          _restoreListView();
           applyUrlFilters();
           loadFeed();
         }
