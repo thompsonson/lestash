@@ -51,6 +51,46 @@ def list_sources() -> None:
     console.print(table)
 
 
+def _disabled_sources(conn) -> set[str]:
+    """Source types explicitly marked disabled in the sources table."""
+    return {
+        row[0]
+        for row in conn.execute("SELECT source_type FROM sources WHERE enabled = 0").fetchall()
+    }
+
+
+def _set_source_enabled(source_name: str, enabled: bool, config: Config | None = None) -> None:
+    """Upsert the enabled flag for a source (creates the row if absent)."""
+    config = config or Config.load()
+    with get_connection(config) as conn:
+        conn.execute(
+            """
+            INSERT INTO sources (source_type, enabled) VALUES (?, ?)
+            ON CONFLICT(source_type) DO UPDATE SET enabled = excluded.enabled
+            """,
+            (source_name, 1 if enabled else 0),
+        )
+        conn.commit()
+
+
+@app.command("disable")
+def disable_source(
+    source_name: Annotated[str, typer.Argument(help="Source to stop syncing")],
+) -> None:
+    """Stop a source from being synced by `sync --all` (existing data is kept)."""
+    _set_source_enabled(source_name, False)
+    console.print(f"[yellow]Disabled {source_name}[/yellow] — `sync --all` will skip it.")
+
+
+@app.command("enable")
+def enable_source(
+    source_name: Annotated[str, typer.Argument(help="Source to resume syncing")],
+) -> None:
+    """Re-enable a previously disabled source."""
+    _set_source_enabled(source_name, True)
+    console.print(f"[green]Enabled {source_name}[/green]")
+
+
 @app.command("sync")
 def sync_source(
     source_name: Annotated[str | None, typer.Argument(help="Source to sync (omit for all)")] = None,
@@ -63,15 +103,21 @@ def sync_source(
         console.print("[red]No source plugins installed.[/red]")
         raise typer.Exit(1)
 
+    config = Config.load()
+
     if source_name:
+        # An explicit source name syncs even if disabled.
         sources_to_sync = [source_name]
     elif all_sources:
-        sources_to_sync = list(plugins.keys())
+        # --all syncs every registered plugin except those explicitly disabled.
+        with get_connection(config) as conn:
+            disabled = _disabled_sources(conn)
+        sources_to_sync = [name for name in plugins if name not in disabled]
+        for name in sorted(disabled & set(plugins)):
+            console.print(f"[dim]Skipping {name} (disabled)[/dim]")
     else:
         console.print("[red]Specify a source name or use --all[/red]")
         raise typer.Exit(1)
-
-    config = Config.load()
 
     for name in sources_to_sync:
         if name not in plugins:
