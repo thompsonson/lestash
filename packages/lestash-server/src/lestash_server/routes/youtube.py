@@ -45,7 +45,7 @@ def fetch_transcript(body: TranscriptRequest):
     """Fetch and store a YouTube video transcript."""
     try:
         from lestash_youtube.client import get_transcript
-        from lestash_youtube.source import transcript_to_item
+        from lestash_youtube.source import resolve_transcript_parent, transcript_to_item
     except ImportError as e:
         raise HTTPException(status_code=501, detail="lestash-youtube not installed") from e
 
@@ -75,13 +75,10 @@ def fetch_transcript(body: TranscriptRequest):
     item = transcript_to_item(video_id, transcript, video_title, video_author)
 
     with get_db() as conn:
-        # Link to parent video if it exists
-        row = conn.execute(
-            "SELECT id FROM items WHERE source_type = 'youtube' AND source_id = ?",
-            (f"liked:{video_id}",),
-        ).fetchone()
-        if row:
-            item.parent_id = row[0]
+        # Link to the video item if one exists (any subtype, or a share capture).
+        parent_id = resolve_transcript_parent(conn, video_id)
+        if parent_id:
+            item.parent_id = parent_id
         if item.metadata:
             item.metadata.pop("_parent_source_id", None)
 
