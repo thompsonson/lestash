@@ -239,6 +239,20 @@ def sync_source(
                     except ImportError:
                         pass
 
+                # Resolve parent_id for YouTube transcripts captured before
+                # (or alongside) their video item.
+                if name == "youtube":
+                    try:
+                        from lestash_youtube.source import (
+                            resolve_youtube_transcript_parents,
+                        )
+
+                        resolved = resolve_youtube_transcript_parents(conn)
+                        if resolved:
+                            console.print(f"  [dim]Resolved {resolved} transcript parent(s)[/dim]")
+                    except ImportError:
+                        pass
+
                 # Update source last_sync
                 conn.execute(
                     """

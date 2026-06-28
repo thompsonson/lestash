@@ -15,6 +15,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 # Default scopes — callers can request additional scopes
 DEFAULT_SCOPES = [
+    "https://www.googleapis.com/auth/youtube.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
 ]
 

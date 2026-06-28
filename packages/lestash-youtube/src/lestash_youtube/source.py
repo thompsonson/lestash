@@ -2,12 +2,14 @@
 
 import json
 import re
+import sqlite3
 from collections.abc import Iterator
 from contextlib import suppress
 from datetime import datetime
 from typing import Annotated, Any
 
 import typer
+from lestash.core.database import mark_recent_history, max_history_id
 from lestash.core.google_auth import (
     get_client_secrets_path,
     get_credentials_path,
@@ -59,12 +61,17 @@ def parse_iso8601_duration(duration: str | None) -> int | None:
     return hours * 3600 + minutes * 60 + seconds
 
 
-def video_to_item(video: dict[str, Any], source_subtype: str = "liked") -> ItemCreate:
+def video_to_item(
+    video: dict[str, Any],
+    source_subtype: str = "liked",
+    note: str | None = None,
+) -> ItemCreate:
     """Convert YouTube video data to ItemCreate.
 
     Args:
         video: Video data dictionary from API
-        source_subtype: Type of video source ("liked", "history", "uploaded")
+        source_subtype: Type of video source ("liked", "history", "shared")
+        note: Optional user note to store in metadata (e.g. from a share capture)
 
     Returns:
         ItemCreate object for storage
@@ -130,6 +137,10 @@ def video_to_item(video: dict[str, Any], source_subtype: str = "liked") -> ItemC
         metadata["liked_at"] = video["liked_at"]
     if video.get("watched_at"):
         metadata["watched_at"] = video["watched_at"]
+
+    # Preserve a user note from a share capture
+    if note:
+        metadata["notes"] = note
 
     media: list[MediaCreate] | None = None
     if thumbnail_url:
@@ -212,6 +223,96 @@ def _extract_video_id(url_or_id: str) -> str | None:
     if re.match(r"^[a-zA-Z0-9_-]{11}$", url_or_id):
         return url_or_id
     return None
+
+
+def find_video_item(conn: sqlite3.Connection, video_id: str) -> int | None:
+    """Find a canonical YouTube video item (liked:/history:/shared:) by id.
+
+    Exact-matches the known video-level subtypes to avoid LIKE wildcard
+    pitfalls (video ids may contain '_', which is a LIKE wildcard). Returns the
+    item id, or None if no YouTube video item exists for this id.
+    """
+    row = conn.execute(
+        """
+        SELECT id FROM items
+        WHERE source_type = 'youtube'
+          AND source_id IN ('liked:' || ?, 'history:' || ?, 'shared:' || ?)
+        ORDER BY id
+        LIMIT 1
+        """,
+        (video_id, video_id, video_id),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def resolve_transcript_parent(conn: sqlite3.Connection, video_id: str) -> int | None:
+    """Find the best existing item to parent a transcript for ``video_id`` to.
+
+    Preference order:
+      1. A canonical YouTube video item (liked:/history:/shared:), excluding
+         transcripts.
+      2. Any item whose URL references the video_id (e.g. a generic ``share``
+         capture created from the share sheet).
+
+    Returns the parent item id, or None if nothing matches.
+    """
+    # 1. Prefer a real YouTube video item for this id.
+    video_item_id = find_video_item(conn, video_id)
+    if video_item_id is not None:
+        return video_item_id
+
+    # 2. Fall back to any item that references the video by URL (e.g. a share).
+    #    Escape LIKE metacharacters so an id containing '_' matches literally.
+    escaped = video_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    row = conn.execute(
+        r"""
+        SELECT id FROM items
+        WHERE url LIKE '%' || ? || '%' ESCAPE '\'
+          AND NOT (source_type = 'youtube' AND source_id LIKE 'transcript:%')
+        ORDER BY id
+        LIMIT 1
+        """,
+        (escaped,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def resolve_youtube_transcript_parents(conn: sqlite3.Connection) -> int:
+    """Backfill parent_id for orphan YouTube transcripts.
+
+    For each transcript without a parent, link it to the video item it belongs
+    to (matched by video_id) if one now exists. Mirrors resolve_linkedin_parents
+    so re-running a sync repairs transcripts captured before their video.
+
+    Returns the number of transcripts re-parented.
+    """
+    rows = conn.execute(
+        """
+        SELECT id, json_extract(metadata, '$.video_id')
+        FROM items
+        WHERE source_type = 'youtube'
+          AND source_id LIKE 'transcript:%'
+          AND parent_id IS NULL
+        """
+    ).fetchall()
+
+    pre_max = max_history_id(conn)
+    updated: list[int] = []
+    for transcript_id, video_id in rows:
+        if not video_id:
+            continue
+        parent_id = resolve_transcript_parent(conn, video_id)
+        if parent_id and parent_id != transcript_id:
+            conn.execute(
+                "UPDATE items SET parent_id = ? WHERE id = ?",
+                (parent_id, transcript_id),
+            )
+            updated.append(transcript_id)
+
+    if updated:
+        mark_recent_history(conn, pre_max, "sync", item_ids=updated)
+    conn.commit()
+    return len(updated)
 
 
 def transcript_to_item(
@@ -685,13 +786,10 @@ class YouTubeSource(SourcePlugin):
 
             config = Config.load()
             with get_connection(config) as conn:
-                # Check if video exists and link as parent
-                row = conn.execute(
-                    "SELECT id FROM items WHERE source_type = 'youtube' AND source_id = ?",
-                    (f"liked:{video_id}",),
-                ).fetchone()
-                if row:
-                    item.parent_id = row[0]
+                # Link to the video item if one exists (any subtype, or a share).
+                parent_id = resolve_transcript_parent(conn, video_id)
+                if parent_id:
+                    item.parent_id = parent_id
                 if item.metadata:
                     item.metadata.pop("_parent_source_id", None)
                 upsert_item(conn, item)

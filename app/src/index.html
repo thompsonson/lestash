@@ -3164,20 +3164,41 @@
       btn.disabled = true;
       btn.textContent = 'Saving...';
       try {
-        await api('/api/items', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            source_type: 'share',
-            source_id: 'share-' + Date.now(),
-            url: url || null,
-            title: title || null,
-            content: notes ? notes + '\n\n---\n\n' + content : content,
-            is_own_content: false,
-            parent_id: parentId,
-            metadata: notes ? { notes, shared_text: content } : { shared_text: content },
-          }),
-        });
+        // A shared YouTube link is a YouTube video, not a generic capture:
+        // mint a canonical youtube item so it enriches + dedupes and any
+        // transcript nests under it. Attach mode keeps the generic share so it
+        // can be a child of another item.
+        const mintYouTube = mode === 'new' && _isYouTubeUrl(url);
+        let savedYouTube = false;
+        if (mintYouTube) {
+          btn.textContent = 'Importing video...';
+          try {
+            await api('/api/youtube/import-video', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url, note: notes || null }),
+            });
+            savedYouTube = true;
+          } catch (e) {
+            // Fall back to a generic capture so the share is never lost.
+          }
+        }
+        if (!savedYouTube) {
+          await api('/api/items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              source_type: 'share',
+              source_id: 'share-' + Date.now(),
+              url: url || null,
+              title: title || null,
+              content: notes ? notes + '\n\n---\n\n' + content : content,
+              is_own_content: false,
+              parent_id: parentId,
+              metadata: notes ? { notes, shared_text: content } : { shared_text: content },
+            }),
+          });
+        }
         const importDrive = _isDriveOrDocsUrl(url)
           && document.getElementById('capture-drive-import').checked;
         const fetchTranscript = _isYouTubeUrl(url)
@@ -3207,7 +3228,7 @@
             showToast('Saved (transcript unavailable)', 'ok');
           }
         } else {
-          showToast('Saved', 'ok');
+          showToast(savedYouTube ? 'Saved video' : 'Saved', 'ok');
         }
         closeCaptureDialog();
         loadFeed();
