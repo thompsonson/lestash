@@ -61,12 +61,17 @@ def parse_iso8601_duration(duration: str | None) -> int | None:
     return hours * 3600 + minutes * 60 + seconds
 
 
-def video_to_item(video: dict[str, Any], source_subtype: str = "liked") -> ItemCreate:
+def video_to_item(
+    video: dict[str, Any],
+    source_subtype: str = "liked",
+    note: str | None = None,
+) -> ItemCreate:
     """Convert YouTube video data to ItemCreate.
 
     Args:
         video: Video data dictionary from API
-        source_subtype: Type of video source ("liked", "history", "uploaded")
+        source_subtype: Type of video source ("liked", "history", "shared")
+        note: Optional user note to store in metadata (e.g. from a share capture)
 
     Returns:
         ItemCreate object for storage
@@ -132,6 +137,10 @@ def video_to_item(video: dict[str, Any], source_subtype: str = "liked") -> ItemC
         metadata["liked_at"] = video["liked_at"]
     if video.get("watched_at"):
         metadata["watched_at"] = video["watched_at"]
+
+    # Preserve a user note from a share capture
+    if note:
+        metadata["notes"] = note
 
     media: list[MediaCreate] | None = None
     if thumbnail_url:
@@ -216,6 +225,26 @@ def _extract_video_id(url_or_id: str) -> str | None:
     return None
 
 
+def find_video_item(conn: sqlite3.Connection, video_id: str) -> int | None:
+    """Find a canonical YouTube video item (liked:/history:/shared:) by id.
+
+    Exact-matches the known video-level subtypes to avoid LIKE wildcard
+    pitfalls (video ids may contain '_', which is a LIKE wildcard). Returns the
+    item id, or None if no YouTube video item exists for this id.
+    """
+    row = conn.execute(
+        """
+        SELECT id FROM items
+        WHERE source_type = 'youtube'
+          AND source_id IN ('liked:' || ?, 'history:' || ?, 'shared:' || ?)
+        ORDER BY id
+        LIMIT 1
+        """,
+        (video_id, video_id, video_id),
+    ).fetchone()
+    return row[0] if row else None
+
+
 def resolve_transcript_parent(conn: sqlite3.Connection, video_id: str) -> int | None:
     """Find the best existing item to parent a transcript for ``video_id`` to.
 
@@ -227,21 +256,10 @@ def resolve_transcript_parent(conn: sqlite3.Connection, video_id: str) -> int | 
 
     Returns the parent item id, or None if nothing matches.
     """
-    # 1. Prefer a real YouTube video item for this id. Exact-match the known
-    #    video-level subtypes to avoid LIKE wildcard pitfalls (video ids may
-    #    contain '_', which is a LIKE wildcard).
-    row = conn.execute(
-        """
-        SELECT id FROM items
-        WHERE source_type = 'youtube'
-          AND source_id IN ('liked:' || ?, 'history:' || ?, 'shared:' || ?)
-        ORDER BY id
-        LIMIT 1
-        """,
-        (video_id, video_id, video_id),
-    ).fetchone()
-    if row:
-        return row[0]
+    # 1. Prefer a real YouTube video item for this id.
+    video_item_id = find_video_item(conn, video_id)
+    if video_item_id is not None:
+        return video_item_id
 
     # 2. Fall back to any item that references the video by URL (e.g. a share).
     #    Escape LIKE metacharacters so an id containing '_' matches literally.

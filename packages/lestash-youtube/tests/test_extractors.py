@@ -154,6 +154,27 @@ class TestVideoToItem:
         assert liked_item.metadata["source_subtype"] == "liked"
         assert history_item.metadata["source_subtype"] == "history"
 
+    def test_shared_subtype_and_note(self, youtube_video_factory):
+        """Shared captures carry the subtype and a user note in metadata."""
+        video = youtube_video_factory()
+        video["liked_at"] = None
+        video["watched_at"] = None
+
+        item = video_to_item(video, "shared", note="great explainer")
+
+        assert item.source_id == f"shared:{video['id']}"
+        assert item.metadata["source_subtype"] == "shared"
+        assert item.metadata["notes"] == "great explainer"
+        # No action timestamp -> created_at falls back to published_at.
+        assert item.created_at is not None
+        assert item.created_at.year == 2025
+
+    def test_no_note_omits_notes_key(self, youtube_video_factory):
+        """Without a note, metadata has no notes key."""
+        item = video_to_item(youtube_video_factory(), "shared")
+
+        assert "notes" not in item.metadata
+
     def test_stores_duration_in_metadata(self, youtube_video_factory):
         """Should store duration in both seconds and ISO format."""
         video = youtube_video_factory(duration="PT1H23M45S")

@@ -190,6 +190,48 @@ def get_liked_videos(youtube, max_results: int = 50) -> list[dict[str, Any]]:
     return videos
 
 
+def get_video_details(youtube, video_id: str) -> dict[str, Any] | None:
+    """Fetch full metadata for a single video, shaped for video_to_item().
+
+    Args:
+        youtube: Authenticated YouTube API client.
+        video_id: YouTube video ID.
+
+    Returns:
+        Video data dict matching the structure video_to_item() consumes, or
+        None if the video does not exist or is not accessible.
+    """
+    response = (
+        youtube.videos().list(part="snippet,contentDetails,statistics", id=video_id).execute()
+    )
+
+    items = response.get("items", [])
+    if not items:
+        return None
+
+    item = items[0]
+    snippet = item.get("snippet", {})
+    content_details = item.get("contentDetails", {})
+    statistics = item.get("statistics", {})
+
+    return {
+        "id": video_id,
+        "title": snippet.get("title"),
+        "description": snippet.get("description"),
+        "channel_id": snippet.get("channelId"),
+        "channel_title": snippet.get("channelTitle"),
+        "published_at": snippet.get("publishedAt"),
+        "thumbnails": snippet.get("thumbnails", {}),
+        "tags": snippet.get("tags", []),
+        "category_id": snippet.get("categoryId"),
+        "duration": content_details.get("duration"),
+        "definition": content_details.get("definition"),
+        "view_count": statistics.get("viewCount"),
+        "like_count": statistics.get("likeCount"),
+        "comment_count": statistics.get("commentCount"),
+    }
+
+
 def get_watch_history(youtube, max_results: int = 50) -> list[dict[str, Any]]:
     """Attempt to fetch user's watch history.
 

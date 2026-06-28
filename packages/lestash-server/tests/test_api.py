@@ -861,6 +861,105 @@ class TestTags:
         assert resp.status_code == 404
 
 
+class TestImportVideo:
+    """Test POST /api/youtube/import-video."""
+
+    VID = "dQw4w9WgXcQ"
+
+    def _insert_video(self, config, subtype="liked"):
+        from lestash.core.database import get_connection
+
+        with get_connection(config) as conn:
+            cur = conn.execute(
+                """INSERT INTO items (source_type, source_id, url, title, content)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    "youtube",
+                    f"{subtype}:{self.VID}",
+                    f"https://www.youtube.com/watch?v={self.VID}",
+                    "Existing Video",
+                    "",
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def test_rejects_non_youtube_url(self, client):
+        resp = client.post("/api/youtube/import-video", json={"url": "https://example.com"})
+        assert resp.status_code == 400
+
+    def test_dedup_returns_existing_video(self, client, test_config):
+        existing_id = self._insert_video(test_config)
+
+        resp = client.post(
+            "/api/youtube/import-video",
+            json={"url": f"https://youtu.be/{self.VID}"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["created"] is False
+        assert data["item_id"] == existing_id
+        assert data["title"] == "Existing Video"
+
+    def test_mints_new_video(self, client, test_config, monkeypatch):
+        import lestash_youtube.client as yt_client
+
+        monkeypatch.setattr(yt_client, "create_youtube_client", lambda: object())
+        monkeypatch.setattr(
+            yt_client,
+            "get_video_details",
+            lambda youtube, vid: {
+                "id": vid,
+                "title": "Fresh Title",
+                "description": "desc",
+                "channel_id": "UC_chan",
+                "channel_title": "Fresh Channel",
+                "published_at": "2025-03-01T00:00:00Z",
+                "thumbnails": {},
+                "tags": [],
+                "category_id": "22",
+                "duration": "PT3M",
+                "definition": "hd",
+                "view_count": "10",
+                "like_count": "2",
+                "comment_count": "1",
+            },
+        )
+
+        resp = client.post(
+            "/api/youtube/import-video",
+            json={"url": f"https://youtu.be/{self.VID}", "note": "great explainer"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["created"] is True
+        assert data["title"] == "Fresh Title"
+
+        # Persisted as a canonical youtube item with the note preserved.
+        from lestash.core.database import get_connection
+
+        with get_connection(test_config) as conn:
+            row = conn.execute(
+                "SELECT source_id, metadata FROM items WHERE id = ?", (data["item_id"],)
+            ).fetchone()
+        assert row[0] == f"shared:{self.VID}"
+        assert json.loads(row[1])["notes"] == "great explainer"
+
+    def test_missing_video_returns_404(self, client, monkeypatch):
+        import lestash_youtube.client as yt_client
+
+        monkeypatch.setattr(yt_client, "create_youtube_client", lambda: object())
+        monkeypatch.setattr(yt_client, "get_video_details", lambda youtube, vid: None)
+
+        resp = client.post(
+            "/api/youtube/import-video",
+            json={"url": f"https://youtu.be/{self.VID}"},
+        )
+        assert resp.status_code == 404
+
+
 class TestCORS:
     """Test CORS headers."""
 

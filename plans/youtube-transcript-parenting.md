@@ -88,7 +88,7 @@ Re-parents orphans whenever the video later appears.
 
 ---
 
-## Layer 2 — Canonical YouTube item ("share becomes a youtube item")
+## Layer 2 — Canonical YouTube item ("share becomes a youtube item") — DONE (2.1–2.4, 2.7)
 
 A shared YouTube URL mints a first-class `youtube` item (enriched, dedup-safe) instead of a
 generic `share` blob. Transcript nesting + dedupe then fall out for free.
