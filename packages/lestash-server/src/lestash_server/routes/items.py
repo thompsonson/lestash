@@ -2,6 +2,7 @@
 
 import json
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query
 from lestash.core.database import (
@@ -331,6 +332,7 @@ def create_item(body: ItemCreateRequest):
     """Create a single item."""
     metadata_json = json.dumps(body.metadata) if body.metadata else None
     source_id = body.source_id or body.url
+    created_at = body.created_at or datetime.now(UTC)
 
     with get_db() as conn:
         cursor = conn.execute(
@@ -353,7 +355,7 @@ def create_item(body: ItemCreateRequest):
                 body.title,
                 body.content,
                 body.author,
-                body.created_at,
+                created_at,
                 body.is_own_content,
                 metadata_json,
                 body.parent_id,

@@ -476,6 +476,22 @@ class TestCreateItem:
         resp = client.post("/api/items", json={"source_type": "test"})
         assert resp.status_code == 422
 
+    def test_create_item_defaults_created_at(self, client):
+        resp = client.post(
+            "/api/items",
+            json={"source_type": "test", "content": "dated"},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["created_at"] is not None
+
+    def test_create_item_preserves_provided_created_at(self, client):
+        resp = client.post(
+            "/api/items",
+            json={"source_type": "test", "content": "dated", "created_at": "2024-01-02T03:04:05"},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["created_at"].startswith("2024-01-02T03:04:05")
+
     def test_create_item_upsert(self, client):
         """Creating same item twice should update, not duplicate."""
         body = {"source_type": "test", "source_id": "upsert-1", "content": "v1"}

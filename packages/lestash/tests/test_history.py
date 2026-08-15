@@ -447,6 +447,22 @@ class TestChangeReason:
             assert rows[0]["change_reason"] == "sync"
             assert rows[0]["content_old"] == "original"
 
+    def test_upsert_item_defaults_created_at(self, test_db):
+        """Upsert without a created_at should not store NULL."""
+        with get_connection(test_db) as conn:
+            upsert_item(
+                conn,
+                ItemCreate(
+                    source_type="note",
+                    source_id="undated",
+                    content="no date",
+                ),
+            )
+            row = conn.execute(
+                "SELECT created_at FROM items WHERE source_id = ?", ("undated",)
+            ).fetchone()
+            assert row[0] is not None
+
     def test_pdf_enricher_marks_history_as_enricher(self, test_db):
         from lestash.core.pdf_enrich.persistence import mark_source_unavailable
 

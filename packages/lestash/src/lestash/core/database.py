@@ -10,6 +10,7 @@ import logging
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -34,7 +35,7 @@ CREATE TABLE IF NOT EXISTS items (
     title TEXT,
     content TEXT NOT NULL,
     author TEXT,
-    created_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     is_own_content BOOLEAN DEFAULT FALSE,
     metadata TEXT,
@@ -379,6 +380,15 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_syndications_item ON syndications(item_id);
         """,
     ),
+    (
+        12,
+        "Backfill items.created_at NULLs with fetched_at",
+        # items.created_at had no default, so rows written without a date
+        # (API-created notes, gemini imports, etc.) stored NULL. fetched_at is
+        # the best available capture-time proxy. Insert-layer defaults in
+        # upsert_item()/create_item() prevent future NULLs.
+        "UPDATE items SET created_at = fetched_at WHERE created_at IS NULL;",
+    ),
 ]
 
 
@@ -606,6 +616,7 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
     import json
 
     metadata_json = json.dumps(item.metadata) if item.metadata else None
+    created_at = item.created_at or datetime.now(UTC)
     pre_max = max_history_id(conn)
     conn.execute(
         """
@@ -632,7 +643,7 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
             item.title,
             item.content,
             item.author,
-            item.created_at,
+            created_at,
             item.is_own_content,
             metadata_json,
             item.parent_id,
