@@ -190,8 +190,9 @@ def test_a_zip_gone_from_drive_does_not_stop_the_others_but_fails_the_sync(
         OSError(errno.ENOSPC, "No space left on device"),
         _http_error(503),
         _http_error(403, b'{"error": {"errors": [{"reason": "userRateLimitExceeded"}]}}'),
+        _http_error(403, b'{"error": {"errors": [{"reason": "downloadQuotaExceeded"}]}}'),
     ],
-    ids=["network", "disk-full", "drive-5xx", "rate-limit"],
+    ids=["network", "disk-full", "drive-5xx", "rate-limit", "download-quota"],
 )
 def test_a_systemic_download_error_stops_the_sync_and_counts_no_attempt(
     test_db, drive, monkeypatch, error

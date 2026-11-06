@@ -122,6 +122,11 @@ def describe_failure(record: dict[str, Any]) -> str:
     return f"failed {n} of {MAX_ATTEMPTS} times ({retry}): {record.get('error', '')}"
 
 
+# 403 reasons that clear by themselves: rate limits (user/rateLimitExceeded) and quotas
+# (downloadQuotaExceeded, a file downloaded too often today; dailyLimitExceeded).
+TRANSIENT_403 = (b"ratelimitexceeded", b"quotaexceeded", b"dailylimitexceeded")
+
+
 def _file_is_unavailable(error: Exception) -> bool:
     """Whether a download error is about this file (gone or not shared with us), so retrying
     it counts as an attempt. Anything else is about the sign-in, network, Drive or disk."""
@@ -130,8 +135,9 @@ def _file_is_unavailable(error: Exception) -> bool:
     if not isinstance(error, HttpError):
         return False
     status = int(error.resp.status)
-    if status == 403 and b"ratelimitexceeded" in (error.content or b"").lower():
-        return False  # Drive reports rate limits as 403
+    body = (error.content or b"").lower()
+    if status == 403 and any(reason in body for reason in TRANSIENT_403):
+        return False  # Drive reports rate limits and daily quotas as 403
     return status in (403, 404)
 
 
