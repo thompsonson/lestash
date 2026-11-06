@@ -710,3 +710,33 @@ def test_sent_copy_root_drops_the_list_tag_from_replies_too() -> None:
     }
     items = thread_to_items(thread, QUERY)
     assert [i.title for i in items] == ["[CFP] My workshop", "Re: [CFP] My workshop"]
+
+
+OUTLOOK_QUOTE = "_" * 32 + "\nFrom: Bob\nSent: Monday\nTo: UAI\nSubject: Slides\n\n"
+
+
+def test_footer_in_an_outlook_quote_is_removed_and_the_quote_kept() -> None:
+    body = (
+        "My reply.\n\n"
+        + OUTLOOK_QUOTE
+        + "Original text.\n"
+        + GROUPS_FOOTER
+        + "\nTo view this discussion visit https://groups.google.com/d/msgid/uai-list/x."
+        + "\n\nText after the quoted footer.\n\n"
+        + GROUPS_FOOTER
+    )
+    text = _text(body)
+    assert "You received this message" not in text and "unsubscribe" not in text
+    assert "Original text." in text and "From: Bob" in text
+    assert text.endswith("Text after the quoted footer.")
+
+
+def test_nested_quoted_footer_keeps_the_outer_quote() -> None:
+    nested = "> > " + GROUPS_FOOTER.replace("\n", "\n> > ")
+    body = "Reply.\n\n> Outer said\n> > Inner said\n" + nested + "\n> Outer continues\n> More"
+    assert _text(body) == "Reply.\n\n> Outer said\n> > Inner said\n> Outer continues\n> More"
+
+
+def test_short_outlook_quote_mentioning_the_mailing_list_is_kept() -> None:
+    body = "Thanks!\n\n" + OUTLOOK_QUOTE + "Please share this on the mailing list."
+    assert _text(body).endswith("Please share this on the mailing list.")

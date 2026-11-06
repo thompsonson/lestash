@@ -37,6 +37,15 @@ LIST_FOOTER_WORDS = re.compile(r"unsubscribe|mailing list", re.I)
 UNDERSCORE_RULE = re.compile(r"^_{20,}\s*$")
 # A list footer after an underscore rule is short; a long tail is a quoted message (Outlook)
 MAX_FOOTER_LINES = 6
+# The lines of a Google Groups footer, from its first sentence on
+GROUPS_FOOTER_LINES = re.compile(
+    r"^(You received this message because you are subscribed to the Google Groups"
+    r"|To unsubscribe from this group|To view this discussion|To post to this group"
+    r"|Visit this group at|For more options|https://groups\.google\.com/)"
+)
+# An underscore rule followed by these is an Outlook quote ("From: Bob"), not a footer
+OUTLOOK_HEADER = re.compile(r"^(From|De|Von|Da|Van|Från|Fra):\s", re.I)
+QUOTE_MARKS = re.compile(r"^[\s>]*")
 GROUPS_LINK = re.compile(r"https://groups\.google\.com/d/msgid/[^\s>]+")
 REPLY_PREFIX = re.compile(r"^(re|fwd?|aw|tr|sv|vs)\s*(\[\d+\])?\s*:\s*", re.I)
 LEADING_TAG = re.compile(r"^\[([^\]]+)\]\s*")
@@ -63,8 +72,20 @@ def _find_part(part: dict[str, Any], mime: str) -> str | None:
     return None
 
 
+def _depth(line: str) -> int:
+    """How deeply a line is quoted: "> > x" is 2."""
+    marks = QUOTE_MARKS.match(line)
+    return marks.group(0).count(">") if marks else 0
+
+
+def _unquote(line: str) -> str:
+    """The line without its quote marks and leading spaces: "> > -- " gives "-- "."""
+    marks = QUOTE_MARKS.match(line)
+    return line[marks.end() :] if marks else line
+
+
 def _is_quoted(line: str) -> bool:
-    return line.lstrip().startswith(">")
+    return _depth(line) > 0
 
 
 def _strip_trailing_footer(lines: list[str]) -> list[str]:
@@ -88,33 +109,56 @@ def _strip_trailing_footer(lines: list[str]) -> list[str]:
             return lines[:cut]
         if UNDERSCORE_RULE.match(line):
             tail = [t for t in lines[i + 1 : end] if t.strip()]
+            if tail and OUTLOOK_HEADER.match(tail[0].strip()):
+                break  # a quoted message (Outlook), however short
             if len(tail) <= MAX_FOOTER_LINES and any(LIST_FOOTER_WORDS.search(t) for t in tail):
                 return lines[:i]
             break
     return lines
 
 
-def _strip_quoted_footers(lines: list[str]) -> list[str]:
-    """Drop Google Groups footers inside quoted messages ("> -- " ... end of that quote).
+def _footer_starts(lines: list[str], i: int) -> bool:
+    """Whether a Google Groups footer starts at line i: its sentence, or "-- " just before.
 
-    A quoted footer runs to the end of its quoted block; the reply around it is kept.
+    Inside a quote the sentence may be anywhere on the line. Outside a quote (an Outlook
+    quote has no ">") the line must start with it, so text that mentions it is kept.
+    """
+    depth = _depth(lines[i])
+
+    def is_sentence(text: str) -> bool:
+        return GROUPS_FOOTER in text if depth else text.startswith(GROUPS_FOOTER)
+
+    text = _unquote(lines[i]).strip()
+    if is_sentence(text):
+        return True
+    if i + 1 >= len(lines) or _depth(lines[i + 1]) != depth:
+        return False
+    separators = ("--", "") if depth else ("--",)
+    return text in separators and is_sentence(_unquote(lines[i + 1]).strip())
+
+
+def _strip_inner_footers(lines: list[str]) -> list[str]:
+    """Drop Google Groups footers inside the message, i.e. in quoted messages.
+
+    A footer in a ">" quote, at any depth, runs to the end of its quote (the lines quoted
+    as deeply or more); the reply around it is kept. A footer in a quote without ">"
+    (Outlook) is only its own lines: the "-- " line, the Groups sentence, and the Groups
+    lines after it ("To unsubscribe from this group..."), so no written text is lost.
     """
     out: list[str] = []
-    skipping = False
+    skip: int | None = None  # quote depth of the footer being dropped
     for i, line in enumerate(lines):
-        if skipping:
-            if _is_quoted(line):
+        depth = _depth(line)
+        if skip is not None:
+            if depth >= skip and (skip or GROUPS_FOOTER_LINES.match(_unquote(line).strip())):
                 continue
-            skipping = False
-        if _is_quoted(line):
-            text = line.lstrip().lstrip(">").strip()
-            nxt = lines[i + 1].lstrip().lstrip(">") if i + 1 < len(lines) else ""
-            if GROUPS_FOOTER in text or (text in ("--", "") and GROUPS_FOOTER in nxt):
-                # Also drop an empty quoted line just before the separator
-                while out and _is_quoted(out[-1]) and not out[-1].lstrip().lstrip(">").strip():
-                    out.pop()
-                skipping = True
-                continue
+            skip = None
+        if _footer_starts(lines, i):
+            # Also drop empty lines just before the footer
+            while out and _depth(out[-1]) >= depth and not _unquote(out[-1]).strip():
+                out.pop()
+            skip = depth
+            continue
         out.append(line)
     return out
 
@@ -129,8 +173,8 @@ def message_text(message: dict[str, Any]) -> str:
         raw = re.sub(r"(?i)<br\s*/?>|</p>|</div>", "\n", raw)
         text = html.unescape(re.sub(r"<[^>]+>", "", raw))
     lines = text.replace("\r\n", "\n").split("\n")
-    lines = _strip_quoted_footers(_strip_trailing_footer(lines))
-    while lines and not lines[-1].strip().lstrip(">").strip():
+    lines = _strip_inner_footers(_strip_trailing_footer(lines))
+    while lines and not _unquote(lines[-1]).strip():
         lines.pop()  # empty quote lines left at the end
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
