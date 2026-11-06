@@ -862,6 +862,10 @@ def _store_item(conn, item: ItemCreate) -> int:
     Returns:
         1 if item was added/updated, 0 otherwise
     """
+    from lestash.importers import merge_with_stored
+
+    # Keep fields another writer stored, e.g. Takeout watch times on history items
+    merge_with_stored(conn, item)
     metadata_json = json.dumps(item.metadata) if item.metadata else None
 
     cursor = conn.execute(
