@@ -267,10 +267,12 @@ def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse
 
 
 @router.post("/api/import/drive", response_model=list[ImportResponse])
-async def import_from_drive(body: DriveImportRequest):
+def import_from_drive(body: DriveImportRequest):
     """Download files from Google Drive and import them.
 
-    Requires Google auth to be configured via 'lestash google auth'.
+    Requires Google auth to be configured via 'lestash google auth'. A plain ``def``, so
+    FastAPI runs it in a worker thread: a multi-GB download and parse must not stall the
+    event loop.
     """
     from lestash.core.google_auth import download_drive_file, extract_drive_file_id
 
@@ -335,7 +337,7 @@ async def import_from_drive(body: DriveImportRequest):
 
 
 @router.post("/api/import/drive/sync", response_model=DriveSyncResponse)
-async def sync_from_drive(body: DriveSyncRequest):
+def sync_from_drive(body: DriveSyncRequest):
     """Import Google Drive files/folders with Docling markdown conversion.
 
     Accepts Drive URLs, Google Docs URLs, folder URLs, or bare file IDs.

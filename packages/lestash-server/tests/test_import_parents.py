@@ -96,3 +96,13 @@ def test_reimport_batch_nests_children_under_their_own_parent(test_config) -> No
     assert parents["nb:A/note1"] == ids["nb:A"]
     assert parents["nb:A/note2"] == ids["nb:A"]
     assert parents["nb:B/note1"] == ids["nb:B"]
+
+
+def test_drive_imports_run_off_the_event_loop() -> None:
+    """They download and parse synchronously (Takeout parts are several GB)."""
+    import inspect
+
+    from lestash_server.routes import imports
+
+    assert not inspect.iscoroutinefunction(imports.import_from_drive)
+    assert not inspect.iscoroutinefunction(imports.sync_from_drive)
