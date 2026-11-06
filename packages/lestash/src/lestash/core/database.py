@@ -516,6 +516,12 @@ def init_database(config: Config | None = None) -> None:
         apply_migrations(conn)
 
 
+# How long a write waits for another connection's write lock. SQLite's default (5 s) is
+# shorter than a long sync's commit interval, so the server or a second sync would fail
+# with "database is locked".
+BUSY_TIMEOUT_S = 30.0
+
+
 @contextmanager
 def get_connection(config: Config | None = None) -> Iterator[sqlite3.Connection]:
     """Get a database connection.
@@ -526,7 +532,7 @@ def get_connection(config: Config | None = None) -> Iterator[sqlite3.Connection]
     if not db_path.exists():
         init_database(config)
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=BUSY_TIMEOUT_S)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")

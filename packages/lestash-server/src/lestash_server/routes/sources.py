@@ -1,18 +1,11 @@
 """Source API endpoints."""
 
-import json
 import logging
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from lestash.core.database import (
-    get_connection,
-    resolve_parent_id,
-    resolve_parent_source_ids,
-    save_checkpoint,
-)
-from lestash.importers import merge_with_stored
-from lestash.models.sync import SyncCheckpoint
+from lestash.core.database import get_connection
+from lestash.core.sync import SyncStore
 from lestash.plugins.loader import load_plugins
 
 from lestash_server.deps import get_config, get_db
@@ -84,54 +77,11 @@ def _run_sync(source_name: str) -> None:
         sync_id = cursor.lastrowid
         conn.commit()
 
-        items_added = 0
         error_message = None
-        source_types: set[str] = set()
+        store = SyncStore(conn, source_name)
 
         try:
-            for item in plugin.sync(plugin_config):
-                if isinstance(item, SyncCheckpoint):
-                    # Commit the plugin's state with the items yielded before it
-                    save_checkpoint(conn, source_name, item.key, item.value)
-                    conn.commit()
-                    continue
-                resolve_parent_id(conn, item)
-                merge_with_stored(conn, item)
-                source_types.add(item.source_type)
-                metadata_json = json.dumps(item.metadata) if item.metadata else None
-                conn.execute(
-                    """
-                    INSERT INTO items (
-                        source_type, source_id, url, title, content,
-                        author, created_at, is_own_content, metadata, parent_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(source_type, source_id) DO UPDATE SET
-                        url = excluded.url,
-                        title = excluded.title,
-                        content = excluded.content,
-                        author = excluded.author,
-                        is_own_content = excluded.is_own_content,
-                        metadata = excluded.metadata,
-                        parent_id = COALESCE(excluded.parent_id, items.parent_id)
-                    """,
-                    (
-                        item.source_type,
-                        item.source_id,
-                        item.url,
-                        item.title,
-                        item.content,
-                        item.author,
-                        item.created_at,
-                        item.is_own_content,
-                        metadata_json,
-                        item.parent_id,
-                    ),
-                )
-                items_added += 1
-
-            conn.commit()
-            resolve_parent_source_ids(conn, source_types)
-
+            store.run(plugin.sync(plugin_config))
             conn.execute(
                 """
                 INSERT INTO sources (source_type, last_sync)
@@ -155,7 +105,7 @@ def _run_sync(source_name: str) -> None:
                 error_message = ?
             WHERE id = ?
             """,
-            (datetime.now(), status, items_added, 0, error_message, sync_id),
+            (datetime.now(), status, store.items, 0, error_message, sync_id),
         )
         conn.commit()
 

@@ -79,3 +79,35 @@ def test_run_sync_keeps_a_parent_set_by_a_resolver(test_config, monkeypatch) -> 
             "SELECT parent_id FROM items WHERE source_id = 'reaction:1'"
         ).fetchone()[0]
     assert parent == book_id
+
+
+class _CheckpointThenFail:
+    """Zip 1 (items, then its checkpoint), then zip 2 fails after a child and its parent."""
+
+    def sync(self, config: dict):
+        from lestash.models.sync import SyncCheckpoint
+
+        yield ItemCreate(source_type="audible", source_id="other", content="zip 1")
+        yield SyncCheckpoint(key="zip1", value={"status": "imported"})
+        yield NOTE.model_copy(deep=True)
+        yield BOOK.model_copy(deep=True)
+        raise RuntimeError("zip 2 failed")
+
+
+def test_run_sync_commits_checkpoints_with_their_items(test_config, monkeypatch) -> None:
+    from lestash.core.database import get_checkpoints
+
+    monkeypatch.setattr(deps, "_config", test_config)
+    monkeypatch.setattr(sources_route, "load_plugins", lambda: {"audible": _CheckpointThenFail()})
+
+    sources_route._run_sync("audible")
+
+    with get_connection(test_config) as conn:
+        assert get_checkpoints(conn, "audible") == {"zip1": {"status": "imported"}}
+        status, added, error = conn.execute(
+            "SELECT status, items_added, error_message FROM sync_log WHERE source_type = 'audible'"
+        ).fetchone()
+    assert (status, added, error) == ("failed", 3, "zip 2 failed")
+    # What the failed sync stored is still linked
+    book_id, note_parent = _ids(test_config)
+    assert note_parent == book_id
