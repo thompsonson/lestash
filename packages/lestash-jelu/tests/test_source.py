@@ -1,6 +1,9 @@
 """Tests for the Jelu source plugin, against a fake Jelu with Jelu's auth model."""
 
+import json
 import os
+from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -56,6 +59,62 @@ def test_children_point_at_their_book(client) -> None:
     quote = items["jelu:quote:q-1"]
     assert quote.title == "Quote from The Alignment Problem (ch. 4)"
     assert quote.metadata["_parent_source_id"] == "jelu:book:b-1"
+
+
+USERBOOKS_PAGE = json.loads(
+    (Path(__file__).parent / "fixtures" / "userbooks_page.json").read_text()
+)
+
+
+def _sync_real_page() -> dict[str, Any]:
+    """Sync a /userbooks page in the exact shape Jelu 0.88 sends (invented data)."""
+    empty = {"content": [], "last": True, "totalPages": 0, "first": True, "empty": True}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/users/me":
+            return httpx.Response(200, json={"user": {"id": "u-1", "login": "mt"}, "token": "t"})
+        if request.url.path == "/api/v1/userbooks":
+            return httpx.Response(200, json=USERBOOKS_PAGE)
+        return httpx.Response(200, json=empty)
+
+    with JeluClient(BASE, "mt", "pw", transport=httpx.MockTransport(handler)) as c:
+        return _by_id(sync_items(c))
+
+
+def test_real_userbooks_page_maps_every_book() -> None:
+    items = _sync_real_page()
+    books = [i for i in items.values() if i.source_id.startswith("jelu:book:")]
+    assert len(books) == 3
+    # Only the book with non-empty notes gets a notes child
+    assert [i for i in items if i.startswith("jelu:notes:")] == [
+        "jelu:notes:0b6f1c1e-1111-4a00-9000-000000000002"
+    ]
+
+    finished = items["jelu:book:7d0e4c55-2222-4b00-9000-000000000001"]
+    assert "Status: Finished (2025-07-28)" in finished.content
+    assert "A coastal town & its lighthouse, told over three winters." in finished.content
+    assert finished.metadata["cover_url"] == f"{BASE}/files/the-lantern-keepers-7d0e4c55.jpg"
+    assert "asin" not in finished.metadata  # amazonId is null in real Jelu data
+
+
+def test_real_page_currently_reading_book() -> None:
+    reading = _sync_real_page()["jelu:book:7d0e4c55-2222-4b00-9000-000000000002"]
+    assert reading.author == "Ben Placeholder, Cleo Sample"
+    assert "Status: Reading (2026-02-11)" in reading.content
+    assert "Series: Quiet City" in reading.content
+    assert reading.metadata["status"] == "Reading"
+    assert reading.metadata["percent_read"] == 42
+    assert reading.metadata["tags"] == ["sci-fi", "audiobook"]
+    assert reading.metadata["openlibrary_id"] == "OL0000002M"
+    assert reading.url == f"{BASE}/books/0b6f1c1e-1111-4a00-9000-000000000002"
+
+
+def test_real_page_book_without_image_or_dates() -> None:
+    bare = _sync_real_page()["jelu:book:7d0e4c55-2222-4b00-9000-000000000003"]
+    assert bare.metadata["status"] == "To read"
+    assert "cover_url" not in bare.metadata
+    assert bare.content == "Notes Toward a Garden by Dee Invented\nStatus: To read"
+    assert bare.created_at is not None and bare.created_at.date().isoformat() == "2026-03-02"
 
 
 def test_review_of_a_book_outside_the_library_has_no_parent() -> None:

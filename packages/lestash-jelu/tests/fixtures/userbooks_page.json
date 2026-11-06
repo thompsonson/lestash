@@ -1,0 +1,170 @@
+{
+  "content": [
+    {
+      "id": "0b6f1c1e-1111-4a00-9000-000000000001",
+      "creationDate": "2025-03-14T19:02:11.482915Z",
+      "modificationDate": "2025-07-28T21:40:03.118204Z",
+      "book": {
+        "id": "7d0e4c55-2222-4b00-9000-000000000001",
+        "creationDate": "2025-03-14T19:02:11.401733Z",
+        "modificationDate": "2025-03-14T19:02:11.401733Z",
+        "title": "The Lantern Keepers",
+        "isbn10": "0000000001",
+        "isbn13": "9780000000011",
+        "summary": "<p>A coastal town &amp; its lighthouse, told over <b>three</b> winters.</p>",
+        "image": "the-lantern-keepers-7d0e4c55.jpg",
+        "publisher": "Example House",
+        "pageCount": 312,
+        "publishedDate": "2019-09-05",
+        "authors": [
+          {
+            "id": "a1a1a1a1-3333-4c00-9000-000000000001",
+            "creationDate": "2025-03-14T19:02:11.390112Z",
+            "modificationDate": "2025-03-14T19:02:11.390112Z",
+            "name": "Ada Example",
+            "image": null
+          }
+        ],
+        "tags": [
+          {"id": "c0c0c0c0-4444-4d00-9000-000000000001", "creationDate": "2025-03-14T19:02:11.395522Z", "modificationDate": "2025-03-14T19:02:11.395522Z", "name": "fiction"}
+        ],
+        "translators": [],
+        "narrators": [],
+        "series": [],
+        "goodreadsId": null,
+        "googleId": "exampleGoogleId1",
+        "amazonId": null,
+        "librarythingId": null,
+        "isfdbId": null,
+        "openlibraryId": null,
+        "noosfereId": null,
+        "inventaireId": null,
+        "language": "en"
+      },
+      "personalNotes": null,
+      "lastReadingEvent": "FINISHED",
+      "lastReadingEventDate": "2025-07-28T21:40:03.090117Z",
+      "owned": true,
+      "toRead": false,
+      "percentRead": 100,
+      "currentPageNumber": null,
+      "borrowed": false,
+      "priceInCents": null,
+      "avgRating": null,
+      "userAvgRating": null
+    },
+    {
+      "id": "0b6f1c1e-1111-4a00-9000-000000000002",
+      "creationDate": "2026-01-05T08:15:42.003391Z",
+      "modificationDate": "2026-02-11T07:58:19.551870Z",
+      "book": {
+        "id": "7d0e4c55-2222-4b00-9000-000000000002",
+        "creationDate": "2026-01-05T08:15:41.977010Z",
+        "modificationDate": "2026-01-05T08:15:41.977010Z",
+        "title": "Gears of the Quiet City",
+        "isbn10": null,
+        "isbn13": "9780000000028",
+        "summary": null,
+        "image": "gears-of-the-quiet-city-7d0e4c55.jpg",
+        "publisher": "Sample Press",
+        "pageCount": 480,
+        "publishedDate": "2023",
+        "authors": [
+          {"id": "a1a1a1a1-3333-4c00-9000-000000000002", "creationDate": "2026-01-05T08:15:41.960001Z", "modificationDate": "2026-01-05T08:15:41.960001Z", "name": "Ben Placeholder", "image": null},
+          {"id": "a1a1a1a1-3333-4c00-9000-000000000003", "creationDate": "2026-01-05T08:15:41.961002Z", "modificationDate": "2026-01-05T08:15:41.961002Z", "name": "Cleo Sample", "image": null}
+        ],
+        "tags": [
+          {"id": "c0c0c0c0-4444-4d00-9000-000000000002", "creationDate": "2026-01-05T08:15:41.965210Z", "modificationDate": "2026-01-05T08:15:41.965210Z", "name": "sci-fi"},
+          {"id": "c0c0c0c0-4444-4d00-9000-000000000003", "creationDate": "2026-01-05T08:15:41.966310Z", "modificationDate": "2026-01-05T08:15:41.966310Z", "name": "audiobook"}
+        ],
+        "translators": [],
+        "narrators": [],
+        "series": [
+          {"seriesId": "5e5e5e5e-5555-4e00-9000-000000000001", "name": "Quiet City", "numberInSeries": 2.0}
+        ],
+        "goodreadsId": "00000002",
+        "googleId": null,
+        "amazonId": null,
+        "librarythingId": null,
+        "isfdbId": null,
+        "openlibraryId": "OL0000002M",
+        "noosfereId": null,
+        "inventaireId": null,
+        "language": "en"
+      },
+      "personalNotes": "Chapter 9: the clock-tower map matters later.",
+      "lastReadingEvent": "CURRENTLY_READING",
+      "lastReadingEventDate": "2026-02-11T07:58:19.530004Z",
+      "owned": null,
+      "toRead": false,
+      "percentRead": 42,
+      "currentPageNumber": 201,
+      "borrowed": null,
+      "priceInCents": null,
+      "avgRating": null,
+      "userAvgRating": null
+    },
+    {
+      "id": "0b6f1c1e-1111-4a00-9000-000000000003",
+      "creationDate": "2026-03-02T12:00:07.770001Z",
+      "modificationDate": "2026-03-02T12:00:07.770001Z",
+      "book": {
+        "id": "7d0e4c55-2222-4b00-9000-000000000003",
+        "creationDate": "2026-03-02T12:00:07.701501Z",
+        "modificationDate": "2026-03-02T12:00:07.701501Z",
+        "title": "Notes Toward a Garden",
+        "isbn10": null,
+        "isbn13": null,
+        "summary": null,
+        "image": null,
+        "publisher": null,
+        "pageCount": null,
+        "publishedDate": null,
+        "authors": [
+          {"id": "a1a1a1a1-3333-4c00-9000-000000000004", "creationDate": "2026-03-02T12:00:07.690001Z", "modificationDate": "2026-03-02T12:00:07.690001Z", "name": "Dee Invented", "image": null}
+        ],
+        "tags": [],
+        "translators": [],
+        "narrators": [],
+        "series": [],
+        "goodreadsId": null,
+        "googleId": null,
+        "amazonId": null,
+        "librarythingId": null,
+        "isfdbId": null,
+        "openlibraryId": null,
+        "noosfereId": null,
+        "inventaireId": null,
+        "language": null
+      },
+      "personalNotes": "",
+      "lastReadingEvent": null,
+      "lastReadingEventDate": null,
+      "owned": null,
+      "toRead": true,
+      "percentRead": null,
+      "currentPageNumber": null,
+      "borrowed": null,
+      "priceInCents": null,
+      "avgRating": null,
+      "userAvgRating": null
+    }
+  ],
+  "pageable": {
+    "pageNumber": 0,
+    "pageSize": 100,
+    "sort": {"empty": false, "sorted": true, "unsorted": false},
+    "offset": 0,
+    "paged": true,
+    "unpaged": false
+  },
+  "last": true,
+  "totalPages": 1,
+  "totalElements": 3,
+  "size": 100,
+  "number": 0,
+  "sort": {"empty": false, "sorted": true, "unsorted": false},
+  "first": true,
+  "numberOfElements": 3,
+  "empty": false
+}
