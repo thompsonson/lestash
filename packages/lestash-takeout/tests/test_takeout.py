@@ -1,11 +1,14 @@
 """Tests for the Takeout plugin: Drive listing, per-zip state committed with the items."""
 
+import errno
 import json
 import zipfile
 from pathlib import Path
 from typing import Any
 
+import httplib2
 import pytest
+from googleapiclient.errors import HttpError
 from lestash.cli import sources as sources_cli
 from lestash.core.database import get_checkpoints, get_connection
 from lestash.importers import IMPORTER_VERSION
@@ -156,14 +159,18 @@ def test_kill_inside_a_zip_leaves_no_record(test_db, drive, monkeypatch) -> None
     assert _items(test_db) == []
 
 
-def test_a_failing_zip_does_not_stop_the_others_but_fails_the_sync(
+def _http_error(status: int, content: bytes = b"{}") -> HttpError:
+    return HttpError(httplib2.Response({"status": status}), content)
+
+
+def test_a_zip_gone_from_drive_does_not_stop_the_others_but_fails_the_sync(
     test_db, drive, monkeypatch
 ) -> None:
     real = source.download
 
     def download(svc, file_id, dest):
         if file_id == "f1":
-            raise OSError("connection reset")
+            raise _http_error(404)
         return real(svc, file_id, dest)
 
     monkeypatch.setattr(source, "download", download)
@@ -173,7 +180,53 @@ def test_a_failing_zip_does_not_stop_the_others_but_fails_the_sync(
     assert state["f2"]["status"] == "unrecognized"
     status, error = _last_sync(test_db)
     assert status == "failed"
-    assert "takeout-1-001.zip" in error and "connection reset" in error
+    assert "takeout-1-001.zip" in error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConnectionError("connection reset"),
+        OSError(errno.ENOSPC, "No space left on device"),
+        _http_error(503),
+        _http_error(403, b'{"error": {"errors": [{"reason": "userRateLimitExceeded"}]}}'),
+    ],
+    ids=["network", "disk-full", "drive-5xx", "rate-limit"],
+)
+def test_a_systemic_download_error_stops_the_sync_and_counts_no_attempt(
+    test_db, drive, monkeypatch, error
+) -> None:
+    """Sign-in, network, Drive or disk errors would fail every zip: none uses up retries."""
+
+    def download(svc, file_id, dest):
+        svc.downloaded.append(dest)
+        raise error
+
+    monkeypatch.setattr(source, "download", download)
+    for _ in range(source.MAX_ATTEMPTS):
+        drive.downloaded.clear()
+        _sync()
+        # Stopped at the first zip: the second isn't tried
+        assert [p.name for p in drive.downloaded] == ["takeout-1-001.zip"]
+        assert _state(test_db) == {}
+        status, message = _last_sync(test_db)
+        assert status == "failed" and "takeout-1-001.zip" in message
+
+    assert [f["name"] for f in source.pending_zips(drive, _state(test_db))] == [
+        "takeout-1-001.zip",
+        "takeout-1-002.zip",
+    ]
+
+
+def test_a_systemic_error_after_a_bad_zip_reports_both(test_db, drive, monkeypatch) -> None:
+    def download(svc, file_id, dest):
+        raise _http_error(404) if file_id == "f1" else ConnectionError("offline")
+
+    monkeypatch.setattr(source, "download", download)
+    _sync()
+    assert set(_state(test_db)) == {"f1"}
+    status, message = _last_sync(test_db)
+    assert status == "failed" and "offline" in message and "takeout-1-001.zip" in message
 
 
 def test_a_zip_that_fails_to_parse_is_retried_then_given_up(test_db, drive, monkeypatch) -> None:

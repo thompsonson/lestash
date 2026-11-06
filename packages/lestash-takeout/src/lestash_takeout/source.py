@@ -9,9 +9,11 @@ Which zips are done is kept in the ``sync_checkpoints`` table (source ``takeout`
 file id). The plugin yields a checkpoint after a zip's items, and the sync loop commits both
 together, so a zip is never marked done while its items are missing.
 
-A zip that fails to download or read is recorded as ``failed`` with its attempt count, and the
-sync then ends ``failed``. It is retried up to ``MAX_ATTEMPTS`` times, then left alone until
-``lestash takeout forget`` or a new importer version.
+A zip that can't be read, or that Drive says is gone (404, 403), is recorded as ``failed``
+with its attempt count, and the sync then ends ``failed``. It is retried up to
+``MAX_ATTEMPTS`` times, then left alone until ``lestash takeout forget`` or a new importer
+version. Any other download error (sign-in, network, a Drive 5xx or rate limit, a full disk)
+would fail every zip the same way: the sync stops there and records nothing for that zip.
 """
 
 import tempfile
@@ -120,6 +122,19 @@ def describe_failure(record: dict[str, Any]) -> str:
     return f"failed {n} of {MAX_ATTEMPTS} times ({retry}): {record.get('error', '')}"
 
 
+def _file_is_unavailable(error: Exception) -> bool:
+    """Whether a download error is about this file (gone or not shared with us), so retrying
+    it counts as an attempt. Anything else is about the sign-in, network, Drive or disk."""
+    from googleapiclient.errors import HttpError
+
+    if not isinstance(error, HttpError):
+        return False
+    status = int(error.resp.status)
+    if status == 403 and b"ratelimitexceeded" in (error.content or b"").lower():
+        return False  # Drive reports rate limits as 403
+    return status in (403, 404)
+
+
 def import_zip(
     service: Any,
     file: dict[str, Any],
@@ -128,25 +143,36 @@ def import_zip(
 ) -> Iterator[ItemCreate | SyncCheckpoint]:
     """Download one Takeout zip and yield its items, then its checkpoint.
 
-    The download is deleted before the items are yielded. A download or read error, or a
-    corrupt (e.g. truncated) zip, yields a ``failed`` checkpoint counting the attempt;
-    ``previous`` is the zip's stored record.
+    The download is deleted before the items are yielded. A corrupt (e.g. truncated) zip, a
+    parse error, or a file Drive says is gone yields a ``failed`` checkpoint counting the
+    attempt; ``previous`` is the zip's stored record. Any other download error raises
+    ``TakeoutError`` and records nothing: it would fail the next zip too.
     """
-    try:
-        with tempfile.TemporaryDirectory(dir=workdir) as tmp:
+    error: Exception | None = None
+    with tempfile.TemporaryDirectory(dir=workdir) as tmp:
+        try:
             path = download(service, file["id"], Path(tmp) / file["name"])
+        except Exception as e:
+            if not _file_is_unavailable(e):
+                raise TakeoutError(
+                    f"stopped at {file['name']}, nothing recorded for it: {type(e).__name__}: {e}"
+                ) from e
+            error = e
+        else:
             try:
                 items, source_type = parse_zip(path)
-            except CorruptZip:
-                raise  # a bad download, not a format we don't know
+            except CorruptZip as e:
+                error = e  # a bad download, not a format we don't know
             except ValueError as e:
                 # Nothing this importer understands (e.g. only photos): record it, so it is
                 # retried only once the importer version changes.
                 logger.info(f"{file['name']}: {e}")
                 yield SyncCheckpoint(key=file["id"], value=_record(file, "unrecognized", 0, None))
                 return
-    except Exception as e:  # noqa: BLE001 - one bad zip must not stop the others
-        record = failure(file, previous, e)
+            except Exception as e:  # noqa: BLE001 - one bad zip must not stop the others
+                error = e
+    if error is not None:
+        record = failure(file, previous, error)
         logger.warning(f"{file['name']} ({file['id']}): {describe_failure(record)}")
         yield SyncCheckpoint(key=file["id"], value=record)
         return
@@ -217,15 +243,22 @@ class TakeoutSource(SourcePlugin):
             logger.warning(f"Google Drive not available: {e}")
             return
         state = load_state()
-        failed: list[str] = []
-        for file in pending_zips(service, state):
-            for obj in import_zip(service, file, previous=state.get(file["id"])):
-                if isinstance(obj, SyncCheckpoint) and (obj.value or {}).get("status") == "failed":
-                    failed.append(f"{file['name']} ({describe_failure(obj.value or {})})")
-                yield obj
-        if failed:
+        problems: list[str] = []
+        try:
+            for file in pending_zips(service, state):
+                for obj in import_zip(service, file, previous=state.get(file["id"])):
+                    if (
+                        isinstance(obj, SyncCheckpoint)
+                        and (obj.value or {}).get("status") == "failed"
+                    ):
+                        problems.append(f"{file['name']} ({describe_failure(obj.value or {})})")
+                    yield obj
+        except TakeoutError as e:  # sign-in, network, Drive or disk: the rest would fail too
+            logger.warning(f"Takeout sync stopped: {e}")
+            problems.insert(0, str(e))
+        if problems:
             # After the other zips' items and checkpoints, so the sync is logged failed
-            raise TakeoutError(f"{len(failed)} zip(s) failed: " + "; ".join(failed))
+            raise TakeoutError("; ".join(problems))
 
     def configure(self) -> dict:
         return {}
