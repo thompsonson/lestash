@@ -104,3 +104,16 @@ def test_searches_grouped_case_insensitively() -> None:
     assert search.metadata["searched_count"] == 2
     assert search.is_own_content is True
     assert "2 times" in search.content
+
+
+def test_youtube_music_is_left_for_later() -> None:
+    music = watch("MMMMMMMMMMM", "2026-01-01T00:00:00Z", title="A podcast episode")
+    music["header"] = "YouTube Music"
+    assert parse_watch_history([music]) == []
+    search = {
+        "header": "YouTube Music",
+        "title": "Searched for lex fridman",
+        "titleUrl": "https://music.youtube.com/search?q=lex+fridman",
+        "time": "2026-01-01T00:00:00Z",
+    }
+    assert parse_search_history([search]) == []
