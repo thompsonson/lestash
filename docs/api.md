@@ -111,6 +111,10 @@ Partially update an item. Only provided fields are changed.
 
 Validates that `parent_id` does not create a circular reference.
 
+A synced item that names its parent in `metadata._parent_source_id` is linked to that parent
+again by its source's next sync. So detaching or reparenting such an item lasts only until
+then. Other items keep the parent you set across `lestash sources sync` and server syncs.
+
 **Response:** `ItemResponse`
 
 **Errors:** 400 (circular ref, self-parent, missing parent, no fields), 404 (item not found)
