@@ -2,6 +2,7 @@
 
 import subprocess
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from lestash.models.sync import SyncCheckpoint
@@ -653,6 +654,12 @@ def test_an_unreadable_thread_is_retried_then_given_up(fake_gws) -> None:
     assert state["retry"] == {} and "gave up on 1 thread(s)" in (error or "")
     _, state, error = run_with(state)
     assert error is None
+    assert state["given_up"] == ["t1"]  # listed by `gmail doctor`
+
+    # Read again (new mail brings it back), it is no longer listed
+    t1_works = True
+    _, state, error = run_with({**state, "retry": {"t1": {"queries": [QUERY], "attempts": 1}}})
+    assert error is None and state["given_up"] == []
 
 
 def test_backfill_keeps_the_state_with_limit_and_saves_it_without(
@@ -752,6 +759,10 @@ def test_short_outlook_quote_mentioning_the_mailing_list_is_kept() -> None:
         # A negation excludes a list; it isn't the list to keep
         ("from:x@example.org -list:b.example.org", set()),
         ("list:a.example.org -list:b.example.org", {"a.example.org"}),
+        ("list:(a.example.org -b.example.org)", {"a.example.org"}),
+        ("NOT list:a.example.org", set()),
+        ("-{list:a.example.org list:b.example.org}", set()),
+        ("-(list:a.example.org) list:b.example.org", {"b.example.org"}),
     ],
 )
 def test_list_terms(query, lists) -> None:
@@ -787,3 +798,57 @@ def test_a_failed_search_keeps_its_sync_log_window_when_state_is_first_saved(fak
     [checkpoint] = [x for x in out if isinstance(x, SyncCheckpoint)]
     assert checkpoint.value is not None
     assert checkpoint.value["windows"][bad] == logged.isoformat()
+
+
+def _mixed_thread():
+    """An off-list message to you first, then the list post and a list reply."""
+    return {
+        "id": "t9",
+        "messages": [
+            _msg("m0", 1, "Talk", list_id=False, to="me@example.org"),
+            _msg("m1", 2, "[UAI] Talk"),
+            _msg("m2", 3, "Re: [UAI] Talk"),
+        ],
+    }
+
+
+@pytest.mark.parametrize("other_matches_in", [1, 2])
+def test_parent_stays_when_the_matching_searches_change(
+    tmp_path, monkeypatch, other_matches_in
+) -> None:
+    import json
+
+    other = "from:x@example.org"
+    thread = _mixed_thread()
+    current = {"sync": 0}
+
+    def runner(cmd, **kwargs):
+        sub, params = cmd[3 : cmd.index("--params")], json.loads(cmd[-1])
+        if sub == ["messages", "list"]:
+            # The list search always matches; the other search only in one sync
+            hit = other not in params["q"] or current["sync"] == other_matches_in
+            out: Any = {"messages": [{"id": "m1", "threadId": "t9"}] if hit else []}
+        else:
+            out = thread
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(out), stderr="")
+
+    sync, connect = _cli_sync(tmp_path, monkeypatch, [QUERY, other], runner)
+    snapshots = []
+    for current["sync"] in (1, 2):
+        sync()
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT source_id, json_extract(metadata, '$.message_id') FROM items"
+            ).fetchall()
+            history = conn.execute("SELECT COUNT(*) FROM item_history").fetchone()[0]
+        snapshots.append((dict(rows), history))
+
+    for rows, _ in snapshots:
+        assert rows["gmail:thread:t9"] == "<m1@example.org>"  # the first list post
+        assert "gmail:message:m1" not in rows  # never stored twice
+    if other_matches_in == 1:
+        # Losing the other search in sync 2 changes nothing and writes no history
+        assert snapshots[0] == snapshots[1]
+        assert set(snapshots[1][0]) == {"gmail:thread:t9", "gmail:message:m0", "gmail:message:m2"}
+    else:
+        assert "gmail:message:m0" in snapshots[1][0]  # added as a child; parent unchanged

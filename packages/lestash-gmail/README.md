@@ -29,7 +29,8 @@ Failures stay visible but don't hold back the rest:
 
 `lestash gmail backfill` re-reads everything at any time and is logged like a sync; with
 `--limit` it is logged `partial` and leaves the windows alone. `lestash gmail doctor` shows
-where each search's next sync starts. The windows and retries are kept as a sync checkpoint.
+where each search's next sync starts, and any threads waiting for a retry or given up.
+The windows and retries are kept as a sync checkpoint.
 
 Settings live in `~/.config/lestash/gmail.json` (`queries`, optional `gws_path`). `gws` is found
 on `PATH` or in the usual Homebrew/local locations, so it works from systemd services too.
@@ -43,6 +44,10 @@ on `PATH` or in the usual Homebrew/local locations, so it works from systemd ser
 
 For `list:` searches, only messages that went to the list are kept: list copies (`List-Id`) and
 your own posts (the list is in To, Cc or Bcc). Private replies in a list thread are left out.
+A thread's parent is its first list message, and it stays the same once stored. If a search
+without `list:` also matches the thread, the whole thread is kept from then on.
+Reading `list:` out of complex boolean searches is best-effort: `-list:`, `NOT list:` and
+negated groups are understood, but unusual forms may misparse.
 
 A Google Groups footer at the end of a message is removed, and so are footers inside quoted
 messages; text written below a quote is kept. Labels (read, starred, ...) aren't stored, since

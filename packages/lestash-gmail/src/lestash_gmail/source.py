@@ -6,10 +6,12 @@ Reads mail through `gws` with read-only access.
 
 import base64
 import html
+import json
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
+from functools import partial
 from typing import Annotated, Any
 
 import typer
@@ -27,7 +29,8 @@ logger = get_plugin_logger("gmail")
 # Each search re-reads mail since its last successful read, minus this margin (late
 # delivery, clock skew). A search never read yet reads its whole history.
 WINDOW_MARGIN = timedelta(days=2)
-# Sync state, kept as one checkpoint: {"windows": {search: iso time}, "retry": {...}}
+# Sync state, kept as one checkpoint: {"windows": {search: iso time}, "retry": {...},
+# "given_up": [thread ids]}
 STATE_KEY = "state"
 # A thread that can't be read is retried at the next syncs, then given up on
 MAX_THREAD_ATTEMPTS = 5
@@ -52,6 +55,8 @@ LEADING_TAG = re.compile(r"^\[([^\]]+)\]\s*")
 # Tags that mail systems add in front of a subject, never part of it
 MAILER_TAGS = frozenset({"external", "ext", "spam", "suspected spam", "caution", "warning"})
 # `list:x`, `list:"x"`, `list:(a OR b)`, `list:{a b}`; not `-list:x`, which excludes x
+NEGATED_GROUP = re.compile(r"(?<![\w-])-(\([^)]*\)|\{[^}]*\})")
+NOT_BEFORE = re.compile(r"\bNOT\s+$")
 LIST_TERM = re.compile(r'(?<![\w-])list:(\([^)]*\)|\{[^}]*\}|"[^"]*"|[^\s()]+)', re.I)
 
 
@@ -282,11 +287,19 @@ def thread_list_tags(messages: list[dict[str, Any]], queries: Sequence[str]) -> 
 
 
 def list_terms(query: str) -> frozenset[str]:
-    """Mailing lists a Gmail search keeps with `list:`, normalised (negations left out)."""
+    """Mailing lists a Gmail search keeps with `list:`, normalised (negations left out).
+
+    Best effort: `-list:x`, `NOT list:x`, `list:(a -b)` and `list:` inside a `-(...)` or
+    `-{...}` group are negations. Other boolean searches may misparse.
+    """
+    negated = [m.span() for m in NEGATED_GROUP.finditer(query)]
     terms = set()
-    for group in LIST_TERM.findall(query):
-        for word in re.split(r'[\s(){}"]+', group):
-            if word and word.upper() not in ("OR", "AND"):
+    for match in LIST_TERM.finditer(query):
+        start = match.start()
+        if any(a <= start < b for a, b in negated) or NOT_BEFORE.search(query[:start]):
+            continue
+        for word in re.split(r'[\s(){}"]+', match.group(1)):
+            if word and word.upper() not in ("OR", "AND") and not word.startswith("-"):
                 terms.add(_norm_list(word))
     return frozenset(terms)
 
@@ -361,28 +374,82 @@ def _as_list(queries: str | Sequence[str]) -> list[str]:
     return [queries] if isinstance(queries, str) else list(queries)
 
 
-def thread_to_items(thread: dict[str, Any], queries: str | Sequence[str]) -> list[ItemCreate]:
-    """First on-list message as the parent, the other on-list messages as its children.
+def thread_to_items(
+    thread: dict[str, Any],
+    queries: str | Sequence[str],
+    stored: Mapping[str, Any] | None = None,
+) -> list[ItemCreate]:
+    """The thread as a parent item, with the other kept messages as its children.
 
-    ``queries`` are the searches that matched the thread. A message is kept if any of them
-    keeps it: a search without `list:` keeps the whole thread, `list:` searches keep the
-    messages that went to their lists. Off-list messages (private replies) are left out
-    otherwise; see is_on_list.
+    ``queries`` are the searches that matched the thread now; ``stored`` is what the
+    thread's stored item recorded (see stored_threads). Its searches are added to them,
+    so what is kept only grows: once a search without `list:` matched, the whole thread
+    stays kept. A message is kept if any of the searches keeps it: a search without
+    `list:` keeps the whole thread, `list:` searches keep the messages that went to their
+    lists; see is_on_list.
+
+    The parent is the stored one, if any. Otherwise it is the first message that went to
+    the lists (the first message, for searches without `list:`), so an off-list message
+    before it is a child. The parent then never changes as the matching searches change.
     """
-    queries = _as_list(queries)
+    stored = stored or {}
+    queries = sorted({*_as_list(queries), *stored.get("queries", [])})
     keep_all = any(not list_terms(q) for q in queries)
     lists = frozenset().union(*(list_terms(q) for q in queries))
     messages = sorted(thread.get("messages", []), key=lambda m: int(m.get("internalDate", 0)))
     messages = [m for m in messages if keep_all or is_on_list(m, lists)]
     if not messages:
         return []
+    root_id = stored.get("message_id")
+    root = next((m for m in messages if root_id and _headers(m).get("message-id") == root_id), None)
+    if root is None:
+        root = next((m for m in messages if is_on_list(m, lists)), messages[0])
     list_tags = thread_list_tags(messages, queries)
-    parent = message_to_item(messages[0], queries, list_tags=list_tags)
+    parent = message_to_item(root, queries, list_tags=list_tags)
     children = [
         message_to_item(m, queries, parent_source_id=parent.source_id, list_tags=list_tags)
-        for m in messages[1:]
+        for m in messages
+        if m is not root
     ]
     return [parent, *children]
+
+
+def stored_threads(conn: Any, thread_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+    """What the stored thread items recorded, by thread id: their searches and root.
+
+    One query per 500 threads. Items stored before ``queries`` existed have ``query``.
+    """
+    found: dict[str, dict[str, Any]] = {}
+    source_ids = [f"gmail:thread:{t}" for t in thread_ids]
+    for start in range(0, len(source_ids), 500):
+        chunk = source_ids[start : start + 500]
+        rows = conn.execute(
+            "SELECT source_id, metadata FROM items WHERE source_type = 'gmail' "
+            f"AND source_id IN ({', '.join('?' * len(chunk))})",
+            chunk,
+        ).fetchall()
+        for source_id, raw in rows:
+            try:
+                metadata = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                metadata = {}
+            searches = metadata.get("queries") or (
+                [metadata["query"]] if metadata.get("query") else []
+            )
+            found[source_id.removeprefix("gmail:thread:")] = {
+                "queries": searches,
+                "message_id": metadata.get("message_id"),
+            }
+    return found
+
+
+def load_stored_threads(thread_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+    """stored_threads, on a connection of its own (for a sync run by the CLI or server)."""
+    from lestash.core.config import Config
+    from lestash.core.database import get_connection
+
+    with get_connection(Config.load()) as conn:
+        return stored_threads(conn, thread_ids)
 
 
 def search_query(query: str, since: datetime | None) -> str:
@@ -400,6 +467,7 @@ def sync_queries(
     since: Mapping[str, datetime | None] | None = None,
     limit: int | None = None,
     state: Mapping[str, Any] | None = None,
+    stored: Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None = None,
 ) -> Iterator[ItemCreate | SyncCheckpoint]:
     """Items for every thread matching the searches, then the new sync state.
 
@@ -407,7 +475,8 @@ def sync_queries(
     reads everything. ``state`` is the previous sync state, for its failed threads.
 
     Each thread is read once, even when several searches match it, and its items record
-    every search that matched (see thread_to_items).
+    every search that matched (see thread_to_items). ``stored`` looks up what the stored
+    thread items recorded, once for all threads (see stored_threads).
 
     A failed search keeps its old window; the others move on to the start of this sync. A
     thread that can't be read is retried at the next syncs, up to MAX_THREAD_ATTEMPTS
@@ -419,6 +488,7 @@ def sync_queries(
     since = since or {}
     old_windows: dict[str, str] = dict((state or {}).get("windows", {}))
     old_retry: dict[str, dict[str, Any]] = dict((state or {}).get("retry", {}))
+    given_up_before: list[str] = list((state or {}).get("given_up", []))
 
     matched: dict[str, list[str]] = {}  # thread id -> searches that matched it, in order
     failed: list[str] = []
@@ -434,8 +504,10 @@ def sync_queries(
         if retry_queries and thread_id not in matched:
             matched[thread_id] = retry_queries
 
+    known = stored(list(matched)) if stored and matched else {}
     retry: dict[str, dict[str, Any]] = {}
     given_up: list[str] = []
+    read: set[str] = set()
     for thread_id, thread_queries in matched.items():
         try:
             thread = gmail.thread(thread_id)
@@ -448,7 +520,8 @@ def sync_queries(
                 retry[thread_id] = {"queries": thread_queries, "attempts": attempts}
                 logger.warning(f"Skipping thread {thread_id} (retried next sync): {e}")
             continue
-        yield from thread_to_items(thread, thread_queries)
+        read.add(thread_id)
+        yield from thread_to_items(thread, thread_queries, known.get(thread_id))
 
     if not limit:
         windows = {q: started.isoformat() for q in queries if q not in failed}
@@ -457,7 +530,11 @@ def sync_queries(
                 windows[q] = old_windows[q]
             elif start := since.get(q):
                 windows[q] = start.isoformat()
-        yield SyncCheckpoint(key=STATE_KEY, value={"windows": windows, "retry": retry})
+        # Given-up threads are listed (by `doctor`) until one is read again
+        gave_up = [t for t in dict.fromkeys(given_up_before + given_up) if t not in read]
+        yield SyncCheckpoint(
+            key=STATE_KEY, value={"windows": windows, "retry": retry, "given_up": gave_up}
+        )
 
     problems = []
     if retry:
@@ -558,7 +635,8 @@ def run_backfill(
     status = "completed"
     try:
         state = get_checkpoints(conn, "gmail").get(STATE_KEY)
-        for item in sync_queries(gmail, queries, limit=limit, state=state):
+        lookup = partial(stored_threads, conn)
+        for item in sync_queries(gmail, queries, limit=limit, state=state, stored=lookup):
             if isinstance(item, SyncCheckpoint):
                 save_checkpoint(conn, "gmail", item.key, item.value)
                 conn.commit()
@@ -637,6 +715,8 @@ class GmailSource(SourcePlugin):
                 raise typer.Exit(1) from e
             if retry := (state or {}).get("retry"):
                 console.print(f"[yellow]{len(retry)} thread(s) wait for a retry[/yellow]")
+            if given_up := (state or {}).get("given_up"):
+                console.print(f"[yellow]Given up on thread(s): {', '.join(given_up)}[/yellow]")
             if not config["queries"]:
                 console.print("No queries yet: lestash gmail add-query 'list:...'")
 
@@ -674,7 +754,9 @@ class GmailSource(SourcePlugin):
             raise GwsError("gws not found; install it or set gws_path in gmail.json")
         queries = settings["queries"]
         state, since = current_windows(queries)
-        yield from sync_queries(GwsGmail(gws), queries, since=since, state=state)
+        yield from sync_queries(
+            GwsGmail(gws), queries, since=since, state=state, stored=load_stored_threads
+        )
 
     def configure(self) -> dict:
         return {}
