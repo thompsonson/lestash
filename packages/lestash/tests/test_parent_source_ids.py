@@ -199,3 +199,20 @@ def test_sources_sync_keeps_a_parent_set_by_a_resolver(test_db, monkeypatch) -> 
         assert _parent_of(conn, "reaction:1") == post_id
         # No unlink/relink churn in the audit trail
         assert conn.execute("SELECT COUNT(*) FROM item_history").fetchone()[0] == history_before
+
+
+def test_an_item_naming_itself_is_not_its_own_parent(test_db) -> None:
+    selfish = ItemCreate(
+        source_type="audible",
+        source_id="audible:book:B1",
+        content="A book",
+        metadata={"_parent_source_id": "audible:book:B1"},
+    )
+    with get_connection(test_db) as conn:
+        upsert_item(conn, selfish)
+        assert resolve_parent_source_ids(conn, "audible") == 0
+        assert _parent_of(conn, "audible:book:B1") is None
+
+        again = selfish.model_copy(deep=True)
+        resolve_parent_id(conn, again)  # a re-sync finds the item itself
+        assert again.parent_id is None

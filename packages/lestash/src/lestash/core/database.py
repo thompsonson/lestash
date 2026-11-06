@@ -688,8 +688,8 @@ def resolve_parent_id(conn: sqlite3.Connection, item: ItemCreate) -> None:
     if item.parent_id is not None or not item.metadata:
         return
     parent_source_id = item.metadata.get("_parent_source_id")
-    if not parent_source_id:
-        return
+    if not parent_source_id or parent_source_id == item.source_id:
+        return  # an item naming itself is not its own parent
     row = conn.execute(
         "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
         (item.source_type, parent_source_id),
@@ -722,6 +722,7 @@ def resolve_parent_source_ids(
         SELECT p.id FROM items p
         WHERE p.source_type = items.source_type
           AND p.source_id = json_extract(items.metadata, '$._parent_source_id')
+          AND p.id != items.id
     """
     where_source = ""
     params: tuple[str, ...] = ()
