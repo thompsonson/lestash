@@ -6,6 +6,7 @@ Each migration is applied once, incrementing the version number.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from collections.abc import Iterable, Iterator
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -389,6 +390,19 @@ MIGRATIONS = [
         # upsert_item()/create_item() prevent future NULLs.
         "UPDATE items SET created_at = fetched_at WHERE created_at IS NULL;",
     ),
+    (
+        13,
+        "Add sync_checkpoints table (plugin state committed with its items)",
+        """
+        CREATE TABLE IF NOT EXISTS sync_checkpoints (
+            source TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (source, key)
+        );
+        """,
+    ),
 ]
 
 
@@ -748,6 +762,33 @@ def resolve_parent_source_ids(
     mark_recent_history(conn, since, "sync", item_ids=linked)
     conn.commit()
     return len(linked)
+
+
+def save_checkpoint(conn: sqlite3.Connection, source: str, key: str, value: dict | None) -> None:
+    """Store (or with ``value=None`` delete) a plugin checkpoint. Does not commit.
+
+    The caller commits it together with the items it describes; see ``SyncCheckpoint``.
+    """
+    if value is None:
+        conn.execute("DELETE FROM sync_checkpoints WHERE source = ? AND key = ?", (source, key))
+        return
+    conn.execute(
+        """
+        INSERT INTO sync_checkpoints (source, key, value, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(source, key) DO UPDATE SET
+            value = excluded.value, updated_at = excluded.updated_at
+        """,
+        (source, key, json.dumps(value)),
+    )
+
+
+def get_checkpoints(conn: sqlite3.Connection, source: str) -> dict[str, dict]:
+    """All checkpoints a plugin has saved, by key."""
+    rows = conn.execute(
+        "SELECT key, value FROM sync_checkpoints WHERE source = ?", (source,)
+    ).fetchall()
+    return {row[0]: json.loads(row[1]) for row in rows}
 
 
 def add_tag(conn: sqlite3.Connection, item_id: int, tag_name: str) -> int:

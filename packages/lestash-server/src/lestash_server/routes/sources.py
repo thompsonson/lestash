@@ -9,7 +9,10 @@ from lestash.core.database import (
     get_connection,
     resolve_parent_id,
     resolve_parent_source_ids,
+    save_checkpoint,
 )
+from lestash.importers import merge_with_stored
+from lestash.models.sync import SyncCheckpoint
 from lestash.plugins.loader import load_plugins
 
 from lestash_server.deps import get_config, get_db
@@ -87,7 +90,13 @@ def _run_sync(source_name: str) -> None:
 
         try:
             for item in plugin.sync(plugin_config):
+                if isinstance(item, SyncCheckpoint):
+                    # Commit the plugin's state with the items yielded before it
+                    save_checkpoint(conn, source_name, item.key, item.value)
+                    conn.commit()
+                    continue
                 resolve_parent_id(conn, item)
+                merge_with_stored(conn, item)
                 source_types.add(item.source_type)
                 metadata_json = json.dumps(item.metadata) if item.metadata else None
                 conn.execute(
