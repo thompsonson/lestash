@@ -16,6 +16,7 @@ version. Any other download error (sign-in, network, a Drive 5xx or rate limit, 
 would fail every zip the same way: the sync stops there and records nothing for that zip.
 """
 
+import shutil
 import tempfile
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -187,6 +188,22 @@ def import_zip(
     logger.info(f"{file['name']}: {len(items)} items ({source_type})")
 
 
+# Free space to leave on the download disk besides the zip itself.
+DISK_HEADROOM = 512 * 1024 * 1024
+
+
+def lacks_space(file: dict[str, Any], workdir: Path | None = None) -> str | None:
+    """Why the zip won't fit on the download disk, or None if it will (or its size is unknown).
+
+    Checked before downloading, so one big part doesn't fill the disk on every sync and hold
+    up the smaller zips after it."""
+    size = int(file.get("size") or 0)
+    free = shutil.disk_usage(workdir or tempfile.gettempdir()).free
+    if size and size + DISK_HEADROOM > free:
+        return f"needs {size / 1e9:.1f} GB free to download, {free / 1e9:.1f} GB free; will retry"
+    return None
+
+
 def pending_zips(service: Any, state: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     pending = []
     for f in list_takeout_zips(service):
@@ -252,6 +269,11 @@ class TakeoutSource(SourcePlugin):
         problems: list[str] = []
         try:
             for file in pending_zips(service, state):
+                if reason := lacks_space(file):
+                    # Not the zip's fault: no attempt counted, and smaller zips still import
+                    logger.warning(f"{file['name']} ({file['id']}): {reason}")
+                    problems.append(f"{file['name']} ({reason})")
+                    continue
                 for obj in import_zip(service, file, previous=state.get(file["id"])):
                     if (
                         isinstance(obj, SyncCheckpoint)

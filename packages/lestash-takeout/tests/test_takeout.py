@@ -4,6 +4,7 @@ import errno
 import json
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httplib2
@@ -300,3 +301,18 @@ def test_a_truncated_download_is_a_failure_not_unrecognized(test_db, drive, monk
     state = _state(test_db)
     assert state["f1"]["status"] == "failed"  # retried next time
     assert state["f2"]["status"] == "unrecognized"
+
+
+def test_a_zip_too_big_for_the_disk_is_skipped_and_the_others_import(
+    test_db, drive, monkeypatch
+) -> None:
+    drive._files[0]["size"] = str(50 * 10**9)  # f1: far more than is free
+    monkeypatch.setattr(source.shutil, "disk_usage", lambda path: SimpleNamespace(free=10**9))
+    _sync()
+    state = _state(test_db)
+    assert "f1" not in state  # no attempt counted: retried once there is room
+    assert drive.downloaded and all("001" not in p.name for p in drive.downloaded)
+    assert state["f2"]["status"] == "unrecognized"  # the smaller zip still ran
+    status, error = _last_sync(test_db)
+    assert status == "failed"
+    assert "takeout-1-001.zip" in error and "GB free" in error

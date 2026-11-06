@@ -37,6 +37,9 @@ never marks a zip done without its items; the zip is simply imported again.
 - Any other download error (expired sign-in, network, a Drive outage or rate limit, a full
   disk) stops the sync at that zip, logged `failed`. Nothing is recorded, so no zip uses up
   its retries; the next sync tries again.
+- A zip larger than the free space on the download disk (`$TMPDIR`, else `/tmp`), less 512 MB
+  of headroom, is skipped before downloading, without counting an attempt. Smaller zips still
+  import, and the sync is logged `failed` naming it, until there is room.
 - A zip with nothing recognisable (e.g. only photos) is recorded with the importer version and
   retried when the importer learns a new format.
 
