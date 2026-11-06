@@ -29,7 +29,7 @@ def test_thread_becomes_parent_with_reply_children(fake_gws) -> None:
     assert parent.url == "https://groups.google.com/d/msgid/uai-list/abc%40googlegroups.com."
     assert parent.metadata["from_email"] == "alice@example.org"
     assert parent.metadata["list_id"] == "<uai-list.googlegroups.com>"
-    assert parent.metadata["query"] == QUERY
+    assert parent.metadata["queries"] == [QUERY]
     assert parent.created_at is not None and parent.created_at.year == 2023
     assert "_parent_source_id" not in parent.metadata
 
@@ -485,3 +485,43 @@ def test_failed_search_is_skipped_then_sync_fails(fake_gws) -> None:
         for item in sync_queries(GwsGmail("gws", runner=flaky), [bad, QUERY]):
             items.append(item)
     assert {i.source_id for i in items} >= {"gmail:thread:t1", "gmail:thread:t2"}
+
+
+def test_thread_matched_by_two_searches_is_read_once_and_stored_stably(
+    tmp_path, monkeypatch, fake_gws
+) -> None:
+    from lestash.core.config import Config
+    from lestash_gmail import source as gmail_source
+
+    config, get_connection = _sync_log_db(tmp_path)
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: config))
+    other = "from:alice@example.org"
+    gmail = GwsGmail("gws", runner=fake_gws)
+    history = []
+    with get_connection(config) as conn:
+        for _ in range(3):
+            fake_gws.calls.clear()
+            gmail_source.run_backfill(conn, gmail, [QUERY, other])
+            history.append(conn.execute("SELECT COUNT(*) FROM item_history").fetchone()[0])
+            reads = [c for c in fake_gws.calls if c[3:5] == ["threads", "get"]]
+            assert len(reads) == 2  # t1 and t2, once each
+        row = conn.execute(
+            "SELECT metadata FROM items WHERE source_id = 'gmail:thread:t1'"
+        ).fetchone()
+    assert history == [0, 0, 0]  # unchanged threads leave no history
+    import json
+
+    assert json.loads(row[0])["queries"] == sorted([QUERY, other])
+
+
+def test_a_non_list_search_on_the_same_thread_keeps_off_list_replies() -> None:
+    thread = {
+        "id": "t9",
+        "messages": [
+            _msg("a", 1, "[UAI] Talk"),
+            _msg("b", 2, "Re: [UAI] Talk", list_id=False, to="Alice <alice@example.org>"),
+        ],
+    }
+    assert len(thread_to_items(thread, [QUERY])) == 1
+    items = thread_to_items(thread, [QUERY, "from:x@example.org"])
+    assert [i.source_id for i in items] == ["gmail:thread:t9", "gmail:message:b"]

@@ -7,7 +7,7 @@ Reads mail through `gws` with read-only access.
 import base64
 import html
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from typing import Annotated, Any
@@ -244,7 +244,7 @@ def is_on_list(message: dict[str, Any], lists: frozenset[str]) -> bool:
 
 def message_to_item(
     message: dict[str, Any],
-    query: str,
+    queries: str | Sequence[str],
     *,
     parent_source_id: str | None = None,
     list_tags: frozenset[str] | None = None,
@@ -259,7 +259,8 @@ def message_to_item(
     # Labels (read, starred, ...) change all the time, so they aren't stored.
     metadata: dict[str, Any] = {
         "type": "reply" if is_reply else "thread",
-        "query": query,
+        # Sorted, so a thread matched by several searches is stored the same way each sync
+        "queries": sorted(_as_list(queries)),
         "thread_id": message.get("threadId"),
         "message_id": headers.get("message-id"),
         "from_email": address,
@@ -287,20 +288,29 @@ def message_to_item(
     )
 
 
-def thread_to_items(thread: dict[str, Any], query: str) -> list[ItemCreate]:
+def _as_list(queries: str | Sequence[str]) -> list[str]:
+    return [queries] if isinstance(queries, str) else list(queries)
+
+
+def thread_to_items(thread: dict[str, Any], queries: str | Sequence[str]) -> list[ItemCreate]:
     """First on-list message as the parent, the other on-list messages as its children.
 
-    Off-list messages in the thread (private replies) are left out; see is_on_list.
+    ``queries`` are the searches that matched the thread. A message is kept if any of them
+    keeps it: a search without `list:` keeps the whole thread, `list:` searches keep the
+    messages that went to their lists. Off-list messages (private replies) are left out
+    otherwise; see is_on_list.
     """
-    lists = list_terms(query)
+    queries = _as_list(queries)
+    keep_all = any(not list_terms(q) for q in queries)
+    lists = frozenset().union(*(list_terms(q) for q in queries))
     messages = sorted(thread.get("messages", []), key=lambda m: int(m.get("internalDate", 0)))
-    messages = [m for m in messages if is_on_list(m, lists)]
+    messages = [m for m in messages if keep_all or is_on_list(m, lists)]
     if not messages:
         return []
-    list_tags = root_list_tag(messages[0], query)
-    parent = message_to_item(messages[0], query, list_tags=list_tags)
+    list_tags = root_list_tag(messages[0], " ".join(queries))
+    parent = message_to_item(messages[0], queries, list_tags=list_tags)
     children = [
-        message_to_item(m, query, parent_source_id=parent.source_id, list_tags=list_tags)
+        message_to_item(m, queries, parent_source_id=parent.source_id, list_tags=list_tags)
         for m in messages[1:]
     ]
     return [parent, *children]
@@ -321,26 +331,32 @@ def sync_queries(
     since: datetime | None = None,
     limit: int | None = None,
 ) -> Iterator[ItemCreate]:
-    """Items for every thread matching each search (since `since`, if given).
+    """Items for every thread matching the searches (since `since`, if given).
+
+    Each thread is read once, even when several searches match it, and its items record
+    every search that matched (see thread_to_items).
 
     A search or thread that fails is skipped and the rest are still yielded; then GwsError
     is raised, so the sync is logged as failed and the next one re-reads the same window.
     """
+    matched: dict[str, list[str]] = {}  # thread id -> searches that matched it, in order
     failed: list[str] = []
-    skipped = 0
     for query in queries:
         try:
             for thread_id in gmail.thread_ids(search_query(query, since), limit=limit):
-                try:
-                    thread = gmail.thread(thread_id)
-                except GwsError as e:
-                    skipped += 1
-                    logger.warning(f"Skipping thread {thread_id}: {e}")
-                    continue
-                yield from thread_to_items(thread, query)
+                matched.setdefault(thread_id, []).append(query)
         except GwsError as e:
             failed.append(query)
             logger.warning(f"Search {query!r} failed: {e}")
+    skipped = 0
+    for thread_id, thread_queries in matched.items():
+        try:
+            thread = gmail.thread(thread_id)
+        except GwsError as e:
+            skipped += 1
+            logger.warning(f"Skipping thread {thread_id}: {e}")
+            continue
+        yield from thread_to_items(thread, thread_queries)
     problems = [f"{skipped} thread(s) could not be read"] if skipped else []
     if failed:
         problems.append(f"{len(failed)} search(es) failed: {', '.join(failed)}")
