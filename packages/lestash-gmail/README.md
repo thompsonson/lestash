@@ -42,7 +42,7 @@ on `PATH` or in the usual Homebrew/local locations, so it works from systemd ser
 | Reply | `gmail:message:{messageId}` | the thread |
 
 For `list:` searches, only messages that went to the list are kept: list copies (`List-Id`) and
-your own posts (the list is a recipient). Private replies in a list thread are left out.
+your own posts (the list is in To, Cc or Bcc). Private replies in a list thread are left out.
 
 A Google Groups footer at the end of a message is removed, and so are footers inside quoted
 messages; text written below a quote is kept. Labels (read, starred, ...) aren't stored, since

@@ -51,7 +51,8 @@ REPLY_PREFIX = re.compile(r"^(re|fwd?|aw|tr|sv|vs)\s*(\[\d+\])?\s*:\s*", re.I)
 LEADING_TAG = re.compile(r"^\[([^\]]+)\]\s*")
 # Tags that mail systems add in front of a subject, never part of it
 MAILER_TAGS = frozenset({"external", "ext", "spam", "suspected spam", "caution", "warning"})
-LIST_TERM = re.compile(r"\blist:\(?\"?([^\s\"()]+)", re.I)
+# `list:x`, `list:"x"`, `list:(a OR b)`, `list:{a b}`; not `-list:x`, which excludes x
+LIST_TERM = re.compile(r'(?<![\w-])list:(\([^)]*\)|\{[^}]*\}|"[^"]*"|[^\s()]+)', re.I)
 
 
 def _headers(message: dict[str, Any]) -> dict[str, str]:
@@ -281,16 +282,21 @@ def thread_list_tags(messages: list[dict[str, Any]], queries: Sequence[str]) -> 
 
 
 def list_terms(query: str) -> frozenset[str]:
-    """Mailing lists named by `list:` in a Gmail search, normalised."""
-    return frozenset(_norm_list(t) for t in LIST_TERM.findall(query))
+    """Mailing lists a Gmail search keeps with `list:`, normalised (negations left out)."""
+    terms = set()
+    for group in LIST_TERM.findall(query):
+        for word in re.split(r'[\s(){}"]+', group):
+            if word and word.upper() not in ("OR", "AND"):
+                terms.add(_norm_list(word))
+    return frozenset(terms)
 
 
 def is_on_list(message: dict[str, Any], lists: frozenset[str]) -> bool:
     """Whether a message went to one of the lists (always True if the search names none).
 
     List copies carry a List-Id header. Your own posts are kept from your Sent copy, which
-    has no List-Id, by checking whether the list was a recipient. Private replies inside a
-    list thread (To/Cc without the list) are not on the list.
+    has no List-Id, by checking whether the list was a recipient (To, Cc or Bcc). Private
+    replies inside a list thread (no list among the recipients) are not on the list.
     """
     if not lists:
         return True
@@ -300,7 +306,8 @@ def is_on_list(message: dict[str, Any], lists: frozenset[str]) -> bool:
         inner = re.search(r"<([^>]+)>", list_id)
         if _norm_list(inner.group(1) if inner else list_id) in lists:
             return True
-    recipients = getaddresses([headers.get("to", ""), headers.get("cc", "")])
+    # Only headers that are there: getaddresses gives no address at all for two empty ones
+    recipients = getaddresses([headers[h] for h in ("to", "cc", "bcc") if headers.get(h)])
     return any(_norm_list(addr) in lists for _, addr in recipients if addr)
 
 

@@ -740,3 +740,32 @@ def test_nested_quoted_footer_keeps_the_outer_quote() -> None:
 def test_short_outlook_quote_mentioning_the_mailing_list_is_kept() -> None:
     body = "Thanks!\n\n" + OUTLOOK_QUOTE + "Please share this on the mailing list."
     assert _text(body).endswith("Please share this on the mailing list.")
+
+
+@pytest.mark.parametrize(
+    ("query", "lists"),
+    [
+        (QUERY, {"uai-list.googlegroups.com"}),
+        ('list:"uai-list@googlegroups.com"', {"uai-list.googlegroups.com"}),
+        ("list:(a.example.org OR b.example.org)", {"a.example.org", "b.example.org"}),
+        ("list:{a.example.org b.example.org}", {"a.example.org", "b.example.org"}),
+        # A negation excludes a list; it isn't the list to keep
+        ("from:x@example.org -list:b.example.org", set()),
+        ("list:a.example.org -list:b.example.org", {"a.example.org"}),
+    ],
+)
+def test_list_terms(query, lists) -> None:
+    from lestash_gmail.source import list_terms
+
+    assert list_terms(query) == lists
+
+
+def test_negated_list_search_keeps_the_thread() -> None:
+    thread = {"id": "t9", "messages": [_msg("a", 1, "Hi", list_id=False, to="me@example.org")]}
+    assert len(thread_to_items(thread, "from:x@example.org -list:b.example.org")) == 1
+
+
+def test_own_post_with_the_list_in_bcc_is_kept() -> None:
+    sent = _msg("a", 1, "[UAI] Talk", list_id=False, to="bob@example.org")
+    sent["payload"]["headers"].append({"name": "Bcc", "value": "uai-list@googlegroups.com"})
+    assert len(thread_to_items({"id": "t9", "messages": [sent]}, QUERY)) == 1
