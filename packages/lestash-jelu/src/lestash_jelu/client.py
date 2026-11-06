@@ -22,6 +22,8 @@ SESSION_HEADER = "X-Auth-Token"
 # Jelu's default sorts (by dates) are not unique, so offset paging could skip or repeat rows
 # when something changes mid-sync. Row ids are unique and never change.
 STABLE_SORT = "id,asc"
+# Far beyond any real library (PAGE_SIZE books a page); only reached if paging is broken
+MAX_PAGES = 10_000
 
 
 class JeluAuthError(RuntimeError):
@@ -126,22 +128,21 @@ class JeluClient:
         return response.json()
 
     def _pages(self, path: str, params: dict[str, Any] | None = None) -> Iterator[dict[str, Any]]:
-        page = 0
-        while True:
+        for page in range(MAX_PAGES):
             data = self._get(
                 path, {**(params or {}), "page": page, "size": PAGE_SIZE, "sort": STABLE_SORT}
             )
             content = data.get("content", [])
             yield from content
             total_pages = data.get("totalPages")
-            last = data.get("last")
-            if last is None and total_pages is None:
-                # Unknown page format: keep going until a page comes back empty
-                if not content:
-                    return
-            elif last or page + 1 >= (total_pages or 0):
+            # Either key alone is enough to stop. With neither (an unknown page format),
+            # keep going until a page comes back empty.
+            if not content or data.get("last"):
                 return
-            page += 1
+            if total_pages is not None and page + 1 >= total_pages:
+                return
+        # A server that ignores ?page= would otherwise repeat the same page forever
+        raise RuntimeError(f"Jelu {path} returned more than {MAX_PAGES} pages; stopped paging")
 
     def me(self) -> dict[str, Any]:
         """The signed-in user ({"id", "login", ...}). Always checks the session with Jelu.

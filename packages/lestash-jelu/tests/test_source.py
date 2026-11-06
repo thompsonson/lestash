@@ -138,6 +138,47 @@ def test_unknown_page_format_reads_until_empty() -> None:
         assert [b["id"] for b in c.userbooks()] == [1, 2]
 
 
+def _serve_pages(pages, calls=None):
+    """A Jelu that serves the given page bodies by page number, after a session login."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/users/me":
+            return httpx.Response(200, json={"user": {"id": "u-1"}, "token": "t"})
+        if calls is not None:
+            calls.append(request)
+        return httpx.Response(200, json=pages(int(request.url.params["page"])))
+
+    return httpx.MockTransport(handler)
+
+
+def test_pages_with_last_but_no_total_pages_are_all_read() -> None:
+    bodies = [
+        {"content": [{"id": 1}], "last": False},
+        {"content": [{"id": 2}], "last": False},
+        {"content": [{"id": 3}], "last": True},
+    ]
+    with JeluClient(BASE, "mt", "pw", transport=_serve_pages(bodies.__getitem__)) as c:
+        assert [b["id"] for b in c.userbooks()] == [1, 2, 3]
+
+
+def test_unknown_page_format_that_never_ends_stops(monkeypatch) -> None:
+    """A server that ignores ?page= and has no last/totalPages must not loop forever."""
+    monkeypatch.setattr(jelu_client, "MAX_PAGES", 5, raising=False)
+    calls: list[httpx.Request] = []
+
+    def same_page(page: int):
+        if page > 50:
+            raise AssertionError("still paging after 50 pages")
+        return {"content": [{"id": 1}]}
+
+    with (
+        JeluClient(BASE, "mt", "pw", transport=_serve_pages(same_page, calls)) as c,
+        pytest.raises(RuntimeError, match="more than 5 pages"),
+    ):
+        list(c.userbooks())
+    assert len(calls) == 5
+
+
 def test_credentials_roundtrip(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(jelu_client, "get_config_path", lambda: tmp_path / "jelu.json")
     assert load_credentials() is None
