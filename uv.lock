@@ -24,6 +24,7 @@ members = [
     "lestash-audible",
     "lestash-bluesky",
     "lestash-claude-code",
+    "lestash-gmail",
     "lestash-linkedin",
     "lestash-microblog",
     "lestash-server",
@@ -1214,6 +1215,7 @@ dependencies = [
     { name = "lestash-audible" },
     { name = "lestash-bluesky" },
     { name = "lestash-claude-code" },
+    { name = "lestash-gmail" },
     { name = "lestash-linkedin" },
     { name = "lestash-microblog" },
     { name = "lestash-server" },
@@ -1239,6 +1241,7 @@ requires-dist = [
     { name = "lestash-audible", editable = "packages/lestash-audible" },
     { name = "lestash-bluesky", editable = "packages/lestash-bluesky" },
     { name = "lestash-claude-code", editable = "packages/lestash-claude-code" },
+    { name = "lestash-gmail", editable = "packages/lestash-gmail" },
     { name = "lestash-linkedin", editable = "packages/lestash-linkedin" },
     { name = "lestash-microblog", editable = "packages/lestash-microblog" },
     { name = "lestash-server", editable = "packages/lestash-server" },
@@ -1343,6 +1346,17 @@ requires-dist = [
 name = "lestash-claude-code"
 version = "1.64.5"
 source = { editable = "packages/lestash-claude-code" }
+dependencies = [
+    { name = "lestash" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "lestash", editable = "packages/lestash" }]
+
+[[package]]
+name = "lestash-gmail"
+version = "1.64.4"
+source = { editable = "packages/lestash-gmail" }
 dependencies = [
     { name = "lestash" },
 ]
