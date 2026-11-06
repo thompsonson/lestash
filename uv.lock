@@ -28,6 +28,7 @@ members = [
     "lestash-linkedin",
     "lestash-microblog",
     "lestash-server",
+    "lestash-takeout",
     "lestash-voice",
     "lestash-youtube",
 ]
@@ -1219,6 +1220,7 @@ dependencies = [
     { name = "lestash-linkedin" },
     { name = "lestash-microblog" },
     { name = "lestash-server" },
+    { name = "lestash-takeout" },
     { name = "lestash-voice" },
     { name = "lestash-youtube" },
 ]
@@ -1245,6 +1247,7 @@ requires-dist = [
     { name = "lestash-linkedin", editable = "packages/lestash-linkedin" },
     { name = "lestash-microblog", editable = "packages/lestash-microblog" },
     { name = "lestash-server", editable = "packages/lestash-server" },
+    { name = "lestash-takeout", editable = "packages/lestash-takeout" },
     { name = "lestash-voice", editable = "packages/lestash-voice" },
     { name = "lestash-youtube", editable = "packages/lestash-youtube" },
 ]
@@ -1417,6 +1420,21 @@ requires-dist = [
     { name = "lestash-voice", editable = "packages/lestash-voice" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
+]
+
+[[package]]
+name = "lestash-takeout"
+version = "1.64.4"
+source = { editable = "packages/lestash-takeout" }
+dependencies = [
+    { name = "lestash" },
+    { name = "lestash-server" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "lestash", editable = "packages/lestash" },
+    { name = "lestash-server", editable = "packages/lestash-server" },
 ]
 
 [[package]]

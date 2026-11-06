@@ -27,6 +27,8 @@ test-all:
     uv run pytest packages/lestash-claude-code/tests
     @echo "\nRunning lestash-gmail tests..."
     uv run pytest packages/lestash-gmail/tests
+    @echo "\nRunning lestash-takeout tests..."
+    uv run pytest packages/lestash-takeout/tests
     @echo "\nRunning lestash-server tests..."
     uv run pytest packages/lestash-server/tests
 
