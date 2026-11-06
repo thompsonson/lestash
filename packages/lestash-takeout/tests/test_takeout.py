@@ -150,3 +150,56 @@ def test_no_google_signin_yields_nothing(monkeypatch) -> None:
 
     monkeypatch.setattr(source, "_drive_service", no_creds)
     assert list(source.TakeoutSource().sync({})) == []
+
+
+def test_youtube_history_in_a_multi_product_takeout(tmp_path) -> None:
+    yt = "Takeout/YouTube and YouTube Music"
+    watch = [
+        {
+            "header": "YouTube",
+            "title": "Watched Markov blankets explained",
+            "titleUrl": "https://www.youtube.com/watch?v=AAAAAAAAAAA",
+            "time": "2026-01-01T10:00:00Z",
+        }
+    ]
+    files = {
+        **PART1,
+        f"{yt}/history/watch-history.json": json.dumps(watch),
+        f"{yt}/history/search-history.json": json.dumps(
+            [
+                {
+                    "title": "Searched for markov blanket",
+                    "time": "2026-01-01T09:00:00Z",
+                    "titleUrl": "https://www.youtube.com/results?search_query=markov+blanket",
+                }
+            ]
+        ),
+        # A supervised child account's history must not be imported
+        f"{yt}/children/Kid/watch-history.json": json.dumps(
+            [{**watch[0], "titleUrl": "https://www.youtube.com/watch?v=KKKKKKKKKKK"}]
+        ),
+        f"{yt}/videos/my upload.mp4": "x",
+    }
+    items, source_type = parse_zip(_notebook_zip(tmp_path / "multi.zip", files))
+    assert source_type == "takeout"  # NotebookLM + YouTube
+    ids = {i.source_id for i in items}
+    assert {"history:AAAAAAAAAAA", "search:markov blanket"} <= ids
+    assert "history:KKKKKKKKKKK" not in ids
+    assert NB in ids  # the notebook is still imported alongside
+
+
+def test_youtube_only_takeout(tmp_path) -> None:
+    files = {
+        "Takeout/YouTube and YouTube Music/history/watch-history.json": json.dumps(
+            [
+                {
+                    "title": "Watched X",
+                    "titleUrl": "https://www.youtube.com/watch?v=AAAAAAAAAAA",
+                    "time": "2026-01-01T10:00:00Z",
+                }
+            ]
+        )
+    }
+    items, source_type = parse_zip(_notebook_zip(tmp_path / "yt.zip", files))
+    assert source_type == "youtube"
+    assert [i.source_id for i in items] == ["history:AAAAAAAAAAA"]

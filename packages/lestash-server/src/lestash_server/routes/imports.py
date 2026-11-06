@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import re
 import tempfile
 import zipfile
 from datetime import UTC
@@ -406,14 +407,10 @@ def parse_zip(data: bytes | Path):
         with zipfile.ZipFile(BytesIO(data) if isinstance(data, bytes) else data) as zf:
             names = zf.namelist()
 
-            # Detect Google Keep Takeout
+            # Google Takeout: one export can hold several products, so collect them all
             keep_files = [n for n in names if n.startswith("Keep/") and n.endswith(".json")]
             if not keep_files:
                 keep_files = [n for n in names if "/Keep/" in n and n.endswith(".json")]
-            if keep_files:
-                return _parse_google_keep_zip(zf, keep_files), "google-keep"
-
-            # Detect Google Takeout with Gemini and/or NotebookLM
             gemini_convos = [
                 n
                 for n in names
@@ -423,19 +420,22 @@ def parse_zip(data: bytes | Path):
                 and not n.endswith("/")
             ]
             nlm_files = [n for n in names if "NotebookLM" in n and not n.endswith("/")]
+            youtube_history = [n for n in names if YOUTUBE_HISTORY.match(n)]
 
-            if gemini_convos or nlm_files:
-                all_items = []
-                if gemini_convos:
-                    all_items.extend(_parse_gemini_zip(zf, gemini_convos))
-                if nlm_files:
-                    all_items.extend(_parse_notebooklm_zip(zf, nlm_files, names))
-                source_type = "takeout"
-                if gemini_convos and not nlm_files:
-                    source_type = "gemini"
-                elif nlm_files and not gemini_convos:
-                    source_type = "notebooklm"
-                return all_items, source_type
+            found: list[tuple[str, list]] = []
+            if keep_files:
+                found.append(("google-keep", _parse_google_keep_zip(zf, keep_files)))
+            if gemini_convos:
+                found.append(("gemini", _parse_gemini_zip(zf, gemini_convos)))
+            if nlm_files:
+                found.append(("notebooklm", _parse_notebooklm_zip(zf, nlm_files, names)))
+            if youtube_history:
+                youtube_items = _parse_youtube_history_zip(zf, youtube_history)
+                if youtube_items is not None:
+                    found.append(("youtube", youtube_items))
+            if found:
+                all_items = [item for _, items in found for item in items]
+                return all_items, found[0][0] if len(found) == 1 else "takeout"
 
             # Detect Mistral Le Chat export
             from lestash_server.parsers.mistral import detect_mistral_zip, parse_mistral_zip
@@ -458,6 +458,34 @@ def parse_zip(data: bytes | Path):
             raise ValueError("ZIP file does not contain recognizable import data")
     except zipfile.BadZipFile:
         raise ValueError("Invalid ZIP file") from None
+
+
+# Your own history only: supervised accounts live under .../children/<name>/
+YOUTUBE_HISTORY = re.compile(r"^Takeout/YouTube[^/]*/history/(watch|search)-history\.json$")
+
+
+def _parse_youtube_history_zip(zf, history_files):
+    """YouTube watch/search history (JSON). None if lestash-youtube isn't installed."""
+    try:
+        from lestash_youtube.takeout import parse_search_history, parse_watch_history
+    except ImportError:
+        logger.warning("YouTube history found in Takeout but lestash-youtube is not installed")
+        return None
+
+    items = []
+    for name in history_files:
+        try:
+            entries = json.loads(zf.read(name))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            logger.warning(f"Could not read YouTube history file: {name}")
+            continue
+        if not isinstance(entries, list):
+            continue
+        if name.endswith("watch-history.json"):
+            items.extend(parse_watch_history(entries))
+        else:
+            items.extend(parse_search_history(entries))
+    return items
 
 
 def _parse_google_keep_zip(zf, keep_files):
