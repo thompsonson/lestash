@@ -1,6 +1,6 @@
 [project]
 name = "lestash-gmail"
-version = "1.67.0"
+version = "1.67.1"
 description = "Gmail source plugin for Le Stash (read-only, via the gws CLI)"
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}
