@@ -1,6 +1,6 @@
 """Gmail source plugin: threads matching saved Gmail searches (e.g. a mailing list).
 
-Each thread becomes a parent item (its first message); replies are children.
+Each thread becomes a parent item (its first on-list message); replies are children.
 Reads mail through `gws` with read-only access.
 """
 
@@ -8,8 +8,8 @@ import base64
 import html
 import re
 from collections.abc import Iterator
-from datetime import UTC, datetime
-from email.utils import parseaddr, parsedate_to_datetime
+from datetime import UTC, datetime, timedelta
+from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from typing import Annotated, Any
 
 import typer
@@ -23,24 +23,21 @@ from lestash_gmail.client import GwsError, GwsGmail, find_gws, load_config, save
 console = Console()
 logger = get_plugin_logger("gmail")
 
-# Each sync re-reads this window so late replies are picked up; the first sync reads everything.
-RECENT_WINDOW = "newer_than:30d"
+# A sync re-reads mail since the last successful sync, minus this margin (late delivery,
+# clock skew). With no successful sync yet, it reads the whole history of each search.
+WINDOW_MARGIN = timedelta(days=2)
 
-FOOTER_PATTERNS = [
-    # Google Groups: from the "-- " separator, or from the sentence if the separator differs
-    re.compile(
-        r"\n--\s*\nYou received this message because you are subscribed to the Google Groups.*",
-        re.S,
-    ),
-    re.compile(
-        r"You received this message because you are subscribed to the Google Groups.*", re.S
-    ),
-    # Generic mailing-list signature separator followed by list boilerplate
-    re.compile(r"\n_{20,}\n.*(unsubscribe|mailing list).*", re.S | re.I),
-]
+GROUPS_FOOTER = "You received this message because you are subscribed to the Google Groups"
+LIST_FOOTER_WORDS = re.compile(r"unsubscribe|mailing list", re.I)
+UNDERSCORE_RULE = re.compile(r"^_{20,}\s*$")
+# A list footer after an underscore rule is short; a long tail is a quoted message (Outlook)
+MAX_FOOTER_LINES = 6
 GROUPS_LINK = re.compile(r"https://groups\.google\.com/d/msgid/[^\s>]+")
-REPLY_PREFIX = re.compile(r"^\s*((re|fwd?|aw|tr)\s*:\s*)+", re.I)
-LIST_TAG = re.compile(r"^\s*\[[^\]]+\]\s*")
+REPLY_PREFIX = re.compile(r"^(re|fwd?|aw|tr|sv|vs)\s*(\[\d+\])?\s*:\s*", re.I)
+LEADING_TAG = re.compile(r"^\[([^\]]+)\]\s*")
+# Tags that mail systems add in front of a subject, never part of it
+MAILER_TAGS = frozenset({"external", "ext", "spam", "suspected spam", "caution", "warning"})
+LIST_TERM = re.compile(r"\blist:\(?\"?([^\s\"()]+)", re.I)
 
 
 def _headers(message: dict[str, Any]) -> dict[str, str]:
@@ -61,6 +58,62 @@ def _find_part(part: dict[str, Any], mime: str) -> str | None:
     return None
 
 
+def _is_quoted(line: str) -> bool:
+    return line.lstrip().startswith(">")
+
+
+def _strip_trailing_footer(lines: list[str]) -> list[str]:
+    """Cut a list footer at the end of the message (unquoted lines only).
+
+    A footer starts at the Google Groups sentence (or a "-- " line just before it), or at an
+    underscore rule followed by a few lines that mention unsubscribing. Everything after the
+    cut must be unquoted, so text below a quoted message (bottom-posting) is never touched.
+    """
+    end = len(lines)
+    while end and not lines[end - 1].strip():
+        end -= 1
+    for i in range(end - 1, -1, -1):
+        line = lines[i]
+        if _is_quoted(line):
+            break  # the footer is only ever after the last quoted line
+        if GROUPS_FOOTER in line:
+            cut = i
+            if cut and lines[cut - 1].strip() in ("--", "-- "):
+                cut -= 1
+            return lines[:cut]
+        if UNDERSCORE_RULE.match(line):
+            tail = [t for t in lines[i + 1 : end] if t.strip()]
+            if len(tail) <= MAX_FOOTER_LINES and any(LIST_FOOTER_WORDS.search(t) for t in tail):
+                return lines[:i]
+            break
+    return lines
+
+
+def _strip_quoted_footers(lines: list[str]) -> list[str]:
+    """Drop Google Groups footers inside quoted messages ("> -- " ... end of that quote).
+
+    A quoted footer runs to the end of its quoted block; the reply around it is kept.
+    """
+    out: list[str] = []
+    skipping = False
+    for i, line in enumerate(lines):
+        if skipping:
+            if _is_quoted(line):
+                continue
+            skipping = False
+        if _is_quoted(line):
+            text = line.lstrip().lstrip(">").strip()
+            nxt = lines[i + 1].lstrip().lstrip(">") if i + 1 < len(lines) else ""
+            if GROUPS_FOOTER in text or (text in ("--", "") and GROUPS_FOOTER in nxt):
+                # Also drop an empty quoted line just before the separator
+                while out and _is_quoted(out[-1]) and not out[-1].lstrip().lstrip(">").strip():
+                    out.pop()
+                skipping = True
+                continue
+        out.append(line)
+    return out
+
+
 def message_text(message: dict[str, Any]) -> str:
     """Plain-text body (HTML stripped if there is no text part), without list footers."""
     payload = message.get("payload", {})
@@ -70,10 +123,11 @@ def message_text(message: dict[str, Any]) -> str:
         raw = re.sub(r"(?is)<(script|style).*?</\1>", "", raw)
         raw = re.sub(r"(?i)<br\s*/?>|</p>|</div>", "\n", raw)
         text = html.unescape(re.sub(r"<[^>]+>", "", raw))
-    text = text.replace("\r\n", "\n")
-    for pattern in FOOTER_PATTERNS:
-        text = pattern.sub("", text)
-    return re.sub(r"\n{3,}", "\n\n", text).strip()
+    lines = text.replace("\r\n", "\n").split("\n")
+    lines = _strip_quoted_footers(_strip_trailing_footer(lines))
+    while lines and not lines[-1].strip().lstrip(">").strip():
+        lines.pop()  # empty quote lines left at the end
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 def _message_date(message: dict[str, Any], headers: dict[str, str]) -> datetime | None:
@@ -85,15 +139,84 @@ def _message_date(message: dict[str, Any], headers: dict[str, str]) -> datetime 
         return None
 
 
-def clean_subject(subject: str) -> str:
-    """Drop reply prefixes ("Re:", "Fwd:") and the leading list tag like "[UAI]"."""
-    text = REPLY_PREFIX.sub("", subject or "")
-    text = REPLY_PREFIX.sub("", LIST_TAG.sub("", text, count=1))
+def clean_subject(subject: str, list_tags: frozenset[str] | None = None) -> str:
+    """Drop reply prefixes ("Re:", "Fwd:"), the list tag ("[UAI]") and mailer tags.
+
+    They are removed in any order and any number of times. Other leading tags such as
+    "[CFP]" are part of the subject and are kept, except that with no known list tags the
+    first leading tag is taken to be the list's.
+    """
+    text = (subject or "").strip()
+    known = {t.lower() for t in list_tags or ()}
+    guess_list_tag = not known
+    while True:
+        if match := REPLY_PREFIX.match(text):
+            text = text[match.end() :]
+            continue
+        if match := LEADING_TAG.match(text):
+            tag = match.group(1).strip().lower()
+            rest = text[match.end() :]
+            if tag in known or tag in MAILER_TAGS:
+                text = rest
+                continue
+            if guess_list_tag or REPLY_PREFIX.match(rest):
+                # The first other tag is the list's; a tag before "Re:" was added in front
+                guess_list_tag = False
+                known.add(tag)
+                text = rest
+                continue
+        break
     return text.strip() or "(no subject)"
 
 
+def _leading_tags(subject: str) -> list[str]:
+    tags = []
+    text = (subject or "").strip()
+    while True:
+        if match := REPLY_PREFIX.match(text):
+            text = text[match.end() :]
+        elif match := LEADING_TAG.match(text):
+            tags.append(match.group(1).strip())
+            text = text[match.end() :]
+        else:
+            return tags
+
+
+def _norm_list(address: str) -> str:
+    """'uai-list@googlegroups.com', '<uai-list.googlegroups.com>' -> 'uai-list.googlegroups.com'."""
+    return address.strip().strip("<>").strip().lower().replace("@", ".")
+
+
+def list_terms(query: str) -> frozenset[str]:
+    """Mailing lists named by `list:` in a Gmail search, normalised."""
+    return frozenset(_norm_list(t) for t in LIST_TERM.findall(query))
+
+
+def is_on_list(message: dict[str, Any], lists: frozenset[str]) -> bool:
+    """Whether a message went to one of the lists (always True if the search names none).
+
+    List copies carry a List-Id header. Your own posts are kept from your Sent copy, which
+    has no List-Id, by checking whether the list was a recipient. Private replies inside a
+    list thread (To/Cc without the list) are not on the list.
+    """
+    if not lists:
+        return True
+    headers = _headers(message)
+    list_id = headers.get("list-id", "")
+    if list_id:
+        inner = re.search(r"<([^>]+)>", list_id)
+        if _norm_list(inner.group(1) if inner else list_id) in lists:
+            return True
+    recipients = getaddresses([headers.get("to", ""), headers.get("cc", "")])
+    return any(_norm_list(addr) in lists for _, addr in recipients if addr)
+
+
 def message_to_item(
-    message: dict[str, Any], query: str, *, parent_source_id: str | None = None
+    message: dict[str, Any],
+    query: str,
+    *,
+    parent_source_id: str | None = None,
+    list_tags: frozenset[str] | None = None,
 ) -> ItemCreate:
     headers = _headers(message)
     raw_text = message_text(message)
@@ -102,6 +225,7 @@ def message_to_item(
     subject = headers.get("subject", "")
     is_reply = parent_source_id is not None
 
+    # Labels (read, starred, ...) change all the time, so they aren't stored.
     metadata: dict[str, Any] = {
         "type": "reply" if is_reply else "thread",
         "query": query,
@@ -110,7 +234,6 @@ def message_to_item(
         "from_email": address,
         "list_id": headers.get("list-id"),
         "subject": subject,
-        "labels": message.get("labelIds", []),
     }
     if groups_link:
         metadata["groups_url"] = groups_link.group(0)
@@ -124,7 +247,7 @@ def message_to_item(
         url=groups_link.group(0)
         if groups_link
         else f"https://mail.google.com/mail/u/0/#all/{thread_id}",
-        title=("Re: " if is_reply else "") + clean_subject(subject),
+        title=("Re: " if is_reply else "") + clean_subject(subject, list_tags),
         content=raw_text or subject,
         author=name or address or None,
         created_at=_message_date(message, headers),
@@ -134,25 +257,79 @@ def message_to_item(
 
 
 def thread_to_items(thread: dict[str, Any], query: str) -> list[ItemCreate]:
-    """First message as the parent, the rest as its children (oldest first)."""
+    """First on-list message as the parent, the other on-list messages as its children.
+
+    Off-list messages in the thread (private replies) are left out; see is_on_list.
+    """
+    lists = list_terms(query)
     messages = sorted(thread.get("messages", []), key=lambda m: int(m.get("internalDate", 0)))
+    messages = [m for m in messages if is_on_list(m, lists)]
     if not messages:
         return []
-    parent = message_to_item(messages[0], query)
-    children = [message_to_item(m, query, parent_source_id=parent.source_id) for m in messages[1:]]
+    root_tags = [
+        t
+        for t in _leading_tags(_headers(messages[0]).get("subject", ""))
+        if t.lower() not in MAILER_TAGS
+    ]
+    list_tags = frozenset(root_tags[:1]) or None
+    parent = message_to_item(messages[0], query, list_tags=list_tags)
+    children = [
+        message_to_item(m, query, parent_source_id=parent.source_id, list_tags=list_tags)
+        for m in messages[1:]
+    ]
     return [parent, *children]
 
 
+def search_query(query: str, since: datetime | None) -> str:
+    """The Gmail search for one sync: everything, or mail after `since` minus a margin."""
+    if since is None:
+        return query
+    if since.tzinfo is None:
+        since = since.astimezone()  # sync_log stores local time
+    return f"({query}) after:{int((since - WINDOW_MARGIN).timestamp())}"
+
+
 def sync_queries(
-    gmail: GwsGmail, queries: list[str], full: bool, limit: int | None = None
+    gmail: GwsGmail,
+    queries: list[str],
+    since: datetime | None = None,
+    limit: int | None = None,
 ) -> Iterator[ItemCreate]:
+    """Items for every thread matching each search (since `since`, if given).
+
+    A thread that can't be read is skipped and the rest are still yielded; then GwsError
+    is raised, so the sync is logged as failed and the next one re-reads the same window.
+    """
+    skipped = 0
     for query in queries:
-        search = query if full else f"({query}) {RECENT_WINDOW}"
-        for thread_id in gmail.thread_ids(search, limit=limit):
+        for thread_id in gmail.thread_ids(search_query(query, since), limit=limit):
             try:
-                yield from thread_to_items(gmail.thread(thread_id), query)
+                thread = gmail.thread(thread_id)
             except GwsError as e:
+                skipped += 1
                 logger.warning(f"Skipping thread {thread_id}: {e}")
+                continue
+            yield from thread_to_items(thread, query)
+    if skipped:
+        raise GwsError(f"{skipped} thread(s) could not be read; they are retried next sync")
+
+
+def last_successful_sync() -> datetime | None:
+    """Start time of the last completed Gmail sync, from the sync log."""
+    from lestash.core.config import Config
+    from lestash.core.database import get_connection
+
+    with get_connection(Config.load()) as conn:
+        row = conn.execute(
+            "SELECT MAX(started_at) FROM sync_log WHERE source_type = 'gmail' "
+            "AND status = 'completed'"
+        ).fetchone()
+    if not row or not row[0]:
+        return None
+    try:
+        return datetime.fromisoformat(str(row[0]))
+    except ValueError:
+        return None
 
 
 class GmailSource(SourcePlugin):
@@ -204,6 +381,8 @@ class GmailSource(SourcePlugin):
             except GwsError as e:
                 console.print(f"[red]{e}[/red]")
                 raise typer.Exit(1) from e
+            since = last_successful_sync()
+            console.print(f"Last successful sync: {since or 'never (next sync reads everything)'}")
             if not config["queries"]:
                 console.print("No queries yet: lestash gmail add-query 'list:...'")
 
@@ -213,7 +392,7 @@ class GmailSource(SourcePlugin):
                 int | None, typer.Option(help="Stop after this many threads per query")
             ] = None,
         ) -> None:
-            """Import all matching threads (not just the last 30 days)."""
+            """Import all matching threads, whatever the last sync was."""
             from lestash.core.config import Config
             from lestash.core.database import (
                 get_connection,
@@ -229,26 +408,28 @@ class GmailSource(SourcePlugin):
                 raise typer.Exit(1)
             count = 0
             with get_connection(Config.load()) as conn:
-                for item in sync_queries(GwsGmail(gws), config["queries"], full=True, limit=limit):
-                    resolve_parent_id(conn, item)
-                    upsert_item(conn, item)
-                    count += 1
+                try:
+                    for item in sync_queries(GwsGmail(gws), config["queries"], limit=limit):
+                        resolve_parent_id(conn, item)
+                        upsert_item(conn, item)
+                        count += 1
+                except GwsError as e:
+                    console.print(f"[yellow]{e}[/yellow]")
                 resolve_parent_source_ids(conn, "gmail")
             console.print(f"[green]Imported {count} messages.[/green]")
 
         return app
 
     def sync(self, config: dict) -> Iterator[ItemCreate]:
-        """Recent threads (last 30 days) for each saved search. Use `backfill` for history."""
+        """Threads with mail since the last successful sync (all of it the first time)."""
         settings = load_config()
         if not settings["queries"]:
-            logger.info("No Gmail queries configured; run `lestash gmail add-query`")
+            logger.warning("No Gmail queries configured; run `lestash gmail add-query`")
             return
         gws = find_gws(settings.get("gws_path"))
         if not gws:
-            logger.warning("gws not found; skipping Gmail sync")
-            return
-        yield from sync_queries(GwsGmail(gws), settings["queries"], full=False)
+            raise GwsError("gws not found; install it or set gws_path in gmail.json")
+        yield from sync_queries(GwsGmail(gws), settings["queries"], since=last_successful_sync())
 
     def configure(self) -> dict:
         return {}

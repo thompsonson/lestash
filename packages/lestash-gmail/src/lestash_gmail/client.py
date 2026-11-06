@@ -14,10 +14,13 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-# systemd user services don't have Homebrew on PATH, so also look in the usual places.
 # Gmail limits API "units per minute per user"; on hitting it, wait for the next minute.
-RATE_LIMIT_MARKERS = ("Quota exceeded", "rateLimitExceeded", "Rate Limit Exceeded", "429")
+RATE_LIMIT_REASONS = frozenset({"rateLimitExceeded", "userRateLimitExceeded"})
+RATE_LIMIT_TEXT = ("Quota exceeded", "rateLimitExceeded", "userRateLimitExceeded")
 RETRY_DELAYS = (15, 30, 60, 60)
+CALL_TIMEOUT = 120  # seconds per gws call
+
+# systemd user services don't have Homebrew on PATH, so also look in the usual places.
 
 GWS_FALLBACKS = [
     "/home/linuxbrew/.linuxbrew/bin/gws",
@@ -28,7 +31,26 @@ GWS_FALLBACKS = [
 
 
 class GwsError(RuntimeError):
-    """`gws` failed or returned something that isn't JSON."""
+    """`gws` failed, timed out, or returned something that isn't JSON.
+
+    ``code`` and ``reason`` come from the Gmail API error when gws returned one.
+    """
+
+    def __init__(self, message: str, *, code: int | None = None, reason: str | None = None):
+        super().__init__(message)
+        self.code = code
+        self.reason = reason
+
+    @property
+    def is_rate_limit(self) -> bool:
+        """Gmail's per-user quota was hit (worth waiting and retrying)."""
+        if self.code == 429 or self.reason in RATE_LIMIT_REASONS:
+            return True
+        if self.code is not None:
+            # A structured error that isn't a quota error, e.g. 404 or 400
+            return self.code == 403 and "quota" in str(self).lower()
+        # gws failed before returning JSON: look for the quota wording only
+        return any(marker in str(self) for marker in RATE_LIMIT_TEXT)
 
 
 def find_gws(configured: str | None = None) -> str | None:
@@ -76,25 +98,40 @@ class GwsGmail:
             try:
                 return self._call_once(*args, params=params)
             except GwsError as e:
-                if not any(marker in str(e) for marker in RATE_LIMIT_MARKERS):
+                if not e.is_rate_limit:
                     raise
                 self._sleep(delay)
         return self._call_once(*args, params=params)
 
     def _call_once(self, *args: str, params: dict[str, Any]) -> Any:
-        proc = self._run(
-            [self.gws_path, "gmail", "users", *args, "--params", json.dumps(params)],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+        call = " ".join(args)
+        try:
+            proc = self._run(
+                [self.gws_path, "gmail", "users", *args, "--params", json.dumps(params)],
+                capture_output=True,
+                text=True,
+                timeout=CALL_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise GwsError(f"gws {call} timed out after {CALL_TIMEOUT}s") from e
+        except OSError as e:
+            raise GwsError(f"gws {call} could not run: {e}") from e
         try:
             data = json.loads(proc.stdout)
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, TypeError) as e:
             detail = (proc.stderr or proc.stdout or "").strip()[-300:]
-            raise GwsError(f"gws {' '.join(args)} failed (exit {proc.returncode}): {detail}") from e
+            raise GwsError(f"gws {call} failed (exit {proc.returncode}): {detail}") from e
         if isinstance(data, dict) and "error" in data:
-            raise GwsError(f"gws {' '.join(args)}: {data['error'].get('message', data['error'])}")
+            error = data["error"] if isinstance(data["error"], dict) else {"message": data["error"]}
+            reason = error.get("reason") or next(
+                (e.get("reason") for e in error.get("errors") or [] if e.get("reason")), None
+            )
+            code = error.get("code")
+            raise GwsError(
+                f"gws {call}: {error.get('message', error)}",
+                code=code if isinstance(code, int) else None,
+                reason=reason,
+            )
         return data
 
     def profile(self) -> dict[str, Any]:
