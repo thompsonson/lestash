@@ -437,3 +437,51 @@ def test_backfill_records_sync_log(tmp_path, monkeypatch, fake_gws, fail_t1, lim
         assert since == datetime.fromisoformat(row[3])
     else:
         assert since is None
+
+
+@pytest.mark.parametrize(
+    ("subject", "list_id", "title"),
+    [
+        # The tag names the list: it is the list's and is dropped
+        ("[UAI] Talk", "<uai-list.googlegroups.com>", "Talk"),
+        ("[ML News] Talk", "ML News <announce.lists.example.org>", "Talk"),
+        # A list without a subject tag keeps a real one
+        (
+            "[UAI 2026] Deadline extended",
+            "<uai-list.googlegroups.com>",
+            "[UAI 2026] Deadline extended",
+        ),
+        ("[CFP] Workshop", "<uai-list.googlegroups.com>", "[CFP] Workshop"),
+    ],
+)
+def test_list_tag_must_name_the_list(subject, list_id, title) -> None:
+    root = _msg("a", 1, subject)
+    for h in root["payload"]["headers"]:
+        if h["name"] == "List-ID":
+            h["value"] = list_id
+    [item] = thread_to_items({"id": "t9", "messages": [root]}, "from:x@example.org")
+    assert item.title == title
+
+
+def test_list_tag_from_the_search_when_the_root_has_no_list_id() -> None:
+    # Your own post as the root: the Sent copy has no List-Id
+    thread = {"id": "t9", "messages": [_msg("a", 1, "[UAI] Talk", list_id=False)]}
+    assert thread_to_items(thread, QUERY)[0].title == "Talk"
+
+
+def test_failed_search_is_skipped_then_sync_fails(fake_gws) -> None:
+    bad = "list:broken("
+
+    def flaky(cmd, **kwargs):
+        if "messages" in cmd and "broken" in cmd[-1]:
+            import json
+
+            error = {"error": {"code": 400, "message": "Invalid query"}}
+            return subprocess.CompletedProcess(cmd, 1, stdout=json.dumps(error), stderr="")
+        return fake_gws(cmd, **kwargs)
+
+    items = []
+    with pytest.raises(GwsError, match=r"1 search\(es\) failed: list:broken\("):
+        for item in sync_queries(GwsGmail("gws", runner=flaky), [bad, QUERY]):
+            items.append(item)
+    assert {i.source_id for i in items} >= {"gmail:thread:t1", "gmail:thread:t2"}

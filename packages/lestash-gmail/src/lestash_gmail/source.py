@@ -143,12 +143,12 @@ def clean_subject(subject: str, list_tags: frozenset[str] | None = None) -> str:
     """Drop reply prefixes ("Re:", "Fwd:"), the list tag ("[UAI]") and mailer tags.
 
     They are removed in any order and any number of times. Other leading tags such as
-    "[CFP]" are part of the subject and are kept, except that with no known list tags the
-    first leading tag is taken to be the list's.
+    "[CFP]" are part of the subject and are kept. With ``list_tags=None`` the first
+    leading tag is taken to be the list's; pass an empty set to keep every tag.
     """
     text = (subject or "").strip()
     known = {t.lower() for t in list_tags or ()}
-    guess_list_tag = not known
+    guess_list_tag = list_tags is None
     while True:
         if match := REPLY_PREFIX.match(text):
             text = text[match.end() :]
@@ -185,6 +185,37 @@ def _leading_tags(subject: str) -> list[str]:
 def _norm_list(address: str) -> str:
     """'uai-list@googlegroups.com', '<uai-list.googlegroups.com>' -> 'uai-list.googlegroups.com'."""
     return address.strip().strip("<>").strip().lower().replace("@", ".")
+
+
+def _alnum(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _list_names(message: dict[str, Any], query: str) -> list[str]:
+    """Names a list goes by: List-Id's address and display name, and the search's `list:`."""
+    list_id = _headers(message).get("list-id", "")
+    names = [_norm_list(term).split(".")[0] for term in list_terms(query)]
+    if inner := re.search(r"<([^>]+)>", list_id):
+        names += [_norm_list(inner.group(1)).split(".")[0], list_id[: inner.start()]]
+    elif list_id:
+        names.append(_norm_list(list_id).split(".")[0])
+    return [n for n in map(_alnum, names) if n]
+
+
+def root_list_tag(message: dict[str, Any], query: str) -> frozenset[str]:
+    """The root's first tag, if it names the list ("[UAI]" for uai-list); else none.
+
+    A list without a subject tag keeps a real one: "[UAI 2026] Deadline" stays whole.
+    """
+    tags = [
+        t
+        for t in _leading_tags(_headers(message).get("subject", ""))
+        if t.lower() not in MAILER_TAGS
+    ]
+    if not tags or not (tag := _alnum(tags[0])):
+        return frozenset()
+    names = _list_names(message, query)
+    return frozenset(tags[:1]) if any(tag in name for name in names) else frozenset()
 
 
 def list_terms(query: str) -> frozenset[str]:
@@ -266,12 +297,7 @@ def thread_to_items(thread: dict[str, Any], query: str) -> list[ItemCreate]:
     messages = [m for m in messages if is_on_list(m, lists)]
     if not messages:
         return []
-    root_tags = [
-        t
-        for t in _leading_tags(_headers(messages[0]).get("subject", ""))
-        if t.lower() not in MAILER_TAGS
-    ]
-    list_tags = frozenset(root_tags[:1]) or None
+    list_tags = root_list_tag(messages[0], query)
     parent = message_to_item(messages[0], query, list_tags=list_tags)
     children = [
         message_to_item(m, query, parent_source_id=parent.source_id, list_tags=list_tags)
@@ -297,21 +323,29 @@ def sync_queries(
 ) -> Iterator[ItemCreate]:
     """Items for every thread matching each search (since `since`, if given).
 
-    A thread that can't be read is skipped and the rest are still yielded; then GwsError
+    A search or thread that fails is skipped and the rest are still yielded; then GwsError
     is raised, so the sync is logged as failed and the next one re-reads the same window.
     """
+    failed: list[str] = []
     skipped = 0
     for query in queries:
-        for thread_id in gmail.thread_ids(search_query(query, since), limit=limit):
-            try:
-                thread = gmail.thread(thread_id)
-            except GwsError as e:
-                skipped += 1
-                logger.warning(f"Skipping thread {thread_id}: {e}")
-                continue
-            yield from thread_to_items(thread, query)
-    if skipped:
-        raise GwsError(f"{skipped} thread(s) could not be read; they are retried next sync")
+        try:
+            for thread_id in gmail.thread_ids(search_query(query, since), limit=limit):
+                try:
+                    thread = gmail.thread(thread_id)
+                except GwsError as e:
+                    skipped += 1
+                    logger.warning(f"Skipping thread {thread_id}: {e}")
+                    continue
+                yield from thread_to_items(thread, query)
+        except GwsError as e:
+            failed.append(query)
+            logger.warning(f"Search {query!r} failed: {e}")
+    problems = [f"{skipped} thread(s) could not be read"] if skipped else []
+    if failed:
+        problems.append(f"{len(failed)} search(es) failed: {', '.join(failed)}")
+    if problems:
+        raise GwsError("; ".join(problems) + "; they are retried next sync")
 
 
 def last_successful_sync() -> datetime | None:
