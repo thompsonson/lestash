@@ -101,6 +101,7 @@ le-stash/
 │   ├── lestash-microblog/ # Micro.blog source plugin
 │   ├── lestash-youtube/   # YouTube source plugin
 │   ├── lestash-gmail/     # Gmail source plugin (via gws)
+│   ├── lestash-takeout/   # Google Takeout (via Drive) source plugin
 │   └── lestash-server/    # HTTPS API server
 ├── app/                   # Tauri v2 desktop app
 ├── deploy/                # Systemd service files
@@ -117,6 +118,7 @@ le-stash/
 | [lestash-microblog](packages/lestash-microblog/) | Sync posts from Micro.blog |
 | [lestash-youtube](packages/lestash-youtube/) | Sync liked videos and subscriptions from YouTube |
 | [lestash-gmail](packages/lestash-gmail/) | Sync Gmail threads from saved searches, e.g. mailing lists (read-only, via gws) |
+| [lestash-takeout](packages/lestash-takeout/) | Import Google Takeout exports delivered to Drive (Keep, Gemini, NotebookLM) |
 | [lestash-server](packages/lestash-server/) | HTTPS REST API server (FastAPI) |
 
 ## Development

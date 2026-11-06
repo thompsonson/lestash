@@ -156,10 +156,11 @@ YouTube has deprecated direct API access to watch history for privacy reasons. W
 3. Select **YouTube and YouTube Music**
 4. Click **Multiple formats**
 5. Set **History** to **JSON** format
-6. Click **Next step** and create export
-7. Download and extract the archive
+6. Click **Next step**, choose **Add to Drive** as the delivery method, and create the export
 
-The `watch-history.json` file can be imported in a future update.
+The `lestash-takeout` plugin imports it from Drive (`lestash sources sync takeout`). You can also
+upload the zip with `POST /api/import`. Each watched video becomes the `history:{video_id}` item,
+with every watch time in its metadata; searches and viewed community posts are imported too.
 
 ## Configuration
 

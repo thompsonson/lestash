@@ -9,6 +9,7 @@ import typer
 
 if TYPE_CHECKING:
     from lestash.models.item import ItemCreate
+    from lestash.models.sync import SyncCheckpoint
 
 
 class SourcePlugin(ABC):
@@ -36,14 +37,15 @@ class SourcePlugin(ABC):
         """
 
     @abstractmethod
-    def sync(self, config: dict) -> Iterator["ItemCreate"]:
+    def sync(self, config: dict) -> Iterator["ItemCreate | SyncCheckpoint"]:
         """Fetch new items from the source.
 
         Args:
             config: Plugin-specific configuration dict.
 
         Yields:
-            ItemCreate instances for each new item.
+            ItemCreate instances for each new item. A plugin may also yield a
+            SyncCheckpoint after a batch of items: it is committed with them.
         """
 
     def configure(self) -> dict:
