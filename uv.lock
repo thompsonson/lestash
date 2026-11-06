@@ -25,6 +25,7 @@ members = [
     "lestash-bluesky",
     "lestash-claude-code",
     "lestash-gmail",
+    "lestash-jelu",
     "lestash-linkedin",
     "lestash-microblog",
     "lestash-server",
@@ -1217,6 +1218,7 @@ dependencies = [
     { name = "lestash-bluesky" },
     { name = "lestash-claude-code" },
     { name = "lestash-gmail" },
+    { name = "lestash-jelu" },
     { name = "lestash-linkedin" },
     { name = "lestash-microblog" },
     { name = "lestash-server" },
@@ -1244,6 +1246,7 @@ requires-dist = [
     { name = "lestash-bluesky", editable = "packages/lestash-bluesky" },
     { name = "lestash-claude-code", editable = "packages/lestash-claude-code" },
     { name = "lestash-gmail", editable = "packages/lestash-gmail" },
+    { name = "lestash-jelu", editable = "packages/lestash-jelu" },
     { name = "lestash-linkedin", editable = "packages/lestash-linkedin" },
     { name = "lestash-microblog", editable = "packages/lestash-microblog" },
     { name = "lestash-server", editable = "packages/lestash-server" },
@@ -1366,6 +1369,21 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "lestash", editable = "packages/lestash" }]
+
+[[package]]
+name = "lestash-jelu"
+version = "1.64.4"
+source = { editable = "packages/lestash-jelu" }
+dependencies = [
+    { name = "httpx" },
+    { name = "lestash" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "lestash", editable = "packages/lestash" },
+]
 
 [[package]]
 name = "lestash-linkedin"
