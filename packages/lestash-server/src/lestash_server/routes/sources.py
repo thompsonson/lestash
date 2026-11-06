@@ -5,7 +5,11 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from lestash.core.database import get_connection
+from lestash.core.database import (
+    get_connection,
+    resolve_parent_id,
+    resolve_parent_source_ids,
+)
 from lestash.plugins.loader import load_plugins
 
 from lestash_server.deps import get_config, get_db
@@ -82,20 +86,22 @@ def _run_sync(source_name: str) -> None:
 
         try:
             for item in plugin.sync(plugin_config):
+                resolve_parent_id(conn, item)
                 metadata_json = json.dumps(item.metadata) if item.metadata else None
                 conn.execute(
                     """
                     INSERT INTO items (
                         source_type, source_id, url, title, content,
-                        author, created_at, is_own_content, metadata
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        author, created_at, is_own_content, metadata, parent_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(source_type, source_id) DO UPDATE SET
                         url = excluded.url,
                         title = excluded.title,
                         content = excluded.content,
                         author = excluded.author,
                         is_own_content = excluded.is_own_content,
-                        metadata = excluded.metadata
+                        metadata = excluded.metadata,
+                        parent_id = COALESCE(excluded.parent_id, items.parent_id)
                     """,
                     (
                         item.source_type,
@@ -107,11 +113,13 @@ def _run_sync(source_name: str) -> None:
                         item.created_at,
                         item.is_own_content,
                         metadata_json,
+                        item.parent_id,
                     ),
                 )
                 items_added += 1
 
             conn.commit()
+            resolve_parent_source_ids(conn, source_name)
 
             conn.execute(
                 """

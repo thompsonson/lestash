@@ -9,7 +9,11 @@ from rich.console import Console
 from rich.table import Table
 
 from lestash.core.config import Config
-from lestash.core.database import get_connection
+from lestash.core.database import (
+    get_connection,
+    resolve_parent_id,
+    resolve_parent_source_ids,
+)
 from lestash.plugins.loader import load_plugins
 
 app = typer.Typer(help="Manage content sources.")
@@ -145,6 +149,8 @@ def sync_source(
 
             try:
                 for item in plugin.sync(plugin_config):
+                    # Link to a parent yielded earlier (metadata._parent_source_id)
+                    resolve_parent_id(conn, item)
                     # Try to insert, update on conflict
                     metadata_json = json.dumps(item.metadata) if item.metadata else None
                     cursor = conn.execute(
@@ -203,6 +209,11 @@ def sync_source(
                                 )
 
                 conn.commit()
+
+                # Link children whose parent arrived later in the sync
+                linked = resolve_parent_source_ids(conn, name)
+                if linked:
+                    console.print(f"  [dim]Linked {linked} item(s) to their parent[/dim]")
 
                 # Resolve parent_id for LinkedIn reactions/comments
                 if name == "linkedin":

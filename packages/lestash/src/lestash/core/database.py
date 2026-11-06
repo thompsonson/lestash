@@ -679,6 +679,58 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
     return item_id
 
 
+def resolve_parent_id(conn: sqlite3.Connection, item: ItemCreate) -> None:
+    """Set ``item.parent_id`` from ``metadata["_parent_source_id"]`` when the parent exists.
+
+    Plugins yield a parent before its children and point each child at the parent's
+    ``source_id`` (same ``source_type``). Leaves an explicit ``parent_id`` alone.
+    """
+    if item.parent_id is not None or not item.metadata:
+        return
+    parent_source_id = item.metadata.get("_parent_source_id")
+    if not parent_source_id:
+        return
+    row = conn.execute(
+        "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+        (item.source_type, parent_source_id),
+    ).fetchone()
+    if row:
+        item.parent_id = row[0]
+
+
+def resolve_parent_source_ids(conn: sqlite3.Connection, source_type: str | None = None) -> int:
+    """Link orphaned children to parents named by ``metadata._parent_source_id``.
+
+    Catches children whose parent arrived later (or in an earlier sync). Only fills
+    ``parent_id`` where it is NULL, so plugin-specific resolution is not overridden.
+
+    Returns:
+        Number of items linked.
+    """
+    parent_lookup = """
+        SELECT p.id FROM items p
+        WHERE p.source_type = items.source_type
+          AND p.source_id = json_extract(items.metadata, '$._parent_source_id')
+    """
+    params: tuple[str, ...] = ()
+    where_source = ""
+    if source_type:
+        where_source = "AND source_type = ?"
+        params = (source_type,)
+    cursor = conn.execute(
+        f"""
+        UPDATE items SET parent_id = ({parent_lookup})
+        WHERE parent_id IS NULL
+          AND json_extract(metadata, '$._parent_source_id') IS NOT NULL
+          AND EXISTS ({parent_lookup})
+          {where_source}
+        """,
+        params,
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
 def add_tag(conn: sqlite3.Connection, item_id: int, tag_name: str) -> int:
     """Add a tag to an item. Creates the tag if it doesn't exist.
 
