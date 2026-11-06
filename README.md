@@ -100,6 +100,7 @@ le-stash/
 │   ├── lestash-linkedin/  # LinkedIn source plugin
 │   ├── lestash-microblog/ # Micro.blog source plugin
 │   ├── lestash-youtube/   # YouTube source plugin
+│   ├── lestash-takeout/   # Google Takeout (via Drive) source plugin
 │   └── lestash-server/    # HTTPS API server
 ├── app/                   # Tauri v2 desktop app
 ├── deploy/                # Systemd service files
@@ -115,6 +116,7 @@ le-stash/
 | [lestash-linkedin](packages/lestash-linkedin/) | Import LinkedIn posts via DMA Portability API |
 | [lestash-microblog](packages/lestash-microblog/) | Sync posts from Micro.blog |
 | [lestash-youtube](packages/lestash-youtube/) | Sync liked videos and subscriptions from YouTube |
+| [lestash-takeout](packages/lestash-takeout/) | Import Google Takeout exports delivered to Drive (Keep, Gemini, NotebookLM) |
 | [lestash-server](packages/lestash-server/) | HTTPS REST API server (FastAPI) |
 
 ## Development

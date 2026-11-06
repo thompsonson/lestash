@@ -62,7 +62,7 @@ async def import_file(
             items = parse_json_items(data)
             source_type = "json"
         elif filename.endswith(".zip"):
-            items, source_type = _parse_zip(data)
+            items, source_type = parse_zip(data)
         elif filename.endswith((".html", ".htm")):
             from lestash_server.parsers.html_page import parse_html_page
 
@@ -275,12 +275,12 @@ async def import_from_drive(body: DriveImportRequest):
         file_id = extract_drive_file_id(file_id_or_url)
         try:
             path = download_drive_file(file_id)
-            data = path.read_bytes()
 
             if path.name.endswith(".zip"):
-                items, source_type = _parse_zip(data)
+                # Read from disk: Takeout parts can be several GB
+                items, source_type = parse_zip(path)
             elif path.name.endswith(".json"):
-                items = parse_json_items(data)
+                items = parse_json_items(path.read_bytes())
                 source_type = "json"
             else:
                 results.append(
@@ -397,10 +397,13 @@ async def sync_from_drive(body: DriveSyncRequest):
     )
 
 
-def _parse_zip(data: bytes):
-    """Parse a ZIP file, detecting the format from contents."""
+def parse_zip(data: bytes | Path):
+    """Parse a ZIP file (bytes or a path on disk), detecting the format from contents.
+
+    Returns (items, source_type). Raises ValueError if nothing recognizable is inside.
+    """
     try:
-        with zipfile.ZipFile(BytesIO(data)) as zf:
+        with zipfile.ZipFile(BytesIO(data) if isinstance(data, bytes) else data) as zf:
             names = zf.namelist()
 
             # Detect Google Keep Takeout
@@ -587,6 +590,28 @@ def _parse_gemini_zip(zf, gemini_files):
     return items
 
 
+def _notebooklm_artifact_labels(zf, nb_dir: str, all_names: list[str]) -> list[str]:
+    """Readable names of a notebook's generated artifacts, e.g. "Planning (audio overview)".
+
+    Each artifact has a JSON description with its title and type; the media files beside it
+    (wav, mp4, pptx, numbered slide images) are not listed separately.
+    """
+    labels: set[str] = set()
+    prefix = f"{nb_dir}/Artifacts/"
+    for name in all_names:
+        if not (name.startswith(prefix) and name.endswith(".json")):
+            continue
+        try:
+            data = json.loads(zf.read(name))
+        except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
+            continue
+        if not isinstance(data, dict) or not data.get("title"):
+            continue
+        kind = str(data.get("type", "")).removeprefix("ARTIFACT_TYPE_").replace("_", " ").lower()
+        labels.add(f"{data['title']} ({kind})" if kind else data["title"])
+    return sorted(labels)
+
+
 def _parse_notebooklm_zip(zf, nlm_files, all_names):
     """Parse NotebookLM notebooks from a Google Takeout ZIP.
 
@@ -648,8 +673,14 @@ def _parse_notebooklm_zip(zf, nlm_files, all_names):
             source_metas = [
                 n for n in all_names if n.startswith(f"{nb_dir}/Sources/") and n.endswith(".json")
             ]
+            artifact_names = _notebooklm_artifact_labels(zf, nb_dir, all_names)
+            artifact_reports = sorted(
+                n for n in all_names if n.startswith(f"{nb_dir}/Artifacts/") and n.endswith(".md")
+            )
 
-            if not note_htmls and not chat_htmls:
+            # Multi-part Takeouts spread a notebook over several zips; a part holding only
+            # its artifacts has no metadata/notes/sources and must not overwrite the parent.
+            if not meta_candidates and not note_htmls and not chat_htmls and not source_metas:
                 continue
 
             created_at = None
@@ -678,11 +709,17 @@ def _parse_notebooklm_zip(zf, nlm_files, all_names):
             if source_titles:
                 parent_metadata["sources"] = source_titles
                 parent_metadata["source_count"] = len(source_titles)
+            if artifact_names:
+                parent_metadata["artifacts"] = artifact_names
 
             summary_parts = [f"# {title}"]
             if source_titles:
                 summary_parts.append(
                     f"**Sources ({len(source_titles)}):** " + ", ".join(source_titles)
+                )
+            if artifact_names:
+                summary_parts.append(
+                    f"**Generated ({len(artifact_names)}):** " + ", ".join(artifact_names)
                 )
             summary_parts.append(f"**Notes:** {len(note_htmls)} | **Chats:** {len(chat_htmls)}")
 
@@ -715,6 +752,26 @@ def _parse_notebooklm_zip(zf, nlm_files, all_names):
                             metadata={
                                 "source": "takeout",
                                 "type": "note",
+                                "_parent_source_id": nb_dir,
+                            },
+                        )
+                    )
+
+            # Child items: generated text reports (briefings, study guides, ...)
+            for rp in artifact_reports:
+                text = zf.read(rp).decode("utf-8", errors="replace").strip()
+                if text:
+                    items.append(
+                        ItemCreate(
+                            source_type="notebooklm",
+                            source_id=rp,
+                            title=f"{title} — {rp.rsplit('/', 1)[-1].removesuffix('.md')}",
+                            content=text,
+                            created_at=created_at,
+                            is_own_content=True,
+                            metadata={
+                                "source": "takeout",
+                                "type": "report",
                                 "_parent_source_id": nb_dir,
                             },
                         )
