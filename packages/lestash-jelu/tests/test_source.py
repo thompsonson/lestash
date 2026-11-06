@@ -1,5 +1,7 @@
 """Tests for the Jelu source plugin, against a fake Jelu with Jelu's auth model."""
 
+import os
+
 import httpx
 import pytest
 from lestash_jelu import client as jelu_client
@@ -147,6 +149,43 @@ def test_credentials_roundtrip(tmp_path, monkeypatch) -> None:
         "token": "sess-1",
     }
     assert (tmp_path / "jelu.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_saving_over_a_world_readable_file_never_exposes_the_password(
+    tmp_path, monkeypatch
+) -> None:
+    """An old 0644 jelu.json must not hold the password, even mid-write."""
+    path = tmp_path / "jelu.json"
+    path.write_text("{}")
+    path.chmod(0o644)
+    monkeypatch.setattr(jelu_client, "get_config_path", lambda: path)
+    real_dump = jelu_client.json.dump
+
+    def checking_dump(data, fh, **kwargs):
+        # Whatever file the password goes into must already be private
+        assert os.fstat(fh.fileno()).st_mode & 0o077 == 0
+        real_dump(data, fh, **kwargs)
+
+    monkeypatch.setattr(jelu_client.json, "dump", checking_dump)
+    save_credentials(BASE, "mt", "pw", "sess-1")
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert load_credentials()["password"] == "pw"
+    assert [p.name for p in tmp_path.iterdir()] == ["jelu.json"]  # no temp file left
+
+
+def test_a_failed_save_keeps_the_old_credentials(tmp_path, monkeypatch) -> None:
+    """A crash mid-write must not leave an empty or half-written jelu.json."""
+    monkeypatch.setattr(jelu_client, "get_config_path", lambda: tmp_path / "jelu.json")
+    save_credentials(BASE, "mt", "pw", "sess-1")
+
+    def crash(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(jelu_client.json, "dump", crash)
+    with pytest.raises(OSError, match="disk full"):
+        save_credentials(BASE, "mt", "pw", "sess-2")
+    assert load_credentials()["token"] == "sess-1"
+    assert [p.name for p in tmp_path.iterdir()] == ["jelu.json"]
 
 
 def test_sync_saves_the_new_session(tmp_path, monkeypatch) -> None:

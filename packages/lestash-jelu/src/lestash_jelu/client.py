@@ -10,6 +10,7 @@ paths listed in its scope map, and ``/users/me`` and ``/book-quotes`` are not li
 
 import json
 import os
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -39,11 +40,19 @@ def save_credentials(url: str, username: str, password: str, token: str | None =
     data = {"url": url.rstrip("/"), "username": username, "password": password}
     if token:
         data["token"] = token
-    # Create with 600 from the start so the password is never world-readable
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        json.dump(data, fh, indent=2)
-    os.chmod(path, 0o600)
+    # Write a new file (mkstemp creates it at 600) and swap it in. Rewriting jelu.json in
+    # place would put the password in a file that may still be world-readable, and a crash
+    # mid-write would leave it empty.
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(data, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def load_credentials() -> dict[str, str] | None:
