@@ -682,3 +682,31 @@ def test_windows_fall_back_to_the_sync_log_until_state_is_saved() -> None:
         QUERY: datetime(2026, 11, 1, 12, tzinfo=UTC),
         "new": None,  # a search added later reads everything
     }
+
+
+@pytest.mark.parametrize(
+    ("subject", "title"),
+    [
+        # Short tags that are only substrings of "uai-list" are real tags
+        ("[AI] Safety workshop", "[AI] Safety workshop"),
+        ("[List] admin note", "[List] admin note"),
+        ("[UAI] Talk", "Talk"),
+        ("[UAI-List] Talk", "Talk"),
+    ],
+)
+def test_list_tag_must_be_the_whole_list_name(subject, title) -> None:
+    [item] = thread_to_items({"id": "t9", "messages": [_msg("a", 1, subject)]}, QUERY)
+    assert item.title == title
+
+
+def test_sent_copy_root_drops_the_list_tag_from_replies_too() -> None:
+    # Your own Sent copy has no tag and no List-Id; the list adds "[UAI]" on delivery
+    thread = {
+        "id": "t9",
+        "messages": [
+            _msg("a", 1, "[CFP] My workshop", list_id=False),
+            _msg("b", 2, "Re: [UAI] [CFP] My workshop"),
+        ],
+    }
+    items = thread_to_items(thread, QUERY)
+    assert [i.title for i in items] == ["[CFP] My workshop", "Re: [CFP] My workshop"]

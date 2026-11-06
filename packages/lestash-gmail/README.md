@@ -38,7 +38,7 @@ on `PATH` or in the usual Homebrew/local locations, so it works from systemd ser
 
 | Item | `source_id` | Parent |
 |------|-------------|--------|
-| Thread (first on-list message; list tag like `[UAI]` dropped from the title) | `gmail:thread:{threadId}` | — |
+| Thread (first on-list message; list tag like `[UAI]` dropped from the titles) | `gmail:thread:{threadId}` | — |
 | Reply | `gmail:message:{messageId}` | the thread |
 
 For `list:` searches, only messages that went to the list are kept: list copies (`List-Id`) and

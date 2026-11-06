@@ -196,31 +196,44 @@ def _alnum(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
-def _list_names(message: dict[str, Any], query: str) -> list[str]:
-    """Names a list goes by: List-Id's address and display name, and the search's `list:`."""
-    list_id = _headers(message).get("list-id", "")
-    names = [_norm_list(term).split(".")[0] for term in list_terms(query)]
-    if inner := re.search(r"<([^>]+)>", list_id):
-        names += [_norm_list(inner.group(1)).split(".")[0], list_id[: inner.start()]]
-    elif list_id:
-        names.append(_norm_list(list_id).split(".")[0])
-    return [n for n in map(_alnum, names) if n]
+def _names_list(tag: str, message: dict[str, Any], queries: Sequence[str]) -> bool:
+    """Whether a subject tag names the message's list ("[UAI]" for uai-list).
 
-
-def root_list_tag(message: dict[str, Any], query: str) -> frozenset[str]:
-    """The root's first tag, if it names the list ("[UAI]" for uai-list); else none.
-
-    A list without a subject tag keeps a real one: "[UAI 2026] Deadline" stays whole.
+    The tag must equal a leading run of the words in a list address ("uai", "uailist" for
+    uai-list), from List-Id or the searches' `list:`, or the whole List-Id display name.
+    So "[AI]" and "[List]" don't name uai-list.
     """
-    tags = [
-        t
-        for t in _leading_tags(_headers(message).get("subject", ""))
-        if t.lower() not in MAILER_TAGS
-    ]
-    if not tags or not (tag := _alnum(tags[0])):
-        return frozenset()
-    names = _list_names(message, query)
-    return frozenset(tags[:1]) if any(tag in name for name in names) else frozenset()
+    tag = _alnum(tag)
+    if not tag:
+        return False
+    list_id = _headers(message).get("list-id", "")
+    inner = re.search(r"<([^>]+)>", list_id)
+    addresses = [term for q in queries for term in list_terms(q)]
+    addresses.append(inner.group(1) if inner else list_id)
+    for address in addresses:
+        words = [w for w in re.split(r"[^a-z0-9]+", _norm_list(address).split(".")[0]) if w]
+        if tag in {"".join(words[: i + 1]) for i in range(len(words))}:
+            return True
+    return inner is not None and tag == _alnum(list_id[: inner.start()])
+
+
+def thread_list_tags(messages: list[dict[str, Any]], queries: Sequence[str]) -> frozenset[str]:
+    """The list's subject tags in a thread ("[UAI]"): first tags that name the list.
+
+    Each message's first tag counts, not only the root's: your own Sent copy as the root
+    has no tag (the list adds it on delivery), but the replies do. A list without a
+    subject tag keeps a real one: "[UAI 2026] Deadline" stays whole.
+    """
+    found = set()
+    for message in messages:
+        tags = [
+            t
+            for t in _leading_tags(_headers(message).get("subject", ""))
+            if t.lower() not in MAILER_TAGS
+        ]
+        if tags and _names_list(tags[0], message, queries):
+            found.add(tags[0])
+    return frozenset(found)
 
 
 def list_terms(query: str) -> frozenset[str]:
@@ -312,7 +325,7 @@ def thread_to_items(thread: dict[str, Any], queries: str | Sequence[str]) -> lis
     messages = [m for m in messages if keep_all or is_on_list(m, lists)]
     if not messages:
         return []
-    list_tags = root_list_tag(messages[0], " ".join(queries))
+    list_tags = thread_list_tags(messages, queries)
     parent = message_to_item(messages[0], queries, list_tags=list_tags)
     children = [
         message_to_item(m, queries, parent_source_id=parent.source_id, list_tags=list_tags)
