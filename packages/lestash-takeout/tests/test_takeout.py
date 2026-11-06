@@ -180,3 +180,22 @@ def test_no_google_signin_yields_nothing(monkeypatch) -> None:
 
     monkeypatch.setattr(source, "_drive_service", no_creds)
     assert list(source.TakeoutSource().sync({})) == []
+
+
+def test_a_truncated_download_is_retried_not_marked_unrecognized(
+    test_db, drive, monkeypatch
+) -> None:
+    real = source.download
+
+    def truncated(svc, file_id, dest):
+        real(svc, file_id, dest)
+        if file_id == "f1":
+            data = dest.read_bytes()
+            dest.write_bytes(data[: len(data) // 2])
+        return dest
+
+    monkeypatch.setattr(source, "download", truncated)
+    _sync()
+    state = _state(test_db)
+    assert "f1" not in state  # retried next time
+    assert state["f2"]["status"] == "unrecognized"

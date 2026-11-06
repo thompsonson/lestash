@@ -18,7 +18,7 @@ from typing import Annotated, Any
 
 import typer
 from lestash.core.logging import get_plugin_logger
-from lestash.importers import IMPORTER_VERSION, parse_zip
+from lestash.importers import IMPORTER_VERSION, CorruptZip, parse_zip
 from lestash.models.item import ItemCreate
 from lestash.models.sync import SyncCheckpoint
 from lestash.plugins.base import SourcePlugin
@@ -88,14 +88,17 @@ def import_zip(
 ) -> Iterator[ItemCreate | SyncCheckpoint]:
     """Download one Takeout zip and yield its items, then its checkpoint.
 
-    The download is deleted before the items are yielded. A download or read error is
-    logged and the zip is left unrecorded, so the next sync tries it again.
+    The download is deleted before the items are yielded. A download or read error, or a
+    corrupt (e.g. truncated) zip, is logged and the zip is left unrecorded, so the next
+    sync tries it again.
     """
     try:
         with tempfile.TemporaryDirectory(dir=workdir) as tmp:
             path = download(service, file["id"], Path(tmp) / file["name"])
             try:
                 items, source_type = parse_zip(path)
+            except CorruptZip:
+                raise  # a bad download, not a format we don't know: retry it
             except ValueError as e:
                 # Nothing this importer understands (e.g. only photos): record it, so it is
                 # retried only once the importer version changes.

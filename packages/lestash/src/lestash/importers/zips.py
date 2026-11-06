@@ -24,10 +24,16 @@ logger = logging.getLogger(__name__)
 IMPORTER_VERSION = 2
 
 
+class CorruptZip(ValueError):
+    """The file is not a readable zip (e.g. a truncated download), as opposed to a zip
+    with nothing recognisable inside."""
+
+
 def parse_zip(data: bytes | Path):
     """Parse a ZIP file (bytes or a path on disk), detecting the format from contents.
 
-    Returns (items, source_type). Raises ValueError if nothing recognizable is inside.
+    Returns (items, source_type). Raises ValueError if nothing recognizable is inside,
+    and its subclass CorruptZip if the file can't be read as a zip.
     """
     try:
         with zipfile.ZipFile(BytesIO(data) if isinstance(data, bytes) else data) as zf:
@@ -79,7 +85,7 @@ def parse_zip(data: bytes | Path):
 
             raise ValueError("ZIP file does not contain recognizable import data")
     except zipfile.BadZipFile:
-        raise ValueError("Invalid ZIP file") from None
+        raise CorruptZip("Invalid ZIP file") from None
 
 
 # Your own history only: supervised accounts live under .../children/<name>/.
