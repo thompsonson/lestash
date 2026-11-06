@@ -7,7 +7,7 @@ Reads mail through `gws` with read-only access.
 import base64
 import html
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from typing import Annotated, Any
@@ -15,6 +15,7 @@ from typing import Annotated, Any
 import typer
 from lestash.core.logging import get_plugin_logger
 from lestash.models.item import ItemCreate
+from lestash.models.sync import SyncCheckpoint
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 
@@ -23,9 +24,13 @@ from lestash_gmail.client import GwsError, GwsGmail, find_gws, load_config, save
 console = Console()
 logger = get_plugin_logger("gmail")
 
-# A sync re-reads mail since the last successful sync, minus this margin (late delivery,
-# clock skew). With no successful sync yet, it reads the whole history of each search.
+# Each search re-reads mail since its last successful read, minus this margin (late
+# delivery, clock skew). A search never read yet reads its whole history.
 WINDOW_MARGIN = timedelta(days=2)
+# Sync state, kept as one checkpoint: {"windows": {search: iso time}, "retry": {...}}
+STATE_KEY = "state"
+# A thread that can't be read is retried at the next syncs, then given up on
+MAX_THREAD_ATTEMPTS = 5
 
 GROUPS_FOOTER = "You received this message because you are subscribed to the Google Groups"
 LIST_FOOTER_WORDS = re.compile(r"unsubscribe|mailing list", re.I)
@@ -328,40 +333,110 @@ def search_query(query: str, since: datetime | None) -> str:
 def sync_queries(
     gmail: GwsGmail,
     queries: list[str],
-    since: datetime | None = None,
+    since: Mapping[str, datetime | None] | None = None,
     limit: int | None = None,
-) -> Iterator[ItemCreate]:
-    """Items for every thread matching the searches (since `since`, if given).
+    state: Mapping[str, Any] | None = None,
+) -> Iterator[ItemCreate | SyncCheckpoint]:
+    """Items for every thread matching the searches, then the new sync state.
+
+    ``since`` gives each search's window start (see search_windows); a search not in it
+    reads everything. ``state`` is the previous sync state, for its failed threads.
 
     Each thread is read once, even when several searches match it, and its items record
     every search that matched (see thread_to_items).
 
-    A search or thread that fails is skipped and the rest are still yielded; then GwsError
-    is raised, so the sync is logged as failed and the next one re-reads the same window.
+    A failed search keeps its old window; the others move on to the start of this sync. A
+    thread that can't be read is retried at the next syncs, up to MAX_THREAD_ATTEMPTS
+    reads. The state is yielded as a SyncCheckpoint (not with ``limit``, which reads only
+    part of each window). Then, if anything failed, GwsError is raised, so the sync is
+    logged as failed.
     """
+    started = datetime.now(UTC)
+    since = since or {}
+    old_windows: dict[str, str] = dict((state or {}).get("windows", {}))
+    old_retry: dict[str, dict[str, Any]] = dict((state or {}).get("retry", {}))
+
     matched: dict[str, list[str]] = {}  # thread id -> searches that matched it, in order
     failed: list[str] = []
     for query in queries:
         try:
-            for thread_id in gmail.thread_ids(search_query(query, since), limit=limit):
+            for thread_id in gmail.thread_ids(search_query(query, since.get(query)), limit=limit):
                 matched.setdefault(thread_id, []).append(query)
         except GwsError as e:
             failed.append(query)
             logger.warning(f"Search {query!r} failed: {e}")
-    skipped = 0
+    for thread_id, entry in old_retry.items():
+        retry_queries = [q for q in entry.get("queries", []) if q in queries]
+        if retry_queries and thread_id not in matched:
+            matched[thread_id] = retry_queries
+
+    retry: dict[str, dict[str, Any]] = {}
+    given_up: list[str] = []
     for thread_id, thread_queries in matched.items():
         try:
             thread = gmail.thread(thread_id)
         except GwsError as e:
-            skipped += 1
-            logger.warning(f"Skipping thread {thread_id}: {e}")
+            attempts = old_retry.get(thread_id, {}).get("attempts", 0) + 1
+            if attempts >= MAX_THREAD_ATTEMPTS:
+                given_up.append(thread_id)
+                logger.warning(f"Giving up on thread {thread_id} after {attempts} reads: {e}")
+            else:
+                retry[thread_id] = {"queries": thread_queries, "attempts": attempts}
+                logger.warning(f"Skipping thread {thread_id} (retried next sync): {e}")
             continue
         yield from thread_to_items(thread, thread_queries)
-    problems = [f"{skipped} thread(s) could not be read"] if skipped else []
+
+    if not limit:
+        windows = {q: started.isoformat() for q in queries if q not in failed}
+        windows.update({q: old_windows[q] for q in failed if q in old_windows})
+        yield SyncCheckpoint(key=STATE_KEY, value={"windows": windows, "retry": retry})
+
+    problems = []
+    if retry:
+        problems.append(f"{len(retry)} thread(s) could not be read; retried next sync")
+    if given_up:
+        problems.append(
+            f"gave up on {len(given_up)} thread(s) after {MAX_THREAD_ATTEMPTS} reads: "
+            + ", ".join(given_up)
+        )
     if failed:
-        problems.append(f"{len(failed)} search(es) failed: {', '.join(failed)}")
+        problems.append(
+            f"{len(failed)} search(es) failed and keep their window: {', '.join(failed)}"
+        )
     if problems:
-        raise GwsError("; ".join(problems) + "; they are retried next sync")
+        raise GwsError("; ".join(problems))
+
+
+def load_state() -> dict[str, Any] | None:
+    """The state saved by the last sync, or None before the first one that saved it."""
+    from lestash.core.config import Config
+    from lestash.core.database import get_checkpoints, get_connection
+
+    with get_connection(Config.load()) as conn:
+        return get_checkpoints(conn, "gmail").get(STATE_KEY)
+
+
+def current_windows(
+    queries: list[str],
+) -> tuple[dict[str, Any] | None, dict[str, datetime | None]]:
+    """The saved sync state, and where each search's window starts now."""
+    state = load_state()
+    fallback = last_successful_sync() if state is None else None
+    return state, search_windows(queries, state, fallback)
+
+
+def search_windows(
+    queries: list[str], state: Mapping[str, Any] | None, fallback: datetime | None
+) -> dict[str, datetime | None]:
+    """Where each search's window starts: its last successful read (None: read everything).
+
+    Before any state was saved, every search starts from ``fallback``, the last completed
+    sync in the sync log. After that, a search not in the state is new and reads everything.
+    """
+    if state is None:
+        return dict.fromkeys(queries, fallback)
+    windows = state.get("windows", {})
+    return {q: datetime.fromisoformat(windows[q]) if q in windows else None for q in queries}
 
 
 def last_successful_sync() -> datetime | None:
@@ -387,15 +462,21 @@ def run_backfill(
 ) -> tuple[int, str | None]:
     """Import every matching thread and record the run in the sync log, like a sync.
 
-    The run is logged ``completed`` only if every thread was read and no limit was set, so
-    the next sync starts its window from it. Otherwise it is logged ``failed`` (a thread
-    was skipped) or ``partial`` (``--limit``), and the next sync still reads everything
-    after the last complete run.
+    The run is logged ``completed`` if every search and thread was read, and ``failed``
+    otherwise. Either way the searches that were read move their windows on and failed
+    threads are kept for a retry, as in a sync. With ``--limit`` it is logged ``partial``
+    and the sync state is left alone.
 
     Returns:
         (messages imported, error message or None).
     """
-    from lestash.core.database import resolve_parent_id, resolve_parent_source_ids, upsert_item
+    from lestash.core.database import (
+        get_checkpoints,
+        resolve_parent_id,
+        resolve_parent_source_ids,
+        save_checkpoint,
+        upsert_item,
+    )
 
     started_at = datetime.now()
     sync_id = conn.execute(
@@ -408,7 +489,12 @@ def run_backfill(
     error: str | None = None
     status = "completed"
     try:
-        for item in sync_queries(gmail, queries, limit=limit):
+        state = get_checkpoints(conn, "gmail").get(STATE_KEY)
+        for item in sync_queries(gmail, queries, limit=limit, state=state):
+            if isinstance(item, SyncCheckpoint):
+                save_checkpoint(conn, "gmail", item.key, item.value)
+                conn.commit()
+                continue
             resolve_parent_id(conn, item)
             upsert_item(conn, item)
             count += 1
@@ -471,16 +557,18 @@ class GmailSource(SourcePlugin):
                 )
                 raise typer.Exit(1)
             gmail = GwsGmail(gws)
+            state, windows = current_windows(config["queries"])
             try:
                 console.print(f"gws: {gws} — signed in as {gmail.profile().get('emailAddress')}")
                 for query in config["queries"]:
                     count = sum(1 for _ in gmail.thread_ids(query))
-                    console.print(f"  {query}: {count} threads")
+                    start = windows[query] or "the start"
+                    console.print(f"  {query}: {count} threads; next sync reads from {start}")
             except GwsError as e:
                 console.print(f"[red]{e}[/red]")
                 raise typer.Exit(1) from e
-            since = last_successful_sync()
-            console.print(f"Last successful sync: {since or 'never (next sync reads everything)'}")
+            if retry := (state or {}).get("retry"):
+                console.print(f"[yellow]{len(retry)} thread(s) wait for a retry[/yellow]")
             if not config["queries"]:
                 console.print("No queries yet: lestash gmail add-query 'list:...'")
 
@@ -507,8 +595,8 @@ class GmailSource(SourcePlugin):
 
         return app
 
-    def sync(self, config: dict) -> Iterator[ItemCreate]:
-        """Threads with mail since the last successful sync (all of it the first time)."""
+    def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:
+        """Threads with mail since each search's last successful read (all, the first time)."""
         settings = load_config()
         if not settings["queries"]:
             logger.warning("No Gmail queries configured; run `lestash gmail add-query`")
@@ -516,7 +604,9 @@ class GmailSource(SourcePlugin):
         gws = find_gws(settings.get("gws_path"))
         if not gws:
             raise GwsError("gws not found; install it or set gws_path in gmail.json")
-        yield from sync_queries(GwsGmail(gws), settings["queries"], since=last_successful_sync())
+        queries = settings["queries"]
+        state, since = current_windows(queries)
+        yield from sync_queries(GwsGmail(gws), queries, since=since, state=state)
 
     def configure(self) -> dict:
         return {}

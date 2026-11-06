@@ -4,6 +4,7 @@ import subprocess
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from lestash.models.sync import SyncCheckpoint
 from lestash_gmail import client as gmail_client
 from lestash_gmail.client import GwsError, GwsGmail, find_gws, load_config, save_config
 from lestash_gmail.source import (
@@ -18,8 +19,13 @@ from lestash_gmail.source import (
 QUERY = "list:uai-list.googlegroups.com"
 
 
+def _items(results) -> list:
+    """The items a sync yields, without its state checkpoint."""
+    return [i for i in results if not isinstance(i, SyncCheckpoint)]
+
+
 def test_thread_becomes_parent_with_reply_children(fake_gws) -> None:
-    items = list(sync_queries(GwsGmail("gws", runner=fake_gws), [QUERY]))
+    items = _items(sync_queries(GwsGmail("gws", runner=fake_gws), [QUERY]))
     by_id = {i.source_id: i for i in items}
 
     parent = by_id["gmail:thread:t1"]
@@ -53,7 +59,7 @@ def test_pages_through_results_and_dedupes_threads(fake_gws) -> None:
 
 def test_sync_reads_since_last_sync_minus_margin(fake_gws) -> None:
     since = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
-    list(sync_queries(GwsGmail("gws", runner=fake_gws), [QUERY], since=since))
+    list(sync_queries(GwsGmail("gws", runner=fake_gws), [QUERY], since={QUERY: since}))
     first = fake_gws.calls[0]
     expected = int((since - timedelta(days=2)).timestamp())
     assert f'"q": "({QUERY}) after:{expected}"' in first[first.index("--params") + 1]
@@ -287,7 +293,7 @@ def test_list_tag_comes_from_the_thread_root() -> None:
 
 
 def test_labels_are_not_stored(fake_gws) -> None:
-    items = list(sync_queries(GwsGmail("gws", runner=fake_gws), [QUERY]))
+    items = _items(sync_queries(GwsGmail("gws", runner=fake_gws), [QUERY]))
     assert all("labels" not in i.metadata for i in items)
 
 
@@ -314,7 +320,7 @@ def test_unreadable_thread_is_skipped_then_sync_fails(fake_gws) -> None:
     with pytest.raises(GwsError, match="1 thread"):
         for item in sync_queries(GwsGmail("gws", runner=flaky), [QUERY]):
             items.append(item)
-    assert [i.source_id for i in items] == ["gmail:thread:t2"]
+    assert [i.source_id for i in _items(items)] == ["gmail:thread:t2"]
 
 
 @pytest.mark.parametrize(
@@ -431,7 +437,7 @@ def test_backfill_records_sync_log(tmp_path, monkeypatch, fake_gws, fail_t1, lim
     assert row[3] and row[4]
     assert (error is None) == (status == "completed") == (row[5] is None)
 
-    # Only a complete backfill moves the window for the next sync
+    # The sync log's window (used until sync state is saved) moves only when complete
     since = gmail_source.last_successful_sync()
     if status == "completed":
         assert since == datetime.fromisoformat(row[3])
@@ -481,10 +487,10 @@ def test_failed_search_is_skipped_then_sync_fails(fake_gws) -> None:
         return fake_gws(cmd, **kwargs)
 
     items = []
-    with pytest.raises(GwsError, match=r"1 search\(es\) failed: list:broken\("):
+    with pytest.raises(GwsError, match=r"1 search\(es\) failed and keep their window: list:"):
         for item in sync_queries(GwsGmail("gws", runner=flaky), [bad, QUERY]):
             items.append(item)
-    assert {i.source_id for i in items} >= {"gmail:thread:t1", "gmail:thread:t2"}
+    assert {i.source_id for i in _items(items)} >= {"gmail:thread:t1", "gmail:thread:t2"}
 
 
 def test_thread_matched_by_two_searches_is_read_once_and_stored_stably(
@@ -525,3 +531,154 @@ def test_a_non_list_search_on_the_same_thread_keeps_off_list_replies() -> None:
     assert len(thread_to_items(thread, [QUERY])) == 1
     items = thread_to_items(thread, [QUERY, "from:x@example.org"])
     assert [i.source_id for i in items] == ["gmail:thread:t9", "gmail:message:b"]
+
+
+def _cli_sync(tmp_path, monkeypatch, queries, runner):
+    """Run `lestash sources sync gmail` through the real CLI loop, on a throwaway DB."""
+    from lestash.cli import sources as sources_cli
+    from lestash.core.config import Config
+    from lestash_gmail import source as gmail_source
+
+    config, get_connection = _sync_log_db(tmp_path)
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: config))
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"gmail": GmailSource()})
+    monkeypatch.setattr(gmail_source, "load_config", lambda: {"queries": queries})
+    monkeypatch.setattr(gmail_source, "find_gws", lambda path: "gws")
+    monkeypatch.setattr(gmail_source, "GwsGmail", lambda path: GwsGmail(path, runner=runner))
+
+    def sync():
+        sources_cli.sync_source(source_name="gmail", all_sources=False)
+
+    return sync, lambda: get_connection(config)
+
+
+def _searches(calls) -> list[str]:
+    import json
+
+    return [json.loads(c[-1])["q"] for c in calls if c[3:5] == ["messages", "list"]]
+
+
+def test_a_failing_search_does_not_freeze_the_healthy_ones(tmp_path, monkeypatch, fake_gws) -> None:
+    import json
+
+    bad = "list:broken("
+    broken_searches: list[str] = []
+
+    def runner(cmd, **kwargs):
+        if "messages" in cmd and "broken" in cmd[-1]:
+            broken_searches.extend(_searches([cmd]))
+            error = {"error": {"code": 400, "message": "Invalid query"}}
+            return subprocess.CompletedProcess(cmd, 1, stdout=json.dumps(error), stderr="")
+        return fake_gws(cmd, **kwargs)
+
+    sync, connect = _cli_sync(tmp_path, monkeypatch, [bad, QUERY], runner)
+    sync()
+    fake_gws.calls.clear()
+    sync()
+
+    # The healthy search moved on from the first sync; the broken one still reads everything
+    healthy = _searches(fake_gws.calls)
+    assert len(healthy) == 2 and all(q.startswith(f"({QUERY}) after:") for q in healthy)
+    assert broken_searches == [bad, bad]
+    with connect() as conn:
+        statuses = [r[0] for r in conn.execute("SELECT status FROM sync_log ORDER BY id")]
+        errors = [r[0] for r in conn.execute("SELECT error_message FROM sync_log")]
+    assert statuses == ["failed", "failed"]  # the failure stays visible
+    assert all(bad in e for e in errors)
+
+
+def test_cli_sync_commits_the_other_items_when_a_thread_is_skipped(
+    tmp_path, monkeypatch, fake_gws
+) -> None:
+    def runner(cmd, **kwargs):
+        if "threads" in cmd and '"id": "t1"' in cmd[-1]:
+            raise subprocess.TimeoutExpired(cmd, 120)
+        return fake_gws(cmd, **kwargs)
+
+    sync, connect = _cli_sync(tmp_path, monkeypatch, [QUERY], runner)
+    sync()
+    with connect() as conn:
+        stored = [r[0] for r in conn.execute("SELECT source_id FROM items")]
+        status, error = conn.execute("SELECT status, error_message FROM sync_log").fetchone()
+        from lestash.core.database import get_checkpoints
+
+        state = get_checkpoints(conn, "gmail")["state"]
+    assert stored == ["gmail:thread:t2"]
+    assert status == "failed" and "1 thread(s) could not be read" in error
+    assert state["retry"] == {"t1": {"queries": [QUERY], "attempts": 1}}
+    assert QUERY in state["windows"]
+
+
+def test_an_unreadable_thread_is_retried_then_given_up(fake_gws) -> None:
+    from lestash_gmail.source import MAX_THREAD_ATTEMPTS, search_windows
+
+    t1_works = False
+
+    def runner(cmd, **kwargs):
+        if "messages" in cmd and "after:" in cmd[-1]:
+            # Later windows match nothing: t1 is read again only from the retry list
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"messages": []}', stderr="")
+        if "threads" in cmd and '"id": "t1"' in cmd[-1] and not t1_works:
+            raise subprocess.TimeoutExpired(cmd, 120)
+        return fake_gws(cmd, **kwargs)
+
+    gmail = GwsGmail("gws", runner=runner)
+
+    def run_with(state):
+        out, error = [], None
+        since = search_windows([QUERY], state, None)
+        try:
+            for x in sync_queries(gmail, [QUERY], since=since, state=state):
+                out.append(x)
+        except GwsError as e:
+            error = str(e)
+        [checkpoint] = [x for x in out if isinstance(x, SyncCheckpoint)]
+        return _items(out), checkpoint.value, error
+
+    _, state, error = run_with(None)
+    assert state["retry"]["t1"]["attempts"] == 1 and "retried next sync" in (error or "")
+
+    # A retry that works stores the thread and clears it
+    t1_works = True
+    items, ok_state, error = run_with(state)
+    assert error is None and ok_state["retry"] == {}
+    assert {i.source_id for i in items} == {"gmail:thread:t1", "gmail:message:m2"}
+
+    # A thread that never works is given up on, once, after MAX_THREAD_ATTEMPTS reads
+    t1_works = False
+    for attempt in range(2, MAX_THREAD_ATTEMPTS):
+        _, state, error = run_with(state)
+        assert state["retry"]["t1"]["attempts"] == attempt
+    _, state, error = run_with(state)
+    assert state["retry"] == {} and "gave up on 1 thread(s)" in (error or "")
+    _, state, error = run_with(state)
+    assert error is None
+
+
+def test_backfill_keeps_the_state_with_limit_and_saves_it_without(
+    tmp_path, monkeypatch, fake_gws
+) -> None:
+    from lestash.core.config import Config
+    from lestash.core.database import get_checkpoints
+    from lestash_gmail import source as gmail_source
+
+    config, get_connection = _sync_log_db(tmp_path)
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: config))
+    gmail = GwsGmail("gws", runner=fake_gws)
+    with get_connection(config) as conn:
+        gmail_source.run_backfill(conn, gmail, [QUERY], limit=1)
+        assert get_checkpoints(conn, "gmail") == {}
+        gmail_source.run_backfill(conn, gmail, [QUERY])
+        assert QUERY in get_checkpoints(conn, "gmail")["state"]["windows"]
+
+
+def test_windows_fall_back_to_the_sync_log_until_state_is_saved() -> None:
+    from lestash_gmail.source import search_windows
+
+    logged = datetime(2026, 10, 1, 8)
+    assert search_windows([QUERY], None, logged) == {QUERY: logged}
+    state = {"windows": {QUERY: "2026-11-01T12:00:00+00:00"}}
+    assert search_windows([QUERY, "new"], state, logged) == {
+        QUERY: datetime(2026, 11, 1, 12, tzinfo=UTC),
+        "new": None,  # a search added later reads everything
+    }
