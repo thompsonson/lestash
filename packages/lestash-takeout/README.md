@@ -20,7 +20,7 @@ Drive is changed.
 ```bash
 lestash takeout list            # zips in Drive and whether they're imported
 lestash sources sync takeout    # import new ones
-lestash takeout forget <id>     # import that zip again next sync
+lestash takeout forget <id>     # import that zip again next sync (resets failures)
 ```
 
 ## What is remembered
@@ -29,7 +29,17 @@ Each zip's outcome is stored in the database (`sync_checkpoints`, source `takeou
 file id) and committed in the same transaction as the zip's items. A sync that is killed part-way
 never marks a zip done without its items; the zip is simply imported again.
 
-- A zip that fails to download or read is logged and retried next sync; the others still import.
+- A zip that can't be read, or that Drive says is gone (404, 403), is recorded as failed, with
+  its attempt count; the others still import, and the sync is logged `failed`
+  (`lestash sources status`). It is retried on the next 3 syncs at most, then left alone:
+  `lestash takeout list` shows the error, and `lestash takeout forget <id>` (or a newer
+  importer version) makes it try again.
+- Any other download error (expired sign-in, network, a Drive outage or rate limit, a full
+  disk) stops the sync at that zip, logged `failed`. Nothing is recorded, so no zip uses up
+  its retries; the next sync tries again.
+- A zip larger than the free space on the download disk (`$TMPDIR`, else `/tmp`), less 512 MB
+  of headroom, is skipped before downloading, without counting an attempt. Smaller zips still
+  import, and the sync is logged `failed` naming it, until there is room.
 - A zip with nothing recognisable (e.g. only photos) is recorded with the importer version and
   retried when the importer learns a new format.
 

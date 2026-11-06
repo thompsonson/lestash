@@ -136,6 +136,7 @@ def _upsert_item(conn, item, parent_id=None):
             is_own_content = excluded.is_own_content,
             metadata = excluded.metadata,
             parent_id = COALESCE(excluded.parent_id, items.parent_id)
+        RETURNING id
         """,
         (
             item.source_type,
@@ -150,14 +151,9 @@ def _upsert_item(conn, item, parent_id=None):
             parent_id or item.parent_id,
         ),
     )
-    # Get the ID (works for both insert and upsert)
-    if cursor.lastrowid:
-        return cursor.lastrowid
-    row = conn.execute(
-        "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
-        (item.source_type, source_id),
-    ).fetchone()
-    return row[0] if row else None
+    # RETURNING gives the row's id on insert and on update. lastrowid doesn't: after
+    # ON CONFLICT DO UPDATE it still holds the previous insert's id.
+    return cursor.fetchone()[0]
 
 
 def _insert_items_with_parents(conn, items):
@@ -271,10 +267,12 @@ def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse
 
 
 @router.post("/api/import/drive", response_model=list[ImportResponse])
-async def import_from_drive(body: DriveImportRequest):
+def import_from_drive(body: DriveImportRequest):
     """Download files from Google Drive and import them.
 
-    Requires Google auth to be configured via 'lestash google auth'.
+    Requires Google auth to be configured via 'lestash google auth'. A plain ``def``, so
+    FastAPI runs it in a worker thread: a multi-GB download and parse must not stall the
+    event loop.
     """
     from lestash.core.google_auth import download_drive_file, extract_drive_file_id
 
@@ -339,7 +337,7 @@ async def import_from_drive(body: DriveImportRequest):
 
 
 @router.post("/api/import/drive/sync", response_model=DriveSyncResponse)
-async def sync_from_drive(body: DriveSyncRequest):
+def sync_from_drive(body: DriveSyncRequest):
     """Import Google Drive files/folders with Docling markdown conversion.
 
     Accepts Drive URLs, Google Docs URLs, folder URLs, or bare file IDs.

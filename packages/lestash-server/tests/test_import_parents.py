@@ -65,3 +65,44 @@ def test_unresolved_parent_marker_is_kept_for_a_later_sync(client, test_config) 
             ).fetchone()[0]
         )
     assert md["_parent_source_id"] == f"liked:{VID}"
+
+
+def _nb(name: str) -> ItemCreate:
+    return ItemCreate(source_type="notebooklm", source_id=f"nb:{name}", content=name)
+
+
+def _note(nb: str, n: int) -> ItemCreate:
+    return ItemCreate(
+        source_type="notebooklm",
+        source_id=f"nb:{nb}/note{n}",
+        content=f"note {n}",
+        metadata={"_parent_source_id": f"nb:{nb}"},
+    )
+
+
+def test_reimport_batch_nests_children_under_their_own_parent(test_config) -> None:
+    """A re-imported parent after a new one in the same batch: its upsert hits ON CONFLICT,
+    where lastrowid still holds the new parent's id."""
+    from lestash_server.routes.imports import _insert_items_with_parents
+
+    with get_connection(test_config) as conn:
+        _insert_items_with_parents(conn, [_nb("A"), _note("A", 1)])
+    with get_connection(test_config) as conn:
+        _insert_items_with_parents(conn, [_nb("B"), _note("B", 1), _nb("A"), _note("A", 2)])
+        ids = dict(conn.execute("SELECT source_id, id FROM items WHERE source_type = 'notebooklm'"))
+        parents = dict(
+            conn.execute("SELECT source_id, parent_id FROM items WHERE source_type = 'notebooklm'")
+        )
+    assert parents["nb:A/note1"] == ids["nb:A"]
+    assert parents["nb:A/note2"] == ids["nb:A"]
+    assert parents["nb:B/note1"] == ids["nb:B"]
+
+
+def test_drive_imports_run_off_the_event_loop() -> None:
+    """They download and parse synchronously (Takeout parts are several GB)."""
+    import inspect
+
+    from lestash_server.routes import imports
+
+    assert not inspect.iscoroutinefunction(imports.import_from_drive)
+    assert not inspect.iscoroutinefunction(imports.sync_from_drive)

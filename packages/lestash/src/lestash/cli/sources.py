@@ -1,6 +1,5 @@
 """Source commands for Le Stash CLI."""
 
-import json
 from datetime import datetime
 from typing import Annotated
 
@@ -9,14 +8,8 @@ from rich.console import Console
 from rich.table import Table
 
 from lestash.core.config import Config
-from lestash.core.database import (
-    get_connection,
-    resolve_parent_id,
-    resolve_parent_source_ids,
-    save_checkpoint,
-)
-from lestash.importers import merge_with_stored
-from lestash.models.sync import SyncCheckpoint
+from lestash.core.database import get_connection
+from lestash.core.sync import SyncStore
 from lestash.plugins.loader import load_plugins
 
 app = typer.Typer(help="Manage content sources.")
@@ -146,87 +139,14 @@ def sync_source(
             sync_id = cursor.lastrowid
             conn.commit()
 
-            items_added = 0
             items_updated = 0
             error_message = None
-            source_types: set[str] = set()
+            store = SyncStore(conn, name)
 
             try:
-                for item in plugin.sync(plugin_config):
-                    if isinstance(item, SyncCheckpoint):
-                        # Commit the plugin's state with the items yielded before it
-                        save_checkpoint(conn, name, item.key, item.value)
-                        conn.commit()
-                        continue
-                    # Link to a parent yielded earlier (metadata._parent_source_id)
-                    resolve_parent_id(conn, item)
-                    merge_with_stored(conn, item)
-                    source_types.add(item.source_type)
-                    # Try to insert, update on conflict
-                    metadata_json = json.dumps(item.metadata) if item.metadata else None
-                    cursor = conn.execute(
-                        """
-                        INSERT INTO items (
-                            source_type, source_id, url, title, content,
-                            author, created_at, is_own_content, metadata, parent_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(source_type, source_id) DO UPDATE SET
-                            url = excluded.url,
-                            title = excluded.title,
-                            content = excluded.content,
-                            author = excluded.author,
-                            is_own_content = excluded.is_own_content,
-                            metadata = excluded.metadata,
-                            -- Keep a parent set earlier (e.g. by a resolver) when the
-                            -- plugin doesn't name one
-                            parent_id = COALESCE(excluded.parent_id, items.parent_id)
-                        """,
-                        (
-                            item.source_type,
-                            item.source_id,
-                            item.url,
-                            item.title,
-                            item.content,
-                            item.author,
-                            item.created_at,
-                            item.is_own_content,
-                            metadata_json,
-                            item.parent_id,
-                        ),
-                    )
-                    if cursor.rowcount > 0:
-                        items_added += 1
-
-                    # Insert media attachments if present
-                    if item.media:
-                        from lestash.core.database import add_item_media
-
-                        row = conn.execute(
-                            "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
-                            (item.source_type, item.source_id),
-                        ).fetchone()
-                        item_id = row[0] if row else None
-                        if item_id:
-                            for media in item.media:
-                                add_item_media(
-                                    conn,
-                                    item_id,
-                                    media_type=media.media_type,
-                                    url=media.url,
-                                    local_path=media.local_path,
-                                    mime_type=media.mime_type,
-                                    alt_text=media.alt_text,
-                                    position=media.position,
-                                    source_origin=media.source_origin,
-                                    _commit=False,
-                                )
-
-                conn.commit()
-
-                # Link children whose parent arrived later in the sync
-                linked = resolve_parent_source_ids(conn, source_types)
-                if linked:
-                    console.print(f"  [dim]Linked {linked} item(s) to their parent[/dim]")
+                store.run(plugin.sync(plugin_config))
+                if store.linked:
+                    console.print(f"  [dim]Linked {store.linked} item(s) to their parent[/dim]")
 
                 # Resolve parent_id for LinkedIn reactions/comments
                 if name == "linkedin":
@@ -305,12 +225,12 @@ def sync_source(
                     error_message = ?
                 WHERE id = ?
                 """,
-                (datetime.now(), status, items_added, items_updated, error_message, sync_id),
+                (datetime.now(), status, store.items, items_updated, error_message, sync_id),
             )
             conn.commit()
 
         if status == "completed":
-            console.print(f"[green]Synced {name}: {items_added} items added[/green]")
+            console.print(f"[green]Synced {name}: {store.items} items added[/green]")
 
 
 @app.command("status")
