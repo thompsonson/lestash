@@ -47,6 +47,14 @@ The URL, username, password and current session token are saved to
 working after a session expires. The alternative, saving only the session token, would mean
 running `auth` again whenever the session lapses (for example after a week with pop-mini off).
 
+Treat `jelu.json` as the account itself, not as an API key:
+
+- The password is the full Jelu account password, in plain text. If that account is a Jelu admin,
+  anyone who reads the file can administer Jelu.
+- The session token has the same power as the password until Jelu drops the session.
+- Neither is scoped or read-only. Unlike a scoped API token, neither can be revoked on its own:
+  to stop a leaked password working, change it in Jelu, then run `auth` again.
+
 If the plugin isn't configured, `lestash sources sync` logs a warning and syncs nothing (like the
 other plugins). Run `lestash sources disable jelu` to silence it. A saved login that Jelu rejects
 fails the sync.
