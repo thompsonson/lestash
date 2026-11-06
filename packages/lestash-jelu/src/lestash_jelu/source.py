@@ -5,6 +5,7 @@ Each book becomes a parent item; reviews, personal notes and quotes are its chil
 ISBN and Amazon/ASIN ids are kept in metadata so books can be matched across sources.
 """
 
+import html
 import re
 from collections.abc import Iterator
 from datetime import datetime
@@ -17,7 +18,12 @@ from lestash.models.item import ItemCreate
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 
-from lestash_jelu.client import JeluClient, load_credentials, save_credentials
+from lestash_jelu.client import (
+    JeluAuthError,
+    JeluClient,
+    load_credentials,
+    save_credentials,
+)
 
 console = Console()
 logger = get_plugin_logger("jelu")
@@ -39,7 +45,7 @@ def _parse_date(value: str | None) -> datetime | None:
 
 
 def _strip_html(text: str | None) -> str:
-    return re.sub(r"<[^>]+>", "", text or "").strip()
+    return html.unescape(re.sub(r"<[^>]+>", "", text or "")).strip()
 
 
 def _names(entries: list[dict[str, Any]] | None) -> list[str]:
@@ -144,8 +150,11 @@ def review_to_item(
         "rating": rating,
         "visibility": review.get("visibility"),
     }
-    if review.get("book"):
+    if userbook:
         metadata["_parent_source_id"] = book_source_id(review["book"])
+    elif review.get("book"):
+        # The book isn't in your Jelu library, so no parent item will exist for it
+        metadata["jelu_book_id"] = review["book"]
     return ItemCreate(
         source_type="jelu",
         source_id=f"jelu:review:{review['id']}",
@@ -165,8 +174,11 @@ def quote_to_item(
     userbook = books.get(quote.get("book") or "")
     book_title = userbook["book"].get("title") if userbook else None
     metadata: dict[str, Any] = {"type": "quote", "position": quote.get("position")}
-    if quote.get("book"):
+    if userbook:
         metadata["_parent_source_id"] = book_source_id(quote["book"])
+    elif quote.get("book"):
+        # The book isn't in your Jelu library, so no parent item will exist for it
+        metadata["jelu_book_id"] = quote["book"]
     return ItemCreate(
         source_type="jelu",
         source_id=f"jelu:quote:{quote['id']}",
@@ -182,6 +194,8 @@ def quote_to_item(
 
 def sync_items(client: JeluClient) -> Iterator[ItemCreate]:
     """Books first (so children can link to them), then notes, reviews and quotes."""
+    # Also proves the session is live: /reviews quietly answers anonymous callers with
+    # public reviews only, so an expired session must fail here instead.
     user_id = client.me()["id"]
     userbooks = list(client.userbooks())
     books = {ub["book"]["id"]: ub for ub in userbooks if ub.get("book", {}).get("id")}
@@ -193,11 +207,21 @@ def sync_items(client: JeluClient) -> Iterator[ItemCreate]:
         if notes:
             yield notes
     for review in client.reviews(user_id):
-        if review.get("text"):
+        if review.get("text") and review.get("user", user_id) == user_id:
             yield review_to_item(review, books, client.url)
     for quote in client.quotes(user_id):
-        if quote.get("text"):
+        if quote.get("text") and quote.get("user", user_id) == user_id:
             yield quote_to_item(quote, books, client.url)
+
+
+def _client(creds: dict[str, str]) -> JeluClient:
+    return JeluClient(creds["url"], creds["username"], creds["password"], creds.get("token"))
+
+
+def _remember_token(creds: dict[str, str], client: JeluClient) -> None:
+    """Keep the session for next time, so each sync doesn't open a new Jelu session."""
+    if client.token and client.token != creds.get("token"):
+        save_credentials(creds["url"], creds["username"], creds["password"], client.token)
 
 
 class JeluSource(SourcePlugin):
@@ -214,45 +238,44 @@ class JeluSource(SourcePlugin):
             url: Annotated[
                 str, typer.Option("--url", help="Jelu address, e.g. https://jelu.example:8443")
             ],
-            token: Annotated[
+            username: Annotated[str, typer.Option("--username", "-u", help="Jelu login")],
+            password: Annotated[
                 str | None,
-                typer.Option("--token", "-t", help="Jelu API token (prompted if omitted)"),
+                typer.Option("--password", help="Jelu password (prompted if omitted)"),
             ] = None,
         ) -> None:
-            """Save and check a Jelu API token.
-
-            In Jelu, create an API token with the books:read, reading:read, reviews:read
-            and lists:read scopes.
-            """
-            if not token:
-                token = typer.prompt("Jelu API token", hide_input=True)
+            """Sign in to Jelu and save the login to ~/.config/lestash/jelu.json (mode 600)."""
+            if not password:
+                password = typer.prompt("Jelu password", hide_input=True)
             try:
-                with JeluClient(url, token) as client:
-                    me = client.me()
-            except httpx.HTTPError as e:
-                console.print(f"[red]Could not use that token: {e}[/red]")
+                with JeluClient(url, username, password) as client:
+                    me = client.login()
+                    token = client.token
+            except (JeluAuthError, httpx.HTTPError) as e:
+                console.print(f"[red]Could not sign in to Jelu: {e}[/red]")
                 raise typer.Exit(1) from e
-            save_credentials(url, token)
-            console.print(f"[green]Saved. Connected to Jelu as {me.get('login', '?')}.[/green]")
+            save_credentials(url, username, password, token)
+            console.print(f"[green]Saved. Signed in to Jelu as {me.get('login', '?')}.[/green]")
 
         @app.command("doctor")
         def doctor_cmd() -> None:
-            """Check the saved token and count what would be synced."""
+            """Check the saved login and count what would be synced."""
             creds = load_credentials()
             if not creds:
-                console.print("[red]Not configured. Run: lestash jelu auth --url ...[/red]")
+                console.print("[red]Not configured. Run: lestash jelu auth --url ... -u ...[/red]")
                 raise typer.Exit(1)
             try:
-                with JeluClient(*creds) as client:
+                with _client(creds) as client:
                     me = client.me()
                     userbooks = list(client.userbooks())
                     reviews = list(client.reviews(me["id"]))
                     quotes = list(client.quotes(me["id"]))
-            except httpx.HTTPError as e:
+                    _remember_token(creds, client)
+            except (JeluAuthError, httpx.HTTPError) as e:
                 console.print(f"[red]Jelu request failed: {e}[/red]")
                 raise typer.Exit(1) from e
             notes = sum(1 for ub in userbooks if (ub.get("personalNotes") or "").strip())
-            console.print(f"Connected to {creds[0]} as {me.get('login', '?')}")
+            console.print(f"Connected to {creds['url']} as {me.get('login', '?')}")
             console.print(
                 f"{len(userbooks)} books, {len(reviews)} reviews, "
                 f"{notes} notes, {len(quotes)} quotes"
@@ -263,10 +286,17 @@ class JeluSource(SourcePlugin):
     def sync(self, config: dict) -> Iterator[ItemCreate]:
         creds = load_credentials()
         if not creds:
-            logger.warning("Jelu not configured; run `lestash jelu auth`")
+            # Same as the other plugins: an unused plugin shouldn't fail every timer run.
+            # A saved login that Jelu rejects does fail the sync (JeluAuthError).
+            logger.warning(
+                "Jelu is not configured, so nothing was synced. Run "
+                "`lestash jelu auth --url <address> -u <login>`, "
+                "or `lestash sources disable jelu` to stop this warning."
+            )
             return
-        with JeluClient(*creds) as client:
+        with _client(creds) as client:
             yield from sync_items(client)
+            _remember_token(creds, client)
 
     def configure(self) -> dict:
         return {}

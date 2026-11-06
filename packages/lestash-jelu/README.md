@@ -14,17 +14,35 @@ source of truth for what you've read.
 | A saved quote | `jelu:quote:{quoteId}` | the book |
 
 Book metadata keeps `isbn13`, `isbn10` and `asin` (Jelu's Amazon id) for matching books across
-sources (for example Audible).
+sources. Audible audiobooks usually have their own ASIN and ISBN, so matching them to Jelu books
+will mostly need title and author.
+
+Reviews or quotes for a book that isn't in your library get no parent; the Jelu book id is kept
+in `metadata.jelu_book_id`.
 
 ## Setup
 
-In Jelu, create an API token with the `books:read`, `reading:read`, `reviews:read` and
-`lists:read` scopes, then:
-
 ```bash
-lestash jelu auth --url https://your-jelu-host:8443   # prompts for the token
-lestash jelu doctor                                   # counts books, reviews, notes, quotes
+lestash jelu auth --url https://your-jelu-host:8443 -u <login>   # prompts for the password
+lestash jelu doctor                                               # counts books, reviews, notes, quotes
 lestash sources sync jelu
 ```
 
-The URL and token are saved to `~/.config/lestash/jelu.json` (mode 600).
+## How it signs in
+
+The plugin signs in the way Jelu's web UI does: `GET /api/v1/users/me` with your username and
+password (HTTP Basic) returns a session token, and every later request sends it as
+`X-Auth-Token`. The token is reused across syncs; if Jelu has dropped the session (after a week
+without use, by default), the plugin signs in again.
+
+Jelu's scoped API tokens are not used. Jelu only lets them reach the paths in its scope map, and
+`/users/me` and `/book-quotes` are not in it, so a token can't read your user id or your quotes.
+
+The URL, username, password and current session token are saved to
+`~/.config/lestash/jelu.json` with mode 600. Storing the password is what lets the timer sync keep
+working after a session expires. The alternative, saving only the session token, would mean
+running `auth` again whenever the session lapses (for example after a week with pop-mini off).
+
+If the plugin isn't configured, `lestash sources sync` logs a warning and syncs nothing (like the
+other plugins). Run `lestash sources disable jelu` to silence it. A saved login that Jelu rejects
+fails the sync.
