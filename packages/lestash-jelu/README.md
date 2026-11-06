@@ -38,6 +38,10 @@ without use, by default), the plugin signs in again.
 Jelu's scoped API tokens are not used. Jelu only lets them reach the paths in its scope map, and
 `/users/me` and `/book-quotes` are not in it, so a token can't read your user id or your quotes.
 
+This needs an account that signs in with a password: a local Jelu account, or an LDAP one
+(Jelu checks Basic auth against LDAP when LDAP is enabled). Accounts that sign in only through
+OAuth/OIDC or a reverse-proxy header have no password Jelu accepts, so they can't use this plugin.
+
 The URL, username, password and current session token are saved to
 `~/.config/lestash/jelu.json` with mode 600. Storing the password is what lets the timer sync keep
 working after a session expires. The alternative, saving only the session token, would mean
