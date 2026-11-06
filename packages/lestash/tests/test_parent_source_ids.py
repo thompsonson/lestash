@@ -216,3 +216,36 @@ def test_an_item_naming_itself_is_not_its_own_parent(test_db) -> None:
         again = selfish.model_copy(deep=True)
         resolve_parent_id(conn, again)  # a re-sync finds the item itself
         assert again.parent_id is None
+
+
+def test_sweep_skips_a_row_with_malformed_metadata(test_db) -> None:
+    with get_connection(test_db) as conn:
+        upsert_item(conn, _note(1))
+        upsert_item(conn, ItemCreate(source_type="audible", source_id="broken", content="x"))
+        conn.execute("UPDATE items SET metadata = '{not json' WHERE source_id = 'broken'")
+        book_id = upsert_item(conn, _book())
+
+        assert resolve_parent_source_ids(conn, "audible") == 1
+        assert _parent_of(conn, "audible:annotation:B1:1") == book_id
+        assert _parent_of(conn, "broken") is None
+
+
+def test_upsert_item_keeps_a_parent_when_none_is_given(test_db) -> None:
+    """Core upsert_item callers (audible books, voice, YouTube routes) pass no parent."""
+    with get_connection(test_db) as conn:
+        book_id = upsert_item(conn, _book())
+        child_id = upsert_item(conn, ItemCreate(source_type="audible", source_id="c", content="c"))
+        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (book_id, child_id))
+        conn.commit()
+        history_before = conn.execute("SELECT COUNT(*) FROM item_history").fetchone()[0]
+
+        upsert_item(conn, ItemCreate(source_type="audible", source_id="c", content="c"))
+        assert _parent_of(conn, "c") == book_id
+        # Nothing changed, so nothing is written to the audit trail
+        assert conn.execute("SELECT COUNT(*) FROM item_history").fetchone()[0] == history_before
+
+        # An explicit parent still replaces it
+        other_id = upsert_item(conn, ItemCreate(source_type="audible", source_id="o", content="o"))
+        moved = ItemCreate(source_type="audible", source_id="c", content="c", parent_id=other_id)
+        upsert_item(conn, moved)
+        assert _parent_of(conn, "c") == other_id

@@ -643,12 +643,14 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
             content = excluded.content,
             author = excluded.author,
             metadata = excluded.metadata,
-            parent_id = excluded.parent_id
+            -- Keep a parent set earlier (by a resolver, the sweep or by hand) when the
+            -- caller doesn't name one
+            parent_id = COALESCE(excluded.parent_id, items.parent_id)
         WHERE excluded.title IS NOT items.title
            OR excluded.content IS NOT items.content
            OR excluded.author IS NOT items.author
            OR excluded.metadata IS NOT items.metadata
-           OR excluded.parent_id IS NOT items.parent_id
+           OR COALESCE(excluded.parent_id, items.parent_id) IS NOT items.parent_id
         """,
         (
             item.source_type,
@@ -732,10 +734,15 @@ def resolve_parent_source_ids(
     if types == []:
         return 0
 
-    parent_lookup = """
+    # json_extract raises on malformed JSON, which would fail the whole sweep: skip such rows
+    marker = (
+        "CASE WHEN json_valid(items.metadata)"
+        " THEN json_extract(items.metadata, '$._parent_source_id') END"
+    )
+    parent_lookup = f"""
         SELECT p.id FROM items p
         WHERE p.source_type = items.source_type
-          AND p.source_id = json_extract(items.metadata, '$._parent_source_id')
+          AND p.source_id = {marker}
           AND p.id != items.id
     """
     where_source = ""
@@ -751,7 +758,7 @@ def resolve_parent_source_ids(
             f"""
             UPDATE items SET parent_id = ({parent_lookup})
             WHERE parent_id IS NULL
-              AND json_extract(metadata, '$._parent_source_id') IS NOT NULL
+              AND {marker} IS NOT NULL
               AND EXISTS ({parent_lookup})
               {where_source}
             RETURNING id
