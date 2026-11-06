@@ -720,8 +720,7 @@ class YouTubeSource(SourcePlugin):
                     console.print(
                         "  3. Click 'Multiple formats' and set History to [bold]JSON[/bold]"
                     )
-                    console.print("  4. Export and download")
-                    console.print("\n[dim]Takeout import coming in future update.[/dim]")
+                    console.print("  4. Deliver it to Drive, then: lestash sources sync takeout")
                     return
 
                 table = Table(title=f"Watch History ({len(videos)} items)")

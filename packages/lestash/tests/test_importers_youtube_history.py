@@ -1,6 +1,6 @@
 """Tests for YouTube Takeout watch/search history parsing."""
 
-from lestash_youtube.takeout import parse_search_history, parse_watch_history
+from lestash.importers.youtube_history import parse_search_history, parse_watch_history
 
 
 def watch(video_id: str, when: str, title: str = "A talk", channel: str | None = "Chan", **extra):

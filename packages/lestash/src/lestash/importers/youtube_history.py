@@ -48,6 +48,27 @@ def _channel(entry: dict[str, Any]) -> tuple[str | None, str | None]:
     return subs[0].get("name"), subs[0].get("url")
 
 
+def video_content(
+    title: str, channel: str | None, times: list[datetime], description: str | None = None
+) -> str:
+    """Content of a watched-video item; also rebuilt when a re-import merges watch times."""
+    lines = [title]
+    if channel:
+        lines.append(f"Channel: {channel}")
+    if times:
+        lines.append(f"Watched {_times_summary(times)}")
+    if description:
+        lines += ["", description]
+    return "\n".join(lines)
+
+
+def search_content(query: str, times: list[datetime]) -> str:
+    """Content of a search item; also rebuilt when a re-import merges search times."""
+    if not times:
+        return f"Searched YouTube for “{query}”"
+    return f"Searched YouTube for “{query}” {_times_summary(times)}"
+
+
 def _times_summary(times: list[datetime]) -> str:
     days = sorted({t.date().isoformat() for t in times}, reverse=True)
     shown = ", ".join(days[:10]) + (f" and {len(days) - 10} more days" if len(days) > 10 else "")
@@ -103,11 +124,6 @@ def parse_watch_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
             title = "(video no longer available)"
         channel, channel_url = _channel(latest)
         product = latest.get("header") or "YouTube"
-        lines = [title]
-        if channel:
-            lines.append(f"Channel: {channel}")
-        if group.times:
-            lines.append(f"Watched {_times_summary(group.times)}")
         metadata = {
             "video_id": video_id,
             "channel_title": channel,
@@ -126,7 +142,7 @@ def parse_watch_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
                 source_id=f"history:{video_id}",
                 url=f"https://www.youtube.com/watch?v={video_id}",
                 title=title,
-                content="\n".join(lines),
+                content=video_content(title, channel, group.times),
                 author=channel,
                 created_at=min(group.times) if group.times else None,
                 is_own_content=False,
@@ -194,9 +210,7 @@ def parse_search_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
                 source_id=f"search:{key}",
                 url=group.latest.get("titleUrl"),
                 title=f"Searched YouTube: {query}",
-                content=f"Searched YouTube for “{query}” {_times_summary(group.times)}"
-                if group.times
-                else f"Searched YouTube for “{query}”",
+                content=search_content(query, group.times),
                 created_at=min(group.times) if group.times else None,
                 is_own_content=True,
                 metadata={
