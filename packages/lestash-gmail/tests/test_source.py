@@ -2,8 +2,10 @@
 
 import subprocess
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
+from lestash.models.sync import SyncCheckpoint
 from lestash_gmail import client as gmail_client
 from lestash_gmail.client import GwsError, GwsGmail, find_gws, load_config, save_config
 from lestash_gmail.source import (
@@ -18,8 +20,13 @@ from lestash_gmail.source import (
 QUERY = "list:uai-list.googlegroups.com"
 
 
+def _items(results) -> list:
+    """The items a sync yields, without its state checkpoint."""
+    return [i for i in results if not isinstance(i, SyncCheckpoint)]
+
+
 def test_thread_becomes_parent_with_reply_children(fake_gws) -> None:
-    items = list(sync_queries(GwsGmail("gws", runner=fake_gws), [QUERY]))
+    items = _items(sync_queries(GwsGmail("gws", runner=fake_gws), [QUERY]))
     by_id = {i.source_id: i for i in items}
 
     parent = by_id["gmail:thread:t1"]
@@ -29,7 +36,7 @@ def test_thread_becomes_parent_with_reply_children(fake_gws) -> None:
     assert parent.url == "https://groups.google.com/d/msgid/uai-list/abc%40googlegroups.com."
     assert parent.metadata["from_email"] == "alice@example.org"
     assert parent.metadata["list_id"] == "<uai-list.googlegroups.com>"
-    assert parent.metadata["query"] == QUERY
+    assert parent.metadata["queries"] == [QUERY]
     assert parent.created_at is not None and parent.created_at.year == 2023
     assert "_parent_source_id" not in parent.metadata
 
@@ -53,7 +60,7 @@ def test_pages_through_results_and_dedupes_threads(fake_gws) -> None:
 
 def test_sync_reads_since_last_sync_minus_margin(fake_gws) -> None:
     since = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
-    list(sync_queries(GwsGmail("gws", runner=fake_gws), [QUERY], since=since))
+    list(sync_queries(GwsGmail("gws", runner=fake_gws), [QUERY], since={QUERY: since}))
     first = fake_gws.calls[0]
     expected = int((since - timedelta(days=2)).timestamp())
     assert f'"q": "({QUERY}) after:{expected}"' in first[first.index("--params") + 1]
@@ -287,7 +294,7 @@ def test_list_tag_comes_from_the_thread_root() -> None:
 
 
 def test_labels_are_not_stored(fake_gws) -> None:
-    items = list(sync_queries(GwsGmail("gws", runner=fake_gws), [QUERY]))
+    items = _items(sync_queries(GwsGmail("gws", runner=fake_gws), [QUERY]))
     assert all("labels" not in i.metadata for i in items)
 
 
@@ -314,7 +321,7 @@ def test_unreadable_thread_is_skipped_then_sync_fails(fake_gws) -> None:
     with pytest.raises(GwsError, match="1 thread"):
         for item in sync_queries(GwsGmail("gws", runner=flaky), [QUERY]):
             items.append(item)
-    assert [i.source_id for i in items] == ["gmail:thread:t2"]
+    assert [i.source_id for i in _items(items)] == ["gmail:thread:t2"]
 
 
 @pytest.mark.parametrize(
@@ -431,7 +438,7 @@ def test_backfill_records_sync_log(tmp_path, monkeypatch, fake_gws, fail_t1, lim
     assert row[3] and row[4]
     assert (error is None) == (status == "completed") == (row[5] is None)
 
-    # Only a complete backfill moves the window for the next sync
+    # The sync log's window (used until sync state is saved) moves only when complete
     since = gmail_source.last_successful_sync()
     if status == "completed":
         assert since == datetime.fromisoformat(row[3])
@@ -481,7 +488,367 @@ def test_failed_search_is_skipped_then_sync_fails(fake_gws) -> None:
         return fake_gws(cmd, **kwargs)
 
     items = []
-    with pytest.raises(GwsError, match=r"1 search\(es\) failed: list:broken\("):
+    with pytest.raises(GwsError, match=r"1 search\(es\) failed and keep their window: list:"):
         for item in sync_queries(GwsGmail("gws", runner=flaky), [bad, QUERY]):
             items.append(item)
-    assert {i.source_id for i in items} >= {"gmail:thread:t1", "gmail:thread:t2"}
+    assert {i.source_id for i in _items(items)} >= {"gmail:thread:t1", "gmail:thread:t2"}
+
+
+def test_thread_matched_by_two_searches_is_read_once_and_stored_stably(
+    tmp_path, monkeypatch, fake_gws
+) -> None:
+    from lestash.core.config import Config
+    from lestash_gmail import source as gmail_source
+
+    config, get_connection = _sync_log_db(tmp_path)
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: config))
+    other = "from:alice@example.org"
+    gmail = GwsGmail("gws", runner=fake_gws)
+    history = []
+    with get_connection(config) as conn:
+        for _ in range(3):
+            fake_gws.calls.clear()
+            gmail_source.run_backfill(conn, gmail, [QUERY, other])
+            history.append(conn.execute("SELECT COUNT(*) FROM item_history").fetchone()[0])
+            reads = [c for c in fake_gws.calls if c[3:5] == ["threads", "get"]]
+            assert len(reads) == 2  # t1 and t2, once each
+        row = conn.execute(
+            "SELECT metadata FROM items WHERE source_id = 'gmail:thread:t1'"
+        ).fetchone()
+    assert history == [0, 0, 0]  # unchanged threads leave no history
+    import json
+
+    assert json.loads(row[0])["queries"] == sorted([QUERY, other])
+
+
+def test_a_non_list_search_on_the_same_thread_keeps_off_list_replies() -> None:
+    thread = {
+        "id": "t9",
+        "messages": [
+            _msg("a", 1, "[UAI] Talk"),
+            _msg("b", 2, "Re: [UAI] Talk", list_id=False, to="Alice <alice@example.org>"),
+        ],
+    }
+    assert len(thread_to_items(thread, [QUERY])) == 1
+    items = thread_to_items(thread, [QUERY, "from:x@example.org"])
+    assert [i.source_id for i in items] == ["gmail:thread:t9", "gmail:message:b"]
+
+
+def _cli_sync(tmp_path, monkeypatch, queries, runner):
+    """Run `lestash sources sync gmail` through the real CLI loop, on a throwaway DB."""
+    from lestash.cli import sources as sources_cli
+    from lestash.core.config import Config
+    from lestash_gmail import source as gmail_source
+
+    config, get_connection = _sync_log_db(tmp_path)
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: config))
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"gmail": GmailSource()})
+    monkeypatch.setattr(gmail_source, "load_config", lambda: {"queries": queries})
+    monkeypatch.setattr(gmail_source, "find_gws", lambda path: "gws")
+    monkeypatch.setattr(gmail_source, "GwsGmail", lambda path: GwsGmail(path, runner=runner))
+
+    def sync():
+        sources_cli.sync_source(source_name="gmail", all_sources=False)
+
+    return sync, lambda: get_connection(config)
+
+
+def _searches(calls) -> list[str]:
+    import json
+
+    return [json.loads(c[-1])["q"] for c in calls if c[3:5] == ["messages", "list"]]
+
+
+def test_a_failing_search_does_not_freeze_the_healthy_ones(tmp_path, monkeypatch, fake_gws) -> None:
+    import json
+
+    bad = "list:broken("
+    broken_searches: list[str] = []
+
+    def runner(cmd, **kwargs):
+        if "messages" in cmd and "broken" in cmd[-1]:
+            broken_searches.extend(_searches([cmd]))
+            error = {"error": {"code": 400, "message": "Invalid query"}}
+            return subprocess.CompletedProcess(cmd, 1, stdout=json.dumps(error), stderr="")
+        return fake_gws(cmd, **kwargs)
+
+    sync, connect = _cli_sync(tmp_path, monkeypatch, [bad, QUERY], runner)
+    sync()
+    fake_gws.calls.clear()
+    sync()
+
+    # The healthy search moved on from the first sync; the broken one still reads everything
+    healthy = _searches(fake_gws.calls)
+    assert len(healthy) == 2 and all(q.startswith(f"({QUERY}) after:") for q in healthy)
+    assert broken_searches == [bad, bad]
+    with connect() as conn:
+        statuses = [r[0] for r in conn.execute("SELECT status FROM sync_log ORDER BY id")]
+        errors = [r[0] for r in conn.execute("SELECT error_message FROM sync_log")]
+    assert statuses == ["failed", "failed"]  # the failure stays visible
+    assert all(bad in e for e in errors)
+
+
+def test_cli_sync_commits_the_other_items_when_a_thread_is_skipped(
+    tmp_path, monkeypatch, fake_gws
+) -> None:
+    def runner(cmd, **kwargs):
+        if "threads" in cmd and '"id": "t1"' in cmd[-1]:
+            raise subprocess.TimeoutExpired(cmd, 120)
+        return fake_gws(cmd, **kwargs)
+
+    sync, connect = _cli_sync(tmp_path, monkeypatch, [QUERY], runner)
+    sync()
+    with connect() as conn:
+        stored = [r[0] for r in conn.execute("SELECT source_id FROM items")]
+        status, error = conn.execute("SELECT status, error_message FROM sync_log").fetchone()
+        from lestash.core.database import get_checkpoints
+
+        state = get_checkpoints(conn, "gmail")["state"]
+    assert stored == ["gmail:thread:t2"]
+    assert status == "failed" and "1 thread(s) could not be read" in error
+    assert state["retry"] == {"t1": {"queries": [QUERY], "attempts": 1}}
+    assert QUERY in state["windows"]
+
+
+def test_an_unreadable_thread_is_retried_then_given_up(fake_gws) -> None:
+    from lestash_gmail.source import MAX_THREAD_ATTEMPTS, search_windows
+
+    t1_works = False
+
+    def runner(cmd, **kwargs):
+        if "messages" in cmd and "after:" in cmd[-1]:
+            # Later windows match nothing: t1 is read again only from the retry list
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"messages": []}', stderr="")
+        if "threads" in cmd and '"id": "t1"' in cmd[-1] and not t1_works:
+            raise subprocess.TimeoutExpired(cmd, 120)
+        return fake_gws(cmd, **kwargs)
+
+    gmail = GwsGmail("gws", runner=runner)
+
+    def run_with(state):
+        out, error = [], None
+        since = search_windows([QUERY], state, None)
+        try:
+            for x in sync_queries(gmail, [QUERY], since=since, state=state):
+                out.append(x)
+        except GwsError as e:
+            error = str(e)
+        [checkpoint] = [x for x in out if isinstance(x, SyncCheckpoint)]
+        return _items(out), checkpoint.value, error
+
+    _, state, error = run_with(None)
+    assert state["retry"]["t1"]["attempts"] == 1 and "retried next sync" in (error or "")
+
+    # A retry that works stores the thread and clears it
+    t1_works = True
+    items, ok_state, error = run_with(state)
+    assert error is None and ok_state["retry"] == {}
+    assert {i.source_id for i in items} == {"gmail:thread:t1", "gmail:message:m2"}
+
+    # A thread that never works is given up on, once, after MAX_THREAD_ATTEMPTS reads
+    t1_works = False
+    for attempt in range(2, MAX_THREAD_ATTEMPTS):
+        _, state, error = run_with(state)
+        assert state["retry"]["t1"]["attempts"] == attempt
+    _, state, error = run_with(state)
+    assert state["retry"] == {} and "gave up on 1 thread(s)" in (error or "")
+    _, state, error = run_with(state)
+    assert error is None
+    assert state["given_up"] == ["t1"]  # listed by `gmail doctor`
+
+    # Read again (new mail brings it back), it is no longer listed
+    t1_works = True
+    _, state, error = run_with({**state, "retry": {"t1": {"queries": [QUERY], "attempts": 1}}})
+    assert error is None and state["given_up"] == []
+
+
+def test_backfill_keeps_the_state_with_limit_and_saves_it_without(
+    tmp_path, monkeypatch, fake_gws
+) -> None:
+    from lestash.core.config import Config
+    from lestash.core.database import get_checkpoints
+    from lestash_gmail import source as gmail_source
+
+    config, get_connection = _sync_log_db(tmp_path)
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: config))
+    gmail = GwsGmail("gws", runner=fake_gws)
+    with get_connection(config) as conn:
+        gmail_source.run_backfill(conn, gmail, [QUERY], limit=1)
+        assert get_checkpoints(conn, "gmail") == {}
+        gmail_source.run_backfill(conn, gmail, [QUERY])
+        assert QUERY in get_checkpoints(conn, "gmail")["state"]["windows"]
+
+
+def test_windows_fall_back_to_the_sync_log_until_state_is_saved() -> None:
+    from lestash_gmail.source import search_windows
+
+    logged = datetime(2026, 10, 1, 8)
+    assert search_windows([QUERY], None, logged) == {QUERY: logged}
+    state = {"windows": {QUERY: "2026-11-01T12:00:00+00:00"}}
+    assert search_windows([QUERY, "new"], state, logged) == {
+        QUERY: datetime(2026, 11, 1, 12, tzinfo=UTC),
+        "new": None,  # a search added later reads everything
+    }
+
+
+@pytest.mark.parametrize(
+    ("subject", "title"),
+    [
+        # Short tags that are only substrings of "uai-list" are real tags
+        ("[AI] Safety workshop", "[AI] Safety workshop"),
+        ("[List] admin note", "[List] admin note"),
+        ("[UAI] Talk", "Talk"),
+        ("[UAI-List] Talk", "Talk"),
+    ],
+)
+def test_list_tag_must_be_the_whole_list_name(subject, title) -> None:
+    [item] = thread_to_items({"id": "t9", "messages": [_msg("a", 1, subject)]}, QUERY)
+    assert item.title == title
+
+
+def test_sent_copy_root_drops_the_list_tag_from_replies_too() -> None:
+    # Your own Sent copy has no tag and no List-Id; the list adds "[UAI]" on delivery
+    thread = {
+        "id": "t9",
+        "messages": [
+            _msg("a", 1, "[CFP] My workshop", list_id=False),
+            _msg("b", 2, "Re: [UAI] [CFP] My workshop"),
+        ],
+    }
+    items = thread_to_items(thread, QUERY)
+    assert [i.title for i in items] == ["[CFP] My workshop", "Re: [CFP] My workshop"]
+
+
+OUTLOOK_QUOTE = "_" * 32 + "\nFrom: Bob\nSent: Monday\nTo: UAI\nSubject: Slides\n\n"
+
+
+def test_footer_in_an_outlook_quote_is_removed_and_the_quote_kept() -> None:
+    body = (
+        "My reply.\n\n"
+        + OUTLOOK_QUOTE
+        + "Original text.\n"
+        + GROUPS_FOOTER
+        + "\nTo view this discussion visit https://groups.google.com/d/msgid/uai-list/x."
+        + "\n\nText after the quoted footer.\n\n"
+        + GROUPS_FOOTER
+    )
+    text = _text(body)
+    assert "You received this message" not in text and "unsubscribe" not in text
+    assert "Original text." in text and "From: Bob" in text
+    assert text.endswith("Text after the quoted footer.")
+
+
+def test_nested_quoted_footer_keeps_the_outer_quote() -> None:
+    nested = "> > " + GROUPS_FOOTER.replace("\n", "\n> > ")
+    body = "Reply.\n\n> Outer said\n> > Inner said\n" + nested + "\n> Outer continues\n> More"
+    assert _text(body) == "Reply.\n\n> Outer said\n> > Inner said\n> Outer continues\n> More"
+
+
+def test_short_outlook_quote_mentioning_the_mailing_list_is_kept() -> None:
+    body = "Thanks!\n\n" + OUTLOOK_QUOTE + "Please share this on the mailing list."
+    assert _text(body).endswith("Please share this on the mailing list.")
+
+
+@pytest.mark.parametrize(
+    ("query", "lists"),
+    [
+        (QUERY, {"uai-list.googlegroups.com"}),
+        ('list:"uai-list@googlegroups.com"', {"uai-list.googlegroups.com"}),
+        ("list:(a.example.org OR b.example.org)", {"a.example.org", "b.example.org"}),
+        ("list:{a.example.org b.example.org}", {"a.example.org", "b.example.org"}),
+        # A negation excludes a list; it isn't the list to keep
+        ("from:x@example.org -list:b.example.org", set()),
+        ("list:a.example.org -list:b.example.org", {"a.example.org"}),
+        ("list:(a.example.org -b.example.org)", {"a.example.org"}),
+        ("NOT list:a.example.org", set()),
+        ("-{list:a.example.org list:b.example.org}", set()),
+        ("-(list:a.example.org) list:b.example.org", {"b.example.org"}),
+    ],
+)
+def test_list_terms(query, lists) -> None:
+    from lestash_gmail.source import list_terms
+
+    assert list_terms(query) == lists
+
+
+def test_negated_list_search_keeps_the_thread() -> None:
+    thread = {"id": "t9", "messages": [_msg("a", 1, "Hi", list_id=False, to="me@example.org")]}
+    assert len(thread_to_items(thread, "from:x@example.org -list:b.example.org")) == 1
+
+
+def test_own_post_with_the_list_in_bcc_is_kept() -> None:
+    sent = _msg("a", 1, "[UAI] Talk", list_id=False, to="bob@example.org")
+    sent["payload"]["headers"].append({"name": "Bcc", "value": "uai-list@googlegroups.com"})
+    assert len(thread_to_items({"id": "t9", "messages": [sent]}, QUERY)) == 1
+
+
+def test_a_failed_search_keeps_its_sync_log_window_when_state_is_first_saved(fake_gws) -> None:
+    bad = "list:broken("
+
+    def runner(cmd, **kwargs):
+        if "messages" in cmd and "broken" in cmd[-1]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="bad query")
+        return fake_gws(cmd, **kwargs)
+
+    logged = datetime(2026, 10, 1, 8)
+    out = []
+    with pytest.raises(GwsError):
+        for x in sync_queries(GwsGmail("gws", runner=runner), [bad, QUERY], since={bad: logged}):
+            out.append(x)
+    [checkpoint] = [x for x in out if isinstance(x, SyncCheckpoint)]
+    assert checkpoint.value is not None
+    assert checkpoint.value["windows"][bad] == logged.isoformat()
+
+
+def _mixed_thread():
+    """An off-list message to you first, then the list post and a list reply."""
+    return {
+        "id": "t9",
+        "messages": [
+            _msg("m0", 1, "Talk", list_id=False, to="me@example.org"),
+            _msg("m1", 2, "[UAI] Talk"),
+            _msg("m2", 3, "Re: [UAI] Talk"),
+        ],
+    }
+
+
+@pytest.mark.parametrize("other_matches_in", [1, 2])
+def test_parent_stays_when_the_matching_searches_change(
+    tmp_path, monkeypatch, other_matches_in
+) -> None:
+    import json
+
+    other = "from:x@example.org"
+    thread = _mixed_thread()
+    current = {"sync": 0}
+
+    def runner(cmd, **kwargs):
+        sub, params = cmd[3 : cmd.index("--params")], json.loads(cmd[-1])
+        if sub == ["messages", "list"]:
+            # The list search always matches; the other search only in one sync
+            hit = other not in params["q"] or current["sync"] == other_matches_in
+            out: Any = {"messages": [{"id": "m1", "threadId": "t9"}] if hit else []}
+        else:
+            out = thread
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(out), stderr="")
+
+    sync, connect = _cli_sync(tmp_path, monkeypatch, [QUERY, other], runner)
+    snapshots = []
+    for current["sync"] in (1, 2):
+        sync()
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT source_id, json_extract(metadata, '$.message_id') FROM items"
+            ).fetchall()
+            history = conn.execute("SELECT COUNT(*) FROM item_history").fetchone()[0]
+        snapshots.append((dict(rows), history))
+
+    for rows, _ in snapshots:
+        assert rows["gmail:thread:t9"] == "<m1@example.org>"  # the first list post
+        assert "gmail:message:m1" not in rows  # never stored twice
+    if other_matches_in == 1:
+        # Losing the other search in sync 2 changes nothing and writes no history
+        assert snapshots[0] == snapshots[1]
+        assert set(snapshots[1][0]) == {"gmail:thread:t9", "gmail:message:m0", "gmail:message:m2"}
+    else:
+        assert "gmail:message:m0" in snapshots[1][0]  # added as a child; parent unchanged

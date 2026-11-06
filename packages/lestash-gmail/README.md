@@ -17,12 +17,20 @@ lestash gmail doctor      # gws found, signed-in account, threads per search, la
 lestash sources sync gmail
 ```
 
-The first sync reads everything that matches. Each later sync reads mail since the last
-successful Gmail sync (from the sync log) minus 2 days, so late replies are picked up and a
-stopped timer loses nothing. If a thread can't be read, the others are still stored, the sync is
-logged as failed, and the next sync re-reads the same window. `lestash gmail backfill` re-reads
-everything at any time and is logged like a sync: a complete backfill starts the next sync's
-window, while a failed or `--limit` backfill (logged `failed` / `partial`) does not.
+The first sync reads everything that matches. After that, each search reads mail since its
+last successful read minus 2 days, so late replies are picked up and a stopped timer loses
+nothing. A thread matched by several searches is read once per sync.
+
+Failures stay visible but don't hold back the rest:
+
+- A search that fails keeps its window; the other searches move on.
+- A thread that can't be read is retried at the next syncs, and given up on after 5 reads.
+- While anything fails, the sync is logged as failed, naming what failed.
+
+`lestash gmail backfill` re-reads everything at any time and is logged like a sync; with
+`--limit` it is logged `partial` and leaves the windows alone. `lestash gmail doctor` shows
+where each search's next sync starts, and any threads waiting for a retry or given up.
+The windows and retries are kept as a sync checkpoint.
 
 Settings live in `~/.config/lestash/gmail.json` (`queries`, optional `gws_path`). `gws` is found
 on `PATH` or in the usual Homebrew/local locations, so it works from systemd services too.
@@ -31,11 +39,18 @@ on `PATH` or in the usual Homebrew/local locations, so it works from systemd ser
 
 | Item | `source_id` | Parent |
 |------|-------------|--------|
-| Thread (first on-list message; list tag like `[UAI]` dropped from the title) | `gmail:thread:{threadId}` | — |
+| Thread (first on-list message; list tag like `[UAI]` dropped from the titles) | `gmail:thread:{threadId}` | — |
 | Reply | `gmail:message:{messageId}` | the thread |
 
 For `list:` searches, only messages that went to the list are kept: list copies (`List-Id`) and
-your own posts (the list is a recipient). Private replies in a list thread are left out.
+your own posts (the list is in To, Cc or Bcc). Private replies in a list thread are left out.
+A thread's parent is its first list message, and it stays the same once stored. If a search
+without `list:` also matches the thread, the whole thread is kept from then on, private
+replies included. A thread remembers every search that matched it, so `remove-query` stops
+new mail being read but doesn't un-keep messages already stored; delete those items to drop
+them.
+Reading `list:` out of complex boolean searches is best-effort: `-list:`, `NOT list:` and
+negated groups are understood, but unusual forms may misparse.
 
 A Google Groups footer at the end of a message is removed, and so are footers inside quoted
 messages; text written below a quote is kept. Labels (read, starred, ...) aren't stored, since
