@@ -1,4 +1,4 @@
-"""Tests for the Takeout plugin and the NotebookLM changes it relies on."""
+"""Tests for the Takeout plugin: Drive listing, per-zip state committed with the items."""
 
 import json
 import zipfile
@@ -6,66 +6,30 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from lestash_server.routes.imports import parse_zip
-from lestash_takeout import drive, source
+from lestash.cli import sources as sources_cli
+from lestash.core.database import get_checkpoints, get_connection
+from lestash.importers import IMPORTER_VERSION
+from lestash_takeout import source
+
+NB = "Takeout/NotebookLM/Planning"
+NOTEBOOK = {
+    f"{NB}/Planning.json": json.dumps({"title": "Planning"}),
+    f"{NB}/Notes/Plan A.html": "<p>first plan</p>",
+}
 
 
-def _notebook_zip(path: Path, files: dict[str, str]) -> Path:
+def _zip(path: Path, files: dict[str, str]) -> Path:
     with zipfile.ZipFile(path, "w") as zf:
         for name, text in files.items():
             zf.writestr(name, text)
     return path
 
 
-NB = "Takeout/NotebookLM/Planning"
-PART1 = {
-    f"{NB}/Planning.json": json.dumps(
-        {"title": "Planning", "metadata": {"createTime": "2026-03-01T10:00:00Z"}}
-    ),
-    f"{NB}/Sources/paper metadata.json": json.dumps({"title": "HTN paper"}),
-    f"{NB}/Sources/paper.html": "<p>text</p>",
-    f"{NB}/Artifacts/Deep dive.wav": "x",
-    f"{NB}/Artifacts/Deep dive metadata.json": json.dumps(
-        {"title": "Deep dive", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
-    ),
-    f"{NB}/Artifacts/Briefing.json": json.dumps(
-        {"title": "Briefing", "type": "ARTIFACT_TYPE_REPORT"}
-    ),
-    f"{NB}/Artifacts/Briefing.md": "# Briefing\nHTN planning in one page.",
-}
-PART2 = {f"{NB}/Artifacts/Slides.pptx": "x"}
-
-
-def test_sources_only_notebook_is_kept_with_artifacts(tmp_path) -> None:
-    items, source_type = parse_zip(_notebook_zip(tmp_path / "p1.zip", PART1))
-    assert source_type == "notebooklm"
-    parent, report = items
-    assert parent.title == "Planning"
-    assert parent.metadata["sources"] == ["HTN paper"]
-    assert parent.metadata["artifacts"] == ["Briefing (report)", "Deep dive (audio overview)"]
-    assert "Generated (2)" in parent.content
-    # Text reports become searchable children of the notebook
-    assert report.title == "Planning — Briefing"
-    assert "HTN planning in one page." in report.content
-    assert report.metadata["_parent_source_id"] == NB
-
-
-def test_artifact_only_fragment_does_not_overwrite_parent(tmp_path) -> None:
-    items, _ = parse_zip(_notebook_zip(tmp_path / "p2.zip", PART2))
-    assert items == []
-
-
-def test_parse_zip_still_accepts_bytes(tmp_path) -> None:
-    data = _notebook_zip(tmp_path / "p1.zip", PART1).read_bytes()
-    items, _ = parse_zip(data)
-    assert items[0].title == "Planning"
-
-
 class FakeDrive:
     """Just enough of the Drive v3 client for the plugin."""
 
     def __init__(self, files: list[dict[str, Any]], blobs: dict[str, Path]) -> None:
-        self._files, self.blobs, self.downloads = files, blobs, []
+        self._files, self.blobs = files, blobs
 
     def files(self):
         return self
@@ -83,65 +47,131 @@ class _Exec:
         return self.value
 
 
+def _file(fid: str, name: str) -> dict[str, Any]:
+    return {"id": fid, "name": name, "size": "10", "createdTime": "2026-03-01"}
+
+
 @pytest.fixture
-def state(tmp_path, monkeypatch):
-    monkeypatch.setattr(drive, "get_state_path", lambda: tmp_path / "takeout_state.json")
-    return tmp_path / "takeout_state.json"
-
-
-def test_sync_imports_new_zips_once_and_deletes_downloads(tmp_path, state, monkeypatch) -> None:
-    good = _notebook_zip(tmp_path / "good.zip", PART1)
-    junk = _notebook_zip(tmp_path / "junk.zip", {"Takeout/Photos/a.jpg": "x"})
-    files = [
-        {"id": "f1", "name": "takeout-1-001.zip", "size": "10", "createdTime": "2026-03-01"},
-        {"id": "f2", "name": "takeout-1-002.zip", "size": "10", "createdTime": "2026-03-01"},
-        {"id": "f3", "name": "takeout-1.tgz", "size": "10", "createdTime": "2026-03-01"},
-    ]
-    service = FakeDrive(files, {"f1": good, "f2": junk})
-    downloaded: list[Path] = []
+def drive(tmp_path, monkeypatch):
+    """A fake Drive with a NotebookLM zip (f1) and a photos-only zip (f2)."""
+    service = FakeDrive(
+        [_file("f1", "takeout-1-001.zip"), _file("f2", "takeout-1-002.zip"), _file("f3", "x.tgz")],
+        {
+            "f1": _zip(tmp_path / "good.zip", NOTEBOOK),
+            "f2": _zip(tmp_path / "junk.zip", {"Takeout/Photos/a.jpg": "x"}),
+        },
+    )
+    service.downloaded = []
 
     def fake_download(svc, file_id, dest):
         dest.write_bytes(svc.blobs[file_id].read_bytes())
-        downloaded.append(dest)
+        svc.downloaded.append(dest)
         return dest
 
     monkeypatch.setattr(source, "download", fake_download)
     monkeypatch.setattr(source, "_drive_service", lambda: service)
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"takeout": source.TakeoutSource()})
+    return service
 
-    items = list(source.TakeoutSource().sync({}))
-    assert [i.title for i in items] == ["Planning", "Planning — Briefing"]
-    assert "takeout-" in service.query
+
+def _sync() -> None:
+    sources_cli.sync_source(source_name="takeout", all_sources=False)
+
+
+def _items(test_db) -> list[str]:
+    with get_connection(test_db) as conn:
+        return [r[0] for r in conn.execute("SELECT source_id FROM items ORDER BY source_id")]
+
+
+def _state(test_db) -> dict[str, dict]:
+    with get_connection(test_db) as conn:
+        return get_checkpoints(conn, "takeout")
+
+
+def test_sync_imports_new_zips_once_and_deletes_downloads(test_db, drive) -> None:
+    _sync()
+    assert _items(test_db) == [NB, f"{NB}/Notes/Plan A.html"]
+    assert "'me' in owners" in drive.query
     # .tgz ignored; both zips downloaded and their temp copies removed
-    assert [p.name for p in downloaded] == ["takeout-1-001.zip", "takeout-1-002.zip"]
-    assert not any(p.exists() for p in downloaded)
+    assert [p.name for p in drive.downloaded] == ["takeout-1-001.zip", "takeout-1-002.zip"]
+    assert not any(p.exists() for p in drive.downloaded)
 
-    imported = json.loads(state.read_text())["imported"]
-    assert imported["f1"]["items"] == 2 and imported["f1"]["source_type"] == "notebooklm"
-    assert imported["f2"]["source_type"] == "unrecognized"
+    state = _state(test_db)
+    assert state["f1"]["status"] == "imported" and state["f1"]["items"] == 2
+    assert state["f2"]["status"] == "unrecognized"
+    assert state["f2"]["importer_version"] == IMPORTER_VERSION
 
-    # Second sync: nothing new
-    downloaded.clear()
-    assert list(source.TakeoutSource().sync({})) == []
-    assert downloaded == []
+    # Second sync: nothing new to download
+    drive.downloaded.clear()
+    _sync()
+    assert drive.downloaded == []
 
     # Forget one: it's imported again
-    assert drive.forget("f1")
-    assert [i.title for i in source.TakeoutSource().sync({})][0] == "Planning"
+    assert source.forget("f1")
+    _sync()
+    assert [p.name for p in drive.downloaded] == ["takeout-1-001.zip"]
 
 
-def test_interrupted_sync_is_retried(tmp_path, state, monkeypatch) -> None:
-    good = _notebook_zip(tmp_path / "good.zip", PART1)
-    files = [{"id": "f1", "name": "takeout-1-001.zip", "createdTime": "2026-03-01"}]
-    service = FakeDrive(files, {"f1": good})
-    monkeypatch.setattr(
-        source, "download", lambda svc, fid, dest: dest.write_bytes(good.read_bytes()) and dest
-    )
-    monkeypatch.setattr(source, "_drive_service", lambda: service)
+def test_kill_after_a_zip_keeps_its_items_and_its_record(test_db, drive, monkeypatch) -> None:
+    def download(svc, file_id, dest):
+        if file_id == "f2":
+            raise KeyboardInterrupt("killed while downloading the next zip")
+        dest.write_bytes(svc.blobs[file_id].read_bytes())
+        return dest
 
-    gen = source.TakeoutSource().sync({})
-    next(gen)  # consumer stops part-way
-    gen.close()
-    assert drive.load_state()["imported"] == {}
+    monkeypatch.setattr(source, "download", download)
+    with pytest.raises(KeyboardInterrupt):
+        _sync()
+    # Zip 1's items and its record were committed together
+    assert set(_state(test_db)) == {"f1"}
+    assert NB in _items(test_db)
+
+
+def test_kill_inside_a_zip_leaves_neither_items_nor_record(test_db, drive, monkeypatch) -> None:
+    real_parse = source.parse_zip
+
+    class Explode(list):
+        def __iter__(self):
+            yield self[0]
+            raise KeyboardInterrupt("killed half-way through the zip's items")
+
+    def parse(path):
+        items, kind = real_parse(path)
+        return Explode(items), kind
+
+    monkeypatch.setattr(source, "parse_zip", parse)
+    with pytest.raises(KeyboardInterrupt):
+        _sync()
+    assert _state(test_db) == {}
+    assert _items(test_db) == []
+
+
+def test_a_failing_zip_does_not_stop_the_others(test_db, drive, monkeypatch) -> None:
+    real = source.download
+
+    def download(svc, file_id, dest):
+        if file_id == "f1":
+            raise OSError("connection reset")
+        return real(svc, file_id, dest)
+
+    monkeypatch.setattr(source, "download", download)
+    _sync()
+    state = _state(test_db)
+    assert "f1" not in state  # retried next time
+    assert state["f2"]["status"] == "unrecognized"
+
+
+@pytest.mark.parametrize(
+    ("record", "done"),
+    [
+        (None, False),
+        ({"status": "imported", "importer_version": 1}, True),
+        ({"status": "unrecognized", "importer_version": 1}, False),  # retried by a newer importer
+        ({"status": "unrecognized", "importer_version": IMPORTER_VERSION}, True),
+    ],
+)
+def test_is_done(record, done) -> None:
+    assert source.is_done(record) is done
 
 
 def test_no_google_signin_yields_nothing(monkeypatch) -> None:
@@ -150,56 +180,3 @@ def test_no_google_signin_yields_nothing(monkeypatch) -> None:
 
     monkeypatch.setattr(source, "_drive_service", no_creds)
     assert list(source.TakeoutSource().sync({})) == []
-
-
-def test_youtube_history_in_a_multi_product_takeout(tmp_path) -> None:
-    yt = "Takeout/YouTube and YouTube Music"
-    watch = [
-        {
-            "header": "YouTube",
-            "title": "Watched Markov blankets explained",
-            "titleUrl": "https://www.youtube.com/watch?v=AAAAAAAAAAA",
-            "time": "2026-01-01T10:00:00Z",
-        }
-    ]
-    files = {
-        **PART1,
-        f"{yt}/history/watch-history.json": json.dumps(watch),
-        f"{yt}/history/search-history.json": json.dumps(
-            [
-                {
-                    "title": "Searched for markov blanket",
-                    "time": "2026-01-01T09:00:00Z",
-                    "titleUrl": "https://www.youtube.com/results?search_query=markov+blanket",
-                }
-            ]
-        ),
-        # A supervised child account's history must not be imported
-        f"{yt}/children/Kid/watch-history.json": json.dumps(
-            [{**watch[0], "titleUrl": "https://www.youtube.com/watch?v=KKKKKKKKKKK"}]
-        ),
-        f"{yt}/videos/my upload.mp4": "x",
-    }
-    items, source_type = parse_zip(_notebook_zip(tmp_path / "multi.zip", files))
-    assert source_type == "takeout"  # NotebookLM + YouTube
-    ids = {i.source_id for i in items}
-    assert {"history:AAAAAAAAAAA", "search:markov blanket"} <= ids
-    assert "history:KKKKKKKKKKK" not in ids
-    assert NB in ids  # the notebook is still imported alongside
-
-
-def test_youtube_only_takeout(tmp_path) -> None:
-    files = {
-        "Takeout/YouTube and YouTube Music/history/watch-history.json": json.dumps(
-            [
-                {
-                    "title": "Watched X",
-                    "titleUrl": "https://www.youtube.com/watch?v=AAAAAAAAAAA",
-                    "time": "2026-01-01T10:00:00Z",
-                }
-            ]
-        )
-    }
-    items, source_type = parse_zip(_notebook_zip(tmp_path / "yt.zip", files))
-    assert source_type == "youtube"
-    assert [i.source_id for i in items] == ["history:AAAAAAAAAAA"]

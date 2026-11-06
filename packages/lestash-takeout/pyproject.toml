@@ -7,7 +7,6 @@ license = {text = "AGPL-3.0-only"}
 requires-python = ">=3.12"
 dependencies = [
     "lestash",
-    "lestash-server",
 ]
 
 [project.entry-points."lestash.sources"]
@@ -15,7 +14,6 @@ takeout = "lestash_takeout:TakeoutSource"
 
 [tool.uv.sources]
 lestash = { workspace = true }
-lestash-server = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

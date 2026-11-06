@@ -1428,14 +1428,10 @@ version = "1.64.4"
 source = { editable = "packages/lestash-takeout" }
 dependencies = [
     { name = "lestash" },
-    { name = "lestash-server" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "lestash", editable = "packages/lestash" },
-    { name = "lestash-server", editable = "packages/lestash-server" },
-]
+requires-dist = [{ name = "lestash", editable = "packages/lestash" }]
 
 [[package]]
 name = "lestash-voice"
