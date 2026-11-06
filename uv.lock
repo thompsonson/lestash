@@ -1208,7 +1208,7 @@ wheels = [
 
 [[package]]
 name = "le-stash-workspace"
-version = "1.65.0"
+version = "1.66.0"
 source = { virtual = "." }
 dependencies = [
     { name = "lestash" },
@@ -1265,7 +1265,7 @@ dev = [
 
 [[package]]
 name = "lestash"
-version = "1.65.0"
+version = "1.66.0"
 source = { editable = "packages/lestash" }
 dependencies = [
     { name = "anthropic" },
@@ -1302,7 +1302,7 @@ requires-dist = [
 
 [[package]]
 name = "lestash-arxiv"
-version = "1.65.0"
+version = "1.66.0"
 source = { editable = "packages/lestash-arxiv" }
 dependencies = [
     { name = "arxiv" },
@@ -1317,7 +1317,7 @@ requires-dist = [
 
 [[package]]
 name = "lestash-audible"
-version = "1.65.0"
+version = "1.66.0"
 source = { editable = "packages/lestash-audible" }
 dependencies = [
     { name = "audible" },
@@ -1332,7 +1332,7 @@ requires-dist = [
 
 [[package]]
 name = "lestash-bluesky"
-version = "1.65.0"
+version = "1.66.0"
 source = { editable = "packages/lestash-bluesky" }
 dependencies = [
     { name = "atproto" },
@@ -1347,7 +1347,7 @@ requires-dist = [
 
 [[package]]
 name = "lestash-claude-code"
-version = "1.65.0"
+version = "1.66.0"
 source = { editable = "packages/lestash-claude-code" }
 dependencies = [
     { name = "lestash" },
@@ -1358,7 +1358,7 @@ requires-dist = [{ name = "lestash", editable = "packages/lestash" }]
 
 [[package]]
 name = "lestash-gmail"
-version = "1.65.0"
+version = "1.66.0"
 source = { editable = "packages/lestash-gmail" }
 dependencies = [
     { name = "lestash" },
@@ -1369,7 +1369,7 @@ requires-dist = [{ name = "lestash", editable = "packages/lestash" }]
 
 [[package]]
 name = "lestash-linkedin"
-version = "1.65.0"
+version = "1.66.0"
 source = { editable = "packages/lestash-linkedin" }
 dependencies = [
     { name = "authlib" },
@@ -1386,7 +1386,7 @@ requires-dist = [
 
 [[package]]
 name = "lestash-microblog"
-version = "1.65.0"
+version = "1.66.0"
 source = { editable = "packages/lestash-microblog" }
 dependencies = [
     { name = "httpx" },
@@ -1401,7 +1401,7 @@ requires-dist = [
 
 [[package]]
 name = "lestash-server"
-version = "1.65.0"
+version = "1.66.0"
 source = { editable = "packages/lestash-server" }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -1424,7 +1424,7 @@ requires-dist = [
 
 [[package]]
 name = "lestash-takeout"
-version = "1.64.4"
+version = "1.66.0"
 source = { editable = "packages/lestash-takeout" }
 dependencies = [
     { name = "lestash" },
@@ -1435,7 +1435,7 @@ requires-dist = [{ name = "lestash", editable = "packages/lestash" }]
 
 [[package]]
 name = "lestash-voice"
-version = "1.65.0"
+version = "1.66.0"
 source = { editable = "packages/lestash-voice" }
 dependencies = [
     { name = "faster-whisper" },
@@ -1450,7 +1450,7 @@ requires-dist = [
 
 [[package]]
 name = "lestash-youtube"
-version = "1.65.0"
+version = "1.66.0"
 source = { editable = "packages/lestash-youtube" }
 dependencies = [
     { name = "google-api-python-client" },
