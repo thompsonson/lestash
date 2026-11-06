@@ -136,6 +136,7 @@ def _upsert_item(conn, item, parent_id=None):
             is_own_content = excluded.is_own_content,
             metadata = excluded.metadata,
             parent_id = COALESCE(excluded.parent_id, items.parent_id)
+        RETURNING id
         """,
         (
             item.source_type,
@@ -150,14 +151,9 @@ def _upsert_item(conn, item, parent_id=None):
             parent_id or item.parent_id,
         ),
     )
-    # Get the ID (works for both insert and upsert)
-    if cursor.lastrowid:
-        return cursor.lastrowid
-    row = conn.execute(
-        "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
-        (item.source_type, source_id),
-    ).fetchone()
-    return row[0] if row else None
+    # RETURNING gives the row's id on insert and on update. lastrowid doesn't: after
+    # ON CONFLICT DO UPDATE it still holds the previous insert's id.
+    return cursor.fetchone()[0]
 
 
 def _insert_items_with_parents(conn, items):
