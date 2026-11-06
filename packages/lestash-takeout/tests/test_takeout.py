@@ -88,6 +88,15 @@ def _state(test_db) -> dict[str, dict]:
         return get_checkpoints(conn, "takeout")
 
 
+def _last_sync(test_db) -> tuple[str, str | None]:
+    with get_connection(test_db) as conn:
+        return tuple(
+            conn.execute(
+                "SELECT status, error_message FROM sync_log ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        )
+
+
 def test_sync_imports_new_zips_once_and_deletes_downloads(test_db, drive) -> None:
     _sync()
     assert _items(test_db) == [NB, f"{NB}/Notes/Plan A.html"]
@@ -127,7 +136,7 @@ def test_kill_after_a_zip_keeps_its_items_and_its_record(test_db, drive, monkeyp
     assert NB in _items(test_db)
 
 
-def test_kill_inside_a_zip_leaves_neither_items_nor_record(test_db, drive, monkeypatch) -> None:
+def test_kill_inside_a_zip_leaves_no_record(test_db, drive, monkeypatch) -> None:
     real_parse = source.parse_zip
 
     class Explode(list):
@@ -142,11 +151,14 @@ def test_kill_inside_a_zip_leaves_neither_items_nor_record(test_db, drive, monke
     monkeypatch.setattr(source, "parse_zip", parse)
     with pytest.raises(KeyboardInterrupt):
         _sync()
+    # Items may be committed in chunks before the record; the zip is imported again
     assert _state(test_db) == {}
     assert _items(test_db) == []
 
 
-def test_a_failing_zip_does_not_stop_the_others(test_db, drive, monkeypatch) -> None:
+def test_a_failing_zip_does_not_stop_the_others_but_fails_the_sync(
+    test_db, drive, monkeypatch
+) -> None:
     real = source.download
 
     def download(svc, file_id, dest):
@@ -157,8 +169,42 @@ def test_a_failing_zip_does_not_stop_the_others(test_db, drive, monkeypatch) -> 
     monkeypatch.setattr(source, "download", download)
     _sync()
     state = _state(test_db)
-    assert "f1" not in state  # retried next time
+    assert state["f1"]["status"] == "failed" and state["f1"]["attempts"] == 1
     assert state["f2"]["status"] == "unrecognized"
+    status, error = _last_sync(test_db)
+    assert status == "failed"
+    assert "takeout-1-001.zip" in error and "connection reset" in error
+
+
+def test_a_zip_that_fails_to_parse_is_retried_then_given_up(test_db, drive, monkeypatch) -> None:
+    real_parse = source.parse_zip
+
+    def parse(path):
+        if path.name == "takeout-1-001.zip":
+            raise KeyError("parser bug")
+        return real_parse(path)
+
+    monkeypatch.setattr(source, "parse_zip", parse)
+    for attempt in range(1, source.MAX_ATTEMPTS + 1):
+        drive.downloaded.clear()
+        _sync()
+        assert "takeout-1-001.zip" in [p.name for p in drive.downloaded]
+        assert _state(test_db)["f1"]["attempts"] == attempt
+        assert _last_sync(test_db)[0] == "failed"
+
+    # Given up: not downloaded again, and the sync completes
+    drive.downloaded.clear()
+    _sync()
+    assert drive.downloaded == []
+    assert _last_sync(test_db) == ("completed", None)
+    assert "gave up" in source.describe_failure(_state(test_db)["f1"])
+
+    # forget resets it
+    monkeypatch.setattr(source, "parse_zip", real_parse)
+    assert source.forget("f1")
+    _sync()
+    assert _state(test_db)["f1"]["status"] == "imported"
+    assert _last_sync(test_db) == ("completed", None)
 
 
 @pytest.mark.parametrize(
@@ -168,6 +214,9 @@ def test_a_failing_zip_does_not_stop_the_others(test_db, drive, monkeypatch) -> 
         ({"status": "imported", "importer_version": 1}, True),
         ({"status": "unrecognized", "importer_version": 1}, False),  # retried by a newer importer
         ({"status": "unrecognized", "importer_version": IMPORTER_VERSION}, True),
+        ({"status": "failed", "attempts": 1, "importer_version": IMPORTER_VERSION}, False),
+        ({"status": "failed", "attempts": 3, "importer_version": IMPORTER_VERSION}, True),
+        ({"status": "failed", "attempts": 3, "importer_version": 1}, False),  # newer importer
     ],
 )
 def test_is_done(record, done) -> None:
@@ -182,9 +231,7 @@ def test_no_google_signin_yields_nothing(monkeypatch) -> None:
     assert list(source.TakeoutSource().sync({})) == []
 
 
-def test_a_truncated_download_is_retried_not_marked_unrecognized(
-    test_db, drive, monkeypatch
-) -> None:
+def test_a_truncated_download_is_a_failure_not_unrecognized(test_db, drive, monkeypatch) -> None:
     real = source.download
 
     def truncated(svc, file_id, dest):
@@ -197,5 +244,5 @@ def test_a_truncated_download_is_retried_not_marked_unrecognized(
     monkeypatch.setattr(source, "download", truncated)
     _sync()
     state = _state(test_db)
-    assert "f1" not in state  # retried next time
+    assert state["f1"]["status"] == "failed"  # retried next time
     assert state["f2"]["status"] == "unrecognized"

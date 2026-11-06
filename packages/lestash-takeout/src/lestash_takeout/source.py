@@ -8,6 +8,10 @@ LeStash's Google sign-in with read-only Drive access; nothing is changed in Driv
 Which zips are done is kept in the ``sync_checkpoints`` table (source ``takeout``, key = Drive
 file id). The plugin yields a checkpoint after a zip's items, and the sync loop commits both
 together, so a zip is never marked done while its items are missing.
+
+A zip that fails to download or read is recorded as ``failed`` with its attempt count, and the
+sync then ends ``failed``. It is retried up to ``MAX_ATTEMPTS`` times, then left alone until
+``lestash takeout forget`` or a new importer version.
 """
 
 import tempfile
@@ -31,6 +35,11 @@ console = Console()
 logger = get_plugin_logger("takeout")
 
 SOURCE = "takeout"
+MAX_ATTEMPTS = 3  # a zip that fails this often is not downloaded again
+
+
+class TakeoutError(Exception):
+    """One or more zips failed; raised after the others are imported."""
 
 
 def _drive_service() -> Any:
@@ -62,13 +71,27 @@ def forget(file_id: str) -> bool:
     return exists is not None
 
 
+def attempts(record: dict[str, Any] | None) -> int:
+    """Failed attempts so far with this importer version; a newer importer starts again."""
+    if not record or record.get("status") != "failed":
+        return 0
+    if record.get("importer_version", 1) < IMPORTER_VERSION:
+        return 0
+    return int(record.get("attempts", 1))
+
+
 def is_done(record: dict[str, Any] | None) -> bool:
-    """A zip is done once imported. One with nothing recognisable is retried by a newer
-    importer, which may know its format (e.g. YouTube history, added in version 2)."""
+    """A zip is done once imported, or once it has failed ``MAX_ATTEMPTS`` times.
+
+    One with nothing recognisable, or that kept failing, is retried by a newer importer,
+    which may know its format (e.g. YouTube history, added in version 2).
+    """
     if not record:
         return False
     if record.get("status") == "unrecognized":
         return record.get("importer_version", 1) >= IMPORTER_VERSION
+    if record.get("status") == "failed":
+        return attempts(record) >= MAX_ATTEMPTS
     return True
 
 
@@ -83,14 +106,31 @@ def _record(file: dict[str, Any], status: str, items: int, source_type: str | No
     }
 
 
+def failure(file: dict[str, Any], previous: dict[str, Any] | None, error: Exception) -> dict:
+    """The record of a failed attempt: counts it, and says whether it will be retried."""
+    record = _record(file, "failed", 0, None)
+    record["attempts"] = attempts(previous) + 1
+    record["error"] = str(error)[:500] or type(error).__name__
+    return record
+
+
+def describe_failure(record: dict[str, Any]) -> str:
+    n = attempts(record)
+    retry = "gave up; `lestash takeout forget` retries it" if n >= MAX_ATTEMPTS else "will retry"
+    return f"failed {n} of {MAX_ATTEMPTS} times ({retry}): {record.get('error', '')}"
+
+
 def import_zip(
-    service: Any, file: dict[str, Any], workdir: Path | None = None
+    service: Any,
+    file: dict[str, Any],
+    workdir: Path | None = None,
+    previous: dict[str, Any] | None = None,
 ) -> Iterator[ItemCreate | SyncCheckpoint]:
     """Download one Takeout zip and yield its items, then its checkpoint.
 
     The download is deleted before the items are yielded. A download or read error, or a
-    corrupt (e.g. truncated) zip, is logged and the zip is left unrecorded, so the next
-    sync tries it again.
+    corrupt (e.g. truncated) zip, yields a ``failed`` checkpoint counting the attempt;
+    ``previous`` is the zip's stored record.
     """
     try:
         with tempfile.TemporaryDirectory(dir=workdir) as tmp:
@@ -98,7 +138,7 @@ def import_zip(
             try:
                 items, source_type = parse_zip(path)
             except CorruptZip:
-                raise  # a bad download, not a format we don't know: retry it
+                raise  # a bad download, not a format we don't know
             except ValueError as e:
                 # Nothing this importer understands (e.g. only photos): record it, so it is
                 # retried only once the importer version changes.
@@ -106,7 +146,9 @@ def import_zip(
                 yield SyncCheckpoint(key=file["id"], value=_record(file, "unrecognized", 0, None))
                 return
     except Exception as e:  # noqa: BLE001 - one bad zip must not stop the others
-        logger.warning(f"{file['name']}: download or read failed, will retry: {e}")
+        record = failure(file, previous, e)
+        logger.warning(f"{file['name']} ({file['id']}): {describe_failure(record)}")
+        yield SyncCheckpoint(key=file["id"], value=record)
         return
     yield from items
     yield SyncCheckpoint(key=file["id"], value=_record(file, "imported", len(items), source_type))
@@ -114,7 +156,14 @@ def import_zip(
 
 
 def pending_zips(service: Any, state: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    return [f for f in list_takeout_zips(service) if not is_done(state.get(f["id"]))]
+    pending = []
+    for f in list_takeout_zips(service):
+        record = state.get(f["id"])
+        if not is_done(record):
+            pending.append(f)
+        elif record and record.get("status") == "failed":
+            logger.warning(f"{f['name']} ({f['id']}): {describe_failure(record)}")
+    return pending
 
 
 class TakeoutSource(SourcePlugin):
@@ -139,6 +188,8 @@ class TakeoutSource(SourcePlugin):
                     status = "pending"
                 elif seen.get("status") == "unrecognized":
                     status = "nothing to import" + ("" if is_done(seen) else " (will retry)")
+                elif seen.get("status") == "failed":
+                    status = describe_failure(seen)
                 else:
                     status = f"{seen['items']} items, {seen['imported_at'][:10]}"
                 table.add_row(
@@ -154,8 +205,8 @@ class TakeoutSource(SourcePlugin):
         def forget_cmd(
             file_id: Annotated[str, typer.Argument(help="Drive file id (see `list`)")],
         ) -> None:
-            """Mark a zip as not imported, so the next sync imports it again."""
-            console.print("Forgotten." if forget(file_id) else "That id wasn't marked imported.")
+            """Drop a zip's record (imported, failed, ...), so the next sync imports it again."""
+            console.print("Forgotten." if forget(file_id) else "That id had no record.")
 
         return app
 
@@ -165,8 +216,16 @@ class TakeoutSource(SourcePlugin):
         except ValueError as e:
             logger.warning(f"Google Drive not available: {e}")
             return
-        for file in pending_zips(service, load_state()):
-            yield from import_zip(service, file)
+        state = load_state()
+        failed: list[str] = []
+        for file in pending_zips(service, state):
+            for obj in import_zip(service, file, previous=state.get(file["id"])):
+                if isinstance(obj, SyncCheckpoint) and (obj.value or {}).get("status") == "failed":
+                    failed.append(f"{file['name']} ({describe_failure(obj.value or {})})")
+                yield obj
+        if failed:
+            # After the other zips' items and checkpoints, so the sync is logged failed
+            raise TakeoutError(f"{len(failed)} zip(s) failed: " + "; ".join(failed))
 
     def configure(self) -> dict:
         return {}
