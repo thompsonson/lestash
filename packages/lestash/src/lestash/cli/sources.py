@@ -146,11 +146,13 @@ def sync_source(
             items_added = 0
             items_updated = 0
             error_message = None
+            source_types: set[str] = set()
 
             try:
                 for item in plugin.sync(plugin_config):
                     # Link to a parent yielded earlier (metadata._parent_source_id)
                     resolve_parent_id(conn, item)
+                    source_types.add(item.source_type)
                     # Try to insert, update on conflict
                     metadata_json = json.dumps(item.metadata) if item.metadata else None
                     cursor = conn.execute(
@@ -166,7 +168,9 @@ def sync_source(
                             author = excluded.author,
                             is_own_content = excluded.is_own_content,
                             metadata = excluded.metadata,
-                            parent_id = excluded.parent_id
+                            -- Keep a parent set earlier (e.g. by a resolver) when the
+                            -- plugin doesn't name one
+                            parent_id = COALESCE(excluded.parent_id, items.parent_id)
                         """,
                         (
                             item.source_type,
@@ -211,7 +215,7 @@ def sync_source(
                 conn.commit()
 
                 # Link children whose parent arrived later in the sync
-                linked = resolve_parent_source_ids(conn, name)
+                linked = resolve_parent_source_ids(conn, source_types)
                 if linked:
                     console.print(f"  [dim]Linked {linked} item(s) to their parent[/dim]")
 

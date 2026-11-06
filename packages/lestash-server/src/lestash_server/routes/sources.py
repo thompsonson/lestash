@@ -83,10 +83,12 @@ def _run_sync(source_name: str) -> None:
 
         items_added = 0
         error_message = None
+        source_types: set[str] = set()
 
         try:
             for item in plugin.sync(plugin_config):
                 resolve_parent_id(conn, item)
+                source_types.add(item.source_type)
                 metadata_json = json.dumps(item.metadata) if item.metadata else None
                 conn.execute(
                     """
@@ -119,7 +121,7 @@ def _run_sync(source_name: str) -> None:
                 items_added += 1
 
             conn.commit()
-            resolve_parent_source_ids(conn, source_name)
+            resolve_parent_source_ids(conn, source_types)
 
             conn.execute(
                 """

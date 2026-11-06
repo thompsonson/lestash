@@ -698,37 +698,55 @@ def resolve_parent_id(conn: sqlite3.Connection, item: ItemCreate) -> None:
         item.parent_id = row[0]
 
 
-def resolve_parent_source_ids(conn: sqlite3.Connection, source_type: str | None = None) -> int:
+def resolve_parent_source_ids(
+    conn: sqlite3.Connection, source_types: str | Iterable[str] | None = None
+) -> int:
     """Link orphaned children to parents named by ``metadata._parent_source_id``.
 
     Catches children whose parent arrived later (or in an earlier sync). Only fills
     ``parent_id`` where it is NULL, so plugin-specific resolution is not overridden.
+    The parent must have the child's ``source_type``. Pass the source types a sync
+    wrote (a plugin can write several, e.g. Takeout); ``None`` sweeps every source.
+    History rows written by the link are tagged ``sync``.
 
     Returns:
         Number of items linked.
     """
+    if isinstance(source_types, str):
+        source_types = [source_types]
+    types = sorted(set(source_types)) if source_types is not None else None
+    if types == []:
+        return 0
+
     parent_lookup = """
         SELECT p.id FROM items p
         WHERE p.source_type = items.source_type
           AND p.source_id = json_extract(items.metadata, '$._parent_source_id')
     """
-    params: tuple[str, ...] = ()
     where_source = ""
-    if source_type:
-        where_source = "AND source_type = ?"
-        params = (source_type,)
-    cursor = conn.execute(
-        f"""
-        UPDATE items SET parent_id = ({parent_lookup})
-        WHERE parent_id IS NULL
-          AND json_extract(metadata, '$._parent_source_id') IS NOT NULL
-          AND EXISTS ({parent_lookup})
-          {where_source}
-        """,
-        params,
-    )
+    params: tuple[str, ...] = ()
+    if types:
+        where_source = f"AND source_type IN ({','.join('?' * len(types))})"
+        params = tuple(types)
+
+    since = max_history_id(conn)
+    linked = [
+        row[0]
+        for row in conn.execute(
+            f"""
+            UPDATE items SET parent_id = ({parent_lookup})
+            WHERE parent_id IS NULL
+              AND json_extract(metadata, '$._parent_source_id') IS NOT NULL
+              AND EXISTS ({parent_lookup})
+              {where_source}
+            RETURNING id
+            """,
+            params,
+        ).fetchall()
+    ]
+    mark_recent_history(conn, since, "sync", item_ids=linked)
     conn.commit()
-    return cursor.rowcount
+    return len(linked)
 
 
 def add_tag(conn: sqlite3.Connection, item_id: int, tag_name: str) -> int:

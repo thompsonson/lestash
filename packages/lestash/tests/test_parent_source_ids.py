@@ -105,3 +105,97 @@ def test_sources_sync_links_children(test_db, monkeypatch) -> None:
         ).fetchone()[0]
         assert _parent_of(conn, "audible:annotation:B1:1") == book_id
         assert _parent_of(conn, "audible:annotation:B1:2") == book_id
+
+
+def test_swept_links_are_tagged_sync_in_history(test_db) -> None:
+    with get_connection(test_db) as conn:
+        upsert_item(conn, _note(1))
+        upsert_item(conn, _book())
+        assert resolve_parent_source_ids(conn, "audible") == 1
+        note_id = conn.execute(
+            "SELECT id FROM items WHERE source_id = 'audible:annotation:B1:1'"
+        ).fetchone()[0]
+        reasons = [
+            r[0]
+            for r in conn.execute(
+                "SELECT change_reason FROM item_history"
+                " WHERE item_id = ? AND parent_id_old IS NULL",
+                (note_id,),
+            )
+        ]
+        assert reasons == ["sync"]
+
+
+def test_resolve_parent_source_ids_accepts_several_source_types(test_db) -> None:
+    with get_connection(test_db) as conn:
+        upsert_item(conn, _note(1))
+        upsert_item(conn, _book())
+        nb_child = ItemCreate(
+            source_type="notebooklm",
+            source_id="nb/Notes/a.html",
+            content="n",
+            metadata={"_parent_source_id": "nb"},
+        )
+        upsert_item(conn, nb_child)
+        nb_id = upsert_item(conn, ItemCreate(source_type="notebooklm", source_id="nb", content="x"))
+
+        assert resolve_parent_source_ids(conn, []) == 0
+        assert resolve_parent_source_ids(conn, {"notebooklm"}) == 1
+        assert _parent_of(conn, "nb/Notes/a.html") == nb_id
+        assert _parent_of(conn, "audible:annotation:B1:1") is None
+
+
+class _ChildFirstPlugin:
+    """A plugin named "takeout" whose items use other source types, child first."""
+
+    name = "takeout"
+
+    def sync(self, config: dict) -> Iterator[ItemCreate]:
+        yield ItemCreate(
+            source_type="notebooklm",
+            source_id="nb/Notes/a.html",
+            content="note",
+            metadata={"_parent_source_id": "nb"},
+        )
+        yield ItemCreate(source_type="notebooklm", source_id="nb", content="notebook")
+
+
+def test_sources_sync_sweeps_the_source_types_it_wrote(test_db, monkeypatch) -> None:
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"takeout": _ChildFirstPlugin()})
+    monkeypatch.setattr(sources_cli.Config, "load", classmethod(lambda cls: test_db))
+
+    sources_cli.sync_source(source_name="takeout", all_sources=False)
+
+    with get_connection(test_db) as conn:
+        nb_id = conn.execute("SELECT id FROM items WHERE source_id = 'nb'").fetchone()[0]
+        assert _parent_of(conn, "nb/Notes/a.html") == nb_id
+
+
+class _NoParentPlugin:
+    """Yields a child without naming a parent, like a LinkedIn reaction."""
+
+    name = "audible"
+
+    def sync(self, config: dict) -> Iterator[ItemCreate]:
+        yield ItemCreate(source_type="audible", source_id="reaction:1", content="liked")
+
+
+def test_sources_sync_keeps_a_parent_set_by_a_resolver(test_db, monkeypatch) -> None:
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"audible": _NoParentPlugin()})
+    monkeypatch.setattr(sources_cli.Config, "load", classmethod(lambda cls: test_db))
+
+    sources_cli.sync_source(source_name="audible", all_sources=False)
+    with get_connection(test_db) as conn:
+        post_id = upsert_item(
+            conn, ItemCreate(source_type="audible", source_id="post", content="p")
+        )
+        conn.execute("UPDATE items SET parent_id = ? WHERE source_id = 'reaction:1'", (post_id,))
+        conn.commit()
+        history_before = conn.execute("SELECT COUNT(*) FROM item_history").fetchone()[0]
+
+    sources_cli.sync_source(source_name="audible", all_sources=False)
+
+    with get_connection(test_db) as conn:
+        assert _parent_of(conn, "reaction:1") == post_id
+        # No unlink/relink churn in the audit trail
+        assert conn.execute("SELECT COUNT(*) FROM item_history").fetchone()[0] == history_before
