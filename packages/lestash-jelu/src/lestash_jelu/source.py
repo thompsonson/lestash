@@ -239,14 +239,13 @@ class JeluSource(SourcePlugin):
                 str, typer.Option("--url", help="Jelu address, e.g. https://jelu.example:8443")
             ],
             username: Annotated[str, typer.Option("--username", "-u", help="Jelu login")],
-            password: Annotated[
-                str | None,
-                typer.Option("--password", help="Jelu password (prompted if omitted)"),
-            ] = None,
         ) -> None:
-            """Sign in to Jelu and save the login to ~/.config/lestash/jelu.json (mode 600)."""
-            if not password:
-                password = typer.prompt("Jelu password", hide_input=True)
+            """Sign in to Jelu and save the login to ~/.config/lestash/jelu.json (mode 600).
+
+            The password is only ever prompted for: on the command line it would end up in
+            shell history and ``ps`` output.
+            """
+            password = typer.prompt("Jelu password", hide_input=True)
             try:
                 with JeluClient(url, username, password) as client:
                     me = client.login()

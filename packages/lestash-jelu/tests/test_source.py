@@ -8,6 +8,7 @@ from lestash_jelu import client as jelu_client
 from lestash_jelu import source as jelu_source
 from lestash_jelu.client import JeluAuthError, JeluClient, load_credentials, save_credentials
 from lestash_jelu.source import JeluSource, status_label, sync_items
+from typer.testing import CliRunner
 
 from tests.conftest import BASE, REVIEWS, FakeJelu
 
@@ -244,6 +245,36 @@ def test_sync_saves_the_new_session(tmp_path, monkeypatch) -> None:
     # The next sync reuses it rather than logging in again
     list(JeluSource().sync({}))
     assert jelu.logins == 1
+
+
+def _fake_jelu_client(monkeypatch, jelu: FakeJelu) -> None:
+    real = jelu_source.JeluClient
+    monkeypatch.setattr(
+        jelu_source,
+        "JeluClient",
+        lambda *a, **k: real(*a, **k, transport=httpx.MockTransport(jelu)),
+    )
+
+
+def test_auth_prompts_for_the_password(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(jelu_client, "get_config_path", lambda: tmp_path / "jelu.json")
+    _fake_jelu_client(monkeypatch, FakeJelu())
+    app = JeluSource().get_commands()
+    result = CliRunner().invoke(app, ["auth", "--url", BASE, "-u", "mt"], input="pw\n")
+    assert result.exit_code == 0, result.output
+    assert "pw" not in result.output  # hidden input
+    assert load_credentials()["password"] == "pw"
+
+
+def test_auth_has_no_password_option(tmp_path, monkeypatch) -> None:
+    """A password on the command line lands in shell history and ps output."""
+    monkeypatch.setattr(jelu_client, "get_config_path", lambda: tmp_path / "jelu.json")
+    _fake_jelu_client(monkeypatch, FakeJelu())
+    app = JeluSource().get_commands()
+    result = CliRunner().invoke(app, ["auth", "--url", BASE, "-u", "mt", "--password", "pw"])
+    assert result.exit_code == 2
+    assert "No such option: --password" in result.output
+    assert load_credentials() is None
 
 
 def test_sync_without_credentials_warns_and_yields_nothing(monkeypatch, caplog) -> None:
