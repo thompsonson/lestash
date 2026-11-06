@@ -332,6 +332,54 @@ def last_successful_sync() -> datetime | None:
         return None
 
 
+def run_backfill(
+    conn: Any, gmail: GwsGmail, queries: list[str], limit: int | None = None
+) -> tuple[int, str | None]:
+    """Import every matching thread and record the run in the sync log, like a sync.
+
+    The run is logged ``completed`` only if every thread was read and no limit was set, so
+    the next sync starts its window from it. Otherwise it is logged ``failed`` (a thread
+    was skipped) or ``partial`` (``--limit``), and the next sync still reads everything
+    after the last complete run.
+
+    Returns:
+        (messages imported, error message or None).
+    """
+    from lestash.core.database import resolve_parent_id, resolve_parent_source_ids, upsert_item
+
+    started_at = datetime.now()
+    sync_id = conn.execute(
+        "INSERT INTO sync_log (source_type, started_at, status) VALUES (?, ?, ?)",
+        ("gmail", started_at.isoformat(" "), "running"),
+    ).lastrowid
+    conn.commit()
+
+    count = 0
+    error: str | None = None
+    status = "completed"
+    try:
+        for item in sync_queries(gmail, queries, limit=limit):
+            resolve_parent_id(conn, item)
+            upsert_item(conn, item)
+            count += 1
+        resolve_parent_source_ids(conn, "gmail")
+        if limit:
+            status = "partial"
+            error = f"backfill limited to {limit} threads per search"
+    except GwsError as e:
+        status, error = "failed", str(e)
+        resolve_parent_source_ids(conn, "gmail")
+    conn.execute(
+        """
+        UPDATE sync_log SET completed_at = ?, status = ?, items_added = ?, error_message = ?
+        WHERE id = ?
+        """,
+        (datetime.now().isoformat(" "), status, count, error, sync_id),
+    )
+    conn.commit()
+    return count, error
+
+
 class GmailSource(SourcePlugin):
     """Gmail source plugin (via the gws CLI)."""
 
@@ -394,28 +442,17 @@ class GmailSource(SourcePlugin):
         ) -> None:
             """Import all matching threads, whatever the last sync was."""
             from lestash.core.config import Config
-            from lestash.core.database import (
-                get_connection,
-                resolve_parent_id,
-                resolve_parent_source_ids,
-                upsert_item,
-            )
+            from lestash.core.database import get_connection
 
             config = load_config()
             gws = find_gws(config.get("gws_path"))
             if not gws:
                 console.print("[red]gws not found.[/red]")
                 raise typer.Exit(1)
-            count = 0
             with get_connection(Config.load()) as conn:
-                try:
-                    for item in sync_queries(GwsGmail(gws), config["queries"], limit=limit):
-                        resolve_parent_id(conn, item)
-                        upsert_item(conn, item)
-                        count += 1
-                except GwsError as e:
-                    console.print(f"[yellow]{e}[/yellow]")
-                resolve_parent_source_ids(conn, "gmail")
+                count, error = run_backfill(conn, GwsGmail(gws), config["queries"], limit=limit)
+            if error:
+                console.print(f"[yellow]{error}[/yellow]")
             console.print(f"[green]Imported {count} messages.[/green]")
 
         return app

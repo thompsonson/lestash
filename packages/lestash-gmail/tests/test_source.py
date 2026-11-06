@@ -386,3 +386,54 @@ def test_sync_without_gws_fails_loudly(monkeypatch) -> None:
     monkeypatch.setattr("lestash_gmail.source.find_gws", lambda path: None)
     with pytest.raises(GwsError, match="gws not found"):
         list(GmailSource().sync({}))
+
+
+def _sync_log_db(tmp_path):
+    from lestash.core.config import Config, GeneralConfig
+    from lestash.core.database import get_connection, init_database
+
+    config = Config(general=GeneralConfig(database_path=str(tmp_path / "t.db")))
+    init_database(config)
+    return config, get_connection
+
+
+@pytest.mark.parametrize(
+    ("fail_t1", "limit", "status", "items"),
+    [
+        (False, None, "completed", 3),
+        (True, None, "failed", 1),
+        (False, 1, "partial", 2),
+    ],
+)
+def test_backfill_records_sync_log(tmp_path, monkeypatch, fake_gws, fail_t1, limit, status, items):
+    from lestash.core.config import Config
+    from lestash_gmail import source as gmail_source
+
+    config, get_connection = _sync_log_db(tmp_path)
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: config))
+
+    def runner(cmd, **kwargs):
+        if fail_t1 and "threads" in cmd and '"id": "t1"' in cmd[-1]:
+            raise subprocess.TimeoutExpired(cmd, 120)
+        return fake_gws(cmd, **kwargs)
+
+    with get_connection(config) as conn:
+        count, error = gmail_source.run_backfill(
+            conn, GwsGmail("gws", runner=runner), [QUERY], limit=limit
+        )
+        row = conn.execute(
+            "SELECT source_type, status, items_added, started_at, completed_at, error_message"
+            " FROM sync_log"
+        ).fetchone()
+        stored = conn.execute("SELECT COUNT(*) FROM items WHERE source_type = 'gmail'").fetchone()
+    assert count == items == stored[0]
+    assert row[0] == "gmail" and row[1] == status and row[2] == items
+    assert row[3] and row[4]
+    assert (error is None) == (status == "completed") == (row[5] is None)
+
+    # Only a complete backfill moves the window for the next sync
+    since = gmail_source.last_successful_sync()
+    if status == "completed":
+        assert since == datetime.fromisoformat(row[3])
+    else:
+        assert since is None

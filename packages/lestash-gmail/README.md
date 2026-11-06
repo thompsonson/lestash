@@ -21,7 +21,8 @@ The first sync reads everything that matches. Each later sync reads mail since t
 successful Gmail sync (from the sync log) minus 2 days, so late replies are picked up and a
 stopped timer loses nothing. If a thread can't be read, the others are still stored, the sync is
 logged as failed, and the next sync re-reads the same window. `lestash gmail backfill` re-reads
-everything at any time.
+everything at any time and is logged like a sync: a complete backfill starts the next sync's
+window, while a failed or `--limit` backfill (logged `failed` / `partial`) does not.
 
 Settings live in `~/.config/lestash/gmail.json` (`queries`, optional `gws_path`). `gws` is found
 on `PATH` or in the usual Homebrew/local locations, so it works from systemd services too.
