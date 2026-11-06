@@ -45,7 +45,10 @@ on `PATH` or in the usual Homebrew/local locations, so it works from systemd ser
 For `list:` searches, only messages that went to the list are kept: list copies (`List-Id`) and
 your own posts (the list is in To, Cc or Bcc). Private replies in a list thread are left out.
 A thread's parent is its first list message, and it stays the same once stored. If a search
-without `list:` also matches the thread, the whole thread is kept from then on.
+without `list:` also matches the thread, the whole thread is kept from then on, private
+replies included. A thread remembers every search that matched it, so `remove-query` stops
+new mail being read but doesn't un-keep messages already stored; delete those items to drop
+them.
 Reading `list:` out of complex boolean searches is best-effort: `-list:`, `NOT list:` and
 negated groups are understood, but unusual forms may misparse.
 
