@@ -6,6 +6,9 @@ community post, with every time it happened in metadata, so "what was I watching
 March" works. Videos become the canonical `history:{video_id}` item; a video you also liked is
 nested under its `liked:{video_id}` item instead of appearing twice. Ads and supervised
 (children's) accounts are skipped.
+
+YouTube Music entries (songs, but also podcast episodes) are skipped for now: they will get
+their own item type rather than being treated as videos.
 """
 
 import re
@@ -24,6 +27,11 @@ ACTION_PREFIX = re.compile(r"^(Watched|Viewed|Searched for)\s+", re.S)
 
 def _is_ad(entry: dict[str, Any]) -> bool:
     return any("Google Ads" in (d.get("name") or "") for d in entry.get("details") or [])
+
+
+def _is_music(entry: dict[str, Any]) -> bool:
+    """YouTube Music listens (songs and podcasts), handled separately later."""
+    return entry.get("header") == "YouTube Music"
 
 
 def _time(entry: dict[str, Any]) -> datetime | None:
@@ -78,7 +86,7 @@ def parse_watch_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
     videos: dict[str, _Group] = defaultdict(_Group)
     posts: dict[str, _Group] = defaultdict(_Group)
     for entry in entries:
-        if _is_ad(entry):
+        if _is_ad(entry) or _is_music(entry):
             continue
         url = entry.get("titleUrl") or ""
         if (match := VIDEO_ID.search(url)) and entry.get("title", "").startswith("Watched"):
@@ -171,7 +179,7 @@ def parse_search_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
     """YouTube searches, one item per distinct query (case-insensitive)."""
     searches: dict[str, _Group] = defaultdict(_Group)
     for entry in entries:
-        if _is_ad(entry):
+        if _is_ad(entry) or _is_music(entry):
             continue
         query = _query(entry)
         if query:
