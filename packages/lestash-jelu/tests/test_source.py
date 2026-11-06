@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+import click
 import httpx
 import pytest
 from lestash_jelu import client as jelu_client
@@ -332,7 +333,8 @@ def test_auth_has_no_password_option(tmp_path, monkeypatch) -> None:
     app = JeluSource().get_commands()
     result = CliRunner().invoke(app, ["auth", "--url", BASE, "-u", "mt", "--password", "pw"])
     assert result.exit_code == 2
-    assert "No such option: --password" in result.output
+    # CI forces colour, so drop the ANSI codes before matching
+    assert "No such option: --password" in click.unstyle(result.output)
     assert load_credentials() is None
 
 
