@@ -452,7 +452,11 @@ def sync_queries(
 
     if not limit:
         windows = {q: started.isoformat() for q in queries if q not in failed}
-        windows.update({q: old_windows[q] for q in failed if q in old_windows})
+        for q in failed:  # keep the window it had, saved or from the sync log
+            if q in old_windows:
+                windows[q] = old_windows[q]
+            elif start := since.get(q):
+                windows[q] = start.isoformat()
         yield SyncCheckpoint(key=STATE_KEY, value={"windows": windows, "retry": retry})
 
     problems = []

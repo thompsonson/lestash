@@ -769,3 +769,21 @@ def test_own_post_with_the_list_in_bcc_is_kept() -> None:
     sent = _msg("a", 1, "[UAI] Talk", list_id=False, to="bob@example.org")
     sent["payload"]["headers"].append({"name": "Bcc", "value": "uai-list@googlegroups.com"})
     assert len(thread_to_items({"id": "t9", "messages": [sent]}, QUERY)) == 1
+
+
+def test_a_failed_search_keeps_its_sync_log_window_when_state_is_first_saved(fake_gws) -> None:
+    bad = "list:broken("
+
+    def runner(cmd, **kwargs):
+        if "messages" in cmd and "broken" in cmd[-1]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="bad query")
+        return fake_gws(cmd, **kwargs)
+
+    logged = datetime(2026, 10, 1, 8)
+    out = []
+    with pytest.raises(GwsError):
+        for x in sync_queries(GwsGmail("gws", runner=runner), [bad, QUERY], since={bad: logged}):
+            out.append(x)
+    [checkpoint] = [x for x in out if isinstance(x, SyncCheckpoint)]
+    assert checkpoint.value is not None
+    assert checkpoint.value["windows"][bad] == logged.isoformat()
