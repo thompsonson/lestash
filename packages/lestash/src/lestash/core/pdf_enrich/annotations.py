@@ -212,6 +212,7 @@ def _classify_group(
         annotation_id=primary.annotation_id,
         created_at=primary.created_at,
         stroke_geometry_hash=_hash_strokes(all_strokes),
+        member_ids=tuple(ink.annotation_id for ink in group if ink.annotation_id),
     )
 
 
@@ -299,6 +300,7 @@ def _fallback_unclassified(group: list[_RawInk], *, page, page_num: int) -> Extr
         annotation_id=primary.annotation_id,
         created_at=primary.created_at,
         stroke_geometry_hash=_hash_strokes(all_strokes),
+        member_ids=tuple(ink.annotation_id for ink in group if ink.annotation_id),
     )
 
 

@@ -34,6 +34,10 @@ class ExtractedAnnotation:
     annotation_id: str | None  # PDF /NM (annot.info["id"])
     created_at: str | None  # ISO-8601 from annot.info["creationDate"]
     stroke_geometry_hash: str  # sha256 of canonicalised strokes; OCR cache key
+    # Every member stroke's /NM, first stroke first. The group's annotation_id is
+    # the first one's, so erasing that stroke changes it; any shared name still
+    # identifies the group.
+    member_ids: tuple[str, ...] = ()
 
 
 @dataclass

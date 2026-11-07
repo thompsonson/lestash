@@ -21,9 +21,13 @@ from typing import Literal
 
 from lestash.core.config import Config
 from lestash.core.database import get_connection, mark_recent_history, max_history_id
+from lestash.core.pdf_enrich.persistence import (
+    OCR_TARGET_KINDS,
+    REMOVED_KEY,
+    SOURCE_PDF_MEDIA_TYPE,
+)
 
 OCR_EXTRACTOR_VERSION: int = 1
-OCR_TARGET_KINDS = ("margin_note", "ink_unclassified")
 ANTHROPIC_MODEL = "claude-sonnet-4-6"
 OCR_PROMPT = (
     "Transcribe the handwritten text in this image. "
@@ -78,7 +82,8 @@ def ocr_annotation(child_id: int, *, config: Config | None = None) -> OcrResult:
         except (TypeError, json.JSONDecodeError):
             meta = {}
 
-        if meta.get("annotation_kind") not in OCR_TARGET_KINDS:
+        # A child whose annotation left the PDF has nothing on the page to read
+        if meta.get("annotation_kind") not in OCR_TARGET_KINDS or meta.get(REMOVED_KEY):
             return OcrResult(child_id=child_id, status="skipped", message="kind not eligible")
         if meta.get("ocr_version") == OCR_EXTRACTOR_VERSION:
             return OcrResult(child_id=child_id, status="skipped", text=meta.get("ocr_text"))
@@ -135,7 +140,8 @@ def _candidate_children(conn: sqlite3.Connection, *, parent_id: int | None) -> l
             meta = json.loads(row["metadata"]) if row["metadata"] else {}
         except (TypeError, json.JSONDecodeError):
             continue
-        if meta.get("annotation_kind") not in OCR_TARGET_KINDS:
+        # A child whose annotation left the PDF has nothing on the page to read
+        if meta.get("annotation_kind") not in OCR_TARGET_KINDS or meta.get(REMOVED_KEY):
             continue
         if meta.get("ocr_version") == OCR_EXTRACTOR_VERSION:
             continue
@@ -190,10 +196,10 @@ def _resolve_parent_pdf(conn: sqlite3.Connection, config: Config, parent_id: int
     row = conn.execute(
         """
         SELECT local_path FROM item_media
-        WHERE item_id = ? AND media_type = 'source_pdf'
+        WHERE item_id = ? AND media_type = ?
         ORDER BY id LIMIT 1
         """,
-        (parent_id,),
+        (parent_id, SOURCE_PDF_MEDIA_TYPE),
     ).fetchone()
     if not row or not row["local_path"]:
         raise _OcrUnavailable("parent has no source_pdf media row")

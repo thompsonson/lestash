@@ -59,6 +59,19 @@ Each classified annotation (margin note, circled passage, underlined span, ink_u
 
 **Important refinement**: a child item is created per *semantic annotation*, not per ink stroke. A single circle is typically 5–20 strokes — those become one child. Stroke geometries are preserved in the child's `metadata` JSON for full-fidelity replay.
 
+**Re-runs upsert children; they do not replace them** (amended 2026-11, #196). A Kobo PDF gains ink between syncs, so the same item is re-enriched often. Children must keep their item IDs and OCR text (D10).
+
+- Each annotation is matched to an existing child of the same parent in three passes, trying live children before ones marked removed. First, the same strokes on the same page (`page`, `stroke_geometry_hash`). Then a shared stroke `/NM` on the same page with overlapping boxes: the same annotation with a stroke added or erased. Children store every member stroke's `/NM` (`annotation_ids`), because the group's `annotation_id` is its first stroke's and changes if that stroke is erased. Last, unnamed ink (no `/NM`) matches an unnamed child on the same page whose box overlaps.
+- `/NM` alone is not an identity: PyMuPDF names restart on each page (`fitz-A0`, `fitz-A1`, ...) and are reused after a deletion.
+- `source_id` is scoped to the parent's item id and the page: `item-{parent id}:p{page}:{annotation_id or stroke_geometry_hash}`. A parent's `source_id` is only unique within its source type, so it is not used.
+- A matched child is updated in place, and only if something changed. If its strokes are unchanged and its kind is still one OCR handles, its `content`, `ocr_text` and `ocr_version` are kept.
+- If the geometry hash changed (a stroke joined the group), content is refreshed and the OCR marker is dropped, so OCR reruns for that child only.
+- New annotations are inserted.
+- A child whose annotation has gone from the PDF (erased, or merged into another) is kept, not deleted: its title gets a `[Removed from PDF]` prefix, its metadata gets `removed_from_pdf` (a time), and it moves to the key `item-{parent id}:removed:{child id}`. Deleting would cascade away its tags, collection links, history and OCR text. A later run that matches it again restores it.
+- Enricher image rows are reused when the same image file returns, and deleted when it does not.
+
+Each item keeps exactly one `source_pdf` row (D5). Attaching a changed PDF updates that row and keeps the previous file, when it is still on disk, as a `source_pdf_version` media row (`local_path`, `url`, `source_origin`; `created_at` is when it was replaced). The history lives in media rows, not item metadata, because a re-sync's upsert replaces the metadata. Media files are content-addressed, so old versions stay on disk and the path names the file's hash.
+
 **Rejected:** JSON blob on `items.metadata` (annotations would not be searchable). Dedicated `item_annotations` table (additional join, no benefit over child items).
 
 ### D7: Invocation — single code path, two surfaces
