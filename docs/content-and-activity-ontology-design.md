@@ -376,6 +376,7 @@ flowchart LR
 4. `people`, `person_identities`, `item_agents` and `item_mentions`, filled from `items.author`, then `person_profiles` retired.
 5. `activities` table, then moving timestamp lists into it.
 6. Drive Activity API source; needs the `drive.activity.readonly` scope and a new sign-in.
+   Google's reference does not say how far back activity goes, so the first query records the oldest date found.
 
 Steps 1 and 2 work with today's shape and gain links, people and activities as those land.
 
@@ -386,11 +387,6 @@ Steps 1 and 2 work with today's shape and gain links, people and activities as t
 - Every YouTube channel becomes an entity; listings filter by watch count.
 - Nothing links people automatically; every match is a suggestion you confirm.
 - Item links from exact identifiers count at once and can be removed; name matches wait for you.
-
-## Open questions
-
-- How far back does the Drive Activity API reach?
-  Google's reference does not say, so the first query after sign-in will show it.
 
 ## References
 
