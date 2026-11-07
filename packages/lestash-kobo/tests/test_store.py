@@ -266,3 +266,13 @@ def test_a_folder_that_cannot_be_listed_fails_the_copy(
     with pytest.raises(OSError):
         store.take(device, T1)
     assert store.snapshots() == []
+
+
+def test_folders_not_named_like_snapshots_are_ignored(device: Path, tmp_path: Path) -> None:
+    import shutil
+
+    store = KoboStore(tmp_path / "store")
+    snap = store.take(device, T1).snapshot
+    shutil.copytree(snap.path, store.snapshots_dir / "backup-old")
+    assert [s.name for s in store.snapshots()] == [snap.name]
+    assert store.newest()[1] == snap.name

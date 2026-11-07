@@ -156,6 +156,11 @@ class KoboReader:
             if self._keep(row, marked):
                 kept.add(row["ContentID"])
                 yield self.title_item(row)
+        # Highlights can outlive their book on the device: keep them under a stand-in
+        known = {row["ContentID"] for row in titles}
+        for volume_id in sorted(v for v in marked if v and v not in known):
+            kept.add(volume_id)
+            yield self.missing_title_item(volume_id)
         for mark in sorted(marks, key=lambda m: self._order(m, chapters)):
             if mark["VolumeID"] in kept:
                 yield self.bookmark_item(mark, chapters)
@@ -205,6 +210,18 @@ class KoboReader:
             author=author,
             created_at=parse_date(row.get("DateAdded")) or parse_date(row.get("___SyncTime")),
             metadata={k: v for k, v in meta.items() if v not in (None, "")},
+        )
+
+    def missing_title_item(self, volume_id: str) -> ItemCreate:
+        """A stand-in parent for highlights whose book is no longer on the Kobo."""
+        path = device_path(volume_id)
+        title = Path(path).stem if path else volume_id
+        return ItemCreate(
+            source_type=SOURCE_TYPE,
+            source_id=volume_id,
+            title=title,
+            content=f"{title} (no longer on the Kobo; its highlights were kept)",
+            metadata={"kind": "missing", "content_id": volume_id},
         )
 
     def bookmark_item(self, mark: dict[str, Any], chapters: dict[str, dict]) -> ItemCreate:

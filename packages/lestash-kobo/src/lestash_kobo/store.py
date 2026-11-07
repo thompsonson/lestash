@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_ROOT = Path("~/.local/share/lestash/kobo").expanduser()
 DB_PATH = ".kobo/KoboReader.sqlite"
+SNAPSHOT_NAME = re.compile(r"\d{8}T\d{6}Z")
 
 # Written by macOS and Windows when the Kobo was mounted there; not Kobo data
 SKIP_DIRS = frozenset({".Spotlight-V100", ".fseventsd", ".Trashes", "System Volume Information"})
@@ -140,11 +142,9 @@ class KoboStore:
         """Readable snapshots in name order (names are UTC times, so time order)."""
         if not self.snapshots_dir.is_dir():
             return
-        dirs = sorted(self.snapshots_dir.iterdir(), key=lambda p: p.name, reverse=newest_first)
-        for d in dirs:
+        for name in reversed(self._names()) if newest_first else self._names():
+            d = self.snapshots_dir / name
             manifest = d / "manifest.json"
-            if d.name.startswith(".") or not manifest.is_file():
-                continue
             try:
                 yield self._load(d, json.loads(manifest.read_text()))
             except (OSError, ValueError, KeyError, TypeError) as e:
@@ -160,13 +160,17 @@ class KoboStore:
         return next(self._manifests(newest_first=True), None)
 
     def _names(self) -> list[str]:
-        """Snapshot folder names, readable or not, oldest first."""
+        """Snapshot folder names, readable or not, oldest first.
+
+        Only names this store writes (UTC times): a copied folder such as
+        ``backup-old`` would otherwise sort as the newest.
+        """
         if not self.snapshots_dir.is_dir():
             return []
         return sorted(
             d.name
             for d in self.snapshots_dir.iterdir()
-            if not d.name.startswith(".") and (d / "manifest.json").is_file()
+            if SNAPSHOT_NAME.fullmatch(d.name) and (d / "manifest.json").is_file()
         )
 
     def newest(self) -> tuple[Snapshot | None, str | None]:

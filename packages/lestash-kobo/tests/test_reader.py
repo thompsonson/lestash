@@ -336,3 +336,28 @@ def test_a_lost_markup_blob_skips_the_image_not_the_import(device: Path, tmp_pat
     items = list(KoboReader(store, snap, media_dir=tmp_path / "media").items())
     markup = next(i for i in items if i.source_id == "bookmark:mk-1")
     assert [m.mime_type for m in markup.media or []] == ["image/svg+xml"]
+
+
+def test_highlights_of_a_book_gone_from_the_kobo_are_kept(
+    device: Path, tmp_path: Path, test_db
+) -> None:
+    import sqlite3
+
+    gone = "file:///mnt/onboard/Gone Book.epub"
+    conn = sqlite3.connect(device / ".kobo" / "KoboReader.sqlite")
+    conn.execute(
+        "INSERT INTO Bookmark (BookmarkID, VolumeID, Text, Type, Hidden)"
+        " VALUES ('hl-orphan', ?, 'still mine', 'highlight', 'false')",
+        (gone,),
+    )
+    conn.commit()
+    conn.close()
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    with get_connection(test_db) as db:
+        SyncStore(db, "kobo").run(KoboSource().sync({"store_dir": str(store.root)}))
+        row = db.execute(
+            "SELECT p.title, json_extract(p.metadata, '$.kind') FROM items c"
+            " JOIN items p ON p.id = c.parent_id WHERE c.source_id = 'bookmark:hl-orphan'"
+        ).fetchone()
+    assert tuple(row) == ("Gone Book", "missing")

@@ -110,8 +110,8 @@ class KoboSource(SourcePlugin):
             signal.signal(signal.SIGTERM, _raise_on_sigterm)
             try:
                 result = store.take(source, when, verify=verify)
-            except (FileNotFoundError, FileExistsError) as e:
-                console.print(f"[red]{e}[/red]")
+            except OSError as e:  # includes not mounted, already exists, read errors
+                console.print(f"[red]Snapshot failed: {e}[/red]")
                 raise typer.Exit(1) from e
             _report(result)
 
