@@ -325,3 +325,14 @@ def test_highlight_title_is_one_line(device: Path, tmp_path: Path) -> None:
     conn.close()
     item = next(i for i in _items(device, tmp_path) if i.source_id == "bookmark:hl-multi")
     assert item.title == "Highlight: end of para Next para"
+
+
+def test_a_lost_markup_blob_skips_the_image_not_the_import(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    snap = store.take(device, T1).snapshot
+    blob = snap.blob(store, ".kobo/markups/mk-1.jpg")
+    assert blob is not None
+    blob.unlink()
+    items = list(KoboReader(store, snap, media_dir=tmp_path / "media").items())
+    markup = next(i for i in items if i.source_id == "bookmark:mk-1")
+    assert [m.mime_type for m in markup.media or []] == ["image/svg+xml"]

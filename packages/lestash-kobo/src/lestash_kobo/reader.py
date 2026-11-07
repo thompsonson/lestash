@@ -12,6 +12,7 @@ BookmarkID, VolumeID) are required.
 from __future__ import annotations
 
 import html
+import logging
 import os
 import re
 import shutil
@@ -26,6 +27,8 @@ from urllib.parse import quote
 from lestash.models.item import ItemCreate, MediaCreate
 
 from lestash_kobo.store import DB_PATH, KoboStore, Snapshot, sha_file
+
+logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "kobo"
 # Bump when the items change shape, so the next sync re-imports an unchanged snapshot
@@ -256,6 +259,12 @@ class KoboReader:
         for pos, (ext, mime) in enumerate((("jpg", "image/jpeg"), ("svg", "image/svg+xml"))):
             entry = self.snapshot.files.get(f".kobo/markups/{bookmark_id}.{ext}")
             if not entry:
+                continue
+            if not self.store.blob_path(entry.sha256).is_file():
+                # One lost image must not block every later import
+                logger.warning(
+                    "Kobo markup image %s.%s is missing from the store", bookmark_id, ext
+                )
                 continue
             rel = f"kobo/markup-{safe_id}.{ext}"
             dest = self.media_dir / rel

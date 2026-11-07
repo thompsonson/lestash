@@ -94,6 +94,10 @@ def _decode_part(data: bytes) -> str:
         return data.decode("latin-1")
 
 
+def _raise(error: OSError) -> None:
+    raise error
+
+
 def _write_durably(path: Path, data: bytes) -> None:
     with path.open("wb") as f:
         f.write(data)
@@ -241,6 +245,7 @@ class KoboStore:
                 "files": {k: vars(v) for k, v in sorted(files.items())},
             }
             _write_durably(tmp / "manifest.json", json.dumps(manifest, indent=1).encode())
+            _fsync_dir(tmp)
             final = self.snapshots_dir / name
             tmp.rename(final)
             _fsync_dir(self.snapshots_dir)
@@ -268,7 +273,9 @@ class KoboStore:
                     leftover.unlink(missing_ok=True)
 
     def _walk(self, source: Path):
-        for dirpath, dirnames, filenames in os.walk(source):
+        # A folder that can't be listed fails the copy: a snapshot missing it would be
+        # recorded as complete, and its files would look removed
+        for dirpath, dirnames, filenames in os.walk(source, onerror=_raise):
             dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
             for f in sorted(filenames):
                 if f.startswith("._"):  # macOS AppleDouble files
@@ -301,7 +308,9 @@ class KoboStore:
             if dest.exists() and not (repair and sha_file(dest) != sha):
                 tmp.unlink()
                 return sha, False
-            dest.parent.mkdir(exist_ok=True)
+            if not dest.parent.is_dir():
+                dest.parent.mkdir()
+                _fsync_dir(self.blobs)  # the new shard folder's entry, too
             tmp.chmod(0o400)
             tmp.replace(dest)
             _fsync_dir(dest.parent)

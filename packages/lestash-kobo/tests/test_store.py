@@ -249,3 +249,20 @@ def test_database_change_at_same_size_and_second_is_seen(device: Path, tmp_path:
     db.write_bytes(bytes(data))
     os.utime(db, ns=(st.st_atime_ns, st.st_mtime_ns))  # same mtime too
     assert store.take(device, T2).changed == [".kobo/KoboReader.sqlite"]
+
+
+def test_a_folder_that_cannot_be_listed_fails_the_copy(
+    device: Path, tmp_path: Path, monkeypatch
+) -> None:
+    store = KoboStore(tmp_path / "store")
+    real_scandir = os.scandir
+
+    def flaky(path):
+        if str(path).endswith("markups"):
+            raise OSError(5, "Input/output error", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", flaky)
+    with pytest.raises(OSError):
+        store.take(device, T1)
+    assert store.snapshots() == []
