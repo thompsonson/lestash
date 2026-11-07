@@ -147,8 +147,10 @@ class KoboSource(SourcePlugin):
             logger.info("No Kobo snapshots yet in %s; nothing to import", store.root)
             return
         # The plug-in import and the 6-hourly timer (which syncs every source) can start
-        # together. The second waits, then finds the newest snapshot itself: if the first
-        # already imported it, the checkpoint makes the second a no-op.
+        # together. The CLI's per-source lock (lestash.core.sync.SyncRun) already makes a
+        # named sync wait and --all skip; this lock also covers callers that bypass it.
+        # The second finds the newest snapshot itself: if the first already imported it,
+        # the checkpoint makes the second a no-op.
         with open(store.root / ".sync.lock", "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             imported: str | None = None

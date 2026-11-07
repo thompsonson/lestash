@@ -279,6 +279,12 @@ def notebook_summary(title: str, metadata: dict) -> str:
     return "\n\n".join(parts)
 
 
+def notebook_child_name(path: str) -> str:
+    """A note, report or chat's name: its file name without the extension."""
+    name = path.rsplit("/", 1)[-1]
+    return name.removesuffix(".md") if name.endswith(".md") else name.replace(".html", "")
+
+
 def _parse_notebooklm_zip(zf, nlm_files, all_names):
     """Parse NotebookLM notebooks from a Google Takeout ZIP.
 
@@ -405,7 +411,7 @@ def _parse_notebooklm_zip(zf, nlm_files, all_names):
 
             # Child items: individual notes
             for nh in note_htmls:
-                note_name = nh.rsplit("/", 1)[-1].replace(".html", "")
+                note_name = notebook_child_name(nh)
                 html = zf.read(nh).decode("utf-8", errors="replace")
                 text = re.sub(r"<[^>]+>", "", html).strip()
                 if text:
@@ -433,7 +439,7 @@ def _parse_notebooklm_zip(zf, nlm_files, all_names):
                         ItemCreate(
                             source_type="notebooklm",
                             source_id=rp,
-                            title=f"{title} — {rp.rsplit('/', 1)[-1].removesuffix('.md')}",
+                            title=f"{title} — {notebook_child_name(rp)}",
                             content=text,
                             created_at=created_at,
                             is_own_content=True,
@@ -447,7 +453,7 @@ def _parse_notebooklm_zip(zf, nlm_files, all_names):
 
             # Child items: individual chat sessions
             for ch in chat_htmls:
-                chat_name = ch.rsplit("/", 1)[-1].replace(".html", "")
+                chat_name = notebook_child_name(ch)
                 html = zf.read(ch).decode("utf-8", errors="replace")
                 text = re.sub(r"<[^>]+>", "", html).strip()
                 if text:

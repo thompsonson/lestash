@@ -167,6 +167,76 @@ def test_reimporting_the_same_parts_is_idempotent(test_db) -> None:
     assert top_level == 1
 
 
+# A Takeout folder name is the notebook title with characters such as ":" replaced
+NB_Q1 = "Takeout/NotebookLM/Plan_ Q1"
+META_Q1 = {
+    f"{NB_Q1}/Plan_ Q1.json": json.dumps(
+        {"title": "Plan: Q1", "metadata": {"createTime": "2026-03-01T10:00:00Z"}}
+    ),
+}
+CHILDREN_Q1 = {
+    f"{NB_Q1}/Notes/Plan A.html": "<p>first plan</p>",
+    f"{NB_Q1}/Chat History/Chat 1.html": "<p>USER: hi MODEL: hello</p>",
+}
+
+
+def _children(conn) -> list[tuple[str, str]]:
+    return conn.execute(
+        "SELECT title, created_at FROM items WHERE source_type = 'notebooklm' "
+        "AND parent_id IS NOT NULL ORDER BY title"
+    ).fetchall()
+
+
+def test_children_stored_before_the_metadata_part_take_its_title_and_date(test_db) -> None:
+    with get_connection(test_db) as conn:
+        for part in (CHILDREN_Q1, META_Q1):
+            _store(conn, parse_zip(_zip(part))[0])
+        children = _children(conn)
+    assert [title for title, _ in children] == ["Plan: Q1 — Chat 1", "Plan: Q1 — Plan A"]
+    assert all(created.startswith("2026-03-01") for _, created in children)
+
+
+def test_children_arriving_after_the_metadata_part_take_its_title_and_date(test_db) -> None:
+    with get_connection(test_db) as conn:
+        for part in (META_Q1, CHILDREN_Q1):
+            _store(conn, parse_zip(_zip(part))[0])
+        children = _children(conn)
+    assert [title for title, _ in children] == ["Plan: Q1 — Chat 1", "Plan: Q1 — Plan A"]
+    assert all(created.startswith("2026-03-01") for _, created in children)
+
+
+def test_a_stored_child_without_a_date_is_given_its_notebooks(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _store(conn, parse_zip(_zip(CHILDREN_Q1))[0])
+        # The notebook's metadata arrives, then the children's part is imported again
+        _store(conn, parse_zip(_zip(META_Q1))[0])
+        conn.execute("UPDATE items SET created_at = '2030-01-01' WHERE parent_id IS NOT NULL")
+        conn.execute(
+            "UPDATE items SET title = 'Plan_ Q1 — Plan A' WHERE source_id LIKE '%Plan A.html'"
+        )
+        _store(conn, parse_zip(_zip(CHILDREN_Q1))[0])
+        children = _children(conn)
+    assert [title for title, _ in children] == ["Plan: Q1 — Chat 1", "Plan: Q1 — Plan A"]
+    assert all(created.startswith("2026-03-01") for _, created in children)
+
+
+def test_a_child_title_edited_by_hand_is_kept_when_the_metadata_arrives(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _store(conn, parse_zip(_zip(CHILDREN_Q1))[0])
+        conn.execute("UPDATE items SET title = 'My plan' WHERE source_id LIKE '%Plan A.html'")
+        _store(conn, parse_zip(_zip(META_Q1))[0])
+        children = _children(conn)
+    assert [title for title, _ in children] == ["My plan", "Plan: Q1 — Chat 1"]
+    assert all(created.startswith("2026-03-01") for _, created in children)
+
+
+def test_children_of_a_notebook_without_metadata_keep_the_folder_name(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _store(conn, parse_zip(_zip(CHILDREN_Q1))[0])
+        children = _children(conn)
+    assert [title for title, _ in children] == ["Plan_ Q1 — Chat 1", "Plan_ Q1 — Plan A"]
+
+
 # --- YouTube history ---------------------------------------------------------------------
 
 

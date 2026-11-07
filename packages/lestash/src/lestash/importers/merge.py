@@ -9,6 +9,9 @@ Upserts replace an item's content and metadata. That is wrong for two kinds of i
 - NotebookLM notebooks from a multi-part Takeout: each part holds some of a notebook
   (metadata, sources, notes, artifacts), so the parts are combined. Only the part with the
   notebook's metadata JSON sets its title and date.
+- NotebookLM notes, reports and chats: a child in a part without that JSON has only the
+  folder name for its title prefix, and no date. It takes both from its stored notebook,
+  and the notebook's children are corrected when the JSON arrives later.
 
 Every writer that upserts sync or import items calls ``merge_with_stored`` first.
 """
@@ -30,6 +33,7 @@ TIME_KEYS = {
     "searched_times": "searched_count",
 }
 YOUTUBE_KINDS = ("history", "search", "post")
+NOTEBOOK_CHILD_TYPES = ("note", "report", "chat")
 
 
 def merge_with_stored(conn: sqlite3.Connection, item: ItemCreate) -> None:
@@ -45,6 +49,8 @@ def merge_with_stored(conn: sqlite3.Connection, item: ItemCreate) -> None:
         stored = _stored(conn, item)
         if stored:
             _merge_notebook(conn, item, stored)
+    elif item.source_type == "notebooklm" and metadata.get("type") in NOTEBOOK_CHILD_TYPES:
+        _take_from_notebook(conn, item)
 
 
 def _stored(conn: sqlite3.Connection, item: ItemCreate) -> dict[str, Any] | None:
@@ -144,11 +150,13 @@ def _merge_notebook(conn: sqlite3.Connection, item: ItemCreate, stored: dict[str
         if "emoji" in old:
             merged["emoji"] = old["emoji"]
         merged["has_metadata"] = True
-    elif new_has_meta and not old_has_meta and item.created_at:
-        # The part with the metadata JSON arrived second: it has the real creation date.
-        conn.execute(
-            "UPDATE items SET created_at = ? WHERE id = ?", (item.created_at, stored["id"])
-        )
+    elif new_has_meta and not old_has_meta:
+        # The part with the metadata JSON arrived second: it has the real title and date.
+        if item.created_at:
+            conn.execute(
+                "UPDATE items SET created_at = ? WHERE id = ?", (item.created_at, stored["id"])
+            )
+        _fix_notebook_children(conn, item.source_id or "", item.title or "", item.created_at)
 
     for key in ("sources", "artifacts", "notes", "chats"):
         values = _union(old.get(key), new.get(key))
@@ -164,3 +172,70 @@ def _merge_notebook(conn: sqlite3.Connection, item: ItemCreate, stored: dict[str
 
     item.content = notebook_summary(item.title or "", merged)
     item.metadata = merged
+
+
+def _child_title(notebook_title: str, child_source_id: str) -> str:
+    """A child's title, as the parser builds it: the notebook title, then the file name."""
+    from lestash.importers.zips import notebook_child_name
+
+    return f"{notebook_title} — {notebook_child_name(child_source_id)}"
+
+
+def _take_from_notebook(conn: sqlite3.Connection, item: ItemCreate) -> None:
+    """Give a NotebookLM child its notebook's title and date, once the notebook has them."""
+    parent_source_id = (item.metadata or {}).get("_parent_source_id")
+    if not parent_source_id or not item.source_id:
+        return
+    row = conn.execute(
+        "SELECT title, created_at, metadata FROM items "
+        "WHERE source_type = 'notebooklm' AND source_id = ?",
+        (parent_source_id,),
+    ).fetchone()
+    if not row:
+        return
+    try:
+        parent_metadata = json.loads(row[2]) if row[2] else {}
+    except json.JSONDecodeError:
+        parent_metadata = {}
+    # Notebooks imported before multi-part support came from a part with metadata.
+    if not parent_metadata.get("has_metadata", True):
+        return
+    item.title = _child_title(row[0] or "", item.source_id)
+    if item.created_at is None and row[1]:
+        try:
+            item.created_at = datetime.fromisoformat(str(row[1]))
+        except ValueError:
+            return
+        # An insert takes this date; an upsert of a stored child keeps its old one, so set it.
+        conn.execute(
+            "UPDATE items SET created_at = ? WHERE source_type = 'notebooklm' AND source_id = ?",
+            (row[1], item.source_id),
+        )
+
+
+def _fix_notebook_children(
+    conn: sqlite3.Connection, notebook_source_id: str, title: str, created_at: datetime | None
+) -> None:
+    """Correct the title and date of children stored before their notebook's metadata.
+
+    Only titles still made from the folder name change, so a title edited by hand stays.
+    """
+    from lestash.core.database import mark_recent_history, max_history_id
+
+    # json_extract raises on malformed JSON, so such rows are skipped first
+    folder_prefix = f"{notebook_source_id.rsplit('/', 1)[-1]} — "
+    rows = conn.execute(
+        "SELECT id, source_id, title FROM items WHERE source_type = 'notebooklm' AND CASE "
+        "WHEN json_valid(metadata) THEN json_extract(metadata, '$._parent_source_id') = ? "
+        "AND json_extract(metadata, '$.type') IN ('note', 'report', 'chat') END",
+        (notebook_source_id,),
+    ).fetchall()
+    since = max_history_id(conn)
+    for child_id, child_source_id, child_title in rows:
+        if (child_title or "").startswith(folder_prefix):
+            child_title = _child_title(title, child_source_id)
+        conn.execute(
+            "UPDATE items SET title = ?, created_at = COALESCE(?, created_at) WHERE id = ?",
+            (child_title, created_at.isoformat(" ") if created_at else None, child_id),
+        )
+    mark_recent_history(conn, since, "sync", item_ids=[row[0] for row in rows])
