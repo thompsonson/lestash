@@ -39,10 +39,12 @@ systemctl --user list-timers lestash-sync.timer lestash-cert.timer --no-pager
 
 # The Kobo trigger needs two root steps, once per machine; this script doesn't run them
 KOBO_FSTAB="LABEL=KOBOeReader /media/kobo vfat ro,noauto,user,nosuid,nodev,noexec,uid=$(id -u),gid=$(id -g),umask=077,utf8 0 0"
-if ! grep -qF "$KOBO_FSTAB" /etc/fstab || [ ! -f /etc/udev/rules.d/99-lestash-kobo.rules ]; then
+# Match the label and mount point only, so an edited line isn't reported as missing
+kobo_in_fstab() { grep -qE '^LABEL=KOBOeReader[[:space:]]+/media/kobo[[:space:]]' /etc/fstab; }
+if ! kobo_in_fstab || [ ! -f /etc/udev/rules.d/99-lestash-kobo.rules ]; then
     echo ""
     echo "Kobo plug-in sync needs, once, as root:"
-    grep -qF "$KOBO_FSTAB" /etc/fstab || {
+    kobo_in_fstab || {
         echo "  sudo mkdir -p /media/kobo"
         echo "  echo '$KOBO_FSTAB' | sudo tee -a /etc/fstab && sudo systemctl daemon-reload"
     }

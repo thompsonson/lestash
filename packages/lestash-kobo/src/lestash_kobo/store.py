@@ -22,7 +22,7 @@ import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -52,9 +52,20 @@ class Snapshot:
     path: Path
 
     def digest(self) -> str:
-        """One hash of every path and its contents: equal for identical device states."""
+        """One hash of what the import reads: equal when a re-import would change nothing.
+
+        Under ``.kobo/`` that is the database and the markups; the Kobo's own logs,
+        caches and settings there are left out. Books and PDFs elsewhere count.
+        """
         h = hashlib.sha256()
         for path, entry in sorted(self.files.items()):
+            if path.startswith(".kobo/") and not (
+                path.startswith(DB_PATH)
+                or path.startswith(".kobo/markups/")
+                or path.startswith(".kobo/google_drive/")
+                or path.startswith(".kobo/kepub/")
+            ):
+                continue
             h.update(f"{path}\0{entry.sha256}\n".encode())
         return h.hexdigest()
 
@@ -143,13 +154,19 @@ class KoboStore:
         if not self.snapshots_dir.is_dir():
             return
         for name in reversed(self._names()) if newest_first else self._names():
-            d = self.snapshots_dir / name
-            manifest = d / "manifest.json"
-            try:
-                yield self._load(d, json.loads(manifest.read_text()))
-            except (OSError, ValueError, KeyError, TypeError) as e:
-                # One damaged snapshot must not block the others, or new ones
-                logger.warning("Skipping unreadable Kobo snapshot %s: %s", d.name, e)
+            snap = self._read(name)
+            if snap is not None:
+                yield snap
+
+    def _read(self, name: str) -> Snapshot | None:
+        """A snapshot by folder name, or None (with a warning) if it can't be read."""
+        d = self.snapshots_dir / name
+        try:
+            return self._load(d, json.loads((d / "manifest.json").read_text()))
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            # One damaged snapshot must not block the others, or new ones
+            logger.warning("Unreadable Kobo snapshot %s: %s", name, e)
+            return None
 
     def snapshots(self) -> list[Snapshot]:
         """All complete snapshots, oldest first."""
@@ -181,12 +198,7 @@ class KoboStore:
         names = self._names()
         if not names:
             return None, None
-        d = self.snapshots_dir / names[-1]
-        try:
-            return self._load(d, json.loads((d / "manifest.json").read_text())), d.name
-        except (OSError, ValueError, KeyError, TypeError) as e:
-            logger.warning("Unreadable Kobo snapshot %s: %s", d.name, e)
-            return None, d.name
+        return self._read(names[-1]), names[-1]
 
     def take(
         self, source: Path | str, taken_at: datetime | None = None, verify: bool = False
@@ -209,8 +221,11 @@ class KoboStore:
     def _take(self, source: Path, taken_at: datetime | None, verify: bool) -> SnapshotResult:
         taken_at = (taken_at or datetime.now(UTC)).astimezone(UTC)
         name = taken_at.strftime("%Y%m%dT%H%M%SZ")
+        if taken_at > datetime.now(UTC) + timedelta(minutes=5):
+            raise ValueError(f"{taken_at.isoformat()} is in the future")
         snaps = self.snapshots()
-        if name in self._names():  # damaged ones too: the rename would fail at the end
+        # Any folder of that name, damaged or empty too: the rename would fail at the end
+        if (self.snapshots_dir / name).exists():
             raise FileExistsError(f"snapshot {name} already exists")
         # Compare with what came before this copy, also when importing an old copy late
         history = [s for s in snaps if s.taken_at < taken_at]

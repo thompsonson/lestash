@@ -10,7 +10,7 @@ from lestash_kobo.store import KoboStore, device_name
 
 T1 = datetime(2026, 4, 17, 14, 0, tzinfo=UTC)
 T2 = datetime(2026, 11, 7, 9, 56, tzinfo=UTC)
-T3 = datetime(2026, 11, 8, 9, 0, tzinfo=UTC)
+T3 = datetime(2026, 11, 7, 9, 57, tzinfo=UTC)
 PDF = ".kobo/google_drive/Papers/Judge.pdf"
 
 
@@ -164,7 +164,7 @@ def test_pdf_deleted_then_restored_clean_is_flagged(device: Path, tmp_path: Path
     (device / PDF).unlink()  # Drive sync removed it...
     store.take(device, T3)
     (device / PDF).write_bytes(b"%PDF-1.4 clean")  # ...then downloaded the original
-    fourth = store.take(device, datetime(2026, 11, 9, tzinfo=UTC))
+    fourth = store.take(device, datetime(2026, 11, 7, 9, 58, tzinfo=UTC))
     assert fourth.added == [PDF] and fourth.reverted == [PDF]
 
 
@@ -276,3 +276,23 @@ def test_folders_not_named_like_snapshots_are_ignored(device: Path, tmp_path: Pa
     shutil.copytree(snap.path, store.snapshots_dir / "backup-old")
     assert [s.name for s in store.snapshots()] == [snap.name]
     assert store.newest()[1] == snap.name
+
+
+def test_a_future_time_is_refused(device: Path, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="future"):
+        KoboStore(tmp_path / "store").take(device, datetime(2999, 1, 1, tzinfo=UTC))
+
+
+def test_an_empty_folder_with_the_same_name_is_refused(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    (store.snapshots_dir / "20261107T095600Z").mkdir(parents=True)
+    with pytest.raises(FileExistsError):
+        store.take(device, T2)
+
+
+def test_digest_ignores_the_kobos_own_logs(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    a = store.take(device, T1).snapshot
+    (device / ".kobo" / "affiliate.conf").write_text("changed")
+    b = store.take(device, T2).snapshot
+    assert a.digest() == b.digest()

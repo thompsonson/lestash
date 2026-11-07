@@ -81,7 +81,7 @@ def test_sync_stores_children_under_books_and_is_idempotent(
     config = {"store_dir": str(store.root)}
     # The second snapshot differs only in a file that isn't an item, so the second sync
     # really re-imports, and must not rewrite anything
-    for when in (T1, datetime(2026, 11, 8, tzinfo=UTC)):
+    for when in (T1, datetime(2026, 11, 7, 9, 57, tzinfo=UTC)):
         store.take(device, when)
         (device / ".kobo" / "affiliate.conf").write_text(str(when))
         with get_connection(test_db) as conn:
@@ -145,7 +145,7 @@ def test_redrawn_markup_replaces_its_image(device: Path, tmp_path: Path, test_db
     with get_connection(test_db) as conn:
         SyncStore(conn, "kobo").run(KoboSource().sync(config))
     (device / ".kobo" / "markups" / "mk-1.jpg").write_bytes(b"\xff\xd8redrawn")
-    store.take(device, datetime(2026, 11, 8, tzinfo=UTC))
+    store.take(device, datetime(2026, 11, 7, 9, 57, tzinfo=UTC))
     with get_connection(test_db) as conn:
         SyncStore(conn, "kobo").run(KoboSource().sync(config))
         rows = conn.execute(
@@ -166,7 +166,7 @@ def test_unchanged_snapshot_is_not_imported_twice(device: Path, tmp_path: Path, 
         SyncStore(conn, "kobo").run(iter(first))
     assert list(KoboSource().sync(config)) == []
     # Plugging in again without reading: a new snapshot, same contents, no re-import
-    store.take(device, datetime(2026, 11, 8, tzinfo=UTC))
+    store.take(device, datetime(2026, 11, 7, 9, 57, tzinfo=UTC))
     assert list(KoboSource().sync(config)) == []
     # A changed setting imports again
     assert list(KoboSource().sync({**config, "include_store_titles": True}))
@@ -217,7 +217,7 @@ def test_odd_bookmark_rows_do_not_break_the_sort(device: Path, tmp_path: Path) -
 def test_titles_do_not_change_between_identical_snapshots(device: Path, tmp_path: Path) -> None:
     store = KoboStore(tmp_path / "store")
     a = store.take(device, T1).snapshot
-    b = store.take(device, datetime(2026, 11, 8, tzinfo=UTC)).snapshot
+    b = store.take(device, datetime(2026, 11, 7, 9, 57, tzinfo=UTC)).snapshot
     media = tmp_path / "media"
     first = [i.model_dump() for i in KoboReader(store, a, media_dir=media).items()]
     second = [i.model_dump() for i in KoboReader(store, b, media_dir=media).items()]
@@ -289,7 +289,7 @@ def test_a_snapshot_taken_during_an_import_is_imported_too(
     )
     conn.commit()
     conn.close()
-    store.take(device, datetime(2026, 11, 8, tzinfo=UTC))
+    store.take(device, datetime(2026, 11, 7, 9, 57, tzinfo=UTC))
     rest = list(sync)
     assert sum(isinstance(i, SyncCheckpoint) for i in rest) == 2
     assert "bookmark:hl-new" in {getattr(i, "source_id", None) for i in rest}
@@ -298,7 +298,7 @@ def test_a_snapshot_taken_during_an_import_is_imported_too(
 def test_a_damaged_newest_snapshot_stops_the_import(device: Path, tmp_path: Path) -> None:
     store = KoboStore(tmp_path / "store")
     store.take(device, T1)
-    newest = store.take(device, datetime(2026, 11, 8, tzinfo=UTC)).snapshot
+    newest = store.take(device, datetime(2026, 11, 7, 9, 57, tzinfo=UTC)).snapshot
     (newest.path / "manifest.json").write_text("{")
     with pytest.raises(RuntimeError, match="unreadable"):
         list(KoboSource().sync({"store_dir": str(store.root)}))
@@ -357,7 +357,59 @@ def test_highlights_of_a_book_gone_from_the_kobo_are_kept(
     with get_connection(test_db) as db:
         SyncStore(db, "kobo").run(KoboSource().sync({"store_dir": str(store.root)}))
         row = db.execute(
-            "SELECT p.title, json_extract(p.metadata, '$.kind') FROM items c"
-            " JOIN items p ON p.id = c.parent_id WHERE c.source_id = 'bookmark:hl-orphan'"
+            "SELECT content, parent_id FROM items WHERE source_id = 'bookmark:hl-orphan'"
         ).fetchone()
-    assert tuple(row) == ("Gone Book", "missing")
+    assert tuple(row) == ("still mine", None)  # kept, top-level: its book was never seen
+
+
+def test_a_book_removed_later_keeps_its_item_and_highlights(
+    device: Path, tmp_path: Path, test_db
+) -> None:
+    import sqlite3
+
+    store = KoboStore(tmp_path / "store")
+    config = {"store_dir": str(store.root)}
+    store.take(device, T1)
+    with get_connection(test_db) as db:
+        SyncStore(db, "kobo").run(KoboSource().sync(config))
+        before = db.execute(
+            "SELECT title, author, content, metadata FROM items WHERE source_id = ?", (NN,)
+        ).fetchone()
+    conn = sqlite3.connect(device / ".kobo" / "KoboReader.sqlite")
+    conn.execute("DELETE FROM content WHERE ContentID = ?", (NN,))  # book gone, marks stay
+    conn.commit()
+    conn.close()
+    store.take(device, datetime(2026, 11, 7, 9, 57, tzinfo=UTC))
+    with get_connection(test_db) as db:
+        SyncStore(db, "kobo").run(KoboSource().sync(config))
+        after = db.execute(
+            "SELECT title, author, content, metadata FROM items WHERE source_id = ?", (NN,)
+        ).fetchone()
+        parent = db.execute(
+            "SELECT p.source_id FROM items c JOIN items p ON p.id = c.parent_id"
+            " WHERE c.source_id = 'bookmark:hl-1'"
+        ).fetchone()
+    assert tuple(after) == tuple(before)  # not overwritten by a stand-in
+    assert parent[0] == NN
+
+
+def test_a_saved_copy_is_dated_by_its_database(device: Path, tmp_path: Path, test_db) -> None:
+    import os
+
+    from typer.testing import CliRunner
+
+    db = device / ".kobo" / "KoboReader.sqlite"
+    april = datetime(2026, 4, 17, 14, 40, 3, tzinfo=UTC).timestamp()
+    os.utime(db, (april, april))
+    app = KoboSource().get_commands()
+    store = tmp_path / "store"
+    import lestash_kobo.source as src
+
+    orig = src._store
+    src._store = lambda config: KoboStore(store)
+    try:
+        result = CliRunner().invoke(app, ["snapshot", "--from", str(device)])
+    finally:
+        src._store = orig
+    assert result.exit_code == 0, result.output
+    assert [s.name for s in KoboStore(store).snapshots()] == ["20260417T144003Z"]

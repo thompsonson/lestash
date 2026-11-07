@@ -5,7 +5,8 @@ Two steps, kept apart so the device is unplugged as soon as possible:
 1. ``lestash kobo snapshot`` copies the mounted Kobo into a versioned store.
 2. ``lestash sources sync kobo`` reads the newest snapshot into LeStash.
 
-Nothing ever writes to the Kobo: it is mounted read-only (see deploy/99-lestash-kobo.rules).
+Nothing ever writes to the Kobo: it is mounted read-only (the fstab line printed by
+deploy/install.sh).
 """
 
 import fcntl
@@ -106,11 +107,21 @@ class KoboSource(SourcePlugin):
         ) -> None:
             """Copy the Kobo into the snapshot store. Unchanged files cost nothing."""
             store = _store(Config.load().get_plugin_config(self.name))
-            when = parse_taken_at(taken_at) if taken_at else None
+            if taken_at:
+                when: datetime | None = parse_taken_at(taken_at)
+            elif source != DEFAULT_MOUNT:
+                # A saved copy is as old as its database, not as old as this command:
+                # stamped "now", it would pose as the newest and be imported over newer
+                db = source / ".kobo" / "KoboReader.sqlite"
+                when = datetime.fromtimestamp(db.stat().st_mtime, UTC) if db.is_file() else None
+                if when:
+                    console.print(f"Dating the copy {when:%Y-%m-%d %H:%M} UTC (its database)")
+            else:
+                when = None
             signal.signal(signal.SIGTERM, _raise_on_sigterm)
             try:
                 result = store.take(source, when, verify=verify)
-            except OSError as e:  # includes not mounted, already exists, read errors
+            except (OSError, ValueError) as e:  # not mounted, exists, read error, future
                 console.print(f"[red]Snapshot failed: {e}[/red]")
                 raise typer.Exit(1) from e
             _report(result)
