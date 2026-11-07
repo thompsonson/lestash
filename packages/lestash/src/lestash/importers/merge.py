@@ -280,16 +280,18 @@ def _gemini_chat(conn: sqlite3.Connection, conversation_id: str) -> _GeminiChat 
     if not row:
         chat_id = conversation_id.removeprefix("c_")
         app_url = f"https://gemini.google.com/*app/{chat_id}"
-        # json_extract raises on malformed JSON, so such rows are skipped first
+        # instr() cheaply skips rows that can't hold the id; json_extract raises on
+        # malformed JSON, so such rows are skipped too
         row = conn.execute(
             "SELECT p.id, p.source_id, p.metadata FROM items p "
             "WHERE p.source_type = 'gemini' AND ("
-            "p.source_id GLOB ? OR p.source_id GLOB ? OR CASE WHEN json_valid(p.metadata) "
+            "p.source_id GLOB ? OR p.source_id GLOB ? OR CASE WHEN instr(p.metadata, ?) "
+            "AND json_valid(p.metadata) "
             "THEN json_extract(p.metadata, '$.conversation_id') = ? END) "
             "ORDER BY EXISTS (SELECT 1 FROM items c WHERE c.parent_id = p.id "
             "AND c.source_type = 'gemini') DESC, p.id "
             "LIMIT 1",
-            (app_url, f"{app_url}[/?#]*", conversation_id),
+            (app_url, f"{app_url}[/?#]*", conversation_id, conversation_id),
         ).fetchone()
     if not row:
         return None

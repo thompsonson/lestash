@@ -41,7 +41,7 @@ TITLE_LENGTH = 80
 CHAT_URL = re.compile(r"^https://gemini\.google\.com/((?:u/\d+/)?)app/([0-9a-f]+)/?(?:[?#].*)?$")
 NOTEBOOK = re.compile(r"^(.+?)\s+was used in this chat\.")
 GENERATED_IMAGES = re.compile(r"^(\d+) generated images?\.$")
-PROMPTED = "Prompted "
+PROMPTED = "Prompted"
 CANVAS = "Created Gemini Canvas titled "
 
 
@@ -93,7 +93,7 @@ def _convert(html: str) -> tuple[str, int]:
             string.replace_with(string.replace("|", "\\|"))
     try:
         text = _markdown().convert_soup(soup)
-    except (ValueError, TypeError):
+    except Exception:  # noqa: BLE001 - one odd reply must not cost its prompt and chat
         text = BeautifulSoup(html, "html.parser").get_text("\n")
     return text.strip(), links
 
@@ -177,9 +177,22 @@ class _Prompt:
     reply_details: dict[str, Any]
 
 
+def _utc(when: datetime | None) -> datetime | None:
+    """A Takeout time in UTC; one without an offset is taken as UTC, as Takeout writes."""
+    if when is None:
+        return None
+    return when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
+
+
+def _iso(when: datetime) -> str:
+    """A time as stored in metadata: UTC to the millisecond, so equal times are equal
+    strings, and strings sort as times."""
+    return when.isoformat(timespec="milliseconds")
+
+
 def _stamp(when: datetime) -> str:
     """A time as it goes into ids: UTC, to the millisecond, however the export wrote it."""
-    return when.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return _iso(when).replace("+00:00", "Z")
 
 
 def _parse_prompt(entry: dict[str, Any], when: datetime) -> _Prompt:
@@ -215,10 +228,10 @@ def parse_gemini_activity(entries: list[dict[str, Any]]) -> list[ItemCreate]:
             if not isinstance(entry, dict) or entry.get("header") != "Gemini Apps":
                 continue
             title = entry.get("title")
-            when = _time(entry)
+            when = _utc(_time(entry))
             if not isinstance(title, str) or when is None:
                 continue
-            if title.startswith(PROMPTED):
+            if title == PROMPTED or title.startswith(f"{PROMPTED} "):
                 chat_ids = _chat_ids(entry)
                 if not chat_ids:
                     unlinked += 1
@@ -259,10 +272,10 @@ def _chat_item(chat_id: str, chat: _Chat) -> ItemCreate:
         "type": "chat",
         "conversation_id": chat_source_id(chat_id),
         "generated_title": chat_title(chat.prompts[0].text),
-        "prompted_times": [t.isoformat() for t in times[-MAX_TIMES:]],
+        "prompted_times": [_iso(t) for t in times[-MAX_TIMES:]],
         "prompted_count": len(times),
-        "first_at": times[0].isoformat(),
-        "last_at": times[-1].isoformat(),
+        "first_at": _iso(times[0]),
+        "last_at": _iso(times[-1]),
     }
     if chat.notebooks:
         metadata["notebooklm_notebooks"] = chat.notebooks

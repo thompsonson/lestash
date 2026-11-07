@@ -475,8 +475,19 @@ def test_a_chat_filed_under_another_item_is_still_merged(test_db) -> None:
 
 def test_one_time_written_two_ways_is_one_turn(test_db) -> None:
     _import(test_db, [_prompt("Q", "2026-01-01T10:00:00Z")])
-    _import(test_db, [_prompt("Q", "2026-01-01T10:00:00.000Z")])
+    _import(test_db, [_prompt("Q", "2026-01-01T10:00:00.000123+00:00")])
+    _import(test_db, [_prompt("Q", "2026-01-01T10:00:00")])  # no offset: UTC
     assert len(_items(test_db, "parent_id IS NOT NULL")) == 2
+    chat = _items(test_db, "source_id = ?", (f"c_{CHAT}",))[0]
+    assert chat["metadata"]["prompted_times"] == ["2026-01-01T10:00:00.000+00:00"]
+    assert chat["metadata"]["prompted_count"] == 1
+
+
+def test_a_prompt_titled_only_prompted_is_kept() -> None:
+    entry = _prompt("", "2026-01-01T10:00:00.000Z", attachedFiles=["a.png"])
+    entry["title"] = "Prompted"
+    chat, prompt, _reply = parse_gemini_activity([entry])
+    assert (prompt.content, prompt.metadata["attachments"]) == ("", ["a.png"])
 
 
 def test_an_attachment_only_prompt_is_not_added_to_a_page_chat(test_db) -> None:
