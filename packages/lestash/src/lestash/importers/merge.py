@@ -28,7 +28,7 @@ from datetime import datetime
 from typing import Any, NamedTuple
 
 from lestash.importers.gemini_activity import SOURCE as GEMINI_ACTIVITY
-from lestash.importers.gemini_activity import chat_content
+from lestash.importers.gemini_activity import chat_content, prompt_key
 from lestash.models.item import ItemCreate
 
 MAX_TIMES = 200  # matches youtube_history.MAX_TIMES
@@ -301,10 +301,6 @@ def _gemini_chat(conn: sqlite3.Connection, conversation_id: str) -> _GeminiChat 
     return _GeminiChat(row[0], row[1], metadata if isinstance(metadata, dict) else {})
 
 
-def _normalised(text: str | None) -> str:
-    return " ".join((text or "").split())
-
-
 def _merge_gemini(conn: sqlite3.Connection, item: ItemCreate) -> bool:
     metadata = dict(item.metadata or {})
     prompt = metadata.pop("_prompt", None)
@@ -330,55 +326,70 @@ def _merge_gemini(conn: sqlite3.Connection, item: ItemCreate) -> bool:
     # A turn of a chat saved from the Gemini page
     item.parent_id = chat.id
     metadata["_parent_source_id"] = chat.source_id
-    is_reply = item.author == "model"
-    text = prompt if is_reply else item.content
-    # Keep the page's turn when it has this one: the prompt, or the reply that follows it
-    return not _on_page(_page_turns(conn, chat), text, occurrence, is_reply)
+    turns = _page_turns(conn, chat)
+    if item.author != "model":
+        return _page_prompt(turns, item.content, occurrence) is None
+    # A reply: keep the page's when it has one right after the same prompt
+    index = _page_prompt(turns, prompt, occurrence)
+    if index is None:
+        return True
+    if index + 1 < len(turns) and not turns[index + 1].is_user:
+        return False
+    # The prompt is the page's, so point at that turn instead of Takeout's
+    if turns[index].source_id:
+        metadata["prompt_source_id"] = turns[index].source_id
+    else:
+        metadata.pop("prompt_source_id", None)
+    return True
 
 
-def _page_turns(conn: sqlite3.Connection, chat: _GeminiChat) -> list[tuple[bool, str]]:
-    """A page chat's turns in order, as (is the user's, text).
+class _PageTurn(NamedTuple):
+    is_user: bool
+    text: str
+    source_id: str | None  # None for a turn kept in the extension's metadata
+
+
+def _page_turns(conn: sqlite3.Connection, chat: _GeminiChat) -> list[_PageTurn]:
+    """A page chat's turns in order.
 
     The chat's child turns, not counting those Takeout added; or, for a chat saved by the
     extension, the turns it keeps in metadata.
     """
     rows = conn.execute(
-        "SELECT author, content FROM items WHERE parent_id = ? AND COALESCE("
+        "SELECT author, content, source_id FROM items WHERE parent_id = ? AND COALESCE("
         "CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.source') END, '') != ? "
         "ORDER BY id",
         (chat.id, GEMINI_ACTIVITY),
     ).fetchall()
     if rows:
-        return [(author == "user", content or "") for author, content in rows]
+        return [_PageTurn(author == "user", content or "", sid) for author, content, sid in rows]
     turns = chat.metadata.get("turns")
     if not isinstance(turns, list):
         return []
     return [
-        (t.get("role") == "user", str(t.get("text") or "")) for t in turns if isinstance(t, dict)
+        _PageTurn(t.get("role") == "user", str(t.get("text") or ""), None)
+        for t in turns
+        if isinstance(t, dict)
     ]
 
 
-def _on_page(
-    turns: list[tuple[bool, str]], prompt: str | None, occurrence: int, is_reply: bool
-) -> bool:
-    """Whether the page has the ``occurrence``-th prompt with this text, or for a reply,
-    a reply right after that prompt. Text matches once whitespace is collapsed.
+def _page_prompt(turns: list[_PageTurn], prompt: str | None, occurrence: int) -> int | None:
+    """Where the page has the ``occurrence``-th prompt with this text, matched by
+    prompt_key(), if it has.
 
     ``occurrence`` counts within one export, which holds only the prompts Gemini still
     keeps, so after auto-delete a repeated short prompt can match an older one.
     """
-    if not _normalised(prompt):
-        return False
+    key = prompt_key(prompt)
+    if not key:
+        return None
     seen = 0
-    for index, (is_user, text) in enumerate(turns):
-        if not is_user or _normalised(text) != _normalised(prompt):
-            continue
-        seen += 1
-        if seen == occurrence:
-            if not is_reply:
-                return True
-            return index + 1 < len(turns) and not turns[index + 1][0]
-    return False
+    for index, turn in enumerate(turns):
+        if turn.is_user and prompt_key(turn.text) == key:
+            seen += 1
+            if seen == occurrence:
+                return index
+    return None
 
 
 def _merge_gemini_chat(conn: sqlite3.Connection, item: ItemCreate, stored: dict[str, Any]) -> None:

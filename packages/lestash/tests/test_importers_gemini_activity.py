@@ -187,6 +187,10 @@ def test_html_to_text_keeps_blocks_and_unescapes() -> None:
 def test_html_to_text_tables_and_code() -> None:
     table = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"
     assert html_to_text(table) == "| A | B |\n| --- | --- |\n| 1 | 2 |"
+    cells = "<table><tr><td><p>a</p></td><td>b<br>c</td></tr></table>"
+    assert html_to_text(cells) == "| a | b c |\n| --- | --- |"
+    split = "<ol><li>A</li></ol><pre>x</pre><ol start='2'><li>B</li></ol>"
+    assert html_to_text(split) == "1. A\n\n```\nx\n```\n\n2. B"
     code = "<p>Run:</p><pre><code>pip install x\n  --upgrade\n</code></pre>"
     assert html_to_text(code) == "Run:\n\n```\npip install x\n  --upgrade\n```"
 
@@ -367,6 +371,25 @@ def test_a_reply_the_page_lacks_is_added(test_db) -> None:
     _import(test_db, [_prompt("First question", "2026-01-01T10:00:00.000Z")])
     added = _items(test_db, "parent_id = ? AND source_id LIKE 'c_%-re%'", (chat_id,))
     assert [(t["author"], t["content"]) for t in added] == [("model", "Answer.")]
+    # It points at the page's prompt, as Takeout's copy was not stored
+    assert added[0]["metadata"]["prompt_source_id"] == f"c_{CHAT}-user-1"
+
+
+def test_page_prompts_match_without_spaces(test_db) -> None:
+    """The HTML page parser joins inline elements: "Explain <b>this</b>" -> "Explainthis"."""
+    _page_chat(test_db, [("user", "Explainthis code"), ("model", "Page answer")])
+    _import(test_db, [_prompt("Explain this code", "2026-01-01T10:00:00.000Z")])
+    assert _items(test_db, "source_id LIKE 'c_%-prompt-%' OR source_id LIKE 'c_%-reply-%'") == []
+
+
+def test_a_second_accounts_chat_keeps_its_link() -> None:
+    entry = _prompt("Hi", "2026-01-01T10:00:00.000Z")
+    entry["details"] = [{"url": f"https://gemini.google.com/u/1/app/{CHAT}"}]
+    assert (
+        parse_gemini_activity([entry, entry])[0].url == f"https://gemini.google.com/u/1/app/{CHAT}"
+    )
+    chat = parse_gemini_activity([entry, entry])[0]
+    assert chat.metadata["prompted_count"] == 1  # an entry listed twice is one prompt
 
 
 def test_an_older_export_dates_and_names_the_chat_from_its_first_prompt(test_db) -> None:

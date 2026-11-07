@@ -4,6 +4,8 @@ import io
 import json
 from unittest.mock import MagicMock, patch
 
+from lestash.core.database import get_connection
+
 
 class TestHealth:
     """Test /api/health endpoint."""
@@ -125,6 +127,26 @@ class TestItems:
         data = resp.json()
         assert data["total"] == 0
         assert len(data["items"]) == 0
+
+    def test_children_within_one_second_keep_their_order(self, client, test_config):
+        """A Gemini reply is dated 1 ms after its prompt; datetime() alone would tie them."""
+        with get_connection(test_config) as conn:
+            (chat,) = conn.execute(
+                "INSERT INTO items (source_type, source_id, content) "
+                "VALUES ('gemini', 'c_1', 'chat') RETURNING id"
+            ).fetchone()
+            for source_id, when in (
+                ("c_1-prompt", "2026-01-01 10:00:00+00:00"),
+                ("c_1-reply", "2026-01-01 10:00:00.001000+00:00"),
+            ):
+                conn.execute(
+                    "INSERT INTO items (source_type, source_id, content, created_at, parent_id)"
+                    " VALUES ('gemini', ?, 'x', ?, ?)",
+                    (source_id, when, chat),
+                )
+            conn.commit()
+        resp = client.get(f"/api/items?parent_id={chat}&include_children=true")
+        assert [i["source_id"] for i in resp.json()["items"]] == ["c_1-reply", "c_1-prompt"]
 
 
 class TestItemPatch:

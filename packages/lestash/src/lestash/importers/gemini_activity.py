@@ -30,19 +30,25 @@ from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from typing import Any
 
+from lestash.importers.youtube_history import MAX_TIMES  # merge.py caps times the same
 from lestash.models.item import ItemCreate
 
 logger = logging.getLogger(__name__)
 
 SOURCE = "takeout_activity"  # metadata.source of what this importer writes
-MAX_TIMES = 200  # prompt times kept on a chat; matches youtube_history.MAX_TIMES
 TITLE_LENGTH = 80
 # A chat's link; accounts after the first have /u/<n>/ before /app/
-CHAT_URL = re.compile(r"^https://gemini\.google\.com/(?:u/\d+/)?app/([0-9a-f]+)/?(?:[?#].*)?$")
+CHAT_URL = re.compile(r"^https://gemini\.google\.com/((?:u/\d+/)?)app/([0-9a-f]+)/?(?:[?#].*)?$")
 NOTEBOOK = re.compile(r"^(.+?)\s+was used in this chat\.")
 GENERATED_IMAGES = re.compile(r"^(\d+) generated images?\.$")
 PROMPTED = "Prompted "
 CANVAS = "Created Gemini Canvas titled "
+
+
+def prompt_key(text: str | None) -> str:
+    """A prompt's text for matching: without whitespace, since the HTML page parser joins
+    inline elements without spaces ("Explain <b>this</b>" becomes "Explainthis")."""
+    return "".join((text or "").split())
 
 
 def chat_source_id(chat_id: str) -> str:
@@ -92,6 +98,7 @@ class _TextFromHtml(HTMLParser):
         self.link_count = 0
         self.lists: list[list[Any]] = []  # open lists: [tag, items so far]
         self.row: list[str] = []  # cell tags of the open table row
+        self.cell = False  # inside a table cell, which must stay on one line
         self.header_done = False  # the open table has its separator line
         self.block_start = False  # a paragraph or list item has no text yet
         self.gaps = False  # see TAKEOUT_GAP
@@ -120,7 +127,8 @@ class _TextFromHtml(HTMLParser):
         elif tag in ("ul", "ol"):
             if not self.lists:
                 self.parts.append("\n")
-            self.lists.append([tag, 0])
+            start = dict(attrs).get("start") or ""
+            self.lists.append([tag, int(start) - 1 if start.isdigit() else 0])
         elif tag == "li":
             self._newline()
             indent = "  " * max(0, len(self.lists) - 1)
@@ -135,12 +143,19 @@ class _TextFromHtml(HTMLParser):
             self.parts.append("|")
         elif tag in ("td", "th"):
             self.row.append(tag)
+            self.cell = True
             self.parts.append(" ")
+        elif tag in self.BLOCKS and self.cell:
+            self._space()
         elif tag == "table":
             self.header_done = False
             self.parts.append("\n")
         elif tag in self.BLOCKS and not self._at_item_start():
             self.parts.append("\n")  # "<li><p>x" is one line, "- x"
+
+    def _space(self) -> None:
+        if self.parts and not self.parts[-1].endswith(" "):
+            self.parts.append(" ")
 
     def _at_item_start(self) -> bool:
         return bool(self.parts) and self.parts[-1].endswith(("- ", ". "))
@@ -168,6 +183,9 @@ class _TextFromHtml(HTMLParser):
             if not self.lists:
                 self.parts.append("\n")
         elif tag in ("td", "th"):
+            self.cell = False
+            if self.parts:
+                self.parts[-1] = self.parts[-1].rstrip(" ")
             self.parts.append(" |")
         elif tag == "tr":
             if self.row and not self.header_done:
@@ -175,6 +193,8 @@ class _TextFromHtml(HTMLParser):
                 self.parts.append("\n|" + " --- |" * len(self.row))
                 self.header_done = True
             self.parts.append("\n")
+        elif tag in self.BLOCKS and self.cell:
+            self._space()
         elif tag in self.BLOCKS:
             self.parts.append("\n")
 
@@ -227,12 +247,14 @@ def _reply(entry: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     return text, details
 
 
-def _chat_ids(entry: dict[str, Any]) -> list[str]:
-    ids = []
+def _chat_ids(entry: dict[str, Any]) -> dict[str, str]:
+    """The chats a prompt names: chat id -> its link, keeping the account segment."""
+    ids: dict[str, str] = {}
     for detail in entry.get("details") or []:
         match = CHAT_URL.match(detail.get("url") or "")
-        if match and match.group(1) not in ids:
-            ids.append(match.group(1))
+        if match:
+            account, chat_id = match.groups()
+            ids.setdefault(chat_id, f"https://gemini.google.com/{account}app/{chat_id}")
     return ids
 
 
@@ -278,6 +300,7 @@ class _Chat:
     def __init__(self) -> None:
         self.prompts: list[_Prompt] = []
         self.notebooks: list[str] = []
+        self.url = ""
 
 
 def parse_gemini_activity(entries: list[dict[str, Any]]) -> list[ItemCreate]:
@@ -304,8 +327,9 @@ def parse_gemini_activity(entries: list[dict[str, Any]]) -> list[ItemCreate]:
                     continue
                 prompt = _parse_prompt(entry, when)
                 notebook = prompt.details.get("notebooklm_notebook")
-                for chat_id in chat_ids:
+                for chat_id, url in chat_ids.items():
                     chat = chats[chat_id]
+                    chat.url = chat.url or url
                     chat.prompts.append(prompt)
                     if notebook and notebook not in chat.notebooks:
                         chat.notebooks.append(notebook)
@@ -320,13 +344,13 @@ def parse_gemini_activity(entries: list[dict[str, Any]]) -> list[ItemCreate]:
         logger.warning("Skipped %d Gemini activity entries of an unexpected shape", malformed)
     items: list[ItemCreate] = []
     for chat_id, chat in chats.items():
-        chat.prompts.sort(key=lambda prompt: prompt.when)
+        # An entry listed twice is one prompt: its turns share their ids
+        chat.prompts = sorted({p.stamp: p for p in chat.prompts}.values(), key=lambda p: p.when)
         items.append(_chat_item(chat_id, chat))
         seen: dict[str, int] = defaultdict(int)
         for prompt in chat.prompts:
-            key = " ".join(prompt.text.split())
-            seen[key] += 1
-            items.extend(_turns(chat_id, prompt, seen[key]))
+            seen[prompt_key(prompt.text)] += 1
+            items.extend(_turns(chat_id, prompt, seen[prompt_key(prompt.text)]))
     return items + canvases
 
 
@@ -346,7 +370,7 @@ def _chat_item(chat_id: str, chat: _Chat) -> ItemCreate:
     return ItemCreate(
         source_type="gemini",
         source_id=chat_source_id(chat_id),
-        url=f"https://gemini.google.com/app/{chat_id}",
+        url=chat.url,
         title=chat_title(chat.prompts[0].text),
         content=chat_content(len(times)),
         created_at=times[0],
