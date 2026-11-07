@@ -445,6 +445,35 @@ def test_a_renamed_chat_keeps_its_title_on_reimport(test_db) -> None:
     assert _items(test_db, "source_id = ?", (f"c_{CHAT}",))[0]["title"] == "My name"
 
 
+def test_a_renamed_chat_keeps_its_title_when_an_older_export_arrives(test_db) -> None:
+    _import(test_db, [_prompt("Second", "2026-02-01T10:00:00.000Z")])
+    with get_connection(test_db) as conn:
+        conn.execute("UPDATE items SET title = 'My name' WHERE source_id = ?", (f"c_{CHAT}",))
+        conn.commit()
+    _import(test_db, [_prompt("First", "2026-01-01T10:00:00.000Z")])
+    chat = _items(test_db, "source_id = ?", (f"c_{CHAT}",))[0]
+    assert chat["title"] == "My name"
+    assert chat["created_at"].startswith("2026-01-01")
+
+
+def test_one_time_written_two_ways_is_one_turn(test_db) -> None:
+    _import(test_db, [_prompt("Q", "2026-01-01T10:00:00Z")])
+    _import(test_db, [_prompt("Q", "2026-01-01T10:00:00.000Z")])
+    assert len(_items(test_db, "parent_id IS NOT NULL")) == 2
+
+
+def test_an_attachment_only_prompt_is_not_added_to_a_page_chat(test_db) -> None:
+    chat_id = _page_chat(test_db, [("user", ""), ("model", "Answer.")])
+    _import(test_db, [_prompt("", "2026-01-01T10:00:00.000Z", attachedFiles=["a.png"])])
+    assert len(_items(test_db, "parent_id = ?", (chat_id,))) == 2
+
+
+def test_pipes_in_nested_table_cells_are_escaped_once() -> None:
+    html = "<table><tr><td>a|b<table><tr><td>x|y</td></tr></table></td></tr></table>"
+    text = html_to_text(html)
+    assert "x\\|y" in text and "x\\\\|y" not in text
+
+
 def test_a_chat_starting_with_an_attachment_has_a_title() -> None:
     entry = _prompt("", "2026-01-01T10:00:00.000Z", attachedFiles=["a.png"])
     assert parse_gemini_activity([entry])[0].title == "Gemini conversation"

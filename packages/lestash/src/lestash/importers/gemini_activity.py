@@ -26,13 +26,13 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from bs4 import BeautifulSoup
 from markdownify import ATX, MarkdownConverter
 
-from lestash.importers.youtube_history import MAX_TIMES  # merge.py caps times the same
+from lestash.importers.youtube_history import MAX_TIMES, _time
 from lestash.models.item import ItemCreate
 
 logger = logging.getLogger(__name__)
@@ -68,13 +68,6 @@ def chat_title(first_prompt: str) -> str:
     return title[:TITLE_LENGTH] + ("..." if len(title) > TITLE_LENGTH else "")
 
 
-def _time(entry: dict[str, Any]) -> datetime | None:
-    try:
-        return datetime.fromisoformat(entry["time"].replace("Z", "+00:00"))
-    except (KeyError, ValueError, AttributeError):
-        return None
-
-
 _MARKDOWN = MarkdownConverter(heading_style=ATX, bullets="-", escape_misc=False)
 
 
@@ -86,10 +79,9 @@ def _convert(html: str) -> tuple[str, int]:
     """
     soup = BeautifulSoup(html, "html.parser")
     links = len(soup.find_all("a", href=True))
-    for cell in soup.find_all(["td", "th"]):
-        for string in list(cell.find_all(string=True)):
-            if "|" in string:
-                string.replace_with(string.replace("|", "\\|"))
+    for string in list(soup.find_all(string=True)):
+        if "|" in string and string.find_parent(["td", "th"]):
+            string.replace_with(string.replace("|", "\\|"))
     try:
         text = _MARKDOWN.convert_soup(soup)
     except (ValueError, TypeError):
@@ -169,7 +161,7 @@ class _Prompt:
     """One "Prompted" entry, parsed once, however many chats it names."""
 
     when: datetime
-    stamp: str  # Takeout's own time string, part of the turn ids
+    stamp: str  # the time, normalised, part of the turn ids
     text: str
     details: dict[str, Any]
     reply: str
@@ -179,7 +171,12 @@ class _Prompt:
 def _parse_prompt(entry: dict[str, Any], when: datetime) -> _Prompt:
     reply, reply_details = _reply(entry)
     return _Prompt(
-        when, str(entry["time"]), _prompt_text(entry), _prompt_details(entry), reply, reply_details
+        when,
+        when.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        _prompt_text(entry),
+        _prompt_details(entry),
+        reply,
+        reply_details,
     )
 
 
@@ -247,6 +244,7 @@ def _chat_item(chat_id: str, chat: _Chat) -> ItemCreate:
         "source": SOURCE,
         "type": "chat",
         "conversation_id": chat_source_id(chat_id),
+        "generated_title": chat_title(chat.prompts[0].text),
         "prompted_times": [t.isoformat() for t in times[-MAX_TIMES:]],
         "prompted_count": len(times),
         "first_at": times[0].isoformat(),

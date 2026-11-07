@@ -330,6 +330,10 @@ def _merge_gemini(conn: sqlite3.Connection, item: ItemCreate) -> bool:
     # A turn of a chat saved from the Gemini page
     item.parent_id = chat.id
     metadata["_parent_source_id"] = chat.source_id
+    if not prompt_key(prompt if item.author == "model" else item.content):
+        # A prompt with no text (an attachment only) can't be matched to the page's turns,
+        # and adding it could repeat one the page has: leave the page chat as it is
+        return False
     turns = _page_turns(conn, chat)
     if item.author != "model":
         return _page_prompt(turns, item.content, occurrence) is None
@@ -405,14 +409,18 @@ def _merge_gemini_chat(conn: sqlite3.Connection, item: ItemCreate, stored: dict[
     notebooks = _union(old.get("notebooklm_notebooks"), new.get("notebooklm_notebooks"))
     if notebooks:
         merged["notebooklm_notebooks"] = notebooks
-    if old.get("first_at") and old["first_at"] <= (new.get("first_at") or old["first_at"]):
-        # The same first prompt, or an earlier one: the stored title, perhaps renamed, stays
+    first_new, first_old = new.get("first_at"), old.get("first_at")
+    earlier = bool(first_new) and (not first_old or first_new < first_old)
+    generated = old.get("generated_title", stored["title"])
+    merged["generated_title"] = new.get("generated_title") if earlier else generated
+    if stored["title"] != generated or not earlier:
+        # A title you gave stays; so does one from a first prompt this export lacks
         item.title = stored["title"]
-    elif new.get("first_at") and new["first_at"] < (old.get("first_at") or new["first_at"]):
+    if earlier and first_old and first_new:
         # An older export: the upsert keeps created_at, so date the chat from it here
         conn.execute(
             "UPDATE items SET created_at = ? WHERE id = ?",
-            (datetime.fromisoformat(new["first_at"]).isoformat(" "), stored["id"]),
+            (datetime.fromisoformat(first_new).isoformat(" "), stored["id"]),
         )
     item.content = chat_content(merged.get("prompted_count", 0))
     item.metadata = merged
