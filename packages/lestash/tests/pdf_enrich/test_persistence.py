@@ -364,6 +364,15 @@ def test_same_name_on_another_page_does_not_take_the_child(config, parent_pdf_it
     assert len(after) == 2
 
 
+def _child_rows(conn, parent_id: int) -> dict[int, dict]:
+    rows = conn.execute(
+        "SELECT id, source_id, title, metadata FROM items "
+        "WHERE parent_id = ? AND source_type = 'pdf_annotation'",
+        (parent_id,),
+    ).fetchall()
+    return {r["id"]: {**dict(r), "meta": json.loads(r["metadata"])} for r in rows}
+
+
 def test_reused_name_elsewhere_on_the_page_is_a_new_child(config, parent_pdf_item):
     """Erase fitz-A0 and draw elsewhere: PyMuPDF names the new stroke fitz-A0 too."""
     old = replace(_annotation(), annotation_id="fitz-A0", stroke_geometry_hash="1" * 64)
@@ -371,11 +380,77 @@ def test_reused_name_elsewhere_on_the_page_is_a_new_child(config, parent_pdf_ite
     with get_connection(config) as conn:
         persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[old]))
         (old_id,) = _child_ids(conn, parent_pdf_item).values()
-        # Another item above it, so SQLite can't hand the deleted child's id back
-        upsert_item(conn, ItemCreate(source_type="note", source_id="n1", content="x"))
         persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[new]))
-        (new_id,) = _child_ids(conn, parent_pdf_item).values()
-    assert new_id != old_id
+        rows = _child_rows(conn, parent_pdf_item)
+    assert len(rows) == 2
+    assert rows[old_id]["meta"]["removed_from_pdf"]
+    assert rows[old_id]["title"].startswith("[Removed from PDF] ")
+    (new_id,) = set(rows) - {old_id}
+    assert "removed_from_pdf" not in rows[new_id]["meta"]
+
+
+def test_removed_child_comes_back_when_its_annotation_returns(config, parent_pdf_item):
+    ann = _annotation()
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[ann]))
+        (child_id,) = _child_ids(conn, parent_pdf_item).values()
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[]))
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[ann]))
+        rows = _child_rows(conn, parent_pdf_item)
+    assert list(rows) == [child_id]
+    assert "removed_from_pdf" not in rows[child_id]["meta"]
+    assert not rows[child_id]["title"].startswith("[Removed")
+    assert rows[child_id]["source_id"] == f"item-{parent_pdf_item}:p0:{ann.annotation_id}"
+
+
+def test_merged_annotations_keep_the_absorbed_child(config, parent_pdf_item):
+    """A stroke joining two annotations makes one; the other's child is kept, marked."""
+    a = replace(_annotation(), annotation_id="fitz-A0", stroke_geometry_hash="a" * 64)
+    b = replace(
+        _annotation(),
+        annotation_id="fitz-A3",
+        bbox=(100, 240, 300, 260),
+        stroke_geometry_hash="b" * 64,
+    )
+    merged = replace(a, bbox=(100, 200, 300, 260), stroke_geometry_hash="m" * 64)
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[a, b]))
+        ids = _child_ids(conn, parent_pdf_item)
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[merged]))
+        rows = _child_rows(conn, parent_pdf_item)
+    assert set(rows) == {ids["a" * 64], ids["b" * 64]}
+    assert "removed_from_pdf" not in rows[ids["a" * 64]]["meta"]
+    assert rows[ids["b" * 64]]["meta"]["removed_from_pdf"]
+
+
+def test_stroke_added_to_unnamed_ink_keeps_the_child(config, parent_pdf_item):
+    """Some writers leave /NM out, so the child is followed by page and place."""
+    old = replace(_annotation(), annotation_id=None, stroke_geometry_hash="1" * 64)
+    grown = replace(old, bbox=(90, 190, 320, 240), stroke_geometry_hash="2" * 64)
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[old]))
+        (old_id,) = _child_ids(conn, parent_pdf_item).values()
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[grown]))
+        rows = _child_rows(conn, parent_pdf_item)
+    assert list(rows) == [old_id]
+    assert "removed_from_pdf" not in rows[old_id]["meta"]
+
+
+def test_new_file_without_url_drops_the_old_link(config, parent_pdf_item, tmp_path):
+    with get_connection(config) as conn:
+        add_item_media(
+            conn,
+            parent_pdf_item,
+            media_type="source_pdf",
+            url="https://drive.example/file",
+            local_path="1/old.pdf",
+        )
+        set_source_pdf(conn, config, parent_pdf_item, local_path="1/new.pdf")
+        (url,) = conn.execute(
+            "SELECT url FROM item_media WHERE item_id = ? AND media_type = 'source_pdf'",
+            (parent_pdf_item,),
+        ).fetchone()
+    assert url is None
 
 
 def test_stroke_added_to_a_named_annotation_keeps_the_child(config, parent_pdf_item):

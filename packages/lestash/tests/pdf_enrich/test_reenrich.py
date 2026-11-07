@@ -183,7 +183,7 @@ def test_stroke_joining_an_annotation_refreshes_only_that_child(config, item_id)
     assert _ocr_everything(config, item_id) == [target]
 
 
-def test_removed_annotation_deletes_only_its_child(config, item_id):
+def test_removed_annotation_marks_only_its_child(config, item_id):
     v1 = _base_pdf()
     attach_source_pdf_and_enrich(item_id, v1, "book.pdf", config=config)
     _ocr_everything(config, item_id)
@@ -194,7 +194,10 @@ def test_removed_annotation_deletes_only_its_child(config, item_id):
     attach_source_pdf_and_enrich(item_id, v2, "book.pdf", config=config)
     after = _children(config, item_id)
 
-    assert set(after) == set(before) - {gone}
+    # Kept, with its OCR text, and marked; the others are untouched
+    assert set(after) == set(before)
+    assert after[gone]["removed_from_pdf"]
+    assert not any(c.get("removed_from_pdf") for cid, c in after.items() if cid != gone)
     assert all(c["ocr_text"] == "note" for c in after.values())
 
 

@@ -21,7 +21,11 @@ from typing import Literal
 
 from lestash.core.config import Config
 from lestash.core.database import get_connection, mark_recent_history, max_history_id
-from lestash.core.pdf_enrich.persistence import OCR_TARGET_KINDS, SOURCE_PDF_MEDIA_TYPE
+from lestash.core.pdf_enrich.persistence import (
+    OCR_TARGET_KINDS,
+    REMOVED_KEY,
+    SOURCE_PDF_MEDIA_TYPE,
+)
 
 OCR_EXTRACTOR_VERSION: int = 1
 ANTHROPIC_MODEL = "claude-sonnet-4-6"
@@ -78,7 +82,8 @@ def ocr_annotation(child_id: int, *, config: Config | None = None) -> OcrResult:
         except (TypeError, json.JSONDecodeError):
             meta = {}
 
-        if meta.get("annotation_kind") not in OCR_TARGET_KINDS:
+        # A child whose annotation left the PDF has nothing on the page to read
+        if meta.get("annotation_kind") not in OCR_TARGET_KINDS or meta.get(REMOVED_KEY):
             return OcrResult(child_id=child_id, status="skipped", message="kind not eligible")
         if meta.get("ocr_version") == OCR_EXTRACTOR_VERSION:
             return OcrResult(child_id=child_id, status="skipped", text=meta.get("ocr_text"))
@@ -135,7 +140,8 @@ def _candidate_children(conn: sqlite3.Connection, *, parent_id: int | None) -> l
             meta = json.loads(row["metadata"]) if row["metadata"] else {}
         except (TypeError, json.JSONDecodeError):
             continue
-        if meta.get("annotation_kind") not in OCR_TARGET_KINDS:
+        # A child whose annotation left the PDF has nothing on the page to read
+        if meta.get("annotation_kind") not in OCR_TARGET_KINDS or meta.get(REMOVED_KEY):
             continue
         if meta.get("ocr_version") == OCR_EXTRACTOR_VERSION:
             continue

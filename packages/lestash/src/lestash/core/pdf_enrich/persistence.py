@@ -8,11 +8,12 @@ Owned by the caller (CLI / API), not by the pure extractor. Maps an
 - child `items` rows for classified annotations (source_type='pdf_annotation')
 - updated parent item with rewritten content + enrichment metadata
 
-Idempotent and re-runnable. Child annotation items are upserted by a stable
-key (`annotation_id`, else `stroke_geometry_hash`), so they keep their item
-IDs and any OCR text across re-runs; only children whose annotation has gone
-from the PDF are deleted. Enricher image rows are reused when the same image
-file comes back, and dropped when it does not. The parent's
+Idempotent and re-runnable. Child annotation items are matched to the
+annotations of a re-run (same strokes on the same page, else the same /NM on
+the same page with overlapping boxes, else unnamed ink by place), so they keep
+their item IDs and any OCR text. A child whose annotation has left the PDF is
+kept and marked `removed_from_pdf`, not deleted. Enricher image rows are reused
+when the same image file comes back, and dropped when it does not. The parent's
 `metadata.pdf_sha256` and `metadata.extractor_version` track which run
 produced the current state.
 
@@ -54,6 +55,9 @@ PDF_MIME = "application/pdf"
 # Child metadata written by the OCR pass (ocr.py). Kept across re-runs while
 # the stroke geometry is unchanged; dropped when it changes so OCR reruns.
 OCR_META_KEYS = ("ocr_text", "ocr_version")
+# Set on a child whose annotation has left the PDF (see _upsert_annotations)
+REMOVED_KEY = "removed_from_pdf"
+REMOVED_TITLE_PREFIX = "[Removed from PDF] "
 # Annotation kinds the OCR pass transcribes (ocr.py re-exports this)
 OCR_TARGET_KINDS = ("margin_note", "ink_unclassified")
 
@@ -171,11 +175,20 @@ def _delete_stale_enricher_media(
     # Never the source PDF or its versions, whatever origin wrote them
     sql = (
         "DELETE FROM item_media WHERE item_id = ? AND source_origin = ?"
-        f" AND media_type NOT IN ('{SOURCE_PDF_MEDIA_TYPE}', '{SOURCE_PDF_VERSION_MEDIA_TYPE}')"
+        " AND media_type NOT IN (?, ?)"
     )
     if keep_ids:
         sql += f" AND id NOT IN ({','.join('?' * len(keep_ids))})"
-    conn.execute(sql, (item_id, ENRICHER_ORIGIN, *keep_ids))
+    conn.execute(
+        sql,
+        (
+            item_id,
+            ENRICHER_ORIGIN,
+            SOURCE_PDF_MEDIA_TYPE,
+            SOURCE_PDF_VERSION_MEDIA_TYPE,
+            *keep_ids,
+        ),
+    )
 
 
 def _upsert_annotations(
@@ -236,26 +249,65 @@ def _upsert_annotations(
     for i, ann in enumerate(annotations):
         if matches[i] is not None or not ann.annotation_id:
             continue
-        for child_id in by_name.get((ann.page, ann.annotation_id), ()):
+        candidates = by_name.get((ann.page, ann.annotation_id), []) + by_name.get(
+            (None, ann.annotation_id), []
+        )
+        for child_id in candidates:
             if child_id not in claimed and _overlaps(existing[child_id][1].get("bbox"), ann.bbox):
                 claimed.add(child_id)
                 matches[i] = child_id
                 break
+    # Unnamed ink (the writer left /NM out) has no name to follow, so a stroke
+    # added to it is matched by place: an unnamed child on the same page whose
+    # box overlaps
+    for i, ann in enumerate(annotations):
+        if matches[i] is not None or ann.annotation_id:
+            continue
+        for child_id, (_, child_meta) in existing.items():
+            if (
+                child_id not in claimed
+                and not child_meta.get("annotation_id")
+                and child_meta.get("page") in (ann.page, None)
+                and _overlaps(child_meta.get("bbox"), ann.bbox)
+            ):
+                claimed.add(child_id)
+                matches[i] = child_id
+                break
 
-    stale = [child_id for child_id in existing if child_id not in claimed]
-    if stale:
-        conn.execute(f"DELETE FROM items WHERE id IN ({','.join('?' * len(stale))})", stale)
+    # A child whose annotation is gone (erased, or merged into another) is kept
+    # and marked, not deleted: deleting would also drop its tags, collection
+    # links, history and OCR text. It moves to a key no annotation can take, and
+    # comes back to life if a later run matches it again.
+    removed_at = _now_iso()
+    for child_id, (_, child_meta) in existing.items():
+        if child_id in claimed or child_meta.get(REMOVED_KEY):
+            continue
+        title = conn.execute("SELECT title FROM items WHERE id = ?", (child_id,)).fetchone()[0]
+        conn.execute(
+            "UPDATE items SET source_id = ?, title = ?, metadata = ? WHERE id = ?",
+            (
+                f"{parent_key}:removed:{child_id}",
+                f"{REMOVED_TITLE_PREFIX}{title or ''}",
+                json.dumps({**child_meta, REMOVED_KEY: removed_at}),
+                child_id,
+            ),
+        )
 
     used_keys: set[str] = set()
     plan = [
         (ann, match, _unique_source_id(parent_key, ann, used_keys))
         for ann, match in zip(annotations, matches, strict=True)
     ]
-    # Park children whose source_id changes on a placeholder first, so swapping
-    # keys between children in one run cannot trip UNIQUE(source_type, source_id).
-    # The others already hold their target, and targets are unique.
+    # Park a child on a placeholder first only when another row in this run
+    # (moved or inserted) wants the source_id it holds now, so swapping keys
+    # cannot trip UNIQUE(source_type, source_id). Targets are unique, and removed
+    # children sit on their own keys.
+    wanted = {source_id: match for _, match, source_id in plan}
     for _, match, source_id in plan:
-        if match is not None and existing[match][0] != source_id:
+        if match is None:
+            continue
+        current = existing[match][0]
+        if current != source_id and current in wanted:
             conn.execute(
                 "UPDATE items SET source_id = ? WHERE id = ?",
                 (f"{parent_key}:pending:{match}", match),
@@ -408,7 +460,8 @@ def set_source_pdf(
       are content-addressed, so each version keeps its own path.
     - Extra rows left by older code are kept as versions and removed.
 
-    A missing `url` keeps the existing row's url (e.g. a Drive link).
+    A missing `url` keeps the existing row's url (e.g. a Drive link) for the same
+    file; a different file without a url gets none.
     `source_origin` is set when the file changes; the same file keeps its origin.
     Does not commit. Returns the media row ID.
     """
@@ -433,12 +486,20 @@ def set_source_pdf(
 
     keep_id: int = rows[0][0]
     media_dir = get_media_dir(config)
+    seen: set[str] = set()
     for row in rows:
-        # Only a real earlier file is a version. A url-only row, or one whose file
-        # is gone (so the same Drive file was downloaded again), is not.
-        if row[1] and row[1] != local_path and (media_dir / row[1]).is_file():
-            _record_previous_source_pdf(conn, item_id, row)
+        # Only a real earlier file is a version, once each. A url-only row, or one
+        # whose file is gone (so the same Drive file was downloaded again), is not.
+        old_path = row[1]
+        if old_path and old_path != local_path and old_path not in seen:
+            seen.add(old_path)
+            if (media_dir / old_path).is_file():
+                _record_previous_source_pdf(conn, item_id, row)
     changed = rows[0][1] != local_path
+    # A different file without a url of its own must not keep the old file's link.
+    # The same file keeps its url, or takes one from a legacy row being folded in.
+    old_url = next((row[2] for row in rows if row[2]), None)
+    new_url = url if changed else (url or old_url)
     if len(rows) > 1:
         extra_ids = [row[0] for row in rows[1:]]
         conn.execute(
@@ -447,12 +508,12 @@ def set_source_pdf(
         )
     conn.execute(
         """
-        UPDATE item_media SET local_path = ?, url = COALESCE(?, url), mime_type = ?,
+        UPDATE item_media SET local_path = ?, url = ?, mime_type = ?,
             alt_text = 'original PDF', position = 0,
             source_origin = CASE WHEN ? THEN ? ELSE source_origin END
         WHERE id = ?
         """,
-        (local_path, url, PDF_MIME, changed, source_origin, keep_id),
+        (local_path, new_url, PDF_MIME, changed, source_origin, keep_id),
     )
     return keep_id
 

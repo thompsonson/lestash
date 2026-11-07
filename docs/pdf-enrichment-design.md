@@ -82,7 +82,7 @@ def persist_enrichment(conn: Connection, item_id: int, enriched: EnrichedPdf) ->
 
 Responsibilities:
 - Upload images via existing `add_item_media` and rewrite `placeholder:N` refs to `/api/media/{id}`.
-- Upsert child items (`source_type = 'pdf_annotation'`) by `annotation_id`, else `stroke_geometry_hash`; delete only children whose annotation is gone (ADR 0001 D6).
+- Upsert child items (`source_type = 'pdf_annotation'`): match by strokes on the same page, else `/NM` on the same page with overlapping boxes, else unnamed ink by place. Children whose annotation is gone are kept and marked `removed_from_pdf` (ADR 0001 D6).
 - Write `items.content` and bump `metadata.pdf_sha256` + `metadata.extractor_version` + `metadata.enriched_at`.
 - Run inside a transaction.
 
@@ -181,7 +181,7 @@ sequenceDiagram
     Enrich->>FS: write extracted images
     Enrich->>DB: INSERT item_media (media_type='image', source_origin='enricher') × N
     Enrich->>DB: rewrite content with /api/media/{id}
-    Enrich->>DB: UPSERT child items × M (match by annotation_id / stroke_geometry_hash)
+    Enrich->>DB: UPSERT child items × M (match by page + strokes, then page + /NM)
     Enrich->>DB: DELETE children whose annotation is gone
     Enrich->>DB: UPDATE items SET content=?, metadata=? WHERE id=?
     Enrich->>DB: COMMIT
