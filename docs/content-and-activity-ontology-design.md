@@ -132,6 +132,7 @@ CREATE TABLE item_links (
     kind       TEXT NOT NULL,   -- one of the kinds above
     evidence   TEXT,            -- what matched: a URL, an arXiv id, a file name
     origin     TEXT NOT NULL,   -- 'linker:url', 'import:takeout', 'manual'
+    status     TEXT NOT NULL,   -- suggested, confirmed, rejected
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (from_id, to_id, kind)
 );
@@ -147,6 +148,22 @@ CREATE INDEX idx_item_links_to ON item_links(to_id, kind);
   - NotebookLM source names against arXiv ids and Drive titles (`derived_from`, `alternate_of`).
 - Every link carries its evidence, so a wrong match can be traced and removed.
 - The primary key makes reruns add nothing new.
+
+### Which links count at once
+
+| Match | Count today | Status on creation |
+|---|---|---|
+| Importer knows it, such as a comment's video | — | `confirmed` |
+| Exact web address in content | 587 | `confirmed` |
+| Micro.blog `syndication` address | 86 | `confirmed` |
+| arXiv id in a NotebookLM source | 2 | `confirmed` |
+| File name or title, such as a NotebookLM source and a Drive PDF | 14 | `suggested` |
+
+- An exact identifier rarely points at the wrong item, so it counts at once.
+- A name or title match waits for you to confirm it.
+- Every counted link shows a remove action; removing sets `status = 'rejected'`.
+- A rejected link keeps its row, so the linker never adds it again.
+- Listings and related-item views show `confirmed` links only.
 
 ## The people ontology
 
@@ -368,10 +385,10 @@ Steps 1 and 2 work with today's shape and gain links, people and activities as t
 - NotebookLM sources become items, reusing items LeStash already holds.
 - Every YouTube channel becomes an entity; listings filter by watch count.
 - Nothing links people automatically; every match is a suggestion you confirm.
+- Item links from exact identifiers count at once and can be removed; name matches wait for you.
 
 ## Open questions
 
-- Should the linker's text matches between items be suggestions before they count as links?
 - How far back does the Drive Activity API reach?
   Google's reference does not say, so the first query after sign-in will show it.
 
