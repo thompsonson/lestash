@@ -1,0 +1,17 @@
+[Unit]
+Description=Renew the LeStash Tailscale TLS cert and restart the server if it changed
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# tailscale cert keeps the cached cert until it is near expiry, so most runs change
+# nothing. The server reads the cert at start, so restart it only when the file changed.
+WorkingDirectory=%h/.config/tailscale-certs
+Environment=NAME=pop-mini.monkey-ladon.ts.net
+ExecStart=/bin/sh -c '\
+  before=$$(sha256sum $$NAME.crt 2>/dev/null); \
+  /usr/bin/tailscale cert --cert-file $$NAME.crt --key-file $$NAME.key $$NAME || exit 1; \
+  if [ "$$(sha256sum $$NAME.crt)" = "$$before" ]; then echo "cert unchanged"; exit 0; fi; \
+  echo "cert renewed; restarting lestash-server"; \
+  systemctl --user restart lestash-server.service'
