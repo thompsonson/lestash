@@ -1,0 +1,5 @@
+# Start the LeStash Kobo snapshot when a Kobo's storage appears (after tapping Connect).
+# Install: sudo cp deploy/99-lestash-kobo.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+# Needs the read-only fstab line in deploy/install.sh, so the user unit can mount it.
+# "change" too: after an eject the disk stays, and Connect only re-inserts the medium.
+ACTION=="add|change", SUBSYSTEM=="block", ENV{ID_VENDOR_ID}=="2237", ENV{ID_FS_LABEL}=="KOBOeReader", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="lestash-kobo.service"

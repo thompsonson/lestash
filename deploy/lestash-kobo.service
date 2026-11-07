@@ -1,0 +1,27 @@
+[Unit]
+Description=Snapshot the Kobo when it is plugged in, then import it into LeStash
+# Started by udev (deploy/99-lestash-kobo.rules). Stops if the Kobo is unplugged mid-copy;
+# the next snapshot sweeps what a stopped one left behind.
+BindsTo=dev-disk-by\x2dlabel-KOBOeReader.device
+After=dev-disk-by\x2dlabel-KOBOeReader.device
+
+[Service]
+Type=oneshot
+# Holds a flag saying this unit did the mount, so it never unmounts yours
+RuntimeDirectory=lestash-kobo
+# Full paths: Homebrew's mount and umount come first in PATH and are not setuid.
+# The fstab line makes the mount read-only, so nothing can write to the Kobo.
+# mountpoint, not findmnt: util-linux 2.37's findmnt has no -q.
+ExecStart=/bin/sh -c '/usr/bin/mountpoint -q /media/kobo || { /usr/bin/mount /media/kobo && touch "$RUNTIME_DIRECTORY/mounted"; }'
+ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo snapshot --from /media/kobo
+# The import reads the snapshot store, not the Kobo, so it runs in its own unit and
+# isn't stopped by an unplug. A new instance each time: a start request for a unit
+# that is still running would merge into it and import nothing new. Imports take a
+# lock, so they run one after the other.
+ExecStart=/bin/sh -c '/usr/bin/systemctl --user start --no-block "lestash-kobo-sync@$(date +%%s%%N).service"'
+# Unmount (only if this unit mounted it), so the Kobo can be unplugged safely. umount
+# does not eject: the Kobo may stay on its Connected screen until unplugged.
+ExecStart=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/mounted" ]; then /usr/bin/umount /media/kobo && rm "$RUNTIME_DIRECTORY/mounted"; fi'
+# The same when a step failed
+ExecStopPost=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/mounted" ] && /usr/bin/mountpoint -q /media/kobo; then /usr/bin/umount /media/kobo; fi'
+WorkingDirectory=%h/Projects/thompsonson/lestash
