@@ -13,6 +13,10 @@ cp "$SCRIPT_DIR/lestash-server.service" "$DEST/"
 cp "$SCRIPT_DIR/lestash-sync.service" "$DEST/"
 cp "$SCRIPT_DIR/lestash-sync.timer" "$DEST/"
 
+# Deploy TLS cert renewal timer
+cp "$SCRIPT_DIR/lestash-cert.service" "$DEST/"
+cp "$SCRIPT_DIR/lestash-cert.timer" "$DEST/"
+
 systemctl --user daemon-reload
 
 # Enable and start server
@@ -21,7 +25,10 @@ systemctl --user enable --now lestash-server.service
 # Enable and start sync timer
 systemctl --user enable --now lestash-sync.timer
 
+# Enable cert renewal timer
+systemctl --user enable --now lestash-cert.timer
+
 echo "Deployed services:"
 systemctl --user status lestash-server.service --no-pager || true
 echo ""
-systemctl --user list-timers lestash-sync.timer --no-pager
+systemctl --user list-timers lestash-sync.timer lestash-cert.timer --no-pager
