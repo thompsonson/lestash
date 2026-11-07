@@ -7,8 +7,8 @@ prompt in its title and Gemini's reply as HTML. Chats have no titles in Takeout.
 - A chat becomes a ``gemini`` item with ``source_id`` ``c_<chat id>``, the id LeStash
   already stores as ``metadata.conversation_id`` for chats saved from the Gemini page.
 - Each prompt and each reply becomes a child turn, with ``items.author`` ``user`` or
-  ``model``, as the app's chat view expects. A reply is dated 1 ms after its prompt, so
-  turns sort in order.
+  ``model``, as the app's chat view expects. A reply takes its prompt's time, as Takeout
+  gives no other; listings put it after the prompt, which is stored first.
 - A reply becomes Markdown (markdownify), keeping its links, citations among them.
 - Some replies have lines reduced to a lone full stop; the cause is unconfirmed. Such a
   reply is kept verbatim and flagged ``takeout_gaps``, so it can be checked later.
@@ -26,7 +26,7 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from bs4 import BeautifulSoup
@@ -79,13 +79,16 @@ def _convert(html: str) -> tuple[str, int]:
     """
     soup = BeautifulSoup(html, "html.parser")
     links = len(soup.find_all("a", href=True))
+    for numbered in soup.find_all("ol", start=True):
+        if not str(numbered["start"]).isascii() or not str(numbered["start"]).isdigit():
+            del numbered["start"]  # markdownify needs a number
     for string in list(soup.find_all(string=True)):
         if "|" in string and string.find_parent(["td", "th"]):
             string.replace_with(string.replace("|", "\\|"))
     try:
         text = _MARKDOWN.convert_soup(soup)
     except (ValueError, TypeError):
-        text = soup.get_text("\n")
+        text = BeautifulSoup(html, "html.parser").get_text("\n")
     return text.strip(), links
 
 
@@ -168,11 +171,16 @@ class _Prompt:
     reply_details: dict[str, Any]
 
 
+def _stamp(when: datetime) -> str:
+    """A time as it goes into ids: UTC, to the millisecond, however the export wrote it."""
+    return when.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def _parse_prompt(entry: dict[str, Any], when: datetime) -> _Prompt:
     reply, reply_details = _reply(entry)
     return _Prompt(
         when,
-        when.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        _stamp(when),
         _prompt_text(entry),
         _prompt_details(entry),
         reply,
@@ -298,7 +306,7 @@ def _turns(chat_id: str, prompt: _Prompt, occurrence: int) -> list[ItemCreate]:
                 source_id=f"{parent}-reply-{prompt.stamp}",
                 content=prompt.reply,
                 author="model",
-                created_at=prompt.when + timedelta(milliseconds=1),
+                created_at=prompt.when,
                 is_own_content=False,
                 metadata={
                     "source": SOURCE,
@@ -329,7 +337,7 @@ def _canvas(entry: dict[str, Any], when: datetime) -> ItemCreate:
         metadata["draft_count"] = len(drafts)
     return ItemCreate(
         source_type="gemini",
-        source_id=f"canvas-{entry['time']}",
+        source_id=f"canvas-{_stamp(when)}",
         title=title or "Gemini Canvas",
         content="\n\n---\n\n".join(drafts) if drafts else title,
         created_at=when,

@@ -128,8 +128,8 @@ class TestItems:
         assert data["total"] == 0
         assert len(data["items"]) == 0
 
-    def test_children_within_one_second_keep_their_order(self, client, test_config):
-        """A Gemini reply is dated 1 ms after its prompt; datetime() alone would tie them."""
+    def test_children_at_one_time_keep_their_order(self, client, test_config):
+        """A Gemini reply has its prompt's time; newest first, it comes before the prompt."""
         with get_connection(test_config) as conn:
             (chat,) = conn.execute(
                 "INSERT INTO items (source_type, source_id, content) "
@@ -137,7 +137,7 @@ class TestItems:
             ).fetchone()
             for source_id, when in (
                 ("c_1-prompt", "2026-01-01 10:00:00+00:00"),
-                ("c_1-reply", "2026-01-01 10:00:00.001000+00:00"),
+                ("c_1-reply", "2026-01-01 10:00:00+00:00"),
             ):
                 conn.execute(
                     "INSERT INTO items (source_type, source_id, content, created_at, parent_id)"

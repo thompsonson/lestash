@@ -274,8 +274,7 @@ def _gemini_chat(conn: sqlite3.Connection, conversation_id: str) -> _GeminiChat 
     """
     # The usual case, by the (source_type, source_id) index: Takeout's own chat
     row = conn.execute(
-        "SELECT id, source_id, metadata FROM items "
-        "WHERE source_type = 'gemini' AND source_id = ? AND parent_id IS NULL",
+        "SELECT id, source_id, metadata FROM items WHERE source_type = 'gemini' AND source_id = ?",
         (conversation_id,),
     ).fetchone()
     if not row:
@@ -284,7 +283,7 @@ def _gemini_chat(conn: sqlite3.Connection, conversation_id: str) -> _GeminiChat 
         # json_extract raises on malformed JSON, so such rows are skipped first
         row = conn.execute(
             "SELECT p.id, p.source_id, p.metadata FROM items p "
-            "WHERE p.source_type = 'gemini' AND p.parent_id IS NULL AND ("
+            "WHERE p.source_type = 'gemini' AND ("
             "p.source_id GLOB ? OR p.source_id GLOB ? OR CASE WHEN json_valid(p.metadata) "
             "THEN json_extract(p.metadata, '$.conversation_id') = ? END) "
             "ORDER BY EXISTS (SELECT 1 FROM items c WHERE c.parent_id = p.id "

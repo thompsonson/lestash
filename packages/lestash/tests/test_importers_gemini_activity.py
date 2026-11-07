@@ -113,7 +113,7 @@ def test_prompts_become_a_chat_with_ordered_turns(test_db) -> None:
         ("user", "Second   question", chat["id"]),
         ("model", "B & C", chat["id"]),
     ]
-    assert turns[0]["created_at"] < turns[1]["created_at"] < turns[2]["created_at"]
+    assert turns[0]["created_at"] == turns[1]["created_at"] < turns[2]["created_at"]
     # The private matching keys are not stored
     assert not any(k.startswith("_o") or k == "_prompt" for t in turns for k in t["metadata"])
 
@@ -186,8 +186,8 @@ def test_replies_become_markdown() -> None:
     assert html_to_text(code) == "```\ndef a():\n\n\n    pass\n```"
 
 
-def test_html_markdownify_rejects_falls_back_to_plain_text() -> None:
-    assert html_to_text("<ol start='²'><li>A</li></ol>") == "A"
+def test_an_ordered_list_with_a_bad_start_still_converts() -> None:
+    assert html_to_text("<h2>H</h2><ol start='²'><li>A</li></ol>") == "## H\n\n1. A"
 
 
 # --- merging ------------------------------------------------------------------------------
@@ -454,6 +454,23 @@ def test_a_renamed_chat_keeps_its_title_when_an_older_export_arrives(test_db) ->
     chat = _items(test_db, "source_id = ?", (f"c_{CHAT}",))[0]
     assert chat["title"] == "My name"
     assert chat["created_at"].startswith("2026-01-01")
+
+
+def test_a_chat_filed_under_another_item_is_still_merged(test_db) -> None:
+    _import(test_db, [_prompt("Second", "2026-02-01T10:00:00.000Z")])
+    with get_connection(test_db) as conn:
+        (folder,) = conn.execute(
+            "INSERT INTO items (source_type, source_id, content) VALUES ('note', 'f', 'f') "
+            "RETURNING id"
+        ).fetchone()
+        conn.execute(
+            "UPDATE items SET title = 'Mine', parent_id = ? WHERE source_id = ?",
+            (folder, f"c_{CHAT}"),
+        )
+        conn.commit()
+    _import(test_db, [_prompt("First", "2026-01-01T10:00:00.000Z")])
+    chat = _items(test_db, "source_id = ?", (f"c_{CHAT}",))[0]
+    assert (chat["title"], chat["metadata"]["prompted_count"]) == ("Mine", 2)
 
 
 def test_one_time_written_two_ways_is_one_turn(test_db) -> None:

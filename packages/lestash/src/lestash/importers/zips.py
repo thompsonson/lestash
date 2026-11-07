@@ -70,7 +70,8 @@ def parse_zip(data: bytes | Path):
                 found.append(("gemini", _parse_gemini_activity_zip(zf, gemini_activity)))
             if found:
                 all_items = [item for _, items in found for item in items]
-                return all_items, found[0][0] if len(found) == 1 else "takeout"
+                kinds = {kind for kind, _ in found}
+                return all_items, kinds.pop() if len(kinds) == 1 else "takeout"
 
             # Detect Mistral Le Chat export
             if detect_mistral_zip(names):

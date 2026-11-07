@@ -150,9 +150,9 @@ def list_items(
 
         # Sort by fetched_at when filtering recent, otherwise by created_at
         sort_col = "fetched_at" if since else "created_at"
-        # julianday(), unlike datetime(), keeps fractions of a second, so a chat turn sorts
-        # before the reply 1 ms later; then insertion order
-        query += f" ORDER BY julianday({sort_col}) DESC, id DESC"
+        # Ties go to insertion order: a chat's reply, stored after its prompt with the
+        # same time, sorts after it
+        query += f" ORDER BY datetime({sort_col}) DESC, id DESC"
 
         excludes = set()
         if exclude_subtype:

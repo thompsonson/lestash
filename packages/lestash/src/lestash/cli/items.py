@@ -113,7 +113,7 @@ def list_items(
             query += " AND is_own_content = ?"
             params.append(own)
 
-        query += " ORDER BY julianday(created_at) DESC, id DESC LIMIT ?"
+        query += " ORDER BY datetime(created_at) DESC, id DESC LIMIT ?"
         params.append(limit)
 
         cursor = conn.execute(query, params)
