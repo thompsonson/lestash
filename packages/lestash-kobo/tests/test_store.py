@@ -65,12 +65,12 @@ def test_failed_snapshot_leaves_nothing(device: Path, tmp_path: Path, monkeypatc
     calls = 0
     real = KoboStore._store_blob
 
-    def unplugged(self, path):
+    def unplugged(self, path, repair=False):
         nonlocal calls
         calls += 1
         if calls == 3:
             raise OSError("device gone")
-        return real(self, path)
+        return real(self, path, repair)
 
     monkeypatch.setattr(KoboStore, "_store_blob", unplugged)
     with pytest.raises(OSError):
@@ -110,9 +110,9 @@ def test_unchanged_files_are_not_read_again(device: Path, tmp_path: Path, monkey
     read: list[str] = []
     real = KoboStore._store_blob
 
-    def spy(self, path):
+    def spy(self, path, repair=False):
         read.append(path.name)
-        return real(self, path)
+        return real(self, path, repair)
 
     monkeypatch.setattr(KoboStore, "_store_blob", spy)
     second = store.take(device, T2)
@@ -201,3 +201,19 @@ def test_digest_follows_contents_not_name(device: Path, tmp_path: Path) -> None:
     (device / PDF).write_bytes(b"%PDF-1.4 with ink")
     c = store.take(device, T3).snapshot
     assert a.digest() == b.digest() != c.digest()
+
+
+def test_verify_repairs_a_damaged_blob(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    snap = store.take(device, T1).snapshot
+    blob = snap.blob(store, PDF)
+    assert blob is not None
+    blob.chmod(0o600)
+    blob.write_bytes(b"bit rot")
+    store.take(device, T2, verify=True)
+    assert blob.read_bytes() == b"%PDF-1.4 clean"
+
+
+def test_names_are_repaired_per_path_part() -> None:
+    folder = os.fsdecode("caf\xb7".encode("latin-1"))  # Latin-1 byte in the folder
+    assert device_name(f"{folder}/é.pdf") == "caf·/é.pdf"  # the UTF-8 file name survives

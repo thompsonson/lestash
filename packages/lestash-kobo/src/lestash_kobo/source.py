@@ -140,28 +140,33 @@ class KoboSource(SourcePlugin):
         # already imported it, the checkpoint makes the second a no-op.
         with open(store.root / ".sync.lock", "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            snapshot = store.latest()
-            if snapshot is None:
-                logger.warning(
-                    "No Kobo snapshot in %s, so nothing was synced. Plug in the Kobo, or "
-                    "run `lestash kobo snapshot --from <folder>`.",
-                    store.root,
-                )
-                return
-            # Keyed on the contents, not the name: plugging in twice without reading
-            # makes a new snapshot with the same files, which needs no re-import
-            state = {
-                "snapshot_digest": snapshot.digest(),
-                "reader_version": READER_VERSION,
-                "include_store_titles": include_store,
-            }
-            with get_connection(Config.load()) as conn:
-                if get_checkpoints(conn, self.name).get(STATE_KEY) == state:
-                    logger.info("Kobo snapshot %s is already imported", snapshot.name)
+            imported: str | None = None
+            # A plug-in during this import adds a snapshot, and its start request merges
+            # into this running unit; so import again until the newest one is in.
+            while (snapshot := store.latest()) is not None:
+                digest = snapshot.digest()
+                if digest == imported:
                     return
-            logger.info("Reading Kobo snapshot %s", snapshot.name)
-            reader = KoboReader(
-                store, snapshot, media_dir=get_media_dir(), include_store_titles=include_store
+                # Keyed on the contents, not the name: plugging in twice without reading
+                # makes a new snapshot with the same files, which needs no re-import
+                state = {
+                    "snapshot_digest": digest,
+                    "reader_version": READER_VERSION,
+                    "include_store_titles": include_store,
+                }
+                with get_connection(Config.load()) as conn:
+                    if get_checkpoints(conn, self.name).get(STATE_KEY) == state:
+                        logger.info("Kobo snapshot %s is already imported", snapshot.name)
+                        return
+                logger.info("Reading Kobo snapshot %s", snapshot.name)
+                reader = KoboReader(
+                    store, snapshot, media_dir=get_media_dir(), include_store_titles=include_store
+                )
+                yield from reader.items()
+                yield SyncCheckpoint(key=STATE_KEY, value=state)
+                imported = digest
+            logger.warning(
+                "No Kobo snapshot in %s, so nothing was synced. Plug in the Kobo, or "
+                "run `lestash kobo snapshot --from <folder>`.",
+                store.root,
             )
-            yield from reader.items()
-            yield SyncCheckpoint(key=STATE_KEY, value=state)

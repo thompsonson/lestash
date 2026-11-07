@@ -268,3 +268,28 @@ def test_markup_temp_files_from_a_killed_sync_are_swept(device: Path, tmp_path: 
     leftover.write_bytes(b"half")
     _items(device, tmp_path)
     assert not leftover.exists()
+
+
+def test_a_snapshot_taken_during_an_import_is_imported_too(
+    device: Path, tmp_path: Path, test_db
+) -> None:
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    sync = KoboSource().sync({"store_dir": str(store.root)})
+    first = next(sync)
+    assert first.source_id  # the first import has started
+    # The Kobo is plugged in again mid-import, after a new highlight
+    import sqlite3
+
+    conn = sqlite3.connect(device / ".kobo" / "KoboReader.sqlite")
+    conn.execute(
+        "INSERT INTO Bookmark (BookmarkID, VolumeID, Text, Type, Hidden)"
+        " VALUES ('hl-new', ?, 'later', 'highlight', 'false')",
+        (NN,),
+    )
+    conn.commit()
+    conn.close()
+    store.take(device, datetime(2026, 11, 8, tzinfo=UTC))
+    rest = list(sync)
+    assert sum(isinstance(i, SyncCheckpoint) for i in rest) == 2
+    assert "bookmark:hl-new" in {getattr(i, "source_id", None) for i in rest}

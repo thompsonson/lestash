@@ -80,11 +80,23 @@ def device_name(raw: str) -> str:
     Such a mount turns ``·`` into the single byte 0xB7, which Python reads as a lone
     surrogate. Those bytes are Latin-1, so decoding them that way restores the name.
     """
-    data = os.fsencode(raw)
+    return "/".join(_decode_part(os.fsencode(part)) for part in raw.split("/"))
+
+
+def _decode_part(data: bytes) -> str:
+    # Per path part, so one Latin-1 folder name doesn't garble a UTF-8 file name in it
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError:
         return data.decode("latin-1")
+
+
+def _sha_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        while chunk := f.read(CHUNK):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _iso(ts: float) -> str:
@@ -100,38 +112,28 @@ class KoboStore:
     def blob_path(self, sha256: str) -> Path:
         return self.blobs / sha256[:2] / sha256
 
-    def snapshots(self) -> list[Snapshot]:
-        """All complete snapshots, oldest first."""
+    def _manifests(self, newest_first: bool = False):
+        """Readable snapshots in name order (names are UTC times, so time order)."""
         if not self.snapshots_dir.is_dir():
-            return []
-        found = []
-        for d in self.snapshots_dir.iterdir():
+            return
+        dirs = sorted(self.snapshots_dir.iterdir(), key=lambda p: p.name, reverse=newest_first)
+        for d in dirs:
             manifest = d / "manifest.json"
             if d.name.startswith(".") or not manifest.is_file():
                 continue
             try:
-                found.append(self._load(d, json.loads(manifest.read_text())))
+                yield self._load(d, json.loads(manifest.read_text()))
             except (OSError, ValueError, KeyError, TypeError) as e:
                 # One damaged snapshot must not block the others, or new ones
                 logger.warning("Skipping unreadable Kobo snapshot %s: %s", d.name, e)
-        return sorted(found, key=lambda s: (s.taken_at, s.name))
+
+    def snapshots(self) -> list[Snapshot]:
+        """All complete snapshots, oldest first."""
+        return sorted(self._manifests(), key=lambda s: (s.taken_at, s.name))
 
     def latest(self) -> Snapshot | None:
-        """The newest snapshot, reading only its manifest.
-
-        Names are UTC times, so they sort like ``taken_at``; damaged ones are skipped.
-        """
-        if not self.snapshots_dir.is_dir():
-            return None
-        for d in sorted(self.snapshots_dir.iterdir(), key=lambda p: p.name, reverse=True):
-            manifest = d / "manifest.json"
-            if d.name.startswith(".") or not manifest.is_file():
-                continue
-            try:
-                return self._load(d, json.loads(manifest.read_text()))
-            except (OSError, ValueError, KeyError, TypeError) as e:
-                logger.warning("Skipping unreadable Kobo snapshot %s: %s", d.name, e)
-        return None
+        """The newest snapshot, reading only its manifest."""
+        return next(self._manifests(newest_first=True), None)
 
     def take(
         self, source: Path | str, taken_at: datetime | None = None, verify: bool = False
@@ -180,7 +182,7 @@ class KoboStore:
                 ):
                     files[rel] = known
                     continue
-                sha, is_new = self._store_blob(path)
+                sha, is_new = self._store_blob(path, repair=verify)
                 if is_new:
                     new_blobs += 1
                     new_bytes += stat.st_size
@@ -226,8 +228,12 @@ class KoboStore:
                 if path.is_file() and not path.is_symlink():
                     yield path
 
-    def _store_blob(self, path: Path) -> tuple[str, bool]:
-        """Copy ``path`` into the blob store. Returns its hash, and whether it was new."""
+    def _store_blob(self, path: Path, repair: bool = False) -> tuple[str, bool]:
+        """Copy ``path`` into the blob store. Returns its hash, and whether it was new.
+
+        With ``repair``, an existing blob whose contents no longer match its name
+        (disk damage) is replaced by this good copy.
+        """
         digest = hashlib.sha256()
         self.blobs.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(prefix=".tmp-", dir=self.blobs)
@@ -239,12 +245,12 @@ class KoboStore:
                     dst.write(chunk)
             sha = digest.hexdigest()
             dest = self.blob_path(sha)
-            if dest.exists():
+            if dest.exists() and not (repair and _sha_file(dest) != sha):
                 tmp.unlink()
                 return sha, False
             dest.parent.mkdir(exist_ok=True)
             tmp.chmod(0o400)
-            tmp.rename(dest)
+            tmp.replace(dest)
             return sha, True
         except BaseException:
             tmp.unlink(missing_ok=True)

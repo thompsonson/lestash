@@ -9,7 +9,8 @@ After=dev-disk-by\x2dlabel-KOBOeReader.device
 Type=oneshot
 # Full paths: Homebrew's mount and umount come first in PATH and are not setuid.
 # The fstab line makes the mount read-only, so nothing can write to the Kobo.
-ExecStart=/bin/sh -c 'findmnt -q /media/kobo || /usr/bin/mount /media/kobo'
+# mountpoint, not findmnt: util-linux 2.37's findmnt has no -q
+ExecStart=/bin/sh -c '/usr/bin/mountpoint -q /media/kobo || /usr/bin/mount /media/kobo'
 ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo snapshot --from /media/kobo
 # The import reads the snapshot store, not the Kobo, so it runs in its own unit: it is
 # not stopped when the Kobo is unplugged.
@@ -18,5 +19,5 @@ ExecStart=/usr/bin/systemctl --user start --no-block lestash-kobo-sync.service
 # on its Connected screen until unplugged (ejecting needs root or a polkit rule).
 ExecStart=/usr/bin/umount /media/kobo
 # Unmount even when a step failed
-ExecStopPost=/bin/sh -c 'if findmnt -q /media/kobo; then /usr/bin/umount /media/kobo; fi'
+ExecStopPost=/bin/sh -c 'if /usr/bin/mountpoint -q /media/kobo; then /usr/bin/umount /media/kobo; fi'
 WorkingDirectory=%h/Projects/thompsonson/lestash
