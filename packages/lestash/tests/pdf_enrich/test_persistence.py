@@ -136,7 +136,7 @@ def test_persist_updates_parent_metadata_with_sha_and_version(config, parent_pdf
     assert meta["enriched_at"]
 
 
-def test_idempotent_rerun_replaces_prior_artifacts(config, parent_pdf_item):
+def test_rerun_updates_child_in_place_and_drops_stale_images(config, parent_pdf_item):
     first = _enriched(images=[_image(0)], annotations=[_annotation(kind="underline")])
     second = _enriched(
         images=[],
@@ -158,6 +158,77 @@ def test_idempotent_rerun_replaces_prior_artifacts(config, parent_pdf_item):
     assert media_count == 0  # second run had no images; first run's image was deleted
     assert len(children) == 1
     assert json.loads(children[0]["metadata"])["annotation_kind"] == "circle"
+
+
+def test_rerun_keeps_image_media_id_when_image_unchanged(config, parent_pdf_item):
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(images=[_image(0)]))
+        first = conn.execute(
+            "SELECT id FROM item_media WHERE item_id = ? AND source_origin = 'enricher'",
+            (parent_pdf_item,),
+        ).fetchall()
+        persist_enrichment(
+            conn, config, parent_pdf_item, _enriched(sha="b" * 64, images=[_image(0)])
+        )
+        second = conn.execute(
+            "SELECT id FROM item_media WHERE item_id = ? AND source_origin = 'enricher'",
+            (parent_pdf_item,),
+        ).fetchall()
+    assert [r["id"] for r in first] == [r["id"] for r in second]
+
+
+def test_rerun_adopts_legacy_child_and_keeps_its_ocr(config, parent_pdf_item):
+    """Children written before #196 used the bare /NM as source_id."""
+    ann = _annotation(kind="margin_note", anchor="")
+    with get_connection(config) as conn:
+        legacy_id = conn.execute(
+            "INSERT INTO items (source_type, source_id, title, content, metadata, parent_id) "
+            "VALUES ('pdf_annotation', ?, 'Margin note', 'transcribed words', ?, ?)",
+            (
+                ann.annotation_id,
+                json.dumps(
+                    {
+                        "annotation_kind": "margin_note",
+                        "annotation_id": ann.annotation_id,
+                        "stroke_geometry_hash": ann.stroke_geometry_hash,
+                        "ocr_text": "transcribed words",
+                        "ocr_version": 1,
+                    }
+                ),
+                parent_pdf_item,
+            ),
+        ).lastrowid
+        conn.commit()
+
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[ann]))
+        rows = conn.execute(
+            "SELECT id, source_id, content, metadata FROM items WHERE parent_id = ?",
+            (parent_pdf_item,),
+        ).fetchall()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["id"] == legacy_id
+    assert row["source_id"] == f"drive-fixture-1:{ann.annotation_id}"
+    assert row["content"] == "transcribed words"
+    assert json.loads(row["metadata"])["ocr_version"] == 1
+
+
+def test_annotations_without_ids_upsert_by_geometry_hash(config, parent_pdf_item):
+    ann = _annotation()
+    ann.annotation_id = None
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[ann]))
+        (first,) = conn.execute(
+            "SELECT id, source_id FROM items WHERE parent_id = ?", (parent_pdf_item,)
+        ).fetchall()
+        persist_enrichment(
+            conn, config, parent_pdf_item, _enriched(sha="b" * 64, annotations=[ann])
+        )
+        (second,) = conn.execute(
+            "SELECT id, source_id FROM items WHERE parent_id = ?", (parent_pdf_item,)
+        ).fetchall()
+    assert second["id"] == first["id"]
+    assert second["source_id"] == f"drive-fixture-1:{ann.stroke_geometry_hash}"
 
 
 def test_repeated_image_dedups_to_one_media_row_but_replaces_all_placeholders(

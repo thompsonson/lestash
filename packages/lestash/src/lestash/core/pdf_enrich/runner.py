@@ -20,7 +20,6 @@ from typing import Literal
 
 from lestash.core.config import Config
 from lestash.core.database import (
-    add_item_media,
     get_connection,
     get_media_dir,
     save_media_file,
@@ -28,16 +27,15 @@ from lestash.core.database import (
 
 from .extractor import enrich_pdf
 from .persistence import (
+    SOURCE_PDF_MEDIA_TYPE,
     is_already_enriched,
     mark_source_unavailable,
     persist_enrichment,
+    set_source_pdf,
 )
 from .version import EXTRACTOR_VERSION
 
 logger = logging.getLogger(__name__)
-
-SOURCE_PDF_MEDIA_TYPE = "source_pdf"
-PDF_MIME = "application/pdf"
 
 EnrichmentStatus = Literal["enriched", "skipped", "source_unavailable", "failed"]
 
@@ -114,23 +112,15 @@ def attach_source_pdf_and_enrich(
     enricher in one shot.
 
     Called from `sync()` (Drive) and the Kobo backup ingestion paths after
-    the item has been upserted.
+    the item has been upserted. Re-attaching a changed PDF (e.g. a Kobo file
+    with new ink) updates the item's one `source_pdf` row and records the
+    previous version in `metadata.source_pdf_versions`.
     """
     config = config or Config.load()
     with get_connection(config) as conn:
         rel_path = save_media_file(item_id, pdf_bytes, filename, config=config)
-        add_item_media(
-            conn,
-            item_id,
-            media_type=SOURCE_PDF_MEDIA_TYPE,
-            url=drive_url,
-            local_path=rel_path,
-            mime_type=PDF_MIME,
-            alt_text="original PDF",
-            position=0,
-            source_origin="sync",
-            _commit=True,
-        )
+        set_source_pdf(conn, config, item_id, local_path=rel_path, url=drive_url)
+        conn.commit()
     return enrich_item(item_id, config=config)
 
 
@@ -274,17 +264,6 @@ def _create_source_pdf_row_from_drive(
         raise _SourceUnavailable(f"could not read downloaded PDF: {exc}") from exc
 
     rel_path = save_media_file(item_id, data, name, config=config)
-    add_item_media(
-        conn,
-        item_id,
-        media_type=SOURCE_PDF_MEDIA_TYPE,
-        url=metadata.get("drive_web_link"),
-        local_path=rel_path,
-        mime_type=PDF_MIME,
-        alt_text="original PDF",
-        position=0,
-        source_origin="sync",
-        _commit=False,
-    )
+    set_source_pdf(conn, config, item_id, local_path=rel_path, url=metadata.get("drive_web_link"))
     conn.commit()
     return get_media_dir(config) / rel_path
