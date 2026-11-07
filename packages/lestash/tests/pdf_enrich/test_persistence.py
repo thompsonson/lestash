@@ -500,3 +500,93 @@ def test_missing_or_url_only_source_pdf_is_not_a_version(config, parent_pdf_item
         ).fetchall()
     assert versions == 0
     assert [r["local_path"] for r in current] == ["1/new.pdf"]
+
+
+def test_erasing_the_first_stroke_keeps_the_child(config, parent_pdf_item):
+    """The group is named after its first stroke; erasing it renames the group."""
+    note = replace(
+        _annotation(kind="margin_note"),
+        annotation_id="fitz-A0",
+        member_ids=("fitz-A0", "fitz-A1", "fitz-A2"),
+        stroke_geometry_hash="1" * 64,
+    )
+    shrunk = replace(
+        note,
+        annotation_id="fitz-A1",
+        member_ids=("fitz-A1", "fitz-A2"),
+        stroke_geometry_hash="2" * 64,
+    )
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[note]))
+        (child_id,) = _child_ids(conn, parent_pdf_item).values()
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[shrunk]))
+        rows = _child_rows(conn, parent_pdf_item)
+    assert list(rows) == [child_id]
+    assert "removed_from_pdf" not in rows[child_id]["meta"]
+
+
+def test_removed_child_does_not_take_a_live_childs_annotation(config, parent_pdf_item):
+    """A erased; B drawn nearby reuses the name fitz-A0; then B grows."""
+    a = replace(_annotation(), annotation_id="fitz-A0", stroke_geometry_hash="a" * 64)
+    # B starts clear of A's box, then grows to overlap both
+    b = replace(a, bbox=(100, 230, 300, 250), stroke_geometry_hash="b" * 64)
+    b_grown = replace(b, bbox=(100, 215, 300, 250), stroke_geometry_hash="c" * 64)
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[a]))
+        a_id = _child_ids(conn, parent_pdf_item)["a" * 64]
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[]))
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[b]))
+        b_id = _child_ids(conn, parent_pdf_item)["b" * 64]
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[b_grown]))
+        rows = _child_rows(conn, parent_pdf_item)
+    assert b_id != a_id
+    assert rows[b_id]["meta"]["stroke_geometry_hash"] == "c" * 64
+    assert "removed_from_pdf" not in rows[b_id]["meta"]
+    assert rows[a_id]["meta"]["removed_from_pdf"]
+
+
+def test_removal_is_logged_as_the_enrichers_change(config, parent_pdf_item):
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[_annotation()]))
+        (child_id,) = _child_ids(conn, parent_pdf_item).values()
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[]))
+        reasons = {
+            r[0]
+            for r in conn.execute(
+                "SELECT change_reason FROM item_history WHERE item_id = ?", (child_id,)
+            )
+        }
+    assert reasons == {"enricher"}
+
+
+def test_detached_former_child_does_not_block_a_new_one(config, parent_pdf_item):
+    """A child moved to another parent by hand keeps its key; a new child must not clash."""
+    ann = _annotation()
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[ann]))
+        (child_id,) = _child_ids(conn, parent_pdf_item).values()
+        conn.execute("UPDATE items SET parent_id = NULL WHERE id = ?", (child_id,))
+        conn.commit()
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[ann]))
+        rows = _child_rows(conn, parent_pdf_item)
+    assert len(rows) == 1
+    assert child_id not in rows
+
+
+def test_same_file_in_a_folded_legacy_row_keeps_its_link(config, parent_pdf_item):
+    with get_connection(config) as conn:
+        add_item_media(conn, parent_pdf_item, media_type="source_pdf", local_path="1/old.pdf")
+        add_item_media(
+            conn,
+            parent_pdf_item,
+            media_type="source_pdf",
+            url="https://drive.example/file",
+            local_path="1/new.pdf",
+        )
+        set_source_pdf(conn, config, parent_pdf_item, local_path="1/new.pdf")
+        rows = conn.execute(
+            "SELECT local_path, url FROM item_media "
+            "WHERE item_id = ? AND media_type = 'source_pdf'",
+            (parent_pdf_item,),
+        ).fetchall()
+    assert [tuple(r) for r in rows] == [("1/new.pdf", "https://drive.example/file")]
