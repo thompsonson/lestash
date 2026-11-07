@@ -220,6 +220,16 @@ def test_a_stored_child_without_a_date_is_given_its_notebooks(test_db) -> None:
     assert all(created.startswith("2026-03-01") for _, created in children)
 
 
+def test_a_child_title_edited_by_hand_is_kept_when_the_metadata_arrives(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _store(conn, parse_zip(_zip(CHILDREN_Q1))[0])
+        conn.execute("UPDATE items SET title = 'My plan' WHERE source_id LIKE '%Plan A.html'")
+        _store(conn, parse_zip(_zip(META_Q1))[0])
+        children = _children(conn)
+    assert [title for title, _ in children] == ["My plan", "Plan: Q1 — Chat 1"]
+    assert all(created.startswith("2026-03-01") for _, created in children)
+
+
 def test_children_of_a_notebook_without_metadata_keep_the_folder_name(test_db) -> None:
     with get_connection(test_db) as conn:
         _store(conn, parse_zip(_zip(CHILDREN_Q1))[0])

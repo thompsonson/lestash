@@ -1,5 +1,6 @@
 """Source commands for Le Stash CLI."""
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Annotated
 
@@ -91,6 +92,10 @@ def enable_source(
     console.print(f"[green]Enabled {source_name}[/green]")
 
 
+def _say_waiting(name: str) -> Callable[[], None]:
+    return lambda: console.print(f"  [dim]Waiting for the running {name} sync to finish[/dim]")
+
+
 @app.command("sync")
 def sync_source(
     source_name: Annotated[str | None, typer.Argument(help="Source to sync (omit for all)")] = None,
@@ -132,7 +137,14 @@ def sync_source(
         with get_connection(config) as conn, sigterm_as_exit():
             store = SyncStore(conn, name)
             try:
-                run = SyncRun.start(conn, name, store)
+                # A source named on its own waits for a running sync of it, as the Kobo
+                # plug-in sync needs; --all (the timer) skips it
+                run = SyncRun.start(
+                    conn,
+                    name,
+                    store,
+                    wait=_say_waiting(name) if source_name else None,
+                )
             except SyncAlreadyRunning as e:
                 console.print(f"[yellow]Skipping {name}: {e}[/yellow]")
                 continue

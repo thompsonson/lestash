@@ -135,7 +135,10 @@ def test_a_stopped_cli_sync_is_logged_interrupted(test_db, monkeypatch, stop, ra
     with pytest.raises(raised):
         _sync(test_db, monkeypatch, _StopsAfterOne(stop))
 
-    assert _rows(test_db) == [("audible", "failed", INTERRUPTED, 1)]
+    # The item stored after the last commit is rolled back, and not counted
+    assert _rows(test_db) == [("audible", "failed", INTERRUPTED, 0)]
+    with get_connection(test_db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 0
     assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL  # the handler is put back
 
 
@@ -150,8 +153,40 @@ def test_a_failed_cli_sync_keeps_its_error(test_db, monkeypatch) -> None:
     assert _rows(test_db) == [("audible", "failed", "API went away", 1)]
 
 
-def test_a_cli_sync_skips_a_source_already_syncing(test_db, monkeypatch) -> None:
+def test_a_named_cli_sync_waits_for_a_running_one(test_db, monkeypatch) -> None:
+    """The Kobo plug-in sync relies on this: a second sync waits, then runs."""
+    import threading
+
+    started, release = threading.Event(), threading.Event()
+
+    class _Slow:
+        def sync(self, config: dict) -> Iterator[ItemCreate]:
+            started.set()
+            release.wait(10)
+            yield _item(1)
+
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"audible": _Slow()})
+    monkeypatch.setattr(sources_cli.Config, "load", classmethod(lambda cls: test_db))
+    first = threading.Thread(target=sources_cli.sync_source, args=("audible", False))
+    first.start()
+    assert started.wait(10)
+    waiting = []
+    monkeypatch.setattr(sources_cli, "_say_waiting", lambda name: lambda: waiting.append(name))
+    second = threading.Thread(target=sources_cli.sync_source, args=("audible", False))
+    second.start()
+    second.join(1)
+    assert second.is_alive() and waiting == ["audible"]  # blocked on the lock
+    release.set()
+    first.join(10)
+    second.join(10)
+
+    assert [status for _, status, _, _ in _rows(test_db)] == ["completed", "completed"]
+
+
+def test_an_all_sources_cli_sync_skips_a_running_one(test_db, monkeypatch) -> None:
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"audible": _Fails()})
+    monkeypatch.setattr(sources_cli.Config, "load", classmethod(lambda cls: test_db))
     with get_connection(test_db) as conn, SyncRun.start(conn, "audible") as run:
-        _sync(test_db, monkeypatch, _Fails())
+        sources_cli.sync_source(source_name=None, all_sources=True)
         run.finish("completed")
     assert _rows(test_db) == [("audible", "completed", None, 0)]

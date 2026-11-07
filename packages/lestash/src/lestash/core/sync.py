@@ -6,7 +6,7 @@ import logging
 import signal
 import sqlite3
 import threading
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +40,7 @@ class SyncStore:
     def __init__(self, conn: sqlite3.Connection, source: str) -> None:
         self.conn, self.source = conn, source
         self.items = 0
+        self.committed = 0  # items as of the last commit
         self.source_types: set[str] = set()
         self.linked = 0
 
@@ -54,13 +55,13 @@ class SyncStore:
                 if isinstance(item, SyncCheckpoint):
                     # Commit the plugin's state with the items yielded before it
                     save_checkpoint(self.conn, self.source, item.key, item.value)
-                    self.conn.commit()
+                    self._commit()
                     continue
                 self._store(item)
                 if self.items % COMMIT_EVERY == 0:
-                    self.conn.commit()
+                    self._commit()
         except Exception:
-            self.conn.commit()
+            self._commit()
             try:
                 self._sweep()
             except Exception:
@@ -68,6 +69,10 @@ class SyncStore:
             raise
         self.conn.commit()
         self._sweep()
+
+    def _commit(self) -> None:
+        self.conn.commit()
+        self.committed = self.items
 
     def _sweep(self) -> None:
         self.linked = resolve_parent_source_ids(self.conn, self.source_types)
@@ -152,13 +157,22 @@ class SyncRun:
         self.finished = False
 
     @classmethod
-    def start(cls, conn: sqlite3.Connection, source: str, store: SyncStore | None = None) -> Self:
+    def start(
+        cls,
+        conn: sqlite3.Connection,
+        source: str,
+        store: SyncStore | None = None,
+        wait: Callable[[], None] | None = None,
+    ) -> Self:
         """Take the source's lock, close out dead runs, and log this one as ``running``.
+
+        If another sync holds the lock, wait for it when ``wait`` is given (it is called
+        once, before waiting, so the caller can say so); otherwise raise.
 
         Raises:
             SyncAlreadyRunning: another process or thread is syncing ``source``.
         """
-        lock = _take_lock(conn, source)
+        lock = _take_lock(conn, source, wait)
         try:
             if lock is not None:
                 conn.execute(
@@ -220,8 +234,10 @@ class SyncRun:
                     error = INTERRUPTED
                 else:
                     error = str(exc) or type(exc).__name__
-                self.conn.rollback()  # drop a half-written item; committed ones stay
-                self.finish("failed", error=error)
+                # Drop what was stored since the last commit, and count only what stays
+                self.conn.rollback()
+                kept = self.store.committed if self.store else None
+                self.finish("failed", items_added=kept, error=error)
         finally:
             if self._lock is not None:
                 self._lock.close()
@@ -232,7 +248,9 @@ def _now() -> str:
     return datetime.now().isoformat(" ")
 
 
-def _take_lock(conn: sqlite3.Connection, source: str) -> IO[bytes] | None:
+def _take_lock(
+    conn: sqlite3.Connection, source: str, wait: Callable[[], None] | None
+) -> IO[bytes] | None:
     """Lock ``<database>.sync-<source>.lock``; None for an in-memory database."""
     db_file = next((row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main"), "")
     if not db_file:
@@ -242,8 +260,15 @@ def _take_lock(conn: sqlite3.Connection, source: str) -> IO[bytes] | None:
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        lock.close()
-        raise SyncAlreadyRunning(f"a {source} sync is already running") from None
+        if wait is None:
+            lock.close()
+            raise SyncAlreadyRunning(f"a {source} sync is already running") from None
+        wait()
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        except BaseException:
+            lock.close()
+            raise
     return lock
 
 
