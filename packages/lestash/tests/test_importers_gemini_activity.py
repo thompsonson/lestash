@@ -483,6 +483,20 @@ def test_one_time_written_two_ways_is_one_turn(test_db) -> None:
     assert chat["metadata"]["prompted_count"] == 1
 
 
+def test_a_long_chats_prompt_count_stays_exact_across_exports(test_db) -> None:
+    def prompts(first: int, last: int) -> list[dict]:
+        return [
+            _prompt(f"p{n}", f"2026-01-01T{n // 60 % 24:02}:{n % 60:02}:00.000Z", reply="")
+            for n in range(first, last + 1)
+        ]
+
+    _import(test_db, prompts(1, 250))
+    _import(test_db, prompts(100, 300))
+    chat = _items(test_db, "source_id = ?", (f"c_{CHAT}",))[0]
+    assert chat["metadata"]["prompted_count"] == 300
+    assert chat["content"] == "Gemini conversation with 300 prompts."
+
+
 def test_a_prompt_titled_only_prompted_is_kept() -> None:
     entry = _prompt("", "2026-01-01T10:00:00.000Z", attachedFiles=["a.png"])
     entry["title"] = "Prompted"

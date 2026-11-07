@@ -27,11 +27,13 @@ from collections import Counter
 from datetime import datetime
 from typing import Any, NamedTuple
 
-from lestash.importers.gemini_activity import SOURCE as GEMINI_ACTIVITY
+from lestash.importers.gemini_activity import SOURCE as GEMINI_ACTIVITY_SOURCE
 from lestash.importers.gemini_activity import chat_content, prompt_key
 from lestash.importers.youtube_history import MAX_TIMES
 from lestash.models.item import ItemCreate
 
+# Lists not capped: a chat has at most a few hundred prompts, and its count must stay exact
+UNCAPPED = frozenset({"prompted_times"})
 # times list -> count key
 TIME_KEYS = {
     "watched_times": "watched_count",
@@ -51,7 +53,7 @@ def merge_with_stored(conn: sqlite3.Connection, item: ItemCreate) -> bool:
     metadata = item.metadata or {}
     if not item.source_id:
         return True
-    if item.source_type == "gemini" and metadata.get("source") == GEMINI_ACTIVITY:
+    if item.source_type == "gemini" and metadata.get("source") == GEMINI_ACTIVITY_SOURCE:
         return _merge_gemini(conn, item)
     if item.source_type == "youtube" and item.source_id.split(":", 1)[0] in YOUTUBE_KINDS:
         stored = _stored(conn, item)
@@ -87,8 +89,11 @@ def _union_times(old: dict[str, Any], new: dict[str, Any], merged: dict[str, Any
         if key not in old and key not in new:
             continue
         times = sorted({*old.get(key, []), *new.get(key, [])})
-        merged[key] = times[-MAX_TIMES:]
-        capped = len(old.get(key, [])) >= MAX_TIMES or len(new.get(key, [])) >= MAX_TIMES
+        cap = len(times) if key in UNCAPPED else MAX_TIMES
+        merged[key] = times[-cap:]
+        capped = key not in UNCAPPED and (
+            len(old.get(key, [])) >= MAX_TIMES or len(new.get(key, [])) >= MAX_TIMES
+        )
         merged[count_key] = (
             max(len(times), old.get(count_key, 0), new.get(count_key, 0)) if capped else len(times)
         )
@@ -261,7 +266,7 @@ class _GeminiChat(NamedTuple):
 
     @property
     def from_takeout(self) -> bool:
-        return self.metadata.get("source") == GEMINI_ACTIVITY
+        return self.metadata.get("source") == GEMINI_ACTIVITY_SOURCE
 
 
 def _gemini_chat(conn: sqlite3.Connection, conversation_id: str) -> _GeminiChat | None:
@@ -369,7 +374,7 @@ def _page_turns(conn: sqlite3.Connection, chat: _GeminiChat) -> list[_PageTurn]:
         "AND source_type = 'gemini' AND COALESCE("
         "CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.source') END, '') != ? "
         "ORDER BY id",
-        (chat.id, GEMINI_ACTIVITY),
+        (chat.id, GEMINI_ACTIVITY_SOURCE),
     ).fetchall()
     if rows:
         return [_PageTurn(author == "user", content or "", sid) for author, content, sid in rows]
