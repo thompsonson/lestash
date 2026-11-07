@@ -82,7 +82,7 @@ def persist_enrichment(conn: Connection, item_id: int, enriched: EnrichedPdf) ->
 
 Responsibilities:
 - Upload images via existing `add_item_media` and rewrite `placeholder:N` refs to `/api/media/{id}`.
-- Delete prior enrichment-derived child items (`WHERE parent_id = ? AND source_type = 'pdf_annotation'`) before re-inserting the new set.
+- Upsert child items (`source_type = 'pdf_annotation'`) by `annotation_id`, else `stroke_geometry_hash`; delete only children whose annotation is gone (ADR 0001 D6).
 - Write `items.content` and bump `metadata.pdf_sha256` + `metadata.extractor_version` + `metadata.enriched_at`.
 - Run inside a transaction.
 
@@ -145,9 +145,9 @@ No DDL changes are strictly required — every field fits the existing schema. T
 
 ### Conventions, written down
 
-- **`source_type='pdf_annotation'`** identifies child items produced by the enricher. The persistence layer deletes-then-inserts these on every successful run.
-- **`media_type='source_pdf'`** identifies the original PDF. The enricher reads from this row's `local_path` or `url` (Drive ID).
-- **`media_type='image'` with `source_origin='enricher'`** identifies an enricher-produced image. These are deleted-then-inserted on every successful run, just like child items. The existing `source_origin` column already exists to distinguish provenance — no new media type is needed.
+- **`source_type='pdf_annotation'`** identifies child items produced by the enricher. The persistence layer upserts these on every successful run, keeping IDs and OCR text (ADR 0001 D6).
+- **`media_type='source_pdf'`** identifies the original PDF. The enricher reads from this row's `local_path` or `url` (Drive ID). One row per item; earlier versions are listed in `metadata.source_pdf_versions`.
+- **`media_type='image'` with `source_origin='enricher'`** identifies an enricher-produced image. Rows are reused when the same image file returns and deleted when it does not. The existing `source_origin` column already exists to distinguish provenance — no new media type is needed.
 - **`extractor_version`** is a single integer in `pdf_enrich/version.py`. Bump it when the extractor changes in a way that should trigger reprocessing.
 
 ## Sequence Flows
@@ -181,8 +181,8 @@ sequenceDiagram
     Enrich->>FS: write extracted images
     Enrich->>DB: INSERT item_media (media_type='image', source_origin='enricher') × N
     Enrich->>DB: rewrite content with /api/media/{id}
-    Enrich->>DB: DELETE child items WHERE parent_id=? AND source_type='pdf_annotation'
-    Enrich->>DB: INSERT child items × M
+    Enrich->>DB: UPSERT child items × M (match by annotation_id / stroke_geometry_hash)
+    Enrich->>DB: DELETE children whose annotation is gone
     Enrich->>DB: UPDATE items SET content=?, metadata=? WHERE id=?
     Enrich->>DB: COMMIT
 ```
