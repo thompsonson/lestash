@@ -17,6 +17,10 @@ cp "$SCRIPT_DIR/lestash-sync.timer" "$DEST/"
 cp "$SCRIPT_DIR/lestash-cert.service" "$DEST/"
 cp "$SCRIPT_DIR/lestash-cert.timer" "$DEST/"
 
+# Deploy Kobo plug-in sync (started by udev, so nothing to enable)
+cp "$SCRIPT_DIR/lestash-kobo.service" "$DEST/"
+cp "$SCRIPT_DIR/lestash-kobo-sync@.service" "$DEST/"
+
 systemctl --user daemon-reload
 
 # Enable and start server
@@ -32,3 +36,23 @@ echo "Deployed services:"
 systemctl --user status lestash-server.service --no-pager || true
 echo ""
 systemctl --user list-timers lestash-sync.timer lestash-cert.timer --no-pager
+
+# The Kobo trigger needs two root steps, once per machine; this script doesn't run them
+KOBO_FSTAB="LABEL=KOBOeReader /media/kobo vfat ro,noauto,user,nosuid,nodev,noexec,uid=$(id -u),gid=$(id -g),umask=077,utf8 0 0"
+# Match the label and mount point only, so an edited line isn't reported as missing
+kobo_in_fstab() { grep -qE '^LABEL=KOBOeReader[[:space:]]+/media/kobo[[:space:]]' /etc/fstab; }
+# The read-only promise rests on that line: warn if it has no "ro"
+if kobo_in_fstab && ! grep -E '^LABEL=KOBOeReader[[:space:]]+/media/kobo[[:space:]]' /etc/fstab |
+    awk '{print $4}' | tr ',' '\n' | grep -qx ro; then
+    echo "WARNING: the Kobo line in /etc/fstab has no 'ro' option, so the Kobo would be mounted writable."
+fi
+if ! kobo_in_fstab || [ ! -f /etc/udev/rules.d/99-lestash-kobo.rules ]; then
+    echo ""
+    echo "Kobo plug-in sync needs, once, as root:"
+    kobo_in_fstab || {
+        echo "  sudo mkdir -p /media/kobo"
+        echo "  echo '$KOBO_FSTAB' | sudo tee -a /etc/fstab && sudo systemctl daemon-reload"
+    }
+    [ -f /etc/udev/rules.d/99-lestash-kobo.rules ] ||
+        echo "  sudo cp $SCRIPT_DIR/99-lestash-kobo.rules /etc/udev/rules.d/ && sudo udevadm control --reload"
+fi
