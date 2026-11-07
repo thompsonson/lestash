@@ -27,10 +27,8 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import cache
 from typing import Any
-
-from bs4 import BeautifulSoup
-from markdownify import ATX, MarkdownConverter
 
 from lestash.importers.youtube_history import MAX_TIMES, _time
 from lestash.models.item import ItemCreate
@@ -68,7 +66,13 @@ def chat_title(first_prompt: str) -> str:
     return title[:TITLE_LENGTH] + ("..." if len(title) > TITLE_LENGTH else "")
 
 
-_MARKDOWN = MarkdownConverter(heading_style=ATX, bullets="-", escape_misc=False)
+@cache
+def _markdown() -> Any:
+    """The reply converter. bs4 and markdownify load here, not at import: merge.py imports
+    this module, and so does every CLI start."""
+    from markdownify import ATX, MarkdownConverter
+
+    return MarkdownConverter(heading_style=ATX, bullets="-", escape_misc=False)
 
 
 def _convert(html: str) -> tuple[str, int]:
@@ -77,6 +81,8 @@ def _convert(html: str) -> tuple[str, int]:
     "|" in a table cell is escaped, as it would end the cell. HTML markdownify can't take
     (such as an ordered list starting at "²") falls back to its plain text.
     """
+    from bs4 import BeautifulSoup
+
     soup = BeautifulSoup(html, "html.parser")
     links = len(soup.find_all("a", href=True))
     for numbered in soup.find_all("ol", start=True):
@@ -86,7 +92,7 @@ def _convert(html: str) -> tuple[str, int]:
         if "|" in string and string.find_parent(["td", "th"]):
             string.replace_with(string.replace("|", "\\|"))
     try:
-        text = _MARKDOWN.convert_soup(soup)
+        text = _markdown().convert_soup(soup)
     except (ValueError, TypeError):
         text = BeautifulSoup(html, "html.parser").get_text("\n")
     return text.strip(), links
