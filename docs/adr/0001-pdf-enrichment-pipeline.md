@@ -59,6 +59,17 @@ Each classified annotation (margin note, circled passage, underlined span, ink_u
 
 **Important refinement**: a child item is created per *semantic annotation*, not per ink stroke. A single circle is typically 5–20 strokes — those become one child. Stroke geometries are preserved in the child's `metadata` JSON for full-fidelity replay.
 
+**Re-runs upsert children; they do not replace them** (amended 2026-11, #196). A Kobo PDF gains ink between syncs, so the same item is re-enriched often. Children must keep their item IDs and OCR text (D10).
+
+- Each annotation is matched to an existing child of the same parent by its PDF `/NM` (`annotation_id`), falling back to `stroke_geometry_hash`.
+- `source_id` is scoped to the parent: `{parent source_id}:{annotation_id or stroke_geometry_hash}`. `/NM` is only unique within one PDF.
+- A matched child is updated in place. If its geometry hash is unchanged, its `content`, `ocr_text` and `ocr_version` are kept.
+- If the geometry hash changed (a stroke joined the group), content is refreshed and the OCR marker is dropped, so OCR reruns for that child only.
+- New annotations are inserted. Only children whose annotation has gone from the PDF are deleted.
+- Enricher image rows are reused when the same image file returns, and deleted when it does not.
+
+Each item keeps exactly one `source_pdf` row (D5). Attaching a changed PDF updates that row and appends the previous version (`sha256`, `local_path`, `url`, `replaced_at`) to the parent's `metadata.source_pdf_versions`. Media files are content-addressed, so old versions stay on disk.
+
 **Rejected:** JSON blob on `items.metadata` (annotations would not be searchable). Dedicated `item_annotations` table (additional join, no benefit over child items).
 
 ### D7: Invocation — single code path, two surfaces
