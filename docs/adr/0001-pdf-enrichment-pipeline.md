@@ -61,14 +61,14 @@ Each classified annotation (margin note, circled passage, underlined span, ink_u
 
 **Re-runs upsert children; they do not replace them** (amended 2026-11, #196). A Kobo PDF gains ink between syncs, so the same item is re-enriched often. Children must keep their item IDs and OCR text (D10).
 
-- Each annotation is matched to an existing child of the same parent by its PDF `/NM` (`annotation_id`), falling back to `stroke_geometry_hash`.
-- `source_id` is scoped to the parent: `{parent source_id}:{annotation_id or stroke_geometry_hash}`. `/NM` is only unique within one PDF.
-- A matched child is updated in place. If its geometry hash is unchanged, its `content`, `ocr_text` and `ocr_version` are kept.
+- Each annotation is matched to an existing child of the same parent by its PDF `/NM` (`annotation_id`). Annotations left unmatched then fall back to `stroke_geometry_hash`.
+- `source_id` is scoped to the parent's item id: `item-{parent id}:{annotation_id or stroke_geometry_hash}`. `/NM` is only unique within one PDF, and a parent's `source_id` is only unique within its source type.
+- A matched child is updated in place. If its geometry hash and kind are unchanged, its `content`, `ocr_text` and `ocr_version` are kept.
 - If the geometry hash changed (a stroke joined the group), content is refreshed and the OCR marker is dropped, so OCR reruns for that child only.
 - New annotations are inserted. Only children whose annotation has gone from the PDF are deleted.
 - Enricher image rows are reused when the same image file returns, and deleted when it does not.
 
-Each item keeps exactly one `source_pdf` row (D5). Attaching a changed PDF updates that row and appends the previous version (`sha256`, `local_path`, `url`, `replaced_at`) to the parent's `metadata.source_pdf_versions`. Media files are content-addressed, so old versions stay on disk.
+Each item keeps exactly one `source_pdf` row (D5). Attaching a changed PDF updates that row and keeps the previous file as a `source_pdf_version` media row (`local_path`, `url`, `source_origin`; `created_at` is when it was replaced). The history lives in media rows, not item metadata, because a re-sync's upsert replaces the metadata. Media files are content-addressed, so old versions stay on disk and the path names the file's hash.
 
 **Rejected:** JSON blob on `items.metadata` (annotations would not be searchable). Dedicated `item_annotations` table (additional join, no benefit over child items).
 

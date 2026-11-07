@@ -198,6 +198,30 @@ def test_removed_annotation_deletes_only_its_child(config, item_id):
     assert all(c["ocr_text"] == "note" for c in after.values())
 
 
+def _versions(config: Config, parent_id: int) -> list:
+    with get_connection(config) as conn:
+        return conn.execute(
+            "SELECT local_path, created_at FROM item_media "
+            "WHERE item_id = ? AND media_type = 'source_pdf_version' ORDER BY position",
+            (parent_id,),
+        ).fetchall()
+
+
+def _resync(config: Config) -> None:
+    """What a Drive or Kobo re-sync does first: upsert, which replaces the metadata."""
+    with get_connection(config) as conn:
+        upsert_item(
+            conn,
+            ItemCreate(
+                source_type="kobo",
+                source_id="kobo-book-1",
+                title="Annotated book",
+                content="document body",
+                metadata={"mime_type": "application/pdf"},
+            ),
+        )
+
+
 def test_new_pdf_version_keeps_one_source_pdf_row(config, item_id):
     v1 = _base_pdf()
     attach_source_pdf_and_enrich(item_id, v1, "book.pdf", config=config)
@@ -209,12 +233,37 @@ def test_new_pdf_version_keeps_one_source_pdf_row(config, item_id):
 
     assert row_v2["id"] == row_v1["id"]
     assert row_v2["local_path"] != row_v1["local_path"]
-    meta = _parent_meta(config, item_id)
-    assert meta["pdf_sha256"] == hashlib.sha256(v2).hexdigest()
-    (prev,) = meta["source_pdf_versions"]
-    assert prev["sha256"] == hashlib.sha256(v1).hexdigest()
+    assert _parent_meta(config, item_id)["pdf_sha256"] == hashlib.sha256(v2).hexdigest()
+    (prev,) = _versions(config, item_id)
     assert prev["local_path"] == row_v1["local_path"]
-    assert prev["replaced_at"]
+    assert prev["created_at"]
+
+
+def test_version_history_survives_resync(config, item_id):
+    """A re-sync replaces the item's metadata, so the history must live elsewhere."""
+    v1 = _base_pdf()
+    v2 = _add_ink(v1, _scribble(NEW_Y))
+    v3 = _add_ink(v2, _scribble(NEW_Y + 100))
+    paths = []
+    for pdf in (v1, v2, v3):
+        _resync(config)
+        attach_source_pdf_and_enrich(item_id, pdf, "book.pdf", config=config)
+        paths.append(_source_pdf_rows(config, item_id)[0]["local_path"])
+
+    assert [v["local_path"] for v in _versions(config, item_id)] == paths[:2]
+
+
+def test_going_back_to_an_earlier_pdf_records_every_step(config, item_id):
+    a = _base_pdf()
+    b = _add_ink(a, _scribble(NEW_Y))
+    for pdf in (a, b, a, b):
+        attach_source_pdf_and_enrich(item_id, pdf, "book.pdf", config=config)
+
+    (path_b,) = [r["local_path"] for r in _source_pdf_rows(config, item_id)]
+    history = [v["local_path"] for v in _versions(config, item_id)]
+    assert len(history) == 3
+    assert history[1] == path_b
+    assert history[0] == history[2] != path_b
 
 
 def test_reattaching_the_same_pdf_records_no_version(config, item_id):
@@ -223,7 +272,7 @@ def test_reattaching_the_same_pdf_records_no_version(config, item_id):
     attach_source_pdf_and_enrich(item_id, v1, "book.pdf", config=config)
 
     assert len(_source_pdf_rows(config, item_id)) == 1
-    assert "source_pdf_versions" not in _parent_meta(config, item_id)
+    assert _versions(config, item_id) == []
 
 
 def test_same_annotation_ids_in_two_pdfs_do_not_collide(config, item_id):

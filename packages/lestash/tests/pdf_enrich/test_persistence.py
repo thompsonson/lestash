@@ -208,7 +208,7 @@ def test_rerun_adopts_legacy_child_and_keeps_its_ocr(config, parent_pdf_item):
     assert len(rows) == 1
     row = rows[0]
     assert row["id"] == legacy_id
-    assert row["source_id"] == f"drive-fixture-1:{ann.annotation_id}"
+    assert row["source_id"] == f"item-{parent_pdf_item}:{ann.annotation_id}"
     assert row["content"] == "transcribed words"
     assert json.loads(row["metadata"])["ocr_version"] == 1
 
@@ -228,7 +228,7 @@ def test_annotations_without_ids_upsert_by_geometry_hash(config, parent_pdf_item
             "SELECT id, source_id FROM items WHERE parent_id = ?", (parent_pdf_item,)
         ).fetchall()
     assert second["id"] == first["id"]
-    assert second["source_id"] == f"drive-fixture-1:{ann.stroke_geometry_hash}"
+    assert second["source_id"] == f"item-{parent_pdf_item}:{ann.stroke_geometry_hash}"
 
 
 def test_repeated_image_dedups_to_one_media_row_but_replaces_all_placeholders(

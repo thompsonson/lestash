@@ -205,7 +205,8 @@ def _insert_items_with_parents(conn, items):
 
 def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse:
     """Import a PDF: extract markdown via Docling, save original as media."""
-    from lestash.core.database import add_item_media, save_media_file
+    from lestash.core.database import save_media_file
+    from lestash.core.pdf_enrich.persistence import set_source_pdf
     from lestash.core.text_extract import extract_content
     from lestash.models.item import ItemCreate
 
@@ -236,14 +237,7 @@ def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse
         item_id = _upsert_item(conn, item)
         if item_id:
             rel_path = save_media_file(item_id, data, display_name, get_config())
-            add_item_media(
-                conn,
-                item_id,
-                media_type="source_pdf",
-                local_path=rel_path,
-                mime_type="application/pdf",
-                source_origin="upload",
-            )
+            set_source_pdf(conn, get_config(), item_id, local_path=rel_path, source_origin="upload")
             items_added = 1
             enrich_item_id = item_id
         conn.commit()

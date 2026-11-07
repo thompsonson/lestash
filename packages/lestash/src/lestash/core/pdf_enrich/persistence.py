@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, Any
 from lestash.core.config import Config
 from lestash.core.database import (
     add_item_media,
-    get_media_dir,
     mark_recent_history,
     max_history_id,
     save_media_file,
@@ -47,6 +46,8 @@ logger = logging.getLogger(__name__)
 ANNOTATION_SOURCE_TYPE = "pdf_annotation"
 ENRICHER_ORIGIN = "enricher"
 SOURCE_PDF_MEDIA_TYPE = "source_pdf"
+# A source PDF replaced by a newer file, kept for history (see set_source_pdf)
+SOURCE_PDF_VERSION_MEDIA_TYPE = "source_pdf_version"
 PDF_MIME = "application/pdf"
 
 # Child metadata written by the OCR pass (ocr.py). Kept across re-runs while
@@ -59,13 +60,7 @@ def is_already_enriched(
 ) -> bool:
     """Return True if the stored (sha256, extractor_version) matches the
     current run — i.e. re-running would be a no-op."""
-    row = conn.execute("SELECT metadata FROM items WHERE id = ?", (item_id,)).fetchone()
-    if not row or not row[0]:
-        return False
-    try:
-        meta = json.loads(row[0])
-    except (TypeError, json.JSONDecodeError):
-        return False
+    meta = _load_item_metadata(conn, item_id)
     return (
         meta.get("pdf_sha256") == current_sha256
         and meta.get("extractor_version") == current_version
@@ -95,13 +90,7 @@ def mark_source_unavailable(conn: sqlite3.Connection, item_id: int) -> None:
 
     Leaves existing content intact; only updates the metadata block.
     """
-    row = conn.execute("SELECT metadata FROM items WHERE id = ?", (item_id,)).fetchone()
-    meta: dict = {}
-    if row and row[0]:
-        try:
-            meta = json.loads(row[0])
-        except (TypeError, json.JSONDecodeError):
-            meta = {}
+    meta = _load_item_metadata(conn, item_id)
     meta["enrichment_status"] = "source_unavailable"
     meta["enriched_at"] = _now_iso()
     pre_max = max_history_id(conn)
@@ -174,7 +163,11 @@ def _delete_stale_enricher_media(
     conn: sqlite3.Connection, item_id: int, *, keep: Iterable[int]
 ) -> None:
     keep_ids = list(keep)
-    sql = "DELETE FROM item_media WHERE item_id = ? AND source_origin = ?"
+    # Never the source PDF or its versions, whatever origin wrote them
+    sql = (
+        "DELETE FROM item_media WHERE item_id = ? AND source_origin = ?"
+        f" AND media_type NOT IN ('{SOURCE_PDF_MEDIA_TYPE}', '{SOURCE_PDF_VERSION_MEDIA_TYPE}')"
+    )
     if keep_ids:
         sql += f" AND id NOT IN ({','.join('?' * len(keep_ids))})"
     conn.execute(sql, (item_id, ENRICHER_ORIGIN, *keep_ids))
@@ -201,12 +194,11 @@ def _upsert_annotations(
     children written by older runs (whose source_id was the bare /NM) are
     adopted and moved to the parent-scoped source_id.
     """
-    parent_row = conn.execute(
-        "SELECT source_type, source_id FROM items WHERE id = ?", (parent_id,)
-    ).fetchone()
-    if not parent_row:
+    if not conn.execute("SELECT 1 FROM items WHERE id = ?", (parent_id,)).fetchone():
         return
-    parent_source_id = parent_row[1] or str(parent_id)
+    # Scoped by the parent's item id, unique by construction: source_ids are only
+    # unique per source_type, so two parents could share one
+    parent_source_id = f"item-{parent_id}"
 
     existing = _load_existing_children(conn, parent_id)
     by_annotation_id: dict[str, list[int]] = {}
@@ -226,12 +218,16 @@ def _upsert_annotations(
                 return child_id
         return None
 
-    plan: list[tuple[ExtractedAnnotation, int | None]] = []
-    for ann in annotations:
-        match = claim(by_annotation_id.get(ann.annotation_id)) if ann.annotation_id else None
-        if match is None:
-            match = claim(by_hash.get(ann.stroke_geometry_hash))
-        plan.append((ann, match))
+    # Every /NM match first, then geometry: an earlier annotation's hash fallback
+    # must not take a child that a later annotation names by /NM
+    matches: list[int | None] = [
+        claim(by_annotation_id.get(ann.annotation_id)) if ann.annotation_id else None
+        for ann in annotations
+    ]
+    for i, ann in enumerate(annotations):
+        if matches[i] is None:
+            matches[i] = claim(by_hash.get(ann.stroke_geometry_hash))
+    plan = list(zip(annotations, matches, strict=True))
 
     stale = [child_id for child_id in existing if child_id not in claimed]
     if stale:
@@ -284,7 +280,12 @@ def _upsert_annotations(
             continue
 
         old_meta = existing[match]
-        if old_meta.get("stroke_geometry_hash") == ann.stroke_geometry_hash:
+        # Keep OCR only for the same strokes read as the same kind: a reclassified
+        # annotation (say margin note to underline) gets its new content
+        if (
+            old_meta.get("stroke_geometry_hash") == ann.stroke_geometry_hash
+            and old_meta.get("annotation_kind") == ann.kind
+        ):
             for key in OCR_META_KEYS:
                 if key in old_meta:
                     meta[key] = old_meta[key]
@@ -322,13 +323,13 @@ def _load_existing_children(conn: sqlite3.Connection, parent_id: int) -> dict[in
     return out
 
 
-def _unique_source_id(parent_source_id: str, ann: ExtractedAnnotation, used: set[str]) -> str:
+def _unique_source_id(parent_key: str, ann: ExtractedAnnotation, used: set[str]) -> str:
     """Parent-scoped, stable source_id for an annotation child.
 
     Scoped by the parent because /NM values are only unique within one PDF
     (PyMuPDF, for one, writes `fitz-A0`, `fitz-A1`, ... in every file).
     """
-    base = f"{parent_source_id}:{ann.annotation_id or ann.stroke_geometry_hash}"
+    base = f"{parent_key}:{ann.annotation_id or ann.stroke_geometry_hash}"
     source_id = base
     n = 2
     while source_id in used:
@@ -350,18 +351,19 @@ def set_source_pdf(
     """Make `local_path` the item's one current `source_pdf` row.
 
     - No row yet: insert one.
-    - A row exists for another file: update it in place, and append the
-      previous version (sha256, local_path, url, replaced_at) to the parent's
-      `metadata.source_pdf_versions`. Old files stay on disk; media files are
-      content-addressed, so each version keeps its own path.
-    - Extra rows left by older code are folded into the history and removed.
+    - A row exists for another file: update it in place, and keep the previous
+      file as a `source_pdf_version` row (its `created_at` is when it was
+      replaced). The history lives in media rows, not item metadata, because a
+      re-sync's upsert replaces the metadata. Old files stay on disk; media files
+      are content-addressed, so each version keeps its own path.
+    - Extra rows left by older code are kept as versions and removed.
 
     A missing `url` keeps the existing row's url (e.g. a Drive link).
-    `source_origin` applies only to a newly inserted row. Does not commit. Returns the media row ID.
+    Does not commit. Returns the media row ID.
     """
     rows = conn.execute(
-        "SELECT id, local_path, url FROM item_media WHERE item_id = ? AND media_type = ? "
-        "ORDER BY id",
+        "SELECT id, local_path, url, source_origin FROM item_media "
+        "WHERE item_id = ? AND media_type = ? ORDER BY id",
         (item_id, SOURCE_PDF_MEDIA_TYPE),
     ).fetchall()
     if not rows:
@@ -379,9 +381,9 @@ def set_source_pdf(
         )
 
     keep_id: int = rows[0][0]
-    previous = [row for row in rows if row[1] != local_path]
-    if previous:
-        _record_previous_source_pdfs(conn, config, item_id, previous)
+    for row in rows:
+        if row[1] != local_path:
+            _record_previous_source_pdf(conn, item_id, row)
     if len(rows) > 1:
         extra_ids = [row[0] for row in rows[1:]]
         conn.execute(
@@ -391,51 +393,31 @@ def set_source_pdf(
     conn.execute(
         """
         UPDATE item_media SET local_path = ?, url = COALESCE(?, url), mime_type = ?,
-            alt_text = 'original PDF', position = 0
+            alt_text = 'original PDF', position = 0, source_origin = ?
         WHERE id = ?
         """,
-        (local_path, url, PDF_MIME, keep_id),
+        (local_path, url, PDF_MIME, source_origin, keep_id),
     )
     return keep_id
 
 
-def _record_previous_source_pdfs(
-    conn: sqlite3.Connection,
-    config: Config,
-    item_id: int,
-    rows: list[sqlite3.Row],
+def _record_previous_source_pdf(
+    conn: sqlite3.Connection, item_id: int, row: sqlite3.Row | tuple
 ) -> None:
-    import hashlib
+    """Keep a replaced source PDF as a `source_pdf_version` row.
 
-    meta = _load_item_metadata(conn, item_id)
-    versions = meta.get("source_pdf_versions")
-    if not isinstance(versions, list):
-        versions = []
-    known = {v.get("local_path") for v in versions if isinstance(v, dict)}
-    media_dir = get_media_dir(config)
-    replaced_at = _now_iso()
-    for row in rows:
-        old_path = row[1]
-        if old_path in known:
-            continue
-        sha256 = None
-        if old_path:
-            candidate = media_dir / old_path
-            if candidate.exists():
-                sha256 = hashlib.sha256(candidate.read_bytes()).hexdigest()
-        versions.append(
-            {
-                "sha256": sha256,
-                "local_path": old_path,
-                "url": row[2],
-                "replaced_at": replaced_at,
-            }
-        )
-        known.add(old_path)
-    meta["source_pdf_versions"] = versions
-    pre_max = max_history_id(conn)
-    conn.execute("UPDATE items SET metadata = ? WHERE id = ?", (json.dumps(meta), item_id))
-    mark_recent_history(conn, pre_max, "enricher", item_ids=[item_id])
+    Always a new row, even for a path seen before, so A→B→A→B keeps every step.
+    """
+    (count,) = conn.execute(
+        "SELECT COUNT(*) FROM item_media WHERE item_id = ? AND media_type = ?",
+        (item_id, SOURCE_PDF_VERSION_MEDIA_TYPE),
+    ).fetchone()
+    conn.execute(
+        """INSERT INTO item_media
+           (item_id, media_type, url, local_path, mime_type, alt_text, position, source_origin)
+           VALUES (?, ?, ?, ?, ?, 'previous PDF', ?, ?)""",
+        (item_id, SOURCE_PDF_VERSION_MEDIA_TYPE, row[2], row[1], PDF_MIME, count, row[3]),
+    )
 
 
 def _load_item_metadata(conn: sqlite3.Connection, item_id: int) -> dict[str, Any]:
@@ -457,13 +439,7 @@ def _update_parent_item(
     *,
     status: str,
 ) -> None:
-    row = conn.execute("SELECT metadata FROM items WHERE id = ?", (item_id,)).fetchone()
-    meta: dict = {}
-    if row and row[0]:
-        try:
-            meta = json.loads(row[0])
-        except (TypeError, json.JSONDecodeError):
-            meta = {}
+    meta = _load_item_metadata(conn, item_id)
     meta["pdf_sha256"] = enriched.pdf_sha256
     meta["extractor_version"] = enriched.extractor_version
     meta["enrichment_status"] = status

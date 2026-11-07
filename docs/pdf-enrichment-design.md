@@ -146,7 +146,7 @@ No DDL changes are strictly required — every field fits the existing schema. T
 ### Conventions, written down
 
 - **`source_type='pdf_annotation'`** identifies child items produced by the enricher. The persistence layer upserts these on every successful run, keeping IDs and OCR text (ADR 0001 D6).
-- **`media_type='source_pdf'`** identifies the original PDF. The enricher reads from this row's `local_path` or `url` (Drive ID). One row per item; earlier versions are listed in `metadata.source_pdf_versions`.
+- **`media_type='source_pdf'`** identifies the original PDF. The enricher reads from this row's `local_path` or `url` (Drive ID). One row per item; earlier files are kept as `media_type='source_pdf_version'` rows.
 - **`media_type='image'` with `source_origin='enricher'`** identifies an enricher-produced image. Rows are reused when the same image file returns and deleted when it does not. The existing `source_origin` column already exists to distinguish provenance — no new media type is needed.
 - **`extractor_version`** is a single integer in `pdf_enrich/version.py`. Bump it when the extractor changes in a way that should trigger reprocessing.
 

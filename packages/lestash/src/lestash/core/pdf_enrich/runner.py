@@ -114,7 +114,7 @@ def attach_source_pdf_and_enrich(
     Called from `sync()` (Drive) and the Kobo backup ingestion paths after
     the item has been upserted. Re-attaching a changed PDF (e.g. a Kobo file
     with new ink) updates the item's one `source_pdf` row and records the
-    previous version in `metadata.source_pdf_versions`.
+    previous file as a `source_pdf_version` media row.
     """
     config = config or Config.load()
     with get_connection(config) as conn:

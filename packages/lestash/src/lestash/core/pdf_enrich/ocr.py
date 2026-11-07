@@ -21,6 +21,7 @@ from typing import Literal
 
 from lestash.core.config import Config
 from lestash.core.database import get_connection, mark_recent_history, max_history_id
+from lestash.core.pdf_enrich.persistence import SOURCE_PDF_MEDIA_TYPE
 
 OCR_EXTRACTOR_VERSION: int = 1
 OCR_TARGET_KINDS = ("margin_note", "ink_unclassified")
@@ -190,10 +191,10 @@ def _resolve_parent_pdf(conn: sqlite3.Connection, config: Config, parent_id: int
     row = conn.execute(
         """
         SELECT local_path FROM item_media
-        WHERE item_id = ? AND media_type = 'source_pdf'
+        WHERE item_id = ? AND media_type = ?
         ORDER BY id LIMIT 1
         """,
-        (parent_id,),
+        (parent_id, SOURCE_PDF_MEDIA_TYPE),
     ).fetchone()
     if not row or not row["local_path"]:
         raise _OcrUnavailable("parent has no source_pdf media row")
