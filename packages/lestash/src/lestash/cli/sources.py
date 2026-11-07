@@ -230,7 +230,8 @@ def sync_source(
             conn.commit()
 
         if status == "completed":
-            console.print(f"[green]Synced {name}: {store.items} items added[/green]")
+            # Counts items written, new or updated alike (#210)
+            console.print(f"[green]Synced {name}: {store.items} items written[/green]")
 
 
 @app.command("status")
