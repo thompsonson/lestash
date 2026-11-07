@@ -8,6 +8,7 @@ Two steps, kept apart so the device is unplugged as soon as possible:
 Nothing ever writes to the Kobo: it is mounted read-only (see deploy/99-lestash-kobo.rules).
 """
 
+import fcntl
 import signal
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -137,14 +138,23 @@ class KoboSource(SourcePlugin):
             "reader_version": READER_VERSION,
             "include_store_titles": include_store,
         }
-        # The 6-hourly timer syncs every source: skip a snapshot already imported as-is
-        with get_connection(Config.load()) as conn:
-            if get_checkpoints(conn, self.name).get(STATE_KEY) == state:
-                logger.info("Kobo snapshot %s is already imported", snapshot.name)
+        # The plug-in import and the 6-hourly timer (which syncs every source) can start
+        # together: only one imports, the other leaves it to that one
+        store.root.mkdir(parents=True, exist_ok=True)
+        with open(store.root / ".sync.lock", "w") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                logger.info("Another Kobo import is running; leaving it to that one")
                 return
-        logger.info("Reading Kobo snapshot %s", snapshot.name)
-        reader = KoboReader(
-            store, snapshot, media_dir=get_media_dir(), include_store_titles=include_store
-        )
-        yield from reader.items()
-        yield SyncCheckpoint(key=STATE_KEY, value=state)
+            # Skip a snapshot already imported as-is
+            with get_connection(Config.load()) as conn:
+                if get_checkpoints(conn, self.name).get(STATE_KEY) == state:
+                    logger.info("Kobo snapshot %s is already imported", snapshot.name)
+                    return
+            logger.info("Reading Kobo snapshot %s", snapshot.name)
+            reader = KoboReader(
+                store, snapshot, media_dir=get_media_dir(), include_store_titles=include_store
+            )
+            yield from reader.items()
+            yield SyncCheckpoint(key=STATE_KEY, value=state)

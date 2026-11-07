@@ -77,13 +77,18 @@ def test_sync_stores_children_under_books_and_is_idempotent(
     device: Path, tmp_path: Path, test_db
 ) -> None:
     store = KoboStore(tmp_path / "store")
-    store.take(device, T1)
     plugin = KoboSource()
     config = {"store_dir": str(store.root)}
-    for _ in range(2):
+    # A new, identical snapshot each time, so the second sync really re-imports
+    for when in (T1, datetime(2026, 11, 8, tzinfo=UTC)):
+        store.take(device, when)
         with get_connection(test_db) as conn:
             SyncStore(conn, "kobo").run(plugin.sync(config))
     with get_connection(test_db) as conn:
+        (history,) = conn.execute(
+            "SELECT count(*) FROM item_history h JOIN items i ON i.id = h.item_id"
+            " WHERE i.source_type = 'kobo'"
+        ).fetchone()
         rows = conn.execute(
             "SELECT i.source_id, p.source_id FROM items i LEFT JOIN items p ON p.id = i.parent_id"
             " WHERE i.source_type = 'kobo' ORDER BY i.source_id"
@@ -98,6 +103,7 @@ def test_sync_stores_children_under_books_and_is_idempotent(
         "bookmark:mk-1": NN,
     }
     assert len(media) == 2  # the second sync didn't add the images again
+    assert history == 0  # nor rewrite unchanged items
     assert all((get_media_dir(test_db) / m[0]).is_file() for m in media)
 
 
@@ -155,3 +161,62 @@ def test_taken_at_without_offset_is_utc() -> None:
     assert parse_taken_at("2026-04-17T14:40:03") == datetime(2026, 4, 17, 14, 40, 3, tzinfo=UTC)
     with pytest.raises(typer.BadParameter):
         parse_taken_at("17 April")
+
+
+def test_unchecked_wal_changes_are_read(device: Path, tmp_path: Path) -> None:
+    import sqlite3
+
+    db = device / ".kobo" / "KoboReader.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA journal_mode=wal")
+    conn.execute("PRAGMA wal_autocheckpoint=0")
+    conn.execute(
+        "INSERT INTO Bookmark (BookmarkID, VolumeID, Text, Type, Hidden)"
+        " VALUES ('hl-wal', ?, 'only in the wal', 'highlight', 'false')",
+        (NN,),
+    )
+    conn.commit()
+    try:
+        assert (device / ".kobo" / "KoboReader.sqlite-wal").stat().st_size > 0
+        ids = {i.source_id for i in _items(device, tmp_path)}
+    finally:
+        conn.close()
+    assert "bookmark:hl-wal" in ids
+
+
+def test_odd_bookmark_rows_do_not_break_the_sort(device: Path, tmp_path: Path) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(device / ".kobo" / "KoboReader.sqlite")
+    conn.execute(
+        "INSERT INTO Bookmark (BookmarkID, VolumeID, ChapterProgress, Type)"
+        " VALUES ('odd-1', NULL, 'abc', 'highlight'), ('odd-2', ?, '', 'note')",
+        (NN,),
+    )
+    conn.commit()
+    conn.close()
+    ids = {i.source_id for i in _items(device, tmp_path)}
+    assert "bookmark:odd-2" in ids and "bookmark:odd-1" not in ids
+
+
+def test_titles_do_not_change_between_identical_snapshots(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    a = store.take(device, T1).snapshot
+    b = store.take(device, datetime(2026, 11, 8, tzinfo=UTC)).snapshot
+    media = tmp_path / "media"
+    first = [i.model_dump() for i in KoboReader(store, a, media_dir=media).items()]
+    second = [i.model_dump() for i in KoboReader(store, b, media_dir=media).items()]
+    assert first == second
+
+
+def test_a_running_import_makes_the_second_one_wait_its_turn(
+    device: Path, tmp_path: Path, test_db
+) -> None:
+    import fcntl
+
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    with open(store.root / ".sync.lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        assert list(KoboSource().sync({"store_dir": str(store.root)})) == []
+    assert list(KoboSource().sync({"store_dir": str(store.root)}))

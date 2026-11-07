@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -22,6 +23,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_ROOT = Path("~/.local/share/lestash/kobo").expanduser()
 DB_PATH = ".kobo/KoboReader.sqlite"
@@ -98,7 +101,11 @@ class KoboStore:
             manifest = d / "manifest.json"
             if d.name.startswith(".") or not manifest.is_file():
                 continue
-            found.append(self._load(d, json.loads(manifest.read_text())))
+            try:
+                found.append(self._load(d, json.loads(manifest.read_text())))
+            except (OSError, ValueError, KeyError, TypeError) as e:
+                # One damaged snapshot must not block the others, or new ones
+                logger.warning("Skipping unreadable Kobo snapshot %s: %s", d.name, e)
         return sorted(found, key=lambda s: (s.taken_at, s.name))
 
     def latest(self) -> Snapshot | None:

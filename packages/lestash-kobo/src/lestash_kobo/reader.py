@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import hashlib
 import html
+import os
 import re
 import shutil
 import sqlite3
+import tempfile
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,6 +55,13 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _float(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _num(value: Any) -> int:
     try:
         return int(value or 0)
@@ -81,6 +90,10 @@ def title_kind(row: dict[str, Any]) -> str:
 def open_db(path: Path) -> sqlite3.Connection:
     # immutable=1: the snapshot copy is read-only and nothing else writes to it
     conn = sqlite3.connect(f"file:{quote(str(path))}?immutable=1", uri=True)
+    return _prepare(conn)
+
+
+def _prepare(conn: sqlite3.Connection) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     # Some TEXT columns hold binary (e.g. Bookmark.ExtraAnnotationData), which the
     # default factory refuses to decode
@@ -104,20 +117,34 @@ class KoboReader:
         self.media_dir = media_dir
         self.include_store_titles = include_store_titles
 
-    def items(self) -> Iterator[ItemCreate]:
+    def _read_db(self) -> tuple[list[dict], list[dict], dict[str, dict]]:
         db = self.snapshot.blob(self.store, DB_PATH)
         if db is None:
             raise FileNotFoundError(f"snapshot {self.snapshot.name} has no {DB_PATH}")
-        conn = open_db(db)
-        try:
-            titles = _rows(conn, "SELECT * FROM content WHERE ContentType = '6'")
-            marks = _rows(conn, "SELECT * FROM Bookmark")
-            chapters = {
-                r["ContentID"]: r
-                for r in _rows(conn, "SELECT * FROM content WHERE ContentType = '9'")
-            }
-        finally:
-            conn.close()
+        wal = self.snapshot.blob(self.store, DB_PATH + "-wal")
+        with tempfile.TemporaryDirectory(prefix="lestash-kobo-") as tmp:
+            if wal is not None and wal.stat().st_size > 0:
+                # Changes not yet checkpointed live in the -wal file. SQLite only reads
+                # it next to its database under the same name, so open copies of both.
+                local = Path(tmp) / "KoboReader.sqlite"
+                shutil.copyfile(db, local)
+                shutil.copyfile(wal, Path(tmp) / "KoboReader.sqlite-wal")
+                conn = _prepare(sqlite3.connect(local))
+            else:
+                conn = open_db(db)
+            try:
+                titles = _rows(conn, "SELECT * FROM content WHERE ContentType = '6'")
+                marks = _rows(conn, "SELECT * FROM Bookmark")
+                chapters = {
+                    r["ContentID"]: r
+                    for r in _rows(conn, "SELECT * FROM content WHERE ContentType = '9'")
+                }
+            finally:
+                conn.close()
+        return titles, marks, chapters
+
+    def items(self) -> Iterator[ItemCreate]:
+        titles, marks, chapters = self._read_db()
 
         marked = {m["VolumeID"] for m in marks}
         kept: set[str] = set()
@@ -160,7 +187,6 @@ class KoboReader:
             "publisher": (row.get("Publisher") or "").strip("​ ") or None,
             "isbn": row.get("ISBN") or None,
             "series": row.get("Series") or None,
-            "snapshot": self.snapshot.name,
         }
         path = device_path(row["ContentID"])
         if path:
@@ -229,9 +255,14 @@ class KoboReader:
             dest = self.media_dir / rel
             if not dest.exists() or dest.stat().st_size != entry.size or _sha(dest) != entry.sha256:
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                tmp = dest.with_name(f".tmp-{dest.name}")
-                shutil.copyfile(self.store.blob_path(entry.sha256), tmp)
-                tmp.replace(dest)
+                fd, tmp_name = tempfile.mkstemp(prefix=f".tmp-{dest.name}-", dir=dest.parent)
+                os.close(fd)
+                try:
+                    shutil.copyfile(self.store.blob_path(entry.sha256), tmp_name)
+                    os.replace(tmp_name, dest)
+                except BaseException:
+                    Path(tmp_name).unlink(missing_ok=True)
+                    raise
             media.append(
                 MediaCreate(
                     media_type="image",
@@ -247,8 +278,8 @@ class KoboReader:
     def _order(mark: dict[str, Any], chapters: dict[str, dict]) -> tuple:
         chapter = chapters.get(mark.get("ContentID") or "", {})
         return (
-            mark["VolumeID"],
+            str(mark.get("VolumeID") or ""),
             _num(chapter.get("VolumeIndex")),
-            float(mark.get("ChapterProgress") or 0),
-            mark.get("DateCreated") or "",
+            _float(mark.get("ChapterProgress")),
+            str(mark.get("DateCreated") or ""),
         )

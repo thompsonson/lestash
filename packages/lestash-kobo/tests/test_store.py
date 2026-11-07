@@ -144,3 +144,13 @@ def test_leftovers_of_a_killed_copy_are_swept(device: Path, tmp_path: Path) -> N
     store.take(device, T2)
     assert not list(store.snapshots_dir.glob(".tmp-*"))
     assert not list(store.blobs.glob(".tmp-*"))
+
+
+def test_a_damaged_manifest_is_skipped(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    broken = store.snapshots_dir / "20260101T000000Z"
+    broken.mkdir()
+    (broken / "manifest.json").write_text('{"taken_at": ')
+    assert [s.name for s in store.snapshots()] == ["20260417T140000Z"]
+    assert store.take(device, T2).new_blobs == 0
