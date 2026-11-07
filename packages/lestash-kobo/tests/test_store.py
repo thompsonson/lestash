@@ -217,3 +217,23 @@ def test_verify_repairs_a_damaged_blob(device: Path, tmp_path: Path) -> None:
 def test_names_are_repaired_per_path_part() -> None:
     folder = os.fsdecode("caf\xb7".encode("latin-1"))  # Latin-1 byte in the folder
     assert device_name(f"{folder}/é.pdf") == "caf·/é.pdf"  # the UTF-8 file name survives
+
+
+def test_a_damaged_snapshot_with_the_same_name_is_refused_up_front(
+    device: Path, tmp_path: Path
+) -> None:
+    store = KoboStore(tmp_path / "store")
+    damaged = store.snapshots_dir / "20261107T095600Z"
+    damaged.mkdir(parents=True)
+    (damaged / "manifest.json").write_text("{")
+    with pytest.raises(FileExistsError):
+        store.take(device, T2)
+
+
+def test_newest_reports_a_damaged_newest(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    newest = store.take(device, T2).snapshot
+    assert store.newest()[1] == newest.name
+    (newest.path / "manifest.json").write_text("{")
+    assert store.newest() == (None, newest.name)

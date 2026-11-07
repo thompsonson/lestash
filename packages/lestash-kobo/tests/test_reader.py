@@ -302,3 +302,26 @@ def test_a_damaged_newest_snapshot_stops_the_import(device: Path, tmp_path: Path
     (newest.path / "manifest.json").write_text("{")
     with pytest.raises(RuntimeError, match="unreadable"):
         list(KoboSource().sync({"store_dir": str(store.root)}))
+
+
+def test_only_snapshot_damaged_is_an_error_not_plug_in_advice(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    only = store.take(device, T1).snapshot
+    (only.path / "manifest.json").write_text("{")
+    with pytest.raises(RuntimeError, match="unreadable"):
+        list(KoboSource().sync({"store_dir": str(store.root)}))
+
+
+def test_highlight_title_is_one_line(device: Path, tmp_path: Path) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(device / ".kobo" / "KoboReader.sqlite")
+    conn.execute(
+        "INSERT INTO Bookmark (BookmarkID, VolumeID, Text, Type, Hidden)"
+        " VALUES ('hl-multi', ?, 'end of para\n\nNext para', 'highlight', 'false')",
+        (NN,),
+    )
+    conn.commit()
+    conn.close()
+    item = next(i for i in _items(device, tmp_path) if i.source_id == "bookmark:hl-multi")
+    assert item.title == "Highlight: end of para Next para"

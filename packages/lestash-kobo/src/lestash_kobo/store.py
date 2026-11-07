@@ -94,6 +94,21 @@ def _decode_part(data: bytes) -> str:
         return data.decode("latin-1")
 
 
+def _write_durably(path: Path, data: bytes) -> None:
+    with path.open("wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _fsync_dir(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def sha_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
@@ -138,16 +153,30 @@ class KoboStore:
         """The newest readable snapshot, reading only its manifest."""
         return next(self._manifests(newest_first=True), None)
 
-    def newest_name(self) -> str | None:
-        """The newest snapshot folder's name, readable or not."""
+    def _names(self) -> list[str]:
+        """Snapshot folder names, readable or not, oldest first."""
         if not self.snapshots_dir.is_dir():
-            return None
-        names = [
+            return []
+        return sorted(
             d.name
             for d in self.snapshots_dir.iterdir()
             if not d.name.startswith(".") and (d / "manifest.json").is_file()
-        ]
-        return max(names, default=None)
+        )
+
+    def newest(self) -> tuple[Snapshot | None, str | None]:
+        """The newest snapshot folder's name, and its snapshot if it can be read.
+
+        One scan, so a snapshot that lands meanwhile can't make the newest look damaged.
+        """
+        names = self._names()
+        if not names:
+            return None, None
+        d = self.snapshots_dir / names[-1]
+        try:
+            return self._load(d, json.loads((d / "manifest.json").read_text())), d.name
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            logger.warning("Unreadable Kobo snapshot %s: %s", d.name, e)
+            return None, d.name
 
     def take(
         self, source: Path | str, taken_at: datetime | None = None, verify: bool = False
@@ -171,7 +200,7 @@ class KoboStore:
         taken_at = (taken_at or datetime.now(UTC)).astimezone(UTC)
         name = taken_at.strftime("%Y%m%dT%H%M%SZ")
         snaps = self.snapshots()
-        if any(s.name == name for s in snaps):
+        if name in self._names():  # damaged ones too: the rename would fail at the end
             raise FileExistsError(f"snapshot {name} already exists")
         # Compare with what came before this copy, also when importing an old copy late
         history = [s for s in snaps if s.taken_at < taken_at]
@@ -206,9 +235,10 @@ class KoboStore:
                 "source": str(source),
                 "files": {k: vars(v) for k, v in sorted(files.items())},
             }
-            (tmp / "manifest.json").write_text(json.dumps(manifest, indent=1))
+            _write_durably(tmp / "manifest.json", json.dumps(manifest, indent=1).encode())
             final = self.snapshots_dir / name
             tmp.rename(final)
+            _fsync_dir(self.snapshots_dir)
         except BaseException:
             shutil.rmtree(tmp, ignore_errors=True)
             raise
@@ -257,6 +287,10 @@ class KoboStore:
                 while chunk := src.read(CHUNK):
                     digest.update(chunk)
                     dst.write(chunk)
+                # On disk before it takes its final name: a crash must not leave a short
+                # blob that later snapshots trust
+                dst.flush()
+                os.fsync(dst.fileno())
             sha = digest.hexdigest()
             dest = self.blob_path(sha)
             if dest.exists() and not (repair and sha_file(dest) != sha):
@@ -265,6 +299,7 @@ class KoboStore:
             dest.parent.mkdir(exist_ok=True)
             tmp.chmod(0o400)
             tmp.replace(dest)
+            _fsync_dir(dest.parent)
             return sha, True
         except BaseException:
             tmp.unlink(missing_ok=True)

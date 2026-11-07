@@ -215,7 +215,7 @@ class KoboReader:
         if re.search(r"\.x?html?$", chapter_title, re.I):
             chapter_title = ""  # a spine file name, not a chapter title
         label = KINDS.get(kind, kind.title())
-        snippet = (text or note)[:60]
+        snippet = " ".join((text or note).split())[:60]  # one line, for listings
         title = f"{label}: {snippet}" if snippet else label
         meta: dict[str, Any] = {
             "_parent_source_id": mark["VolumeID"],

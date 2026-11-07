@@ -141,14 +141,22 @@ class KoboSource(SourcePlugin):
         with open(store.root / ".sync.lock", "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             imported: str | None = None
-            # A plug-in during this import adds a snapshot, and its start request merges
-            # into this running unit; so import again until the newest one is in.
-            while (snapshot := store.latest()) is not None:
-                if snapshot.name != store.newest_name():
-                    # Importing an older snapshot would overwrite newer data with old
+            # A plug-in during this import adds a snapshot; import again until the
+            # newest one is in.
+            while True:
+                snapshot, newest_name = store.newest()
+                if newest_name is None:
+                    logger.warning(
+                        "No Kobo snapshot in %s, so nothing was synced. Plug in the Kobo, "
+                        "or run `lestash kobo snapshot --from <folder>`.",
+                        store.root,
+                    )
+                    return
+                if snapshot is None:
+                    # Importing an older snapshot instead would overwrite newer data
                     raise RuntimeError(
-                        f"The newest Kobo snapshot ({store.newest_name()}) is unreadable; "
-                        f"not importing the older {snapshot.name}. Remove or repair it."
+                        f"The newest Kobo snapshot ({newest_name}) is unreadable, so "
+                        "nothing was imported. Remove or repair it."
                     )
                 digest = snapshot.digest()
                 if digest == imported:
@@ -171,8 +179,3 @@ class KoboSource(SourcePlugin):
                 yield from reader.items()
                 yield SyncCheckpoint(key=STATE_KEY, value=state)
                 imported = digest
-            logger.warning(
-                "No Kobo snapshot in %s, so nothing was synced. Plug in the Kobo, or "
-                "run `lestash kobo snapshot --from <folder>`.",
-                store.root,
-            )

@@ -4,6 +4,9 @@ Description=Import the newest Kobo snapshot into LeStash (run %i)
 # Not tied to the device: it reads the snapshot store, so it keeps running after the
 # Kobo is unplugged.
 
+# One instance per plug-in: unload it when done, failed or not, so they don't pile up
+CollectMode=inactive-or-failed
+
 [Service]
 Type=oneshot
 ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash sources sync kobo
