@@ -18,6 +18,7 @@ dependencies = [
     "lestash-gmail",
     "lestash-takeout",
     "lestash-jelu",
+    "lestash-kobo",
     "lestash-server",
 ]
 
@@ -37,6 +38,7 @@ lestash-claude-code = { workspace = true }
 lestash-gmail = { workspace = true }
 lestash-takeout = { workspace = true }
 lestash-jelu = { workspace = true }
+lestash-kobo = { workspace = true }
 lestash-server = { workspace = true }
 
 [dependency-groups]
@@ -80,6 +82,7 @@ version_toml = [
     "packages/lestash-gmail/pyproject.toml:project.version",
     "packages/lestash-takeout/pyproject.toml:project.version",
     "packages/lestash-jelu/pyproject.toml:project.version",
+    "packages/lestash-kobo/pyproject.toml:project.version",
     "packages/lestash-server/pyproject.toml:project.version",
 ]
 branch = "main"

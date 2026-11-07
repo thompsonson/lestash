@@ -1,0 +1,19 @@
+[Unit]
+Description=Snapshot the Kobo when it is plugged in, then import it into LeStash
+# Started by udev (deploy/99-lestash-kobo.rules). Stops if the Kobo is unplugged mid-copy;
+# a stopped snapshot leaves nothing behind.
+BindsTo=dev-disk-by\x2dlabel-KOBOeReader.device
+After=dev-disk-by\x2dlabel-KOBOeReader.device
+
+[Service]
+Type=oneshot
+# Full paths: Homebrew's mount and umount come first in PATH and are not setuid.
+# The fstab line makes the mount read-only, so nothing can write to the Kobo.
+ExecStart=/bin/sh -c 'findmnt -q /media/kobo || /usr/bin/mount /media/kobo'
+ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo snapshot --from /media/kobo
+# Start the import before ejecting: ejecting removes the device, which stops this unit
+ExecStart=/usr/bin/systemctl --user start --no-block lestash-kobo-sync.service
+ExecStart=/usr/bin/umount /media/kobo
+# Eject even when a step failed, so the Kobo goes back to reading
+ExecStopPost=/bin/sh -c 'if findmnt -q /media/kobo; then /usr/bin/umount /media/kobo; fi'
+WorkingDirectory=%h/Projects/thompsonson/lestash
