@@ -167,13 +167,13 @@ CREATE INDEX idx_activities_item ON activities(item_id);
 ## How the two meet
 
 ```mermaid
-graph LR
-  A[activity: prompted 2026-11-05] -- object --> C[item: Gemini chat]
-  A -- context --> N[item: NotebookLM notebook]
-  N -- derived_from --> P[item: arXiv paper]
-  T[item: chat turn] -- part_of --> C
-  T -- references --> M[item: Micro.blog post]
-  M -- syndication --> B[item: Bluesky post]
+flowchart LR
+  A["Activity: prompted, 5 Nov 2026"] -->|object| C["Item: Gemini chat"]
+  A -->|context| N["Item: NotebookLM notebook"]
+  N -->|derived_from| P["Item: arXiv paper"]
+  T["Item: chat turn"] -->|part_of| C
+  T -->|references| M["Item: Micro.blog post"]
+  M -->|syndication| B["Item: Bluesky post"]
 ```
 
 - Content links answer "what is related to this".
