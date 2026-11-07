@@ -614,7 +614,22 @@ def run_backfill(
 
     Returns:
         (messages imported, error message or None).
+
+    Raises:
+        SyncAlreadyRunning: a Gmail sync or backfill is running.
     """
+    from lestash.core.sync import SyncRun
+
+    with SyncRun.start(conn, "gmail") as run:
+        count, error, status = _backfill(conn, gmail, queries, limit)
+        run.finish(status, items_added=count, error=error)
+    return count, error
+
+
+def _backfill(
+    conn: Any, gmail: GwsGmail, queries: list[str], limit: int | None
+) -> tuple[int, str | None, str]:
+    """The body of ``run_backfill``: (messages imported, error or None, sync_log status)."""
     from lestash.core.database import (
         get_checkpoints,
         resolve_parent_id,
@@ -622,13 +637,6 @@ def run_backfill(
         save_checkpoint,
         upsert_item,
     )
-
-    started_at = datetime.now()
-    sync_id = conn.execute(
-        "INSERT INTO sync_log (source_type, started_at, status) VALUES (?, ?, ?)",
-        ("gmail", started_at.isoformat(" "), "running"),
-    ).lastrowid
-    conn.commit()
 
     count = 0
     error: str | None = None
@@ -651,15 +659,7 @@ def run_backfill(
     except GwsError as e:
         status, error = "failed", str(e)
         resolve_parent_source_ids(conn, "gmail")
-    conn.execute(
-        """
-        UPDATE sync_log SET completed_at = ?, status = ?, items_added = ?, error_message = ?
-        WHERE id = ?
-        """,
-        (datetime.now().isoformat(" "), status, count, error, sync_id),
-    )
-    conn.commit()
-    return count, error
+    return count, error, status
 
 
 class GmailSource(SourcePlugin):
@@ -729,6 +729,7 @@ class GmailSource(SourcePlugin):
             """Import all matching threads, whatever the last sync was."""
             from lestash.core.config import Config
             from lestash.core.database import get_connection
+            from lestash.core.sync import SyncAlreadyRunning
 
             config = load_config()
             gws = find_gws(config.get("gws_path"))
@@ -736,7 +737,11 @@ class GmailSource(SourcePlugin):
                 console.print("[red]gws not found.[/red]")
                 raise typer.Exit(1)
             with get_connection(Config.load()) as conn:
-                count, error = run_backfill(conn, GwsGmail(gws), config["queries"], limit=limit)
+                try:
+                    count, error = run_backfill(conn, GwsGmail(gws), config["queries"], limit=limit)
+                except SyncAlreadyRunning as e:
+                    console.print(f"[red]{e}[/red]")
+                    raise typer.Exit(1) from None
             if error:
                 console.print(f"[yellow]{error}[/yellow]")
             console.print(f"[green]Imported {count} messages.[/green]")

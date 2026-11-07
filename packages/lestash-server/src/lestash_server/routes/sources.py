@@ -5,7 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from lestash.core.database import get_connection
-from lestash.core.sync import SyncStore
+from lestash.core.sync import SyncAlreadyRunning, SyncRun, SyncStore
 from lestash.plugins.loader import load_plugins
 
 from lestash_server.deps import get_config, get_db
@@ -69,45 +69,32 @@ def _run_sync(source_name: str) -> None:
     plugin_config = config.get_plugin_config(source_name)
 
     with get_connection(config) as conn:
-        started_at = datetime.now()
-        cursor = conn.execute(
-            "INSERT INTO sync_log (source_type, started_at, status) VALUES (?, ?, ?)",
-            (source_name, started_at, "running"),
-        )
-        sync_id = cursor.lastrowid
-        conn.commit()
-
-        error_message = None
         store = SyncStore(conn, source_name)
-
         try:
-            store.run(plugin.sync(plugin_config))
-            conn.execute(
-                """
-                INSERT INTO sources (source_type, last_sync)
-                VALUES (?, ?)
-                ON CONFLICT(source_type) DO UPDATE SET last_sync = excluded.last_sync
-                """,
-                (source_name, datetime.now()),
-            )
-            conn.commit()
-            status = "completed"
-        except Exception as e:
-            status = "failed"
-            error_message = str(e)
-            logger.error(f"Sync failed for {source_name}: {e}")
+            run = SyncRun.start(conn, source_name, store)
+        except SyncAlreadyRunning as e:
+            logger.warning(f"Sync skipped for {source_name}: {e}")
+            return
 
-        conn.execute(
-            """
-            UPDATE sync_log SET
-                completed_at = ?, status = ?,
-                items_added = ?, items_updated = ?,
-                error_message = ?
-            WHERE id = ?
-            """,
-            (datetime.now(), status, store.items, 0, error_message, sync_id),
-        )
-        conn.commit()
+        with run:
+            error_message = None
+            try:
+                store.run(plugin.sync(plugin_config))
+                conn.execute(
+                    """
+                    INSERT INTO sources (source_type, last_sync)
+                    VALUES (?, ?)
+                    ON CONFLICT(source_type) DO UPDATE SET last_sync = excluded.last_sync
+                    """,
+                    (source_name, datetime.now()),
+                )
+                conn.commit()
+                status = "completed"
+            except Exception as e:
+                status = "failed"
+                error_message = str(e)
+                logger.error(f"Sync failed for {source_name}: {e}")
+            run.finish(status, error=error_message)
 
 
 @router.post("/{source_name}/sync")
