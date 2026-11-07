@@ -108,7 +108,8 @@ def _upsert_item(conn, item, parent_id=None):
     An existing parent is kept when none is given. The ``_parent_source_id`` marker is
     dropped once the parent is known, and kept otherwise so a later sync can link it.
     """
-    merge_with_stored(conn, item)
+    if not merge_with_stored(conn, item):
+        return None  # a stored item already holds it
     metadata = dict(item.metadata) if item.metadata else {}
     if parent_id or item.parent_id:
         metadata.pop("_parent_source_id", None)
