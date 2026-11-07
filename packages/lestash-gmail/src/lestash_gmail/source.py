@@ -729,14 +729,14 @@ class GmailSource(SourcePlugin):
             """Import all matching threads, whatever the last sync was."""
             from lestash.core.config import Config
             from lestash.core.database import get_connection
-            from lestash.core.sync import SyncAlreadyRunning
+            from lestash.core.sync import SyncAlreadyRunning, sigterm_as_exit
 
             config = load_config()
             gws = find_gws(config.get("gws_path"))
             if not gws:
                 console.print("[red]gws not found.[/red]")
                 raise typer.Exit(1)
-            with get_connection(Config.load()) as conn:
+            with get_connection(Config.load()) as conn, sigterm_as_exit():
                 try:
                     count, error = run_backfill(conn, GwsGmail(gws), config["queries"], limit=limit)
                 except SyncAlreadyRunning as e:

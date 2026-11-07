@@ -67,7 +67,7 @@ class SyncStore:
             except Exception:
                 logger.exception("Linking parents failed after a failed %s sync", self.source)
             raise
-        self.conn.commit()
+        self._commit()
         self._sweep()
 
     def _commit(self) -> None:

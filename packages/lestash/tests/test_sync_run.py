@@ -190,3 +190,15 @@ def test_an_all_sources_cli_sync_skips_a_running_one(test_db, monkeypatch) -> No
         sources_cli.sync_source(source_name=None, all_sources=True)
         run.finish("completed")
     assert _rows(test_db) == [("audible", "completed", None, 0)]
+
+
+def test_a_run_stopped_after_its_items_are_stored_counts_them(test_db) -> None:
+    from lestash.core.sync import SyncStore
+
+    with get_connection(test_db) as conn:
+        store = SyncStore(conn, "audible")
+        with pytest.raises(KeyboardInterrupt), SyncRun.start(conn, "audible", store):
+            store.run(iter([_item(1), _item(2), _item(3)]))
+            raise KeyboardInterrupt  # e.g. during the post-sync steps
+
+    assert _rows(test_db) == [("audible", "failed", INTERRUPTED, 3)]
