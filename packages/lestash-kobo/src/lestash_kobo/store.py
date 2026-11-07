@@ -117,8 +117,10 @@ def sha_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _iso(ts: float) -> str:
-    return datetime.fromtimestamp(ts, UTC).isoformat(timespec="seconds")
+def _iso(ns: int) -> str:
+    # Full precision: a change within the same second must still look like a change
+    seconds, rest = divmod(ns, 1_000_000_000)
+    return datetime.fromtimestamp(seconds, UTC).strftime("%Y-%m-%dT%H:%M:%S") + f".{rest:09d}Z"
 
 
 class KoboStore:
@@ -215,10 +217,13 @@ class KoboStore:
             for path in self._walk(source):
                 rel = device_name(str(path.relative_to(source)))
                 stat = path.stat()
-                mtime = _iso(stat.st_mtime)
+                mtime = _iso(stat.st_mtime_ns)
                 known = previous.get(rel)
+                # The database changes in place, often at the same size, and FAT keeps
+                # times to 2 s: always read it again (it is a few MB)
                 if (
-                    known
+                    not rel.startswith(DB_PATH)
+                    and known
                     and known.size == stat.st_size
                     and known.mtime == mtime
                     and self.blob_path(known.sha256).is_file()

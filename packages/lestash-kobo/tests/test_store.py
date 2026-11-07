@@ -116,7 +116,7 @@ def test_unchanged_files_are_not_read_again(device: Path, tmp_path: Path, monkey
 
     monkeypatch.setattr(KoboStore, "_store_blob", spy)
     second = store.take(device, T2)
-    assert read == ["Judge.pdf"]
+    assert read == ["KoboReader.sqlite", "Judge.pdf"]  # the database is always read
     assert second.changed == [PDF]
     read.clear()
     store.take(device, T3, verify=True)
@@ -237,3 +237,15 @@ def test_newest_reports_a_damaged_newest(device: Path, tmp_path: Path) -> None:
     assert store.newest()[1] == newest.name
     (newest.path / "manifest.json").write_text("{")
     assert store.newest() == (None, newest.name)
+
+
+def test_database_change_at_same_size_and_second_is_seen(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    db = device / ".kobo" / "KoboReader.sqlite"
+    store.take(device, T1)
+    st = db.stat()
+    data = bytearray(db.read_bytes())
+    data[-1] ^= 0xFF  # same size
+    db.write_bytes(bytes(data))
+    os.utime(db, ns=(st.st_atime_ns, st.st_mtime_ns))  # same mtime too
+    assert store.take(device, T2).changed == [".kobo/KoboReader.sqlite"]
