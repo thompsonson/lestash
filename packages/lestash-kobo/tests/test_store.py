@@ -154,3 +154,15 @@ def test_a_damaged_manifest_is_skipped(device: Path, tmp_path: Path) -> None:
     (broken / "manifest.json").write_text('{"taken_at": ')
     assert [s.name for s in store.snapshots()] == ["20260417T140000Z"]
     assert store.take(device, T2).new_blobs == 0
+
+
+def test_pdf_deleted_then_restored_clean_is_flagged(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    (device / PDF).write_bytes(b"%PDF-1.4 with ink")
+    store.take(device, T2)
+    (device / PDF).unlink()  # Drive sync removed it...
+    store.take(device, T3)
+    (device / PDF).write_bytes(b"%PDF-1.4 clean")  # ...then downloaded the original
+    fourth = store.take(device, datetime(2026, 11, 9, tzinfo=UTC))
+    assert fourth.added == [PDF] and fourth.reverted == [PDF]

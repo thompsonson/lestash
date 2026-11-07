@@ -230,7 +230,8 @@ class KoboStore:
             result.changed = sorted(
                 p for p in files if p in prev and prev[p].sha256 != files[p].sha256
             )
-        for path in result.changed:
+        # A PDF that Drive sync deleted and then downloaded again shows as added, not changed
+        for path in sorted(set(result.changed) | set(result.added)):
             if not path.lower().endswith(".pdf"):
                 continue
             versions = [s.files[path].sha256 for s in history if path in s.files]

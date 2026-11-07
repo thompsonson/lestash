@@ -35,3 +35,5 @@ lestash sources sync kobo                             # import the newest snapsh
 store_dir = "~/.local/share/lestash/kobo"   # default
 include_store_titles = false                # default
 ```
+
+These settings take effect once #208 is fixed: today LeStash drops plugin sections.

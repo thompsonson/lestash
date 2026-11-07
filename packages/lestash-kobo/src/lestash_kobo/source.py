@@ -34,6 +34,13 @@ DEFAULT_MOUNT = Path("/media/kobo")
 STATE_KEY = "imported"
 
 
+def flag(value: object) -> bool:
+    """A config switch. ``lestash config set`` stores strings, so "false" must be False."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
 def parse_taken_at(value: str) -> datetime:
     """An ISO time; without an offset it is read as UTC, not local time."""
     try:
@@ -124,30 +131,26 @@ class KoboSource(SourcePlugin):
 
     def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:
         store = _store(config)
-        snapshot = store.latest()
-        if snapshot is None:
-            logger.warning(
-                "No Kobo snapshot in %s, so nothing was synced. Plug in the Kobo, or run "
-                "`lestash kobo snapshot --from <folder>`.",
-                store.root,
-            )
-            return
-        include_store = bool(config.get("include_store_titles", False))
-        state = {
-            "snapshot": snapshot.name,
-            "reader_version": READER_VERSION,
-            "include_store_titles": include_store,
-        }
-        # The plug-in import and the 6-hourly timer (which syncs every source) can start
-        # together: only one imports, the other leaves it to that one
+        include_store = flag(config.get("include_store_titles"))
         store.root.mkdir(parents=True, exist_ok=True)
+        # The plug-in import and the 6-hourly timer (which syncs every source) can start
+        # together. The second waits, then finds the newest snapshot itself: if the first
+        # already imported it, the checkpoint makes the second a no-op.
         with open(store.root / ".sync.lock", "w") as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                logger.info("Another Kobo import is running; leaving it to that one")
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            snapshot = store.latest()
+            if snapshot is None:
+                logger.warning(
+                    "No Kobo snapshot in %s, so nothing was synced. Plug in the Kobo, or "
+                    "run `lestash kobo snapshot --from <folder>`.",
+                    store.root,
+                )
                 return
-            # Skip a snapshot already imported as-is
+            state = {
+                "snapshot": snapshot.name,
+                "reader_version": READER_VERSION,
+                "include_store_titles": include_store,
+            }
             with get_connection(Config.load()) as conn:
                 if get_checkpoints(conn, self.name).get(STATE_KEY) == state:
                     logger.info("Kobo snapshot %s is already imported", snapshot.name)

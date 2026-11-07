@@ -11,7 +11,7 @@ from lestash.core.sync import SyncStore
 from lestash.models.sync import SyncCheckpoint
 from lestash_kobo import KoboSource
 from lestash_kobo.reader import KoboReader, device_path, parse_date
-from lestash_kobo.source import parse_taken_at
+from lestash_kobo.source import flag, parse_taken_at
 from lestash_kobo.store import KoboStore
 
 from .conftest import DRIVE_PDF, NN, NOTEBOOK, STORE_UNOPENED
@@ -209,14 +209,47 @@ def test_titles_do_not_change_between_identical_snapshots(device: Path, tmp_path
     assert first == second
 
 
-def test_a_running_import_makes_the_second_one_wait_its_turn(
-    device: Path, tmp_path: Path, test_db
-) -> None:
+def test_a_second_import_waits_for_the_running_one(device: Path, tmp_path: Path, test_db) -> None:
     import fcntl
+    import threading
 
     store = KoboStore(tmp_path / "store")
     store.take(device, T1)
+    result: list = []
     with open(store.root / ".sync.lock", "w") as held:
         fcntl.flock(held, fcntl.LOCK_EX)
-        assert list(KoboSource().sync({"store_dir": str(store.root)})) == []
-    assert list(KoboSource().sync({"store_dir": str(store.root)}))
+        waiter = threading.Thread(
+            target=lambda: result.extend(KoboSource().sync({"store_dir": str(store.root)}))
+        )
+        waiter.start()
+        waiter.join(0.3)
+        assert waiter.is_alive() and result == []  # blocked, not skipped
+    waiter.join(5)
+    assert result  # imported once the lock was free
+
+
+def test_flag_reads_config_strings() -> None:
+    assert flag("false") is False and flag("False") is False and flag("") is False
+    assert flag("true") is True and flag(True) is True and flag(None) is False
+
+
+def test_store_title_with_only_hidden_marks_is_skipped(device: Path, tmp_path: Path) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(device / ".kobo" / "KoboReader.sqlite")
+    conn.execute(
+        "INSERT INTO Bookmark (BookmarkID, VolumeID, Text, Type, Hidden)"
+        " VALUES ('gone-1', ?, 'deleted', 'highlight', 'true')",
+        (STORE_UNOPENED,),
+    )
+    conn.commit()
+    conn.close()
+    assert STORE_UNOPENED not in {i.source_id for i in _items(device, tmp_path)}
+
+
+def test_markup_temp_files_from_a_killed_sync_are_swept(device: Path, tmp_path: Path) -> None:
+    leftover = tmp_path / "media" / "kobo" / ".tmp-markup-mk-1.jpg-abc"
+    leftover.parent.mkdir(parents=True)
+    leftover.write_bytes(b"half")
+    _items(device, tmp_path)
+    assert not leftover.exists()

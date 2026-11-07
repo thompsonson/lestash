@@ -144,8 +144,10 @@ class KoboReader:
         return titles, marks, chapters
 
     def items(self) -> Iterator[ItemCreate]:
+        self._sweep_media_temp()
         titles, marks, chapters = self._read_db()
 
+        marks = [m for m in marks if str(m.get("Hidden")).lower() != "true"]
         marked = {m["VolumeID"] for m in marks}
         kept: set[str] = set()
         for row in titles:
@@ -153,7 +155,7 @@ class KoboReader:
                 kept.add(row["ContentID"])
                 yield self.title_item(row)
         for mark in sorted(marks, key=lambda m: self._order(m, chapters)):
-            if mark["VolumeID"] in kept and str(mark.get("Hidden")).lower() != "true":
+            if mark["VolumeID"] in kept:
                 yield self.bookmark_item(mark, chapters)
 
     def _keep(self, row: dict[str, Any], marked: set[str]) -> bool:
@@ -236,6 +238,12 @@ class KoboReader:
             metadata={k: v for k, v in meta.items() if v not in (None, "")},
             media=self._markup_media(mark["BookmarkID"]) if kind == "markup" else None,
         )
+
+    def _sweep_media_temp(self) -> None:
+        """Remove markup temp files left by a killed sync. Imports hold the store lock."""
+        if self.media_dir is not None:
+            for leftover in (self.media_dir / "kobo").glob(".tmp-*"):
+                leftover.unlink(missing_ok=True)
 
     def _markup_media(self, bookmark_id: str) -> list[MediaCreate] | None:
         """The pen strokes of a markup: a JPG of the page and an SVG of the ink.
