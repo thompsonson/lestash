@@ -89,8 +89,7 @@ def _union_times(old: dict[str, Any], new: dict[str, Any], merged: dict[str, Any
         if key not in old and key not in new:
             continue
         times = sorted({*old.get(key, []), *new.get(key, [])})
-        cap = len(times) if key in UNCAPPED else MAX_TIMES
-        merged[key] = times[-cap:]
+        merged[key] = times if key in UNCAPPED else times[-MAX_TIMES:]
         capped = key not in UNCAPPED and (
             len(old.get(key, [])) >= MAX_TIMES or len(new.get(key, [])) >= MAX_TIMES
         )
@@ -98,7 +97,7 @@ def _union_times(old: dict[str, Any], new: dict[str, Any], merged: dict[str, Any
             max(len(times), old.get(count_key, 0), new.get(count_key, 0)) if capped else len(times)
         )
         if times:
-            # The lists are capped, so an earlier first_at can live only in the stored copy
+            # A capped list can drop an earlier first_at, kept only in the stored copy
             firsts = [t for t in (times[0], old.get("first_at"), new.get("first_at")) if t]
             lasts = [t for t in (times[-1], old.get("last_at"), new.get("last_at")) if t]
             merged["first_at"], merged["last_at"] = min(firsts), max(lasts)
