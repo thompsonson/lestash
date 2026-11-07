@@ -23,7 +23,8 @@ Notebooks (#202), PDF ink (#200) and reading activity (#201) come later.
 ## Commands
 
 ```bash
-lestash kobo snapshot [--from DIR] [--taken-at ISO]   # copy the Kobo or a saved copy
+lestash kobo snapshot                                 # copy the mounted Kobo
+lestash kobo snapshot --from DIR --taken-at ISO       # a saved copy, dated
 lestash kobo snapshots                                # list snapshots
 lestash sources sync kobo                             # import the newest snapshot
 ```

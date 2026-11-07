@@ -43,7 +43,9 @@ def flag(value: object) -> bool:
 
 
 def parse_taken_at(value: str) -> datetime:
-    """An ISO time; without an offset it is read as UTC, not local time."""
+    """An ISO time (without an offset, read as UTC, not local time), or "now"."""
+    if value.strip().lower() == "now":
+        return datetime.now(UTC)
     try:
         when = datetime.fromisoformat(value)
     except ValueError as e:
@@ -107,17 +109,15 @@ class KoboSource(SourcePlugin):
         ) -> None:
             """Copy the Kobo into the snapshot store. Unchanged files cost nothing."""
             store = _store(Config.load().get_plugin_config(self.name))
-            if taken_at:
-                when: datetime | None = parse_taken_at(taken_at)
-            elif source != DEFAULT_MOUNT:
-                # A saved copy is as old as its database, not as old as this command:
-                # stamped "now", it would pose as the newest and be imported over newer
-                db = source / ".kobo" / "KoboReader.sqlite"
-                when = datetime.fromtimestamp(db.stat().st_mtime, UTC) if db.is_file() else None
-                if when:
-                    console.print(f"Dating the copy {when:%Y-%m-%d %H:%M} UTC (its database)")
-            else:
-                when = None
+            if source != DEFAULT_MOUNT and not taken_at:
+                # A saved copy stamped "now" would pose as the newest snapshot and be
+                # imported over newer data, so say when it was made
+                console.print(
+                    "[red]--from a folder other than /media/kobo needs --taken-at: when "
+                    "the copy was made (ISO time), or 'now' for a live Kobo.[/red]"
+                )
+                raise typer.Exit(1)
+            when = parse_taken_at(taken_at) if taken_at else None
             signal.signal(signal.SIGTERM, _raise_on_sigterm)
             try:
                 result = store.take(source, when, verify=verify)

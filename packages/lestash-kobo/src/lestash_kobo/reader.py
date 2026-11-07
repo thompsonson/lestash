@@ -54,6 +54,12 @@ def _text(value: Any) -> str:
     return html.unescape(re.sub(r"<[^>]+>", " ", str(value or ""))).strip()
 
 
+def _book_name(volume_id: str) -> str:
+    """A readable name for a book from its ContentID: the file name, or the ID."""
+    path = device_path(volume_id or "")
+    return Path(path).stem if path else (volume_id or "")
+
+
 def _float(value: Any) -> float:
     try:
         return float(value or 0)
@@ -142,8 +148,8 @@ class KoboReader:
                     r["ContentID"]: r
                     for r in _rows(
                         conn,
-                        "SELECT ContentID, Title, VolumeIndex FROM content"
-                        " WHERE ContentType = '9'"
+                        # SELECT *: optional columns may be missing on other firmware
+                        "SELECT * FROM content WHERE ContentType = '9'"
                         " AND ContentID IN (SELECT ContentID FROM Bookmark)",
                     )
                 }
@@ -166,7 +172,11 @@ class KoboReader:
         # their book, so they attach to its item if an earlier import stored it, and
         # stay top-level otherwise. (A stand-in book item would overwrite that one.)
         known = {row["ContentID"] for row in titles}
-        kept |= {v for v in marked if v and v not in known}
+        kept |= {
+            v
+            for v in marked
+            if v and v not in known and not v.endswith(".nebo")  # #202
+        }
         for mark in sorted(marks, key=lambda m: self._order(m, chapters)):
             if mark["VolumeID"] in kept:
                 yield self.bookmark_item(mark, chapters)
@@ -229,10 +239,13 @@ class KoboReader:
         if re.search(r"\.x?html?$", chapter_title, re.I):
             chapter_title = ""  # a spine file name, not a chapter title
         label = KINDS.get(kind, kind.title())
+        book = _book_name(mark["VolumeID"])
         snippet = " ".join((text or note).split())[:60]  # one line, for listings
         title = f"{label}: {snippet}" if snippet else label
         meta: dict[str, Any] = {
             "_parent_source_id": mark["VolumeID"],
+            # Names the book even when the book item is gone (the child is then top-level)
+            "book": book,
             "kind": kind,
             "chapter": chapter_title or None,
             "chapter_content_id": mark.get("ContentID"),

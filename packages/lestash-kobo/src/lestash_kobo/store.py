@@ -54,8 +54,8 @@ class Snapshot:
     def digest(self) -> str:
         """One hash of what the import reads: equal when a re-import would change nothing.
 
-        Under ``.kobo/`` that is the database and the markups; the Kobo's own logs,
-        caches and settings there are left out. Books and PDFs elsewhere count.
+        Under ``.kobo/`` that is the database, the markups and the Drive files; the
+        Kobo's own logs, caches and settings there are left out. Files elsewhere count.
         """
         h = hashlib.sha256()
         for path, entry in sorted(self.files.items()):
@@ -63,7 +63,6 @@ class Snapshot:
                 path.startswith(DB_PATH)
                 or path.startswith(".kobo/markups/")
                 or path.startswith(".kobo/google_drive/")
-                or path.startswith(".kobo/kepub/")
             ):
                 continue
             h.update(f"{path}\0{entry.sha256}\n".encode())
@@ -151,9 +150,8 @@ class KoboStore:
 
     def _manifests(self, newest_first: bool = False):
         """Readable snapshots in name order (names are UTC times, so time order)."""
-        if not self.snapshots_dir.is_dir():
-            return
-        for name in reversed(self._names()) if newest_first else self._names():
+        names = self._names()
+        for name in reversed(names) if newest_first else names:
             snap = self._read(name)
             if snap is not None:
                 yield snap

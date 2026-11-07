@@ -41,6 +41,11 @@ systemctl --user list-timers lestash-sync.timer lestash-cert.timer --no-pager
 KOBO_FSTAB="LABEL=KOBOeReader /media/kobo vfat ro,noauto,user,nosuid,nodev,noexec,uid=$(id -u),gid=$(id -g),umask=077,utf8 0 0"
 # Match the label and mount point only, so an edited line isn't reported as missing
 kobo_in_fstab() { grep -qE '^LABEL=KOBOeReader[[:space:]]+/media/kobo[[:space:]]' /etc/fstab; }
+# The read-only promise rests on that line: warn if it has no "ro"
+if kobo_in_fstab && ! grep -E '^LABEL=KOBOeReader[[:space:]]+/media/kobo[[:space:]]' /etc/fstab |
+    awk '{print $4}' | tr ',' '\n' | grep -qx ro; then
+    echo "WARNING: the Kobo line in /etc/fstab has no 'ro' option, so the Kobo would be mounted writable."
+fi
 if ! kobo_in_fstab || [ ! -f /etc/udev/rules.d/99-lestash-kobo.rules ]; then
     echo ""
     echo "Kobo plug-in sync needs, once, as root:"

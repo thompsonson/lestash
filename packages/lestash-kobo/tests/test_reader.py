@@ -393,23 +393,39 @@ def test_a_book_removed_later_keeps_its_item_and_highlights(
     assert parent[0] == NN
 
 
-def test_a_saved_copy_is_dated_by_its_database(device: Path, tmp_path: Path, test_db) -> None:
-    import os
-
+def test_a_saved_copy_needs_taken_at(device: Path, tmp_path: Path, monkeypatch) -> None:
+    import lestash_kobo.source as src
     from typer.testing import CliRunner
 
-    db = device / ".kobo" / "KoboReader.sqlite"
-    april = datetime(2026, 4, 17, 14, 40, 3, tzinfo=UTC).timestamp()
-    os.utime(db, (april, april))
+    store = KoboStore(tmp_path / "store")
+    monkeypatch.setattr(src, "_store", lambda config: store)
     app = KoboSource().get_commands()
-    store = tmp_path / "store"
-    import lestash_kobo.source as src
+    refused = CliRunner().invoke(app, ["snapshot", "--from", str(device)])
+    assert refused.exit_code == 1 and "--taken-at" in refused.output
+    assert store.snapshots() == []
+    ok = CliRunner().invoke(
+        app, ["snapshot", "--from", str(device), "--taken-at", "2026-04-17T14:40:03"]
+    )
+    assert ok.exit_code == 0, ok.output
+    assert [s.name for s in store.snapshots()] == ["20260417T144003Z"]
+    now = CliRunner().invoke(app, ["snapshot", "--from", str(device), "--taken-at", "now"])
+    assert now.exit_code == 0, now.output
 
-    orig = src._store
-    src._store = lambda config: KoboStore(store)
-    try:
-        result = CliRunner().invoke(app, ["snapshot", "--from", str(device)])
-    finally:
-        src._store = orig
-    assert result.exit_code == 0, result.output
-    assert [s.name for s in KoboStore(store).snapshots()] == ["20260417T144003Z"]
+
+def test_orphan_highlights_name_their_book_and_skip_notebooks(device: Path, tmp_path: Path) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(device / ".kobo" / "KoboReader.sqlite")
+    conn.executemany(
+        "INSERT INTO Bookmark (BookmarkID, VolumeID, Text, Type, Hidden)"
+        " VALUES (?, ?, 'x', 'highlight', 'false')",
+        [
+            ("hl-gone", "file:///mnt/onboard/Gone Book.epub"),
+            ("hl-nb", "file:///mnt/onboard/My Notebooks/old.nebo"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    items = {i.source_id: i for i in _items(device, tmp_path)}
+    assert items["bookmark:hl-gone"].metadata["book"] == "Gone Book"
+    assert "bookmark:hl-nb" not in items
