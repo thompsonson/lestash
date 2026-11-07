@@ -25,6 +25,7 @@ the planned activities table. merge_with_stored() matches these chats to stored 
 import logging
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from typing import Any
@@ -36,7 +37,8 @@ logger = logging.getLogger(__name__)
 SOURCE = "takeout_activity"  # metadata.source of what this importer writes
 MAX_TIMES = 200  # prompt times kept on a chat; matches youtube_history.MAX_TIMES
 TITLE_LENGTH = 80
-CHAT_URL = re.compile(r"^https://gemini\.google\.com/app/([0-9a-f]+)/?(?:[?#].*)?$")
+# A chat's link; accounts after the first have /u/<n>/ before /app/
+CHAT_URL = re.compile(r"^https://gemini\.google\.com/(?:u/\d+/)?app/([0-9a-f]+)/?(?:[?#].*)?$")
 NOTEBOOK = re.compile(r"^(.+?)\s+was used in this chat\.")
 GENERATED_IMAGES = re.compile(r"^(\d+) generated images?\.$")
 PROMPTED = "Prompted "
@@ -66,12 +68,16 @@ def _time(entry: dict[str, Any]) -> datetime | None:
 
 
 class _TextFromHtml(HTMLParser):
-    """Plain text from a reply's HTML: blocks on their own lines, list items marked, and
-    links kept as ``[text](url)``, since they include its citations."""
+    """Markdown-like text from a reply's HTML.
+
+    Blocks go on their own lines, lists keep their markers and nesting, tables become
+    pipe tables, ``<pre>`` becomes a fenced block, and links stay as ``[text](url)``,
+    since they include the reply's citations. Other whitespace is collapsed, as a browser
+    would.
+    """
 
     BLOCKS = frozenset(
-        {"p", "div", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "tr"}
-        | {"ul", "ol", "table"}
+        {"p", "div", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "table"}
     )
     VOID = frozenset({"br", "hr"})  # no end tag, though "<br/>" calls handle_endtag
     TEXT_BLOCKS = frozenset({"p", "li", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6"})
@@ -79,14 +85,24 @@ class _TextFromHtml(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
-        self.skip = 0
+        self.skip = 0  # inside script or style
+        self.pre = 0
+        self.code = 0  # inside pre or code
         self.links: list[tuple[int, str]] = []  # open links: where their text starts, url
         self.link_count = 0
-        self.item_open = False  # a list item's marker has no text after it yet
-        self.depth = 0  # nested lists
-        self.code = 0  # inside pre or code
+        self.lists: list[list[Any]] = []  # open lists: [tag, items so far]
+        self.row: list[str] = []  # cell tags of the open table row
+        self.header_done = False  # the open table has its separator line
         self.block_start = False  # a paragraph or list item has no text yet
         self.gaps = False  # see TAKEOUT_GAP
+
+    def _at_line_start(self) -> bool:
+        last = self.parts[-1] if self.parts else "\n"
+        return last.endswith("\n") or last.endswith(("- ", ". ", "| "))
+
+    def _newline(self) -> None:
+        if self.parts and not self.parts[-1].endswith("\n"):
+            self.parts.append("\n")
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in self.TEXT_BLOCKS:
@@ -95,18 +111,39 @@ class _TextFromHtml(HTMLParser):
             self.code += 1
         if tag in ("script", "style"):
             self.skip += 1
+        elif tag == "pre":
+            self.pre += 1
+            self._newline()
+            self.parts.append("\n```\n")
         elif tag == "a":
-            href = dict(attrs).get("href") or ""
-            self.links.append((len(self.parts), href))
+            self.links.append((len(self.parts), dict(attrs).get("href") or ""))
+        elif tag in ("ul", "ol"):
+            if not self.lists:
+                self.parts.append("\n")
+            self.lists.append([tag, 0])
         elif tag == "li":
-            self.parts.append("\n" + "  " * max(0, self.depth - 1) + "- ")
-            self.item_open = True
+            self._newline()
+            indent = "  " * max(0, len(self.lists) - 1)
+            if self.lists and self.lists[-1][0] == "ol":
+                self.lists[-1][1] += 1
+                self.parts.append(f"{indent}{self.lists[-1][1]}. ")
+            else:
+                self.parts.append(f"{indent}- ")
+        elif tag == "tr":
+            self._newline()
+            self.row = []
+            self.parts.append("|")
         elif tag in ("td", "th"):
-            self.parts.append(" | ")
-        elif tag in self.BLOCKS and not self.item_open and not self._nested_list(tag):
+            self.row.append(tag)
+            self.parts.append(" ")
+        elif tag == "table":
+            self.header_done = False
+            self.parts.append("\n")
+        elif tag in self.BLOCKS and not self._at_item_start():
             self.parts.append("\n")  # "<li><p>x" is one line, "- x"
-        if tag in ("ul", "ol"):
-            self.depth += 1
+
+    def _at_item_start(self) -> bool:
+        return bool(self.parts) and self.parts[-1].endswith(("- ", ". "))
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self.VOID:
@@ -115,32 +152,46 @@ class _TextFromHtml(HTMLParser):
             self.code = max(0, self.code - 1)
         if tag in ("script", "style"):
             self.skip = max(0, self.skip - 1)
+        elif tag == "pre":
+            self.pre = max(0, self.pre - 1)
+            self._newline()
+            self.parts.append("```\n\n")
         elif tag == "a" and self.links:
             start, href = self.links.pop()
             text = " ".join("".join(self.parts[start:]).split())
             if href:
                 self.link_count += 1
-                link = href if text in ("", href) else f"[{text}]({href})"
-                self.parts[start:] = [link]
-        if tag in ("ul", "ol"):
-            self.depth = max(0, self.depth - 1)
-        if tag in self.BLOCKS and not self._nested_list(tag):
+                self.parts[start:] = [href if text in ("", href) else f"[{text}]({href})"]
+        elif tag in ("ul", "ol"):
+            if self.lists:
+                self.lists.pop()
+            if not self.lists:
+                self.parts.append("\n")
+        elif tag in ("td", "th"):
+            self.parts.append(" |")
+        elif tag == "tr":
+            if self.row and not self.header_done:
+                # Markdown needs a separator under the first row
+                self.parts.append("\n|" + " --- |" * len(self.row))
+                self.header_done = True
+            self.parts.append("\n")
+        elif tag in self.BLOCKS:
             self.parts.append("\n")
 
-    def _nested_list(self, tag: str) -> bool:
-        """A list inside a list item: each of its items starts a line already."""
-        return tag in ("ul", "ol") and self.depth > 0
-
     def handle_data(self, data: str) -> None:
-        if not self.skip:
-            if self.item_open and not data.strip():
-                return  # whitespace between "<li>" and its first text
-            if self.block_start and data.strip():
-                self.block_start = False
-                if not self.code and TAKEOUT_GAP.match(data.lstrip()):
-                    self.gaps = True
-            self.parts.append(data)
-            self.item_open = False
+        if self.skip:
+            return
+        if not self.pre:
+            data = re.sub(r"\s+", " ", data)
+            if self._at_line_start():
+                data = data.lstrip()
+            if not data:
+                return
+        if self.block_start and data.strip():
+            self.block_start = False
+            if not self.code and TAKEOUT_GAP.match(data.lstrip()):
+                self.gaps = True
+        self.parts.append(data)
 
 
 def _convert(html: str) -> _TextFromHtml:
@@ -204,9 +255,28 @@ def _prompt_details(entry: dict[str, Any]) -> dict[str, Any]:
     return details
 
 
+@dataclass(frozen=True)
+class _Prompt:
+    """One "Prompted" entry, parsed once, however many chats it names."""
+
+    when: datetime
+    stamp: str  # Takeout's own time string, part of the turn ids
+    text: str
+    details: dict[str, Any]
+    reply: str
+    reply_details: dict[str, Any]
+
+
+def _parse_prompt(entry: dict[str, Any], when: datetime) -> _Prompt:
+    reply, reply_details = _reply(entry)
+    return _Prompt(
+        when, str(entry["time"]), _prompt_text(entry), _prompt_details(entry), reply, reply_details
+    )
+
+
 class _Chat:
     def __init__(self) -> None:
-        self.prompts: list[tuple[datetime, dict[str, Any]]] = []
+        self.prompts: list[_Prompt] = []
         self.notebooks: list[str] = []
 
 
@@ -214,48 +284,54 @@ def parse_gemini_activity(entries: list[dict[str, Any]]) -> list[ItemCreate]:
     """Chats with their prompt and reply turns, and Canvas documents.
 
     Each chat comes before its turns, as the sync loop links children to parents
-    stored earlier.
+    stored earlier. An entry of an unexpected shape is skipped and counted in the log.
     """
     chats: dict[str, _Chat] = defaultdict(_Chat)
     canvases: list[ItemCreate] = []
-    unlinked = 0
+    unlinked = malformed = 0
     for entry in entries:
-        if not isinstance(entry, dict) or entry.get("header") != "Gemini Apps":
-            continue
-        title = entry.get("title") or ""
-        when = _time(entry)
-        if when is None:
-            continue
-        if title.startswith(PROMPTED):
-            chat_ids = _chat_ids(entry)
-            if not chat_ids:
-                unlinked += 1
-            notebook = _prompt_details(entry).get("notebooklm_notebook")
-            for chat_id in chat_ids:
-                chat = chats[chat_id]
-                chat.prompts.append((when, entry))
-                if notebook and notebook not in chat.notebooks:
-                    chat.notebooks.append(notebook)
-        elif title.startswith(CANVAS):
-            canvases.append(_canvas(entry, when))
+        try:
+            if not isinstance(entry, dict) or entry.get("header") != "Gemini Apps":
+                continue
+            title = entry.get("title")
+            when = _time(entry)
+            if not isinstance(title, str) or when is None:
+                continue
+            if title.startswith(PROMPTED):
+                chat_ids = _chat_ids(entry)
+                if not chat_ids:
+                    unlinked += 1
+                    continue
+                prompt = _parse_prompt(entry, when)
+                notebook = prompt.details.get("notebooklm_notebook")
+                for chat_id in chat_ids:
+                    chat = chats[chat_id]
+                    chat.prompts.append(prompt)
+                    if notebook and notebook not in chat.notebooks:
+                        chat.notebooks.append(notebook)
+            elif title.startswith(CANVAS):
+                canvases.append(_canvas(entry, when))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            malformed += 1
 
     if unlinked:
         logger.warning("Skipped %d Gemini prompts that name no chat", unlinked)
+    if malformed:
+        logger.warning("Skipped %d Gemini activity entries of an unexpected shape", malformed)
     items: list[ItemCreate] = []
     for chat_id, chat in chats.items():
-        chat.prompts.sort(key=lambda pair: pair[0])
+        chat.prompts.sort(key=lambda prompt: prompt.when)
         items.append(_chat_item(chat_id, chat))
         seen: dict[str, int] = defaultdict(int)
-        for when, entry in chat.prompts:
-            key = " ".join(_prompt_text(entry).split())
+        for prompt in chat.prompts:
+            key = " ".join(prompt.text.split())
             seen[key] += 1
-            items.extend(_turns(chat_id, when, entry, seen[key]))
+            items.extend(_turns(chat_id, prompt, seen[key]))
     return items + canvases
 
 
 def _chat_item(chat_id: str, chat: _Chat) -> ItemCreate:
-    times = [when for when, _ in chat.prompts]
-    first_prompt = _prompt_text(chat.prompts[0][1])
+    times = [prompt.when for prompt in chat.prompts]
     metadata: dict[str, Any] = {
         "source": SOURCE,
         "type": "chat",
@@ -271,7 +347,7 @@ def _chat_item(chat_id: str, chat: _Chat) -> ItemCreate:
         source_type="gemini",
         source_id=chat_source_id(chat_id),
         url=f"https://gemini.google.com/app/{chat_id}",
-        title=chat_title(first_prompt),
+        title=chat_title(chat.prompts[0].text),
         content=chat_content(len(times)),
         created_at=times[0],
         is_own_content=True,
@@ -283,50 +359,45 @@ def _prompt_text(entry: dict[str, Any]) -> str:
     return str(entry.get("title") or "").removeprefix(PROMPTED).strip()
 
 
-def _turns(
-    chat_id: str, when: datetime, entry: dict[str, Any], occurrence: int
-) -> list[ItemCreate]:
+def _turns(chat_id: str, prompt: _Prompt, occurrence: int) -> list[ItemCreate]:
     """A prompt and its reply. ``occurrence`` counts the chat's prompts with this text so
     far, so merge_with_stored() can match repeated prompts one to one. It and ``_prompt``
     are dropped before storing."""
     parent = chat_source_id(chat_id)
-    stamp = entry["time"]
-    prompt_id = f"{parent}-prompt-{stamp}"
-    prompt = _prompt_text(entry)
+    prompt_id = f"{parent}-prompt-{prompt.stamp}"
     turns = [
         ItemCreate(
             source_type="gemini",
             source_id=prompt_id,
-            content=prompt,
+            content=prompt.text,
             author="user",
-            created_at=when,
+            created_at=prompt.when,
             is_own_content=True,
             metadata={
                 "source": SOURCE,
                 "role": "user",
-                **_prompt_details(entry),
+                **prompt.details,
                 "_parent_source_id": parent,
                 "_occurrence": occurrence,
             },
         )
     ]
-    reply, reply_details = _reply(entry)
-    if reply:
+    if prompt.reply:
         turns.append(
             ItemCreate(
                 source_type="gemini",
-                source_id=f"{parent}-reply-{stamp}",
-                content=reply,
+                source_id=f"{parent}-reply-{prompt.stamp}",
+                content=prompt.reply,
                 author="model",
-                created_at=when + timedelta(milliseconds=1),
+                created_at=prompt.when + timedelta(milliseconds=1),
                 is_own_content=False,
                 metadata={
                     "source": SOURCE,
                     "role": "model",
                     "prompt_source_id": prompt_id,
-                    **reply_details,
+                    **prompt.reply_details,
                     "_parent_source_id": parent,
-                    "_prompt": prompt,
+                    "_prompt": prompt.text,
                     "_occurrence": occurrence,
                 },
             )

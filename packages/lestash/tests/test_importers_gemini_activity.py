@@ -175,10 +175,20 @@ def test_other_activity_is_skipped() -> None:
 
 def test_html_to_text_keeps_blocks_and_unescapes() -> None:
     html = "<h3>Title</h3><p>a &quot;b&quot;</p><ol><li>x</li><li>y</li></ol><script>no</script>"
-    assert html_to_text(html) == 'Title\n\na "b"\n\n- x\n- y'
+    assert html_to_text(html) == 'Title\n\na "b"\n\n1. x\n2. y'
     assert html_to_text("<ul>\n<li>\n<p><strong>Top:</strong> one</p>\n</li></ul>") == "- Top: one"
     assert html_to_text("<ul><li>a<ul><li>. b</li></ul></li></ul>") == "- a\n  - . b"
     assert html_to_text("<p>a<br/>b<br>c</p>") == "a\nb\nc"
+    # Pretty-printed source whitespace is collapsed, as a browser would
+    assert html_to_text("<ul>\n<li>a</li>\n<li>b</li>\n</ul>") == "- a\n- b"
+    assert html_to_text("<p>Hello\n    world</p>") == "Hello world"
+
+
+def test_html_to_text_tables_and_code() -> None:
+    table = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"
+    assert html_to_text(table) == "| A | B |\n| --- | --- |\n| 1 | 2 |"
+    code = "<p>Run:</p><pre><code>pip install x\n  --upgrade\n</code></pre>"
+    assert html_to_text(code) == "Run:\n\n```\npip install x\n  --upgrade\n```"
 
 
 # --- merging ------------------------------------------------------------------------------
@@ -351,8 +361,36 @@ def test_a_chat_saved_by_the_extension_is_kept(test_db) -> None:
     ]
 
 
+def test_a_reply_the_page_lacks_is_added(test_db) -> None:
+    """A page saved while the reply was still coming has the prompt only."""
+    chat_id = _page_chat(test_db, [("user", "First question")])
+    _import(test_db, [_prompt("First question", "2026-01-01T10:00:00.000Z")])
+    added = _items(test_db, "parent_id = ? AND source_id LIKE 'c_%-re%'", (chat_id,))
+    assert [(t["author"], t["content"]) for t in added] == [("model", "Answer.")]
+
+
+def test_an_older_export_dates_and_names_the_chat_from_its_first_prompt(test_db) -> None:
+    _import(test_db, [_prompt("June question", "2026-06-01T10:00:00.000Z")])
+    _import(test_db, [_prompt("March question", "2026-03-01T10:00:00.000Z")])
+    chat = _items(test_db, "source_id = ?", (f"c_{CHAT}",))[0]
+    assert chat["title"] == "March question"
+    assert chat["created_at"].startswith("2026-03-01 10:00:00")
+    assert chat["metadata"]["prompted_count"] == 2
+
+
+def test_a_second_account_link_and_odd_entries(caplog) -> None:
+    linked = _prompt("Hi", "2026-01-01T10:00:00.000Z")
+    linked["details"] = [{"url": f"https://gemini.google.com/u/1/app/{CHAT}?hl=en"}]
+    odd = _prompt("Odd", "2026-01-01T11:00:00.000Z")
+    odd["safeHtmlItem"] = ["<p>not a dict</p>"]
+    items = parse_gemini_activity([linked, odd, {"header": "Gemini Apps", "title": 3}])
+    assert [i.source_id for i in items][:1] == [f"c_{CHAT}"]
+    assert len(items) == 3  # the chat, the prompt, its reply
+    assert "Skipped 1 Gemini activity entries of an unexpected shape" in caplog.text
+
+
 def test_a_chat_saved_as_html_is_matched_by_its_url(test_db) -> None:
-    url = f"https://gemini.google.com/app/{CHAT}"
+    url = f"https://gemini.google.com/u/1/app/{CHAT}?hl=en"
     chat_id = _stored_chat(test_db, url, {"source": "html_import"}, url)
     before = _snapshot(test_db)
     _import(test_db, [_prompt("New question", "2026-01-02T10:00:00.000Z")])

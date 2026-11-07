@@ -268,9 +268,10 @@ class _GeminiChat(NamedTuple):
 def _gemini_chat(conn: sqlite3.Connection, conversation_id: str) -> _GeminiChat | None:
     """The stored chat with this exact id.
 
-    Ids match exactly: the extension's ``source_id`` (``c_<id>``), a saved page's URL, or a
-    ``metadata.conversation_id``. One stored as ``c_<id>`` wins, whoever wrote it; then
-    page saves, the one with turns first, then the oldest.
+    Ids match exactly: the extension's ``source_id`` (``c_<id>``), a saved page's URL
+    (also with ``/u/<n>/``, a trailing slash or a query), or a ``metadata.conversation_id``.
+    One stored as ``c_<id>`` wins, whoever wrote it; then page saves, the one with turns
+    first, then the oldest.
     """
     # The usual case, by the (source_type, source_id) index: Takeout's own chat
     row = conn.execute(
@@ -279,16 +280,17 @@ def _gemini_chat(conn: sqlite3.Connection, conversation_id: str) -> _GeminiChat 
         (conversation_id,),
     ).fetchone()
     if not row:
-        app_url = f"https://gemini.google.com/app/{conversation_id.removeprefix('c_')}"
+        chat_id = conversation_id.removeprefix("c_")
+        app_url = f"https://gemini.google.com/*app/{chat_id}"
         # json_extract raises on malformed JSON, so such rows are skipped first
         row = conn.execute(
             "SELECT p.id, p.source_id, p.metadata FROM items p "
             "WHERE p.source_type = 'gemini' AND p.parent_id IS NULL AND ("
-            "p.source_id = ? OR CASE WHEN json_valid(p.metadata) "
+            "p.source_id GLOB ? OR p.source_id GLOB ? OR CASE WHEN json_valid(p.metadata) "
             "THEN json_extract(p.metadata, '$.conversation_id') = ? END) "
             "ORDER BY EXISTS (SELECT 1 FROM items c WHERE c.parent_id = p.id) DESC, p.id "
             "LIMIT 1",
-            (app_url, conversation_id),
+            (app_url, f"{app_url}[/?#]*", conversation_id),
         ).fetchone()
     if not row:
         return None
@@ -316,7 +318,7 @@ def _merge_gemini(conn: sqlite3.Connection, item: ItemCreate) -> bool:
             return False  # saved from the Gemini page: that item stays as it is
         stored = _stored(conn, item)
         if stored:
-            _merge_gemini_chat(item, stored)
+            _merge_gemini_chat(conn, item, stored)
         return True
 
     parent_source_id = metadata.get("_parent_source_id")
@@ -328,34 +330,58 @@ def _merge_gemini(conn: sqlite3.Connection, item: ItemCreate) -> bool:
     # A turn of a chat saved from the Gemini page
     item.parent_id = chat.id
     metadata["_parent_source_id"] = chat.source_id
-    text = item.content if item.author == "user" else prompt
-    # The page has this prompt, and its reply if it has one: keep the page's turns
-    return not _on_page(conn, chat, text, occurrence)
+    is_reply = item.author == "model"
+    text = prompt if is_reply else item.content
+    # Keep the page's turn when it has this one: the prompt, or the reply that follows it
+    return not _on_page(_page_turns(conn, chat), text, occurrence, is_reply)
+
+
+def _page_turns(conn: sqlite3.Connection, chat: _GeminiChat) -> list[tuple[bool, str]]:
+    """A page chat's turns in order, as (is the user's, text).
+
+    The chat's child turns, not counting those Takeout added; or, for a chat saved by the
+    extension, the turns it keeps in metadata.
+    """
+    rows = conn.execute(
+        "SELECT author, content FROM items WHERE parent_id = ? AND COALESCE("
+        "CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.source') END, '') != ? "
+        "ORDER BY id",
+        (chat.id, GEMINI_ACTIVITY),
+    ).fetchall()
+    if rows:
+        return [(author == "user", content or "") for author, content in rows]
+    turns = chat.metadata.get("turns")
+    if not isinstance(turns, list):
+        return []
+    return [
+        (t.get("role") == "user", str(t.get("text") or "")) for t in turns if isinstance(t, dict)
+    ]
 
 
 def _on_page(
-    conn: sqlite3.Connection, chat: _GeminiChat, prompt: str | None, occurrence: int
+    turns: list[tuple[bool, str]], prompt: str | None, occurrence: int, is_reply: bool
 ) -> bool:
-    """Whether the chat's page turns hold this prompt ``occurrence`` times or more.
+    """Whether the page has the ``occurrence``-th prompt with this text, or for a reply,
+    a reply right after that prompt. Text matches once whitespace is collapsed.
 
-    Page turns are the chat's child turns, or the turns the extension keeps in its
-    metadata. Text matches once whitespace is collapsed. Turns Takeout added don't count.
+    ``occurrence`` counts within one export, which holds only the prompts Gemini still
+    keeps, so after auto-delete a repeated short prompt can match an older one.
     """
     if not _normalised(prompt):
         return False
-    rows = conn.execute(
-        "SELECT content FROM items WHERE parent_id = ? AND author = 'user' AND COALESCE("
-        "CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.source') END, '') != ?",
-        (chat.id, GEMINI_ACTIVITY),
-    ).fetchall()
-    texts = [row[0] for row in rows]
-    turns = chat.metadata.get("turns")
-    if isinstance(turns, list):
-        texts += [t.get("text") for t in turns if isinstance(t, dict) and t.get("role") == "user"]
-    return sum(_normalised(text) == _normalised(prompt) for text in texts) >= occurrence
+    seen = 0
+    for index, (is_user, text) in enumerate(turns):
+        if not is_user or _normalised(text) != _normalised(prompt):
+            continue
+        seen += 1
+        if seen == occurrence:
+            if not is_reply:
+                return True
+            return index + 1 < len(turns) and not turns[index + 1][0]
+    return False
 
 
-def _merge_gemini_chat(item: ItemCreate, stored: dict[str, Any]) -> None:
+def _merge_gemini_chat(conn: sqlite3.Connection, item: ItemCreate, stored: dict[str, Any]) -> None:
     """Keep the prompt times of every export: each holds only what Gemini still keeps."""
     old, new = stored["metadata"], dict(item.metadata or {})
     merged = {**old, **new}
@@ -365,5 +391,11 @@ def _merge_gemini_chat(item: ItemCreate, stored: dict[str, Any]) -> None:
         merged["notebooklm_notebooks"] = notebooks
     if old.get("first_at") and old["first_at"] < (new.get("first_at") or old["first_at"]):
         item.title = stored["title"]  # named after an earlier prompt than this export has
+    elif new.get("first_at") and new["first_at"] < (old.get("first_at") or new["first_at"]):
+        # An older export: the upsert keeps created_at, so date the chat from it here
+        conn.execute(
+            "UPDATE items SET created_at = ? WHERE id = ?",
+            (datetime.fromisoformat(new["first_at"]).isoformat(" "), stored["id"]),
+        )
     item.content = chat_content(merged.get("prompted_count", 0))
     item.metadata = merged
