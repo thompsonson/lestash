@@ -189,6 +189,14 @@ def test_html_to_text_tables_and_code() -> None:
     assert html_to_text(table) == "| A | B |\n| --- | --- |\n| 1 | 2 |"
     cells = "<table><tr><td><p>a</p></td><td>b<br>c</td></tr></table>"
     assert html_to_text(cells) == "| a | b c |\n| --- | --- |"
+    assert html_to_text("<table><tr><td> x </td><td>y|z</td></tr></table>").startswith(
+        "| x | y\\|z |"
+    )
+    assert html_to_text("<p>First line. <br>Second - <br>Third</p>") == (
+        "First line.\nSecond -\nThird"
+    )
+    linked_code = '<pre><code>a = 1\n<a href="u">b  c</a>\n</code></pre>'
+    assert html_to_text(linked_code) == "```\na = 1\n[b  c](u)\n```"
     split = "<ol><li>A</li></ol><pre>x</pre><ol start='2'><li>B</li></ol>"
     assert html_to_text(split) == "1. A\n\n```\nx\n```\n\n2. B"
     code = "<p>Run:</p><pre><code>pip install x\n  --upgrade\n</code></pre>"
@@ -410,6 +418,39 @@ def test_a_second_account_link_and_odd_entries(caplog) -> None:
     assert [i.source_id for i in items][:1] == [f"c_{CHAT}"]
     assert len(items) == 3  # the chat, the prompt, its reply
     assert "Skipped 1 Gemini activity entries of an unexpected shape" in caplog.text
+
+
+def test_a_note_on_an_extension_chat_is_not_a_page_turn(test_db) -> None:
+    turns = [{"role": "user", "text": "First question"}, {"role": "model", "text": "Hi"}]
+    metadata = {"source": "extension", "conversation_id": f"c_{CHAT}", "turns": turns}
+    chat_id = _stored_chat(test_db, f"c_{CHAT}", metadata)
+    with get_connection(test_db) as conn:
+        conn.execute(
+            "INSERT INTO items (source_type, source_id, content, author, parent_id) "
+            "VALUES ('note', 'n1', 'my note', 'user', ?)",
+            (chat_id,),
+        )
+        conn.commit()
+    _import(test_db, [_prompt("First question", "2026-01-01T10:00:00.000Z")])
+    assert _items(test_db, "parent_id = ?", (chat_id,)) == []
+
+
+def test_a_canvas_export_without_its_document_keeps_the_stored_one(test_db) -> None:
+    canvas = {
+        "header": "Gemini Apps",
+        "title": "Created Gemini Canvas titled Plan",
+        "time": "2026-11-05T11:44:18.462Z",
+        "subtitles": [{"name": "# The plan"}],
+    }
+    _import(test_db, [canvas])
+    _import(test_db, [{**canvas, "subtitles": []}])
+    (stored,) = _items(test_db, "source_id LIKE 'canvas-%'")
+    assert stored["content"] == "# The plan"
+
+
+def test_a_chat_starting_with_an_attachment_has_a_title() -> None:
+    entry = _prompt("", "2026-01-01T10:00:00.000Z", attachedFiles=["a.png"])
+    assert parse_gemini_activity([entry])[0].title == "Gemini conversation"
 
 
 def test_a_chat_saved_as_html_is_matched_by_its_url(test_db) -> None:

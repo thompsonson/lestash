@@ -29,9 +29,8 @@ from typing import Any, NamedTuple
 
 from lestash.importers.gemini_activity import SOURCE as GEMINI_ACTIVITY
 from lestash.importers.gemini_activity import chat_content, prompt_key
+from lestash.importers.youtube_history import MAX_TIMES
 from lestash.models.item import ItemCreate
-
-MAX_TIMES = 200  # matches youtube_history.MAX_TIMES
 
 # times list -> count key
 TIME_KEYS = {
@@ -288,7 +287,8 @@ def _gemini_chat(conn: sqlite3.Connection, conversation_id: str) -> _GeminiChat 
             "WHERE p.source_type = 'gemini' AND p.parent_id IS NULL AND ("
             "p.source_id GLOB ? OR p.source_id GLOB ? OR CASE WHEN json_valid(p.metadata) "
             "THEN json_extract(p.metadata, '$.conversation_id') = ? END) "
-            "ORDER BY EXISTS (SELECT 1 FROM items c WHERE c.parent_id = p.id) DESC, p.id "
+            "ORDER BY EXISTS (SELECT 1 FROM items c WHERE c.parent_id = p.id "
+            "AND c.source_type = 'gemini') DESC, p.id "
             "LIMIT 1",
             (app_url, f"{app_url}[/?#]*", conversation_id),
         ).fetchone()
@@ -317,9 +317,13 @@ def _merge_gemini(conn: sqlite3.Connection, item: ItemCreate) -> bool:
             _merge_gemini_chat(conn, item, stored)
         return True
 
+    if metadata.get("type") == "canvas":
+        # An export without the document must not blank the stored copy
+        return bool(metadata.get("content_in_export", True)) or not _stored(conn, item)
+
     parent_source_id = metadata.get("_parent_source_id")
     if not parent_source_id:
-        return True  # a Canvas document
+        return True
     chat = _gemini_chat(conn, parent_source_id)
     if chat is None or chat.from_takeout:
         return True
@@ -356,7 +360,8 @@ def _page_turns(conn: sqlite3.Connection, chat: _GeminiChat) -> list[_PageTurn]:
     extension, the turns it keeps in metadata.
     """
     rows = conn.execute(
-        "SELECT author, content, source_id FROM items WHERE parent_id = ? AND COALESCE("
+        "SELECT author, content, source_id FROM items WHERE parent_id = ? "
+        "AND source_type = 'gemini' AND COALESCE("
         "CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.source') END, '') != ? "
         "ORDER BY id",
         (chat.id, GEMINI_ACTIVITY),

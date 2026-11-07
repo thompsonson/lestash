@@ -62,7 +62,7 @@ def chat_content(prompt_count: int) -> str:
 
 
 def chat_title(first_prompt: str) -> str:
-    title = " ".join(first_prompt.split())
+    title = " ".join(first_prompt.split()) or "Gemini conversation"
     return title[:TITLE_LENGTH] + ("..." if len(title) > TITLE_LENGTH else "")
 
 
@@ -101,11 +101,11 @@ class _TextFromHtml(HTMLParser):
         self.cell = False  # inside a table cell, which must stay on one line
         self.header_done = False  # the open table has its separator line
         self.block_start = False  # a paragraph or list item has no text yet
+        self.marker = False  # a list marker or cell opening was just written
         self.gaps = False  # see TAKEOUT_GAP
 
     def _at_line_start(self) -> bool:
-        last = self.parts[-1] if self.parts else "\n"
-        return last.endswith("\n") or last.endswith(("- ", ". ", "| "))
+        return self.marker or not self.parts or self.parts[-1].endswith("\n")
 
     def _newline(self) -> None:
         if self.parts and not self.parts[-1].endswith("\n"):
@@ -137,6 +137,7 @@ class _TextFromHtml(HTMLParser):
                 self.parts.append(f"{indent}{self.lists[-1][1]}. ")
             else:
                 self.parts.append(f"{indent}- ")
+            self.marker = True
         elif tag == "tr":
             self._newline()
             self.row = []
@@ -145,20 +146,18 @@ class _TextFromHtml(HTMLParser):
             self.row.append(tag)
             self.cell = True
             self.parts.append(" ")
+            self.marker = True
         elif tag in self.BLOCKS and self.cell:
             self._space()
         elif tag == "table":
             self.header_done = False
             self.parts.append("\n")
-        elif tag in self.BLOCKS and not self._at_item_start():
+        elif tag in self.BLOCKS and not self.marker:
             self.parts.append("\n")  # "<li><p>x" is one line, "- x"
 
     def _space(self) -> None:
         if self.parts and not self.parts[-1].endswith(" "):
             self.parts.append(" ")
-
-    def _at_item_start(self) -> bool:
-        return bool(self.parts) and self.parts[-1].endswith(("- ", ". "))
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self.VOID:
@@ -173,7 +172,9 @@ class _TextFromHtml(HTMLParser):
             self.parts.append("```\n\n")
         elif tag == "a" and self.links:
             start, href = self.links.pop()
-            text = " ".join("".join(self.parts[start:]).split())
+            text = "".join(self.parts[start:])
+            if not self.pre:
+                text = " ".join(text.split())
             if href:
                 self.link_count += 1
                 self.parts[start:] = [href if text in ("", href) else f"[{text}]({href})"]
@@ -211,7 +212,10 @@ class _TextFromHtml(HTMLParser):
             self.block_start = False
             if not self.code and TAKEOUT_GAP.match(data.lstrip()):
                 self.gaps = True
+        if self.cell:
+            data = data.replace("|", "\\|")  # or it would end the cell
         self.parts.append(data)
+        self.marker = False
 
 
 def _convert(html: str) -> _TextFromHtml:
