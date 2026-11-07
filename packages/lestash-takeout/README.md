@@ -43,7 +43,8 @@ never marks a zip done without its items; the zip is simply imported again.
   of headroom, is skipped before downloading, without counting an attempt. Smaller zips still
   import, and the sync is logged `failed` naming it, until there is room.
 - A zip with nothing recognisable (e.g. only photos) is recorded with the importer version and
-  retried when the importer learns a new format.
+  retried when the importer learns a new format. A zip already imported is not: to read a format
+  added since (such as Gemini Apps activity), run `lestash takeout forget <id>` on it.
 
 ## Re-imports and multi-part exports
 
@@ -54,9 +55,11 @@ Re-importing is safe: items are updated in place, not duplicated.
   you also liked nests under its `liked:` item. YouTube Music listens (songs and podcasts) are
   skipped for now.
 - **Gemini Apps activity:** each prompt names its chat, so prompts become chats with prompt and
-  reply turns. A chat already saved from the Gemini page, matched by its exact chat id, keeps
-  its item and turns; Takeout adds only the prompts it lacks. Chats that LeStash holds without
-  a chat id are left alone, so such a chat can appear twice. Attachments are listed by name.
+  reply turns. A chat already saved from the Gemini page or by the extension, matched by its
+  exact chat id or URL, keeps its item and turns; Takeout adds only the prompts it lacks. Page
+  turns have no times of their own, so the added turns sort after or before them, not between.
+  Chats that LeStash holds without a chat id are left alone, so such a chat can appear twice.
+  Attachments are listed by name.
   Canvas documents become their own items, not tied to a chat, as Takeout doesn't say which.
   A reply with lines reduced to a lone full stop (cause unconfirmed) is kept as it is and
   flagged `takeout_gaps`.

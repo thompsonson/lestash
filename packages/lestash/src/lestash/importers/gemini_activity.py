@@ -22,6 +22,7 @@ Feedback, "Used an Assistant feature" and similar entries are not items. They be
 the planned activities table. merge_with_stored() matches these chats to stored ones.
 """
 
+import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -30,10 +31,12 @@ from typing import Any
 
 from lestash.models.item import ItemCreate
 
+logger = logging.getLogger(__name__)
+
 SOURCE = "takeout_activity"  # metadata.source of what this importer writes
 MAX_TIMES = 200  # prompt times kept on a chat; matches youtube_history.MAX_TIMES
 TITLE_LENGTH = 80
-CHAT_URL = re.compile(r"^https://gemini\.google\.com/app/([0-9a-f]+)$")
+CHAT_URL = re.compile(r"^https://gemini\.google\.com/app/([0-9a-f]+)/?(?:[?#].*)?$")
 NOTEBOOK = re.compile(r"^(.+?)\s+was used in this chat\.")
 GENERATED_IMAGES = re.compile(r"^(\d+) generated images?\.$")
 PROMPTED = "Prompted "
@@ -70,6 +73,8 @@ class _TextFromHtml(HTMLParser):
         {"p", "div", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "tr"}
         | {"ul", "ol", "table"}
     )
+    VOID = frozenset({"br", "hr"})  # no end tag, though "<br/>" calls handle_endtag
+    TEXT_BLOCKS = frozenset({"p", "li", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6"})
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -79,8 +84,15 @@ class _TextFromHtml(HTMLParser):
         self.link_count = 0
         self.item_open = False  # a list item's marker has no text after it yet
         self.depth = 0  # nested lists
+        self.code = 0  # inside pre or code
+        self.block_start = False  # a paragraph or list item has no text yet
+        self.gaps = False  # see TAKEOUT_GAP
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self.TEXT_BLOCKS:
+            self.block_start = True
+        if tag in ("pre", "code"):
+            self.code += 1
         if tag in ("script", "style"):
             self.skip += 1
         elif tag == "a":
@@ -97,6 +109,10 @@ class _TextFromHtml(HTMLParser):
             self.depth += 1
 
     def handle_endtag(self, tag: str) -> None:
+        if tag in self.VOID:
+            return
+        if tag in ("pre", "code"):
+            self.code = max(0, self.code - 1)
         if tag in ("script", "style"):
             self.skip = max(0, self.skip - 1)
         elif tag == "a" and self.links:
@@ -119,42 +135,43 @@ class _TextFromHtml(HTMLParser):
         if not self.skip:
             if self.item_open and not data.strip():
                 return  # whitespace between "<li>" and its first text
+            if self.block_start and data.strip():
+                self.block_start = False
+                if not self.code and TAKEOUT_GAP.match(data.lstrip()):
+                    self.gaps = True
             self.parts.append(data)
             self.item_open = False
 
 
-def _convert(html: str) -> tuple[str, int]:
-    """A reply's text, and how many links it has."""
+def _convert(html: str) -> _TextFromHtml:
     parser = _TextFromHtml()
     parser.feed(html)
     parser.close()
+    return parser
+
+
+def _text(parser: _TextFromHtml) -> str:
     lines = [line.rstrip() for line in "".join(parser.parts).splitlines()]
-    text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
-    return text, parser.link_count
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 def html_to_text(html: str) -> str:
-    return _convert(html)[0]
+    return _text(_convert(html))
 
 
-# Some Takeout replies have lines reduced to a lone full stop, or a paragraph or list item
-# that starts with one. The cause is unconfirmed; the text is kept as it is and flagged.
-TAKEOUT_GAP = re.compile(r"^\s*(?:- |\| )*\.(?:\s|$)", re.M)
+# Some Takeout replies have a paragraph or list item that is a lone full stop, or starts
+# with one. The cause is unconfirmed; the text is kept as it is and the reply flagged.
+TAKEOUT_GAP = re.compile(r"\.(?:\s|$)")
 
 
 def _reply(entry: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """A reply's text, and its link count and gap flag for its metadata."""
-    texts, links = [], 0
-    for part in entry.get("safeHtmlItem") or []:
-        text, count = _convert(part.get("html") or "")
-        if text:
-            texts.append(text)
-        links += count
-    text = "\n\n".join(texts)
+    parsers = [_convert(part.get("html") or "") for part in entry.get("safeHtmlItem") or []]
+    text = "\n\n".join(t for t in map(_text, parsers) if t)
     details: dict[str, Any] = {}
-    if links:
+    if links := sum(p.link_count for p in parsers):
         details["link_count"] = links
-    if TAKEOUT_GAP.search(text):
+    if any(p.gaps for p in parsers):
         details["takeout_gaps"] = True
     return text, details
 
@@ -201,6 +218,7 @@ def parse_gemini_activity(entries: list[dict[str, Any]]) -> list[ItemCreate]:
     """
     chats: dict[str, _Chat] = defaultdict(_Chat)
     canvases: list[ItemCreate] = []
+    unlinked = 0
     for entry in entries:
         if not isinstance(entry, dict) or entry.get("header") != "Gemini Apps":
             continue
@@ -209,15 +227,20 @@ def parse_gemini_activity(entries: list[dict[str, Any]]) -> list[ItemCreate]:
         if when is None:
             continue
         if title.startswith(PROMPTED):
-            for chat_id in _chat_ids(entry):
+            chat_ids = _chat_ids(entry)
+            if not chat_ids:
+                unlinked += 1
+            notebook = _prompt_details(entry).get("notebooklm_notebook")
+            for chat_id in chat_ids:
                 chat = chats[chat_id]
                 chat.prompts.append((when, entry))
-                notebook = _prompt_details(entry).get("notebooklm_notebook")
                 if notebook and notebook not in chat.notebooks:
                     chat.notebooks.append(notebook)
         elif title.startswith(CANVAS):
             canvases.append(_canvas(entry, when))
 
+    if unlinked:
+        logger.warning("Skipped %d Gemini prompts that name no chat", unlinked)
     items: list[ItemCreate] = []
     for chat_id, chat in chats.items():
         chat.prompts.sort(key=lambda pair: pair[0])

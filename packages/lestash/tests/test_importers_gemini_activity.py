@@ -137,6 +137,13 @@ def test_attachments_and_notebook_are_kept_by_name() -> None:
     assert chat.metadata["notebooklm_notebooks"] == ["Ontologies"]
 
 
+def test_a_prompt_naming_no_chat_is_skipped_and_logged(caplog) -> None:
+    entry = _prompt("Lost", "2026-01-01T10:00:00.000Z")
+    entry["details"] = []
+    assert parse_gemini_activity([entry]) == []
+    assert "Skipped 1 Gemini prompts" in caplog.text
+
+
 def test_a_prompt_naming_two_chats_is_a_turn_of_each() -> None:
     items = parse_gemini_activity([_prompt("Translate", "2026-05-16T14:12:49.079Z", CHAT, OTHER)])
     assert sorted(i.source_id for i in items if i.metadata.get("type") == "chat") == sorted(
@@ -171,6 +178,7 @@ def test_html_to_text_keeps_blocks_and_unescapes() -> None:
     assert html_to_text(html) == 'Title\n\na "b"\n\n- x\n- y'
     assert html_to_text("<ul>\n<li>\n<p><strong>Top:</strong> one</p>\n</li></ul>") == "- Top: one"
     assert html_to_text("<ul><li>a<ul><li>. b</li></ul></li></ul>") == "- a\n  - . b"
+    assert html_to_text("<p>a<br/>b<br>c</p>") == "a\nb\nc"
 
 
 # --- merging ------------------------------------------------------------------------------
@@ -241,7 +249,7 @@ def test_reply_links_are_kept_and_full_stop_lines_flagged() -> None:
     )
     dropped = "<p>.</p><h3>Ranking</h3><ul><li>. For a Linux drive</li></ul>"
     trailing = "<p><strong>The Nature of Mind</strong> . . .</p>"
-    clean = "<p>Use λx . x + 1 here.</p>"
+    clean = "<p>Use λx . x + 1 here.</p><pre><code>. venv/bin/activate\n</code></pre>"
     replies = [
         parse_gemini_activity([_prompt("q", "2026-01-01T10:00:00.000Z", reply=html)])[2]
         for html in (cited, dropped, trailing, clean)
@@ -309,3 +317,45 @@ def test_merge_leaves_other_items_alone(test_db) -> None:
     with get_connection(test_db) as conn:
         assert merge.merge_with_stored(conn, item) is True
     assert item.metadata == {"a": 1}
+
+
+def _stored_chat(test_db, source_id: str, metadata: dict, url: str | None = None) -> int:
+    with get_connection(test_db) as conn:
+        (chat_id,) = conn.execute(
+            "INSERT INTO items (source_type, source_id, url, title, content, metadata) "
+            "VALUES ('gemini', ?, ?, 'Saved', 'transcript', ?) RETURNING id",
+            (source_id, url, json.dumps(metadata)),
+        ).fetchone()
+        conn.commit()
+    return chat_id
+
+
+def test_a_chat_saved_by_the_extension_is_kept(test_db) -> None:
+    """The extension stores c_<id> with its turns in metadata, not as child items."""
+    turns = [{"role": "user", "text": "First question"}, {"role": "model", "text": "Hi [1]"}]
+    metadata = {"source": "extension", "conversation_id": f"c_{CHAT}", "turns": turns}
+    chat_id = _stored_chat(test_db, f"c_{CHAT}", metadata)
+    before = _snapshot(test_db)
+    _import(
+        test_db,
+        [
+            _prompt("First question", "2026-01-01T10:00:00.000Z"),
+            _prompt("New question", "2026-01-02T10:00:00.000Z"),
+        ],
+    )
+    assert _snapshot(test_db)[:1] == before
+    added = _items(test_db, "parent_id = ?", (chat_id,))
+    assert [(t["author"], t["content"]) for t in added] == [
+        ("user", "New question"),
+        ("model", "Answer."),
+    ]
+
+
+def test_a_chat_saved_as_html_is_matched_by_its_url(test_db) -> None:
+    url = f"https://gemini.google.com/app/{CHAT}"
+    chat_id = _stored_chat(test_db, url, {"source": "html_import"}, url)
+    before = _snapshot(test_db)
+    _import(test_db, [_prompt("New question", "2026-01-02T10:00:00.000Z")])
+    assert _snapshot(test_db)[:1] == before
+    assert len(_items(test_db, "parent_id IS NULL")) == 1
+    assert len(_items(test_db, "parent_id = ?", (chat_id,))) == 2
