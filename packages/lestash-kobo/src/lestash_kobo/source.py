@@ -132,7 +132,9 @@ class KoboSource(SourcePlugin):
     def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:
         store = _store(config)
         include_store = flag(config.get("include_store_titles"))
-        store.root.mkdir(parents=True, exist_ok=True)
+        if not store.root.is_dir():
+            logger.info("No Kobo snapshots yet in %s; nothing to import", store.root)
+            return
         # The plug-in import and the 6-hourly timer (which syncs every source) can start
         # together. The second waits, then finds the newest snapshot itself: if the first
         # already imported it, the checkpoint makes the second a no-op.
@@ -146,8 +148,10 @@ class KoboSource(SourcePlugin):
                     store.root,
                 )
                 return
+            # Keyed on the contents, not the name: plugging in twice without reading
+            # makes a new snapshot with the same files, which needs no re-import
             state = {
-                "snapshot": snapshot.name,
+                "snapshot_digest": snapshot.digest(),
                 "reader_version": READER_VERSION,
                 "include_store_titles": include_store,
             }

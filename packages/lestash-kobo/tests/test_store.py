@@ -166,3 +166,38 @@ def test_pdf_deleted_then_restored_clean_is_flagged(device: Path, tmp_path: Path
     (device / PDF).write_bytes(b"%PDF-1.4 clean")  # ...then downloaded the original
     fourth = store.take(device, datetime(2026, 11, 9, tzinfo=UTC))
     assert fourth.added == [PDF] and fourth.reverted == [PDF]
+
+
+def test_snapshots_run_one_at_a_time(device: Path, tmp_path: Path) -> None:
+    import fcntl
+    import threading
+
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    done: list = []
+    with open(store.root / ".snapshot.lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        worker = threading.Thread(target=lambda: done.append(store.take(device, T2)))
+        worker.start()
+        worker.join(0.3)
+        assert worker.is_alive() and not done
+    worker.join(5)
+    assert done and done[0].snapshot.name == "20261107T095600Z"
+
+
+def test_latest_reads_only_the_newest(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    store.take(device, T2)
+    (store.snapshots_dir / "20260417T140000Z" / "manifest.json").write_text("{")  # damaged
+    latest = store.latest()
+    assert latest is not None and latest.name == "20261107T095600Z"
+
+
+def test_digest_follows_contents_not_name(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    a = store.take(device, T1).snapshot
+    b = store.take(device, T2).snapshot
+    (device / PDF).write_bytes(b"%PDF-1.4 with ink")
+    c = store.take(device, T3).snapshot
+    assert a.digest() == b.digest() != c.digest()

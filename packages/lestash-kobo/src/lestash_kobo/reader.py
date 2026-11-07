@@ -21,7 +21,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import quote
 
 from lestash.models.item import ItemCreate, MediaCreate
 
@@ -70,10 +70,13 @@ def _num(value: Any) -> int:
 
 
 def device_path(content_id: str) -> str | None:
-    """``file:///mnt/onboard/a/b.pdf`` → ``a/b.pdf`` (the path inside a snapshot)."""
+    """``file:///mnt/onboard/a/b.pdf`` → ``a/b.pdf`` (the path inside a snapshot).
+
+    ContentIDs hold the raw path (spaces and all), not a URL-encoded one.
+    """
     if not content_id.startswith(DEVICE_ROOT):
         return None
-    return unquote(content_id[len(DEVICE_ROOT) :])
+    return content_id[len(DEVICE_ROOT) :]
 
 
 def title_kind(row: dict[str, Any]) -> str:

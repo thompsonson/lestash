@@ -13,6 +13,7 @@ are removed by the next one.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
@@ -47,6 +48,13 @@ class Snapshot:
     taken_at: datetime
     files: dict[str, FileEntry]
     path: Path
+
+    def digest(self) -> str:
+        """One hash of every path and its contents: equal for identical device states."""
+        h = hashlib.sha256()
+        for path, entry in sorted(self.files.items()):
+            h.update(f"{path}\0{entry.sha256}\n".encode())
+        return h.hexdigest()
 
     def blob(self, store: KoboStore, device_path: str) -> Path | None:
         entry = self.files.get(device_path)
@@ -109,8 +117,21 @@ class KoboStore:
         return sorted(found, key=lambda s: (s.taken_at, s.name))
 
     def latest(self) -> Snapshot | None:
-        snaps = self.snapshots()
-        return snaps[-1] if snaps else None
+        """The newest snapshot, reading only its manifest.
+
+        Names are UTC times, so they sort like ``taken_at``; damaged ones are skipped.
+        """
+        if not self.snapshots_dir.is_dir():
+            return None
+        for d in sorted(self.snapshots_dir.iterdir(), key=lambda p: p.name, reverse=True):
+            manifest = d / "manifest.json"
+            if d.name.startswith(".") or not manifest.is_file():
+                continue
+            try:
+                return self._load(d, json.loads(manifest.read_text()))
+            except (OSError, ValueError, KeyError, TypeError) as e:
+                logger.warning("Skipping unreadable Kobo snapshot %s: %s", d.name, e)
+        return None
 
     def take(
         self, source: Path | str, taken_at: datetime | None = None, verify: bool = False
@@ -123,6 +144,14 @@ class KoboStore:
         source = Path(source)
         if not (source / DB_PATH).is_file():
             raise FileNotFoundError(f"{source} has no {DB_PATH}: is the Kobo mounted?")
+        self.root.mkdir(parents=True, exist_ok=True)
+        # One snapshot at a time, also when one is run by hand during a plug-in: the
+        # temp sweep below would otherwise delete the other run's files
+        with open(self.root / ".snapshot.lock", "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            return self._take(source, taken_at, verify)
+
+    def _take(self, source: Path, taken_at: datetime | None, verify: bool) -> SnapshotResult:
         taken_at = (taken_at or datetime.now(UTC)).astimezone(UTC)
         name = taken_at.strftime("%Y%m%dT%H%M%SZ")
         snaps = self.snapshots()
@@ -176,7 +205,7 @@ class KoboStore:
     def _sweep_temp(self) -> None:
         """Remove temp files left by a copy that was killed (e.g. the Kobo unplugged).
 
-        Snapshots of one store don't run at the same time: the plug-in unit is a oneshot.
+        Safe because the caller holds the snapshot lock.
         """
         for parent in (self.snapshots_dir, self.blobs):
             if not parent.is_dir():
@@ -204,7 +233,7 @@ class KoboStore:
         fd, tmp_name = tempfile.mkstemp(prefix=".tmp-", dir=self.blobs)
         tmp = Path(tmp_name)
         try:
-            with path.open("rb") as src, os.fdopen(fd, "wb") as dst:
+            with os.fdopen(fd, "wb") as dst, path.open("rb") as src:
                 while chunk := src.read(CHUNK):
                     digest.update(chunk)
                     dst.write(chunk)

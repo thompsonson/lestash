@@ -79,9 +79,11 @@ def test_sync_stores_children_under_books_and_is_idempotent(
     store = KoboStore(tmp_path / "store")
     plugin = KoboSource()
     config = {"store_dir": str(store.root)}
-    # A new, identical snapshot each time, so the second sync really re-imports
+    # The second snapshot differs only in a file that isn't an item, so the second sync
+    # really re-imports, and must not rewrite anything
     for when in (T1, datetime(2026, 11, 8, tzinfo=UTC)):
         store.take(device, when)
+        (device / ".kobo" / "affiliate.conf").write_text(str(when))
         with get_connection(test_db) as conn:
             SyncStore(conn, "kobo").run(plugin.sync(config))
     with get_connection(test_db) as conn:
@@ -107,15 +109,25 @@ def test_sync_stores_children_under_books_and_is_idempotent(
     assert all((get_media_dir(test_db) / m[0]).is_file() for m in media)
 
 
-def test_sync_without_snapshot_warns(tmp_path: Path, caplog) -> None:
+def test_sync_without_store_is_quiet(tmp_path: Path, caplog) -> None:
+    caplog.set_level("INFO")
     items = list(KoboSource().sync({"store_dir": str(tmp_path / "empty")}))
     assert items == []
-    assert "No Kobo snapshot" in caplog.text
+    assert "No Kobo snapshots yet" in caplog.text
+    assert not (tmp_path / "empty").exists()  # a machine without a Kobo gets no folder
+
+
+def test_store_without_snapshot_warns(tmp_path: Path, caplog) -> None:
+    (tmp_path / "store").mkdir()
+    assert list(KoboSource().sync({"store_dir": str(tmp_path / "store")})) == []
+    assert "No Kobo snapshot in" in caplog.text
 
 
 def test_helpers() -> None:
-    assert device_path("file:///mnt/onboard/My%20Notebooks/a.nebo") == "My Notebooks/a.nebo"
+    assert device_path("file:///mnt/onboard/My Notebooks/a.nebo") == "My Notebooks/a.nebo"
     assert device_path("a1b2") is None
+    # Raw paths: a literal "%25" in a file name stays as it is
+    assert device_path("file:///mnt/onboard/Growth 100%25.pdf") == "Growth 100%25.pdf"
     assert parse_date("2024-10-03T14:51:19.000") == datetime(2024, 10, 3, 14, 51, 19, tzinfo=UTC)
     assert parse_date("2026-11-07T07:08:17Z") == datetime(2026, 11, 7, 7, 8, 17, tzinfo=UTC)
     assert parse_date("") is None and parse_date("garbage") is None
@@ -152,6 +164,9 @@ def test_unchanged_snapshot_is_not_imported_twice(device: Path, tmp_path: Path, 
     assert first and isinstance(first[-1], SyncCheckpoint)
     with get_connection(test_db) as conn:
         SyncStore(conn, "kobo").run(iter(first))
+    assert list(KoboSource().sync(config)) == []
+    # Plugging in again without reading: a new snapshot, same contents, no re-import
+    store.take(device, datetime(2026, 11, 8, tzinfo=UTC))
     assert list(KoboSource().sync(config)) == []
     # A changed setting imports again
     assert list(KoboSource().sync({**config, "include_store_titles": True}))
