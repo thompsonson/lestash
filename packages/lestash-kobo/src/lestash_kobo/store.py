@@ -7,7 +7,8 @@ clean original. So each plug-in copies the device into a store that never forget
     <root>/snapshots/<time>/manifest.json   device path -> sha256, size, mtime
 
 A snapshot is written to a temporary folder and renamed when complete, so an unplug
-mid-copy leaves nothing half-written.
+mid-copy never leaves a half-written snapshot. Temp files a killed copy leaves behind
+are removed by the next one.
 """
 
 from __future__ import annotations
@@ -104,17 +105,27 @@ class KoboStore:
         snaps = self.snapshots()
         return snaps[-1] if snaps else None
 
-    def take(self, source: Path | str, taken_at: datetime | None = None) -> SnapshotResult:
-        """Copy every file under ``source`` (the Kobo's root) into a new snapshot."""
+    def take(
+        self, source: Path | str, taken_at: datetime | None = None, verify: bool = False
+    ) -> SnapshotResult:
+        """Copy every file under ``source`` (the Kobo's root) into a new snapshot.
+
+        A file whose size and mtime match the previous snapshot is not read again, so a
+        plug-in only reads what changed. ``verify`` re-reads and re-hashes everything.
+        """
         source = Path(source)
         if not (source / DB_PATH).is_file():
             raise FileNotFoundError(f"{source} has no {DB_PATH}: is the Kobo mounted?")
         taken_at = (taken_at or datetime.now(UTC)).astimezone(UTC)
         name = taken_at.strftime("%Y%m%dT%H%M%SZ")
-        history = self.snapshots()
-        if any(s.name == name for s in history):
+        snaps = self.snapshots()
+        if any(s.name == name for s in snaps):
             raise FileExistsError(f"snapshot {name} already exists")
+        # Compare with what came before this copy, also when importing an old copy late
+        history = [s for s in snaps if s.taken_at < taken_at]
+        previous = history[-1].files if history and not verify else {}
 
+        self._sweep_temp()
         self.snapshots_dir.mkdir(parents=True, exist_ok=True)
         tmp = Path(tempfile.mkdtemp(prefix=".tmp-", dir=self.snapshots_dir))
         try:
@@ -123,11 +134,21 @@ class KoboStore:
             for path in self._walk(source):
                 rel = device_name(str(path.relative_to(source)))
                 stat = path.stat()
+                mtime = _iso(stat.st_mtime)
+                known = previous.get(rel)
+                if (
+                    known
+                    and known.size == stat.st_size
+                    and known.mtime == mtime
+                    and self.blob_path(known.sha256).is_file()
+                ):
+                    files[rel] = known
+                    continue
                 sha, is_new = self._store_blob(path)
                 if is_new:
                     new_blobs += 1
                     new_bytes += stat.st_size
-                files[rel] = FileEntry(sha, stat.st_size, _iso(stat.st_mtime))
+                files[rel] = FileEntry(sha, stat.st_size, mtime)
             manifest = {
                 "taken_at": taken_at.isoformat(timespec="seconds"),
                 "source": str(source),
@@ -144,6 +165,20 @@ class KoboStore:
         result = SnapshotResult(snap, len(files), new_blobs, new_bytes)
         self._compare(result, history)
         return result
+
+    def _sweep_temp(self) -> None:
+        """Remove temp files left by a copy that was killed (e.g. the Kobo unplugged).
+
+        Snapshots of one store don't run at the same time: the plug-in unit is a oneshot.
+        """
+        for parent in (self.snapshots_dir, self.blobs):
+            if not parent.is_dir():
+                continue
+            for leftover in parent.glob(".tmp-*"):
+                if leftover.is_dir():
+                    shutil.rmtree(leftover, ignore_errors=True)
+                else:
+                    leftover.unlink(missing_ok=True)
 
     def _walk(self, source: Path):
         for dirpath, dirnames, filenames in os.walk(source):

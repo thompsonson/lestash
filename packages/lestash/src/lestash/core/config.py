@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import toml
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 def get_config_dir() -> Path:
@@ -74,7 +74,14 @@ class LoggingConfig(BaseModel):
 
 
 class Config(BaseModel):
-    """Application configuration."""
+    """Application configuration.
+
+    Sections other than ``general`` and ``logging`` belong to plugins (``[kobo]``,
+    ...). They are kept, so ``get_plugin_config`` can return them and ``save`` doesn't
+    drop them.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     general: GeneralConfig = GeneralConfig()
     logging: LoggingConfig = LoggingConfig()

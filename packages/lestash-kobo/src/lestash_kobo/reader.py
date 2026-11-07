@@ -10,6 +10,7 @@ adds or drops a column doesn't break the import.
 
 from __future__ import annotations
 
+import hashlib
 import html
 import re
 import shutil
@@ -25,6 +26,8 @@ from lestash.models.item import ItemCreate, MediaCreate
 from lestash_kobo.store import DB_PATH, KoboStore, Snapshot
 
 SOURCE_TYPE = "kobo"
+# Bump when the items change shape, so the next sync re-imports an unchanged snapshot
+READER_VERSION = 1
 DEVICE_ROOT = "file:///mnt/onboard/"
 MARKUP_PLACEHOLDER = "[Handwritten markup]"
 BOOKMARK_PLACEHOLDER = "[Bookmark]"
@@ -44,6 +47,10 @@ def parse_date(value: str | None) -> datetime | None:
 
 def _text(value: Any) -> str:
     return html.unescape(re.sub(r"<[^>]+>", " ", str(value or ""))).strip()
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _num(value: Any) -> int:
@@ -205,19 +212,26 @@ class KoboReader:
         )
 
     def _markup_media(self, bookmark_id: str) -> list[MediaCreate] | None:
-        """The pen strokes of a markup: a JPG of the page and an SVG of the ink."""
+        """The pen strokes of a markup: a JPG of the page and an SVG of the ink.
+
+        The file name follows the bookmark, not the contents, so a redrawn markup
+        replaces its image instead of adding a second one.
+        """
         if self.media_dir is None:
             return None
+        safe_id = re.sub(r"[^A-Za-z0-9._-]", "_", bookmark_id)
         media = []
         for pos, (ext, mime) in enumerate((("jpg", "image/jpeg"), ("svg", "image/svg+xml"))):
             entry = self.snapshot.files.get(f".kobo/markups/{bookmark_id}.{ext}")
             if not entry:
                 continue
-            rel = f"kobo/{entry.sha256[:16]}.{ext}"
+            rel = f"kobo/markup-{safe_id}.{ext}"
             dest = self.media_dir / rel
-            if not dest.exists():
+            if not dest.exists() or dest.stat().st_size != entry.size or _sha(dest) != entry.sha256:
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(self.store.blob_path(entry.sha256), dest)
+                tmp = dest.with_name(f".tmp-{dest.name}")
+                shutil.copyfile(self.store.blob_path(entry.sha256), tmp)
+                tmp.replace(dest)
             media.append(
                 MediaCreate(
                     media_type="image",

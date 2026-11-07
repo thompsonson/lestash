@@ -101,3 +101,46 @@ def test_latin1_mount_names_are_repaired() -> None:
 
 def test_default_root_is_under_local_share() -> None:
     assert store_mod.DEFAULT_ROOT.parts[-3:] == ("share", "lestash", "kobo")
+
+
+def test_unchanged_files_are_not_read_again(device: Path, tmp_path: Path, monkeypatch) -> None:
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    (device / PDF).write_bytes(b"%PDF-1.4 with ink")
+    read: list[str] = []
+    real = KoboStore._store_blob
+
+    def spy(self, path):
+        read.append(path.name)
+        return real(self, path)
+
+    monkeypatch.setattr(KoboStore, "_store_blob", spy)
+    second = store.take(device, T2)
+    assert read == ["Judge.pdf"]
+    assert second.changed == [PDF]
+    read.clear()
+    store.take(device, T3, verify=True)
+    assert len(read) == 4
+
+
+def test_old_copy_imported_late_compares_with_what_came_before(
+    device: Path, tmp_path: Path
+) -> None:
+    store = KoboStore(tmp_path / "store")
+    (device / PDF).write_bytes(b"%PDF-1.4 with ink")
+    store.take(device, T2)
+    (device / PDF).write_bytes(b"%PDF-1.4 clean")
+    april = store.take(device, T1)  # older than the snapshot already there
+    assert not (april.added or april.changed or april.removed or april.reverted)
+    assert [s.name for s in store.snapshots()] == ["20260417T140000Z", "20261107T095600Z"]
+
+
+def test_leftovers_of_a_killed_copy_are_swept(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    (store.snapshots_dir / ".tmp-killed").mkdir()
+    (store.snapshots_dir / ".tmp-killed" / "manifest.json").write_text("{}")
+    (store.blobs / ".tmp-partial").write_bytes(b"half")
+    store.take(device, T2)
+    assert not list(store.snapshots_dir.glob(".tmp-*"))
+    assert not list(store.blobs.glob(".tmp-*"))

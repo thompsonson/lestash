@@ -4,10 +4,14 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+import typer
 from lestash.core.database import get_connection, get_media_dir
 from lestash.core.sync import SyncStore
+from lestash.models.sync import SyncCheckpoint
 from lestash_kobo import KoboSource
 from lestash_kobo.reader import KoboReader, device_path, parse_date
+from lestash_kobo.source import parse_taken_at
 from lestash_kobo.store import KoboStore
 
 from .conftest import DRIVE_PDF, NN, NOTEBOOK, STORE_UNOPENED
@@ -114,3 +118,40 @@ def test_helpers() -> None:
 def test_metadata_is_json_serialisable(device: Path, tmp_path: Path) -> None:
     for item in _items(device, tmp_path):
         json.dumps(item.metadata)
+
+
+def test_redrawn_markup_replaces_its_image(device: Path, tmp_path: Path, test_db) -> None:
+    store = KoboStore(tmp_path / "store")
+    config = {"store_dir": str(store.root)}
+    store.take(device, T1)
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "kobo").run(KoboSource().sync(config))
+    (device / ".kobo" / "markups" / "mk-1.jpg").write_bytes(b"\xff\xd8redrawn")
+    store.take(device, datetime(2026, 11, 8, tzinfo=UTC))
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "kobo").run(KoboSource().sync(config))
+        rows = conn.execute(
+            "SELECT m.local_path FROM item_media m JOIN items i ON i.id = m.item_id"
+            " WHERE i.source_id = 'bookmark:mk-1' AND m.mime_type = 'image/jpeg'"
+        ).fetchall()
+    assert len(rows) == 1
+    assert (get_media_dir(test_db) / rows[0][0]).read_bytes() == b"\xff\xd8redrawn"
+
+
+def test_unchanged_snapshot_is_not_imported_twice(device: Path, tmp_path: Path, test_db) -> None:
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    config = {"store_dir": str(store.root)}
+    first = list(KoboSource().sync(config))
+    assert first and isinstance(first[-1], SyncCheckpoint)
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "kobo").run(iter(first))
+    assert list(KoboSource().sync(config)) == []
+    # A changed setting imports again
+    assert list(KoboSource().sync({**config, "include_store_titles": True}))
+
+
+def test_taken_at_without_offset_is_utc() -> None:
+    assert parse_taken_at("2026-04-17T14:40:03") == datetime(2026, 4, 17, 14, 40, 3, tzinfo=UTC)
+    with pytest.raises(typer.BadParameter):
+        parse_taken_at("17 April")

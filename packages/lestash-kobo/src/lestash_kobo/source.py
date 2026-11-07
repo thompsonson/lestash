@@ -5,29 +5,47 @@ Two steps, kept apart so the device is unplugged as soon as possible:
 1. ``lestash kobo snapshot`` copies the mounted Kobo into a versioned store.
 2. ``lestash sources sync kobo`` reads the newest snapshot into LeStash.
 
-Nothing ever writes to the Kobo: it is mounted read-only (see deploy/kobo/).
+Nothing ever writes to the Kobo: it is mounted read-only (see deploy/99-lestash-kobo.rules).
 """
 
+import signal
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from lestash.core.config import Config
-from lestash.core.database import get_media_dir
+from lestash.core.database import get_checkpoints, get_connection, get_media_dir
 from lestash.core.logging import get_plugin_logger
 from lestash.models.item import ItemCreate
+from lestash.models.sync import SyncCheckpoint
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 
-from lestash_kobo.reader import KoboReader
+from lestash_kobo.reader import READER_VERSION, KoboReader
 from lestash_kobo.store import KoboStore, SnapshotResult
 
 console = Console()
 logger = get_plugin_logger("kobo")
 
 DEFAULT_MOUNT = Path("/media/kobo")
+STATE_KEY = "imported"
+
+
+def parse_taken_at(value: str) -> datetime:
+    """An ISO time; without an offset it is read as UTC, not local time."""
+    try:
+        when = datetime.fromisoformat(value)
+    except ValueError as e:
+        raise typer.BadParameter(f"not an ISO time: {value!r}") from e
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
+
+
+def _raise_on_sigterm(signum: int, frame: object) -> None:
+    # systemd stops the plug-in unit with SIGTERM when the Kobo is unplugged. Turning it
+    # into SystemExit lets the snapshot remove its temp files on the way out.
+    raise SystemExit(128 + signum)
 
 
 def _store(config: dict) -> KoboStore:
@@ -74,12 +92,16 @@ class KoboSource(SourcePlugin):
                     "--taken-at", help="When the copy was made (ISO time), for old copies"
                 ),
             ] = None,
+            verify: Annotated[
+                bool, typer.Option("--verify", help="Re-read every file, not just changed ones")
+            ] = False,
         ) -> None:
             """Copy the Kobo into the snapshot store. Unchanged files cost nothing."""
             store = _store(Config.load().get_plugin_config(self.name))
-            when = datetime.fromisoformat(taken_at) if taken_at else None
+            when = parse_taken_at(taken_at) if taken_at else None
+            signal.signal(signal.SIGTERM, _raise_on_sigterm)
             try:
-                result = store.take(source, when)
+                result = store.take(source, when, verify=verify)
             except (FileNotFoundError, FileExistsError) as e:
                 console.print(f"[red]{e}[/red]")
                 raise typer.Exit(1) from e
@@ -99,7 +121,7 @@ class KoboSource(SourcePlugin):
 
         return app
 
-    def sync(self, config: dict) -> Iterator[ItemCreate]:
+    def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:
         store = _store(config)
         snapshot = store.latest()
         if snapshot is None:
@@ -109,11 +131,20 @@ class KoboSource(SourcePlugin):
                 store.root,
             )
             return
+        include_store = bool(config.get("include_store_titles", False))
+        state = {
+            "snapshot": snapshot.name,
+            "reader_version": READER_VERSION,
+            "include_store_titles": include_store,
+        }
+        # The 6-hourly timer syncs every source: skip a snapshot already imported as-is
+        with get_connection(Config.load()) as conn:
+            if get_checkpoints(conn, self.name).get(STATE_KEY) == state:
+                logger.info("Kobo snapshot %s is already imported", snapshot.name)
+                return
         logger.info("Reading Kobo snapshot %s", snapshot.name)
         reader = KoboReader(
-            store,
-            snapshot,
-            media_dir=get_media_dir(),
-            include_store_titles=bool(config.get("include_store_titles", False)),
+            store, snapshot, media_dir=get_media_dir(), include_store_titles=include_store
         )
         yield from reader.items()
+        yield SyncCheckpoint(key=STATE_KEY, value=state)
