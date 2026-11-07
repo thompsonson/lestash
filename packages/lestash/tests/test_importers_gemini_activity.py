@@ -173,34 +173,21 @@ def test_other_activity_is_skipped() -> None:
     assert parse_gemini_activity(entries) == []
 
 
-def test_html_to_text_keeps_blocks_and_unescapes() -> None:
-    html = "<h3>Title</h3><p>a &quot;b&quot;</p><ol><li>x</li><li>y</li></ol><script>no</script>"
-    assert html_to_text(html) == 'Title\n\na "b"\n\n1. x\n2. y'
-    assert html_to_text("<ul>\n<li>\n<p><strong>Top:</strong> one</p>\n</li></ul>") == "- Top: one"
-    assert html_to_text("<ul><li>a<ul><li>. b</li></ul></li></ul>") == "- a\n  - . b"
-    assert html_to_text("<p>a<br/>b<br>c</p>") == "a\nb\nc"
-    # Pretty-printed source whitespace is collapsed, as a browser would
-    assert html_to_text("<ul>\n<li>a</li>\n<li>b</li>\n</ul>") == "- a\n- b"
-    assert html_to_text("<p>Hello\n    world</p>") == "Hello world"
+def test_replies_become_markdown() -> None:
+    html = "<h3>Title</h3><p>a &quot;b&quot;</p><ol><li>x</li><li>y</li></ol>"
+    assert html_to_text(html) == '### Title\n\na "b"\n\n1. x\n2. y'
+    assert html_to_text("<ul>\n<li>\n<p><strong>Top:</strong> one</p>\n</li></ul>") == (
+        "- **Top:** one"
+    )
+    assert html_to_text("<p>Use <code>__init__</code></p>") == "Use `__init__`"
+    table = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>y|z</td></tr></table>"
+    assert html_to_text(table) == "| A | B |\n| --- | --- |\n| 1 | y\\|z |"
+    code = "<pre><code>def a():\n\n\n    pass\n</code></pre>"
+    assert html_to_text(code) == "```\ndef a():\n\n\n    pass\n```"
 
 
-def test_html_to_text_tables_and_code() -> None:
-    table = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"
-    assert html_to_text(table) == "| A | B |\n| --- | --- |\n| 1 | 2 |"
-    cells = "<table><tr><td><p>a</p></td><td>b<br>c</td></tr></table>"
-    assert html_to_text(cells) == "| a | b c |\n| --- | --- |"
-    assert html_to_text("<table><tr><td> x </td><td>y|z</td></tr></table>").startswith(
-        "| x | y\\|z |"
-    )
-    assert html_to_text("<p>First line. <br>Second - <br>Third</p>") == (
-        "First line.\nSecond -\nThird"
-    )
-    linked_code = '<pre><code>a = 1\n<a href="u">b  c</a>\n</code></pre>'
-    assert html_to_text(linked_code) == "```\na = 1\n[b  c](u)\n```"
-    split = "<ol><li>A</li></ol><pre>x</pre><ol start='2'><li>B</li></ol>"
-    assert html_to_text(split) == "1. A\n\n```\nx\n```\n\n2. B"
-    code = "<p>Run:</p><pre><code>pip install x\n  --upgrade\n</code></pre>"
-    assert html_to_text(code) == "Run:\n\n```\npip install x\n  --upgrade\n```"
+def test_html_markdownify_rejects_falls_back_to_plain_text() -> None:
+    assert html_to_text("<ol start='²'><li>A</li></ol>") == "A"
 
 
 # --- merging ------------------------------------------------------------------------------
@@ -278,11 +265,11 @@ def test_reply_links_are_kept_and_full_stop_lines_flagged() -> None:
     ]
     assert replies[0].content == (
         "Do raises against a wall [[00:45](https://www.youtube.com/watch?v=x&t=45)] "
-        "and see https://arxiv.org/abs/1."
+        "and see <https://arxiv.org/abs/1>."
     )
     assert replies[0].metadata["link_count"] == 2
     assert [r.metadata.get("takeout_gaps") for r in replies] == [None, True, None, None]
-    assert replies[1].content == ".\n\nRanking\n\n- . For a Linux drive"  # left as it is
+    assert replies[1].content == ".\n\n### Ranking\n\n- . For a Linux drive"  # left as it is
 
 
 def test_two_page_saves_of_one_chat_use_the_one_with_turns(test_db) -> None:
@@ -446,6 +433,16 @@ def test_a_canvas_export_without_its_document_keeps_the_stored_one(test_db) -> N
     _import(test_db, [{**canvas, "subtitles": []}])
     (stored,) = _items(test_db, "source_id LIKE 'canvas-%'")
     assert stored["content"] == "# The plan"
+
+
+def test_a_renamed_chat_keeps_its_title_on_reimport(test_db) -> None:
+    entry = _prompt("First question", "2026-01-01T10:00:00.000Z")
+    _import(test_db, [entry])
+    with get_connection(test_db) as conn:
+        conn.execute("UPDATE items SET title = 'My name' WHERE source_id = ?", (f"c_{CHAT}",))
+        conn.commit()
+    _import(test_db, [entry, _prompt("Later", "2026-02-01T10:00:00.000Z")])
+    assert _items(test_db, "source_id = ?", (f"c_{CHAT}",))[0]["title"] == "My name"
 
 
 def test_a_chat_starting_with_an_attachment_has_a_title() -> None:

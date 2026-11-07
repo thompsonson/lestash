@@ -9,7 +9,7 @@ prompt in its title and Gemini's reply as HTML. Chats have no titles in Takeout.
 - Each prompt and each reply becomes a child turn, with ``items.author`` ``user`` or
   ``model``, as the app's chat view expects. A reply is dated 1 ms after its prompt, so
   turns sort in order.
-- A reply keeps its links, citations among them, as ``[text](url)``.
+- A reply becomes Markdown (markdownify), keeping its links, citations among them.
 - Some replies have lines reduced to a lone full stop; the cause is unconfirmed. Such a
   reply is kept verbatim and flagged ``takeout_gaps``, so it can be checked later.
 - A prompt that names several chats is stored as a turn of each of them.
@@ -27,8 +27,10 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from html.parser import HTMLParser
 from typing import Any
+
+from bs4 import BeautifulSoup
+from markdownify import ATX, MarkdownConverter
 
 from lestash.importers.youtube_history import MAX_TIMES  # merge.py caps times the same
 from lestash.models.item import ItemCreate
@@ -73,180 +75,61 @@ def _time(entry: dict[str, Any]) -> datetime | None:
         return None
 
 
-class _TextFromHtml(HTMLParser):
-    """Markdown-like text from a reply's HTML.
+_MARKDOWN = MarkdownConverter(heading_style=ATX, bullets="-", escape_misc=False)
 
-    Blocks go on their own lines, lists keep their markers and nesting, tables become
-    pipe tables, ``<pre>`` becomes a fenced block, and links stay as ``[text](url)``,
-    since they include the reply's citations. Other whitespace is collapsed, as a browser
-    would.
+
+def _convert(html: str) -> tuple[str, int]:
+    """A reply's Markdown and its link count; the links include its citations.
+
+    "|" in a table cell is escaped, as it would end the cell. HTML markdownify can't take
+    (such as an ordered list starting at "²") falls back to its plain text.
     """
-
-    BLOCKS = frozenset(
-        {"p", "div", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "table"}
-    )
-    VOID = frozenset({"br", "hr"})  # no end tag, though "<br/>" calls handle_endtag
-    TEXT_BLOCKS = frozenset({"p", "li", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6"})
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-        self.skip = 0  # inside script or style
-        self.pre = 0
-        self.code = 0  # inside pre or code
-        self.links: list[tuple[int, str]] = []  # open links: where their text starts, url
-        self.link_count = 0
-        self.lists: list[list[Any]] = []  # open lists: [tag, items so far]
-        self.row: list[str] = []  # cell tags of the open table row
-        self.cell = False  # inside a table cell, which must stay on one line
-        self.header_done = False  # the open table has its separator line
-        self.block_start = False  # a paragraph or list item has no text yet
-        self.marker = False  # a list marker or cell opening was just written
-        self.gaps = False  # see TAKEOUT_GAP
-
-    def _at_line_start(self) -> bool:
-        return self.marker or not self.parts or self.parts[-1].endswith("\n")
-
-    def _newline(self) -> None:
-        if self.parts and not self.parts[-1].endswith("\n"):
-            self.parts.append("\n")
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in self.TEXT_BLOCKS:
-            self.block_start = True
-        if tag in ("pre", "code"):
-            self.code += 1
-        if tag in ("script", "style"):
-            self.skip += 1
-        elif tag == "pre":
-            self.pre += 1
-            self._newline()
-            self.parts.append("\n```\n")
-        elif tag == "a":
-            self.links.append((len(self.parts), dict(attrs).get("href") or ""))
-        elif tag in ("ul", "ol"):
-            if not self.lists:
-                self.parts.append("\n")
-            start = dict(attrs).get("start") or ""
-            self.lists.append([tag, int(start) - 1 if start.isdigit() else 0])
-        elif tag == "li":
-            self._newline()
-            indent = "  " * max(0, len(self.lists) - 1)
-            if self.lists and self.lists[-1][0] == "ol":
-                self.lists[-1][1] += 1
-                self.parts.append(f"{indent}{self.lists[-1][1]}. ")
-            else:
-                self.parts.append(f"{indent}- ")
-            self.marker = True
-        elif tag == "tr":
-            self._newline()
-            self.row = []
-            self.parts.append("|")
-        elif tag in ("td", "th"):
-            self.row.append(tag)
-            self.cell = True
-            self.parts.append(" ")
-            self.marker = True
-        elif tag in self.BLOCKS and self.cell:
-            self._space()
-        elif tag == "table":
-            self.header_done = False
-            self.parts.append("\n")
-        elif tag in self.BLOCKS and not self.marker:
-            self.parts.append("\n")  # "<li><p>x" is one line, "- x"
-
-    def _space(self) -> None:
-        if self.parts and not self.parts[-1].endswith(" "):
-            self.parts.append(" ")
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in self.VOID:
-            return
-        if tag in ("pre", "code"):
-            self.code = max(0, self.code - 1)
-        if tag in ("script", "style"):
-            self.skip = max(0, self.skip - 1)
-        elif tag == "pre":
-            self.pre = max(0, self.pre - 1)
-            self._newline()
-            self.parts.append("```\n\n")
-        elif tag == "a" and self.links:
-            start, href = self.links.pop()
-            text = "".join(self.parts[start:])
-            if not self.pre:
-                text = " ".join(text.split())
-            if href:
-                self.link_count += 1
-                self.parts[start:] = [href if text in ("", href) else f"[{text}]({href})"]
-        elif tag in ("ul", "ol"):
-            if self.lists:
-                self.lists.pop()
-            if not self.lists:
-                self.parts.append("\n")
-        elif tag in ("td", "th"):
-            self.cell = False
-            if self.parts:
-                self.parts[-1] = self.parts[-1].rstrip(" ")
-            self.parts.append(" |")
-        elif tag == "tr":
-            if self.row and not self.header_done:
-                # Markdown needs a separator under the first row
-                self.parts.append("\n|" + " --- |" * len(self.row))
-                self.header_done = True
-            self.parts.append("\n")
-        elif tag in self.BLOCKS and self.cell:
-            self._space()
-        elif tag in self.BLOCKS:
-            self.parts.append("\n")
-
-    def handle_data(self, data: str) -> None:
-        if self.skip:
-            return
-        if not self.pre:
-            data = re.sub(r"\s+", " ", data)
-            if self._at_line_start():
-                data = data.lstrip()
-            if not data:
-                return
-        if self.block_start and data.strip():
-            self.block_start = False
-            if not self.code and TAKEOUT_GAP.match(data.lstrip()):
-                self.gaps = True
-        if self.cell:
-            data = data.replace("|", "\\|")  # or it would end the cell
-        self.parts.append(data)
-        self.marker = False
-
-
-def _convert(html: str) -> _TextFromHtml:
-    parser = _TextFromHtml()
-    parser.feed(html)
-    parser.close()
-    return parser
-
-
-def _text(parser: _TextFromHtml) -> str:
-    lines = [line.rstrip() for line in "".join(parser.parts).splitlines()]
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    soup = BeautifulSoup(html, "html.parser")
+    links = len(soup.find_all("a", href=True))
+    for cell in soup.find_all(["td", "th"]):
+        for string in list(cell.find_all(string=True)):
+            if "|" in string:
+                string.replace_with(string.replace("|", "\\|"))
+    try:
+        text = _MARKDOWN.convert_soup(soup)
+    except (ValueError, TypeError):
+        text = soup.get_text("\n")
+    return text.strip(), links
 
 
 def html_to_text(html: str) -> str:
-    return _text(_convert(html))
+    return _convert(html)[0]
 
 
 # Some Takeout replies have a paragraph or list item that is a lone full stop, or starts
 # with one. The cause is unconfirmed; the text is kept as it is and the reply flagged.
-TAKEOUT_GAP = re.compile(r"\.(?:\s|$)")
+TAKEOUT_GAP = re.compile(r"^\s*(?:(?:[-*+]|\d+\.) +|> ?)*\.(?:\s|$)")
+
+
+def _has_gaps(markdown: str) -> bool:
+    """Whether a line outside code blocks starts with a lone full stop."""
+    in_code = False
+    for line in markdown.splitlines():
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+        elif not in_code and TAKEOUT_GAP.match(line):
+            return True
+    return False
 
 
 def _reply(entry: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """A reply's text, and its link count and gap flag for its metadata."""
-    parsers = [_convert(part.get("html") or "") for part in entry.get("safeHtmlItem") or []]
-    text = "\n\n".join(t for t in map(_text, parsers) if t)
+    """A reply's Markdown, and its link count and gap flag for its metadata."""
+    texts, links = [], 0
+    for part in entry.get("safeHtmlItem") or []:
+        text, count = _convert(part.get("html") or "")
+        if text:
+            texts.append(text)
+        links += count
+    text = "\n\n".join(texts)
     details: dict[str, Any] = {}
-    if links := sum(p.link_count for p in parsers):
+    if links:
         details["link_count"] = links
-    if any(p.gaps for p in parsers):
+    if _has_gaps(text):
         details["takeout_gaps"] = True
     return text, details
 

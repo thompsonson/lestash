@@ -151,8 +151,8 @@ def list_items(
         # Sort by fetched_at when filtering recent, otherwise by created_at
         sort_col = "fetched_at" if since else "created_at"
         # datetime() drops fractions of a second, so ties (a chat turn and the reply 1 ms
-        # later) fall back to the full stored time, then to insertion order
-        query += f" ORDER BY datetime({sort_col}) DESC, {sort_col} DESC, id DESC"
+        # later) fall back to julianday(), which keeps them, then to insertion order
+        query += f" ORDER BY datetime({sort_col}) DESC, julianday({sort_col}) DESC, id DESC"
 
         excludes = set()
         if exclude_subtype:

@@ -405,8 +405,9 @@ def _merge_gemini_chat(conn: sqlite3.Connection, item: ItemCreate, stored: dict[
     notebooks = _union(old.get("notebooklm_notebooks"), new.get("notebooklm_notebooks"))
     if notebooks:
         merged["notebooklm_notebooks"] = notebooks
-    if old.get("first_at") and old["first_at"] < (new.get("first_at") or old["first_at"]):
-        item.title = stored["title"]  # named after an earlier prompt than this export has
+    if old.get("first_at") and old["first_at"] <= (new.get("first_at") or old["first_at"]):
+        # The same first prompt, or an earlier one: the stored title, perhaps renamed, stays
+        item.title = stored["title"]
     elif new.get("first_at") and new["first_at"] < (old.get("first_at") or new["first_at"]):
         # An older export: the upsert keeps created_at, so date the chat from it here
         conn.execute(
