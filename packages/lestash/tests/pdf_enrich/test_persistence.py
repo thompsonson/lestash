@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from lestash.core.pdf_enrich.persistence import (
     is_already_enriched,
     mark_source_unavailable,
     persist_enrichment,
+    set_source_pdf,
 )
 from lestash.core.pdf_enrich.types import (
     EnrichedPdf,
@@ -208,7 +210,7 @@ def test_rerun_adopts_legacy_child_and_keeps_its_ocr(config, parent_pdf_item):
     assert len(rows) == 1
     row = rows[0]
     assert row["id"] == legacy_id
-    assert row["source_id"] == f"item-{parent_pdf_item}:{ann.annotation_id}"
+    assert row["source_id"] == f"item-{parent_pdf_item}:p{ann.page}:{ann.annotation_id}"
     assert row["content"] == "transcribed words"
     assert json.loads(row["metadata"])["ocr_version"] == 1
 
@@ -228,7 +230,7 @@ def test_annotations_without_ids_upsert_by_geometry_hash(config, parent_pdf_item
             "SELECT id, source_id FROM items WHERE parent_id = ?", (parent_pdf_item,)
         ).fetchall()
     assert second["id"] == first["id"]
-    assert second["source_id"] == f"item-{parent_pdf_item}:{ann.stroke_geometry_hash}"
+    assert second["source_id"] == f"item-{parent_pdf_item}:p{ann.page}:{ann.stroke_geometry_hash}"
 
 
 def test_repeated_image_dedups_to_one_media_row_but_replaces_all_placeholders(
@@ -339,3 +341,87 @@ def test_persist_rolls_back_on_failure(config, parent_pdf_item, monkeypatch):
             "SELECT COUNT(*) FROM items WHERE parent_id = ?", (parent_pdf_item,)
         ).fetchone()[0]
     assert survivors == baseline_count
+
+
+def _child_ids(conn, parent_id: int) -> dict[str, int]:
+    rows = conn.execute(
+        "SELECT id, metadata FROM items WHERE parent_id = ? AND source_type = 'pdf_annotation'",
+        (parent_id,),
+    ).fetchall()
+    return {json.loads(r["metadata"])["stroke_geometry_hash"]: r["id"] for r in rows}
+
+
+def test_same_name_on_another_page_does_not_take_the_child(config, parent_pdf_item):
+    """PyMuPDF restarts /NM on each page, so fitz-A0 can be on page 0 and page 3."""
+    on_p3 = replace(_annotation(), page=3, annotation_id="fitz-A0", stroke_geometry_hash="3" * 64)
+    on_p0 = replace(_annotation(), page=0, annotation_id="fitz-A0", stroke_geometry_hash="0" * 64)
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[on_p3]))
+        before = _child_ids(conn, parent_pdf_item)
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[on_p0, on_p3]))
+        after = _child_ids(conn, parent_pdf_item)
+    assert after["3" * 64] == before["3" * 64]
+    assert len(after) == 2
+
+
+def test_reused_name_elsewhere_on_the_page_is_a_new_child(config, parent_pdf_item):
+    """Erase fitz-A0 and draw elsewhere: PyMuPDF names the new stroke fitz-A0 too."""
+    old = replace(_annotation(), annotation_id="fitz-A0", stroke_geometry_hash="1" * 64)
+    new = replace(old, bbox=(400, 500, 450, 550), stroke_geometry_hash="2" * 64)
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[old]))
+        (old_id,) = _child_ids(conn, parent_pdf_item).values()
+        # Another item above it, so SQLite can't hand the deleted child's id back
+        upsert_item(conn, ItemCreate(source_type="note", source_id="n1", content="x"))
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[new]))
+        (new_id,) = _child_ids(conn, parent_pdf_item).values()
+    assert new_id != old_id
+
+
+def test_stroke_added_to_a_named_annotation_keeps_the_child(config, parent_pdf_item):
+    old = replace(_annotation(), annotation_id="fitz-A0", stroke_geometry_hash="1" * 64)
+    grown = replace(old, bbox=(90, 190, 320, 240), stroke_geometry_hash="2" * 64)
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[old]))
+        (old_id,) = _child_ids(conn, parent_pdf_item).values()
+        persist_enrichment(conn, config, parent_pdf_item, _enriched(annotations=[grown]))
+        (new_id,) = _child_ids(conn, parent_pdf_item).values()
+    assert new_id == old_id
+
+
+def test_unchanged_rerun_does_not_rewrite_children(config, parent_pdf_item):
+    run = _enriched(annotations=[_annotation(), replace(_annotation(), page=2)])
+    with get_connection(config) as conn:
+        persist_enrichment(conn, config, parent_pdf_item, run)
+        children = list(_child_ids(conn, parent_pdf_item).values())
+        marks = ",".join("?" * len(children))
+        count = f"SELECT COUNT(*) FROM item_history WHERE item_id IN ({marks})"
+        before = conn.execute(count, children).fetchone()[0]
+        persist_enrichment(conn, config, parent_pdf_item, run)
+        after = conn.execute(count, children).fetchone()[0]
+    assert after == before
+
+
+@pytest.mark.parametrize("old_path", [None, "1/gone.pdf"])
+def test_missing_or_url_only_source_pdf_is_not_a_version(config, parent_pdf_item, old_path):
+    """A Drive file downloaded again after its local copy vanished is not a new version."""
+    with get_connection(config) as conn:
+        add_item_media(
+            conn,
+            parent_pdf_item,
+            media_type="source_pdf",
+            url="https://drive.example/file",
+            local_path=old_path,
+        )
+        set_source_pdf(conn, config, parent_pdf_item, local_path="1/new.pdf")
+        versions = conn.execute(
+            "SELECT COUNT(*) FROM item_media "
+            "WHERE item_id = ? AND media_type = 'source_pdf_version'",
+            (parent_pdf_item,),
+        ).fetchone()[0]
+        current = conn.execute(
+            "SELECT local_path FROM item_media WHERE item_id = ? AND media_type = 'source_pdf'",
+            (parent_pdf_item,),
+        ).fetchall()
+    assert versions == 0
+    assert [r["local_path"] for r in current] == ["1/new.pdf"]

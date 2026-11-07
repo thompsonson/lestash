@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 from lestash.core.config import Config
 from lestash.core.database import (
     add_item_media,
+    get_media_dir,
     mark_recent_history,
     max_history_id,
     save_media_file,
@@ -53,6 +54,8 @@ PDF_MIME = "application/pdf"
 # Child metadata written by the OCR pass (ocr.py). Kept across re-runs while
 # the stroke geometry is unchanged; dropped when it changes so OCR reruns.
 OCR_META_KEYS = ("ocr_text", "ocr_version")
+# Annotation kinds the OCR pass transcribes (ocr.py re-exports this)
+OCR_TARGET_KINDS = ("margin_note", "ink_unclassified")
 
 
 def is_already_enriched(
@@ -144,10 +147,12 @@ def _store_images(
                 source_origin=ENRICHER_ORIGIN,
                 _commit=False,
             )
-            # A reused row may carry an older page / position.
+            # A reused row may carry an older page / position. Only the
+            # enricher's own rows: a user's image with the same bytes is left alone
             conn.execute(
-                "UPDATE item_media SET alt_text = ?, position = ? WHERE id = ?",
-                (alt_text, image.placeholder_index, media_id),
+                "UPDATE item_media SET alt_text = ?, position = ? "
+                "WHERE id = ? AND source_origin = ?",
+                (alt_text, image.placeholder_index, media_id, ENRICHER_ORIGIN),
             )
             hash_to_media_id[image.xref_hash] = media_id
 
@@ -180,73 +185,85 @@ def _upsert_annotations(
 ) -> None:
     """Upsert one child item per semantic annotation (ADR 0001 D6).
 
-    Each annotation is matched to an existing child of this parent by its
-    PDF `annotation_id` (/NM), falling back to `stroke_geometry_hash`.
+    Each annotation is matched to an existing child of this parent, in two passes:
 
-    - Matched, same geometry hash: refresh title/metadata in place; keep the
-      child's `content` and OCR metadata if OCR has run on it.
-    - Matched, geometry changed (e.g. a stroke was added to the group):
-      refresh content and drop the OCR marker so `enrich --ocr` redoes it.
+    1. The same strokes on the same page (`page`, `stroke_geometry_hash`).
+    2. Otherwise the same PDF `/NM` on the same page, with overlapping boxes:
+       the same annotation with a stroke added. `/NM` alone is not enough:
+       PyMuPDF names restart on each page and are reused after a deletion.
+
+    - Matched, same strokes and still an OCR kind: refresh title/metadata in
+      place; keep the child's `content` and OCR metadata if OCR has run on it.
+    - Matched, strokes changed: refresh content and drop the OCR marker so
+      `enrich --ocr` redoes it.
     - Unmatched annotation: insert a new child.
     - Existing child with no annotation left in the PDF: delete it.
+    - A child whose row would not change is not written.
 
     Matching reads the keys from child metadata rather than `source_id`, so
     children written by older runs (whose source_id was the bare /NM) are
-    adopted and moved to the parent-scoped source_id.
+    adopted and moved to the current source_id.
     """
     if not conn.execute("SELECT 1 FROM items WHERE id = ?", (parent_id,)).fetchone():
         return
     # Scoped by the parent's item id, unique by construction: source_ids are only
     # unique per source_type, so two parents could share one
-    parent_source_id = f"item-{parent_id}"
+    parent_key = f"item-{parent_id}"
 
     existing = _load_existing_children(conn, parent_id)
-    by_annotation_id: dict[str, list[int]] = {}
-    by_hash: dict[str, list[int]] = {}
-    for child_id, child_meta in existing.items():
-        if child_meta.get("annotation_id"):
-            by_annotation_id.setdefault(child_meta["annotation_id"], []).append(child_id)
+    by_geometry: dict[tuple[Any, str], list[int]] = {}
+    by_name: dict[tuple[Any, str], list[int]] = {}
+    for child_id, (_, child_meta) in existing.items():
+        page = child_meta.get("page")
         if child_meta.get("stroke_geometry_hash"):
-            by_hash.setdefault(child_meta["stroke_geometry_hash"], []).append(child_id)
+            key = (page, child_meta["stroke_geometry_hash"])
+            by_geometry.setdefault(key, []).append(child_id)
+        if child_meta.get("annotation_id"):
+            by_name.setdefault((page, child_meta["annotation_id"]), []).append(child_id)
 
     claimed: set[int] = set()
-
-    def claim(candidates: list[int] | None) -> int | None:
-        for child_id in candidates or ():
+    matches: list[int | None] = [None] * len(annotations)
+    for i, ann in enumerate(annotations):
+        # A child with no page recorded (hand-made or very old) matches on any page
+        candidates = by_geometry.get((ann.page, ann.stroke_geometry_hash), []) + by_geometry.get(
+            (None, ann.stroke_geometry_hash), []
+        )
+        for child_id in candidates:
             if child_id not in claimed:
                 claimed.add(child_id)
-                return child_id
-        return None
-
-    # Every /NM match first, then geometry: an earlier annotation's hash fallback
-    # must not take a child that a later annotation names by /NM
-    matches: list[int | None] = [
-        claim(by_annotation_id.get(ann.annotation_id)) if ann.annotation_id else None
-        for ann in annotations
-    ]
+                matches[i] = child_id
+                break
     for i, ann in enumerate(annotations):
-        if matches[i] is None:
-            matches[i] = claim(by_hash.get(ann.stroke_geometry_hash))
-    plan = list(zip(annotations, matches, strict=True))
+        if matches[i] is not None or not ann.annotation_id:
+            continue
+        for child_id in by_name.get((ann.page, ann.annotation_id), ()):
+            if child_id not in claimed and _overlaps(existing[child_id][1].get("bbox"), ann.bbox):
+                claimed.add(child_id)
+                matches[i] = child_id
+                break
 
     stale = [child_id for child_id in existing if child_id not in claimed]
     if stale:
         conn.execute(f"DELETE FROM items WHERE id IN ({','.join('?' * len(stale))})", stale)
 
-    # Park matched children on a placeholder source_id first, so reassigning
+    used_keys: set[str] = set()
+    plan = [
+        (ann, match, _unique_source_id(parent_key, ann, used_keys))
+        for ann, match in zip(annotations, matches, strict=True)
+    ]
+    # Park children whose source_id changes on a placeholder first, so swapping
     # keys between children in one run cannot trip UNIQUE(source_type, source_id).
-    for _, match in plan:
-        if match is not None:
+    # The others already hold their target, and targets are unique.
+    for _, match, source_id in plan:
+        if match is not None and existing[match][0] != source_id:
             conn.execute(
                 "UPDATE items SET source_id = ? WHERE id = ?",
-                (f"{parent_source_id}:pending:{match}", match),
+                (f"{parent_key}:pending:{match}", match),
             )
 
     pre_max = max_history_id(conn)
-    used_keys: set[str] = set()
     touched: list[int] = []
-    for ann, match in plan:
-        source_id = _unique_source_id(parent_source_id, ann, used_keys)
+    for ann, match, source_id in plan:
         title = _annotation_title(ann)
         content: str | None = ann.anchor_text or _human_kind(ann.kind)
         meta: dict[str, Any] = {
@@ -279,19 +296,20 @@ def _upsert_annotations(
             )
             continue
 
-        old_meta = existing[match]
-        # Keep OCR only for the same strokes read as the same kind: a reclassified
-        # annotation (say margin note to underline) gets its new content
+        old_meta = existing[match][1]
+        # OCR reads the strokes' area whatever the kind, so keep it for the same
+        # strokes while the kind is still one OCR handles. A reclassified
+        # annotation (say margin note to underline) gets its new content.
         if (
             old_meta.get("stroke_geometry_hash") == ann.stroke_geometry_hash
-            and old_meta.get("annotation_kind") == ann.kind
+            and ann.kind in OCR_TARGET_KINDS
         ):
-            for key in OCR_META_KEYS:
-                if key in old_meta:
-                    meta[key] = old_meta[key]
+            for ocr_key in OCR_META_KEYS:
+                if ocr_key in old_meta:
+                    meta[ocr_key] = old_meta[ocr_key]
             if "ocr_version" in old_meta:
                 content = None  # COALESCE below keeps the OCR'd content
-        conn.execute(
+        cur = conn.execute(
             """
             UPDATE items SET
                 source_id = ?,
@@ -300,36 +318,68 @@ def _upsert_annotations(
                 created_at = COALESCE(?, created_at),
                 metadata = ?
             WHERE id = ?
+              AND (source_id IS NOT ? OR title IS NOT ? OR content IS NOT COALESCE(?, content)
+                   OR created_at IS NOT COALESCE(?, created_at) OR metadata IS NOT ?)
             """,
-            (source_id, title, content, ann.created_at, json.dumps(meta), match),
+            (
+                source_id,
+                title,
+                content,
+                ann.created_at,
+                json.dumps(meta),
+                match,
+                source_id,
+                title,
+                content,
+                ann.created_at,
+                json.dumps(meta),
+            ),
         )
-        touched.append(match)
+        if cur.rowcount:
+            touched.append(match)
 
     mark_recent_history(conn, pre_max, "enricher", item_ids=touched)
 
 
-def _load_existing_children(conn: sqlite3.Connection, parent_id: int) -> dict[int, dict[str, Any]]:
+def _overlaps(old_bbox: Any, bbox: tuple[float, float, float, float]) -> bool:
+    """Whether two (x0, y0, x1, y1) boxes intersect. A missing old box counts."""
+    try:
+        x0, y0, x1, y1 = (float(v) for v in old_bbox)
+    except (TypeError, ValueError):
+        return True
+    return x0 <= bbox[2] and bbox[0] <= x1 and y0 <= bbox[3] and bbox[1] <= y1
+
+
+def _parse_meta(raw: Any) -> dict[str, Any]:
+    """Item metadata JSON as a dict; anything unreadable or not an object is {}."""
+    try:
+        meta = json.loads(raw) if raw else {}
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _load_existing_children(
+    conn: sqlite3.Connection, parent_id: int
+) -> dict[int, tuple[str | None, dict[str, Any]]]:
+    """Each annotation child's id -> (source_id, metadata)."""
     rows = conn.execute(
-        "SELECT id, metadata FROM items WHERE parent_id = ? AND source_type = ? ORDER BY id",
+        "SELECT id, source_id, metadata FROM items WHERE parent_id = ? AND source_type = ? "
+        "ORDER BY id",
         (parent_id, ANNOTATION_SOURCE_TYPE),
     ).fetchall()
-    out: dict[int, dict[str, Any]] = {}
-    for row in rows:
-        try:
-            meta = json.loads(row[1]) if row[1] else {}
-        except (TypeError, json.JSONDecodeError):
-            meta = {}
-        out[row[0]] = meta if isinstance(meta, dict) else {}
-    return out
+    return {row[0]: (row[1], _parse_meta(row[2])) for row in rows}
 
 
 def _unique_source_id(parent_key: str, ann: ExtractedAnnotation, used: set[str]) -> str:
-    """Parent-scoped, stable source_id for an annotation child.
+    """Parent-scoped source_id for an annotation child: `<parent>:p<page>:<key>`.
 
-    Scoped by the parent because /NM values are only unique within one PDF
-    (PyMuPDF, for one, writes `fitz-A0`, `fitz-A1`, ... in every file).
+    The key is the /NM, else the geometry hash. The page is part of it because
+    /NM values are only unique within one page (PyMuPDF restarts `fitz-A0`,
+    `fitz-A1`, ... on each page, in every file). A `#n` suffix is left only for
+    a repeat within one page, such as identical strokes drawn twice.
     """
-    base = f"{parent_key}:{ann.annotation_id or ann.stroke_geometry_hash}"
+    base = f"{parent_key}:p{ann.page}:{ann.annotation_id or ann.stroke_geometry_hash}"
     source_id = base
     n = 2
     while source_id in used:
@@ -359,6 +409,7 @@ def set_source_pdf(
     - Extra rows left by older code are kept as versions and removed.
 
     A missing `url` keeps the existing row's url (e.g. a Drive link).
+    `source_origin` is set when the file changes; the same file keeps its origin.
     Does not commit. Returns the media row ID.
     """
     rows = conn.execute(
@@ -381,9 +432,13 @@ def set_source_pdf(
         )
 
     keep_id: int = rows[0][0]
+    media_dir = get_media_dir(config)
     for row in rows:
-        if row[1] != local_path:
+        # Only a real earlier file is a version. A url-only row, or one whose file
+        # is gone (so the same Drive file was downloaded again), is not.
+        if row[1] and row[1] != local_path and (media_dir / row[1]).is_file():
             _record_previous_source_pdf(conn, item_id, row)
+    changed = rows[0][1] != local_path
     if len(rows) > 1:
         extra_ids = [row[0] for row in rows[1:]]
         conn.execute(
@@ -393,10 +448,11 @@ def set_source_pdf(
     conn.execute(
         """
         UPDATE item_media SET local_path = ?, url = COALESCE(?, url), mime_type = ?,
-            alt_text = 'original PDF', position = 0, source_origin = ?
+            alt_text = 'original PDF', position = 0,
+            source_origin = CASE WHEN ? THEN ? ELSE source_origin END
         WHERE id = ?
         """,
-        (local_path, url, PDF_MIME, source_origin, keep_id),
+        (local_path, url, PDF_MIME, changed, source_origin, keep_id),
     )
     return keep_id
 
@@ -422,13 +478,7 @@ def _record_previous_source_pdf(
 
 def _load_item_metadata(conn: sqlite3.Connection, item_id: int) -> dict[str, Any]:
     row = conn.execute("SELECT metadata FROM items WHERE id = ?", (item_id,)).fetchone()
-    if not row or not row[0]:
-        return {}
-    try:
-        meta = json.loads(row[0])
-    except (TypeError, json.JSONDecodeError):
-        return {}
-    return meta if isinstance(meta, dict) else {}
+    return _parse_meta(row[0]) if row else {}
 
 
 def _update_parent_item(

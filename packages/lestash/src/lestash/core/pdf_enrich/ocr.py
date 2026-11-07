@@ -21,10 +21,9 @@ from typing import Literal
 
 from lestash.core.config import Config
 from lestash.core.database import get_connection, mark_recent_history, max_history_id
-from lestash.core.pdf_enrich.persistence import SOURCE_PDF_MEDIA_TYPE
+from lestash.core.pdf_enrich.persistence import OCR_TARGET_KINDS, SOURCE_PDF_MEDIA_TYPE
 
 OCR_EXTRACTOR_VERSION: int = 1
-OCR_TARGET_KINDS = ("margin_note", "ink_unclassified")
 ANTHROPIC_MODEL = "claude-sonnet-4-6"
 OCR_PROMPT = (
     "Transcribe the handwritten text in this image. "
