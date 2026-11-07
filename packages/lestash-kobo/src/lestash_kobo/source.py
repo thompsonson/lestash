@@ -144,6 +144,12 @@ class KoboSource(SourcePlugin):
             # A plug-in during this import adds a snapshot, and its start request merges
             # into this running unit; so import again until the newest one is in.
             while (snapshot := store.latest()) is not None:
+                if snapshot.name != store.newest_name():
+                    # Importing an older snapshot would overwrite newer data with old
+                    raise RuntimeError(
+                        f"The newest Kobo snapshot ({store.newest_name()}) is unreadable; "
+                        f"not importing the older {snapshot.name}. Remove or repair it."
+                    )
                 digest = snapshot.digest()
                 if digest == imported:
                     return

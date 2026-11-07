@@ -64,7 +64,6 @@ class Snapshot:
 @dataclass
 class SnapshotResult:
     snapshot: Snapshot
-    files: int = 0
     new_blobs: int = 0
     new_bytes: int = 0
     changed: list[str] = field(default_factory=list)
@@ -72,6 +71,10 @@ class SnapshotResult:
     removed: list[str] = field(default_factory=list)
     # PDFs whose contents went back to the first version seen: annotations wiped
     reverted: list[str] = field(default_factory=list)
+
+    @property
+    def files(self) -> int:
+        return len(self.snapshot.files)
 
 
 def device_name(raw: str) -> str:
@@ -91,7 +94,7 @@ def _decode_part(data: bytes) -> str:
         return data.decode("latin-1")
 
 
-def _sha_file(path: Path) -> str:
+def sha_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
         while chunk := f.read(CHUNK):
@@ -132,8 +135,19 @@ class KoboStore:
         return sorted(self._manifests(), key=lambda s: (s.taken_at, s.name))
 
     def latest(self) -> Snapshot | None:
-        """The newest snapshot, reading only its manifest."""
+        """The newest readable snapshot, reading only its manifest."""
         return next(self._manifests(newest_first=True), None)
+
+    def newest_name(self) -> str | None:
+        """The newest snapshot folder's name, readable or not."""
+        if not self.snapshots_dir.is_dir():
+            return None
+        names = [
+            d.name
+            for d in self.snapshots_dir.iterdir()
+            if not d.name.startswith(".") and (d / "manifest.json").is_file()
+        ]
+        return max(names, default=None)
 
     def take(
         self, source: Path | str, taken_at: datetime | None = None, verify: bool = False
@@ -200,7 +214,7 @@ class KoboStore:
             raise
 
         snap = Snapshot(name, taken_at, files, final)
-        result = SnapshotResult(snap, len(files), new_blobs, new_bytes)
+        result = SnapshotResult(snap, new_blobs, new_bytes)
         self._compare(result, history)
         return result
 
@@ -245,7 +259,7 @@ class KoboStore:
                     dst.write(chunk)
             sha = digest.hexdigest()
             dest = self.blob_path(sha)
-            if dest.exists() and not (repair and _sha_file(dest) != sha):
+            if dest.exists() and not (repair and sha_file(dest) != sha):
                 tmp.unlink()
                 return sha, False
             dest.parent.mkdir(exist_ok=True)

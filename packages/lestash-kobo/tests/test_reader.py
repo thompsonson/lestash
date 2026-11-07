@@ -42,7 +42,7 @@ def test_book_item_fields(device: Path, tmp_path: Path) -> None:
     assert book.title == "Neural Networks for Beginners"
     assert book.author == "Brian Murray"
     assert book.content == "An easy & gentle intro."
-    assert book.metadata["percent_read"] == 40
+    assert "percent_read" not in book.metadata  # progress is activity (#201)
     assert book.metadata["publisher"] == "May Reads"  # zero-width space stripped
     assert book.metadata["kind"] == "store"
 
@@ -293,3 +293,12 @@ def test_a_snapshot_taken_during_an_import_is_imported_too(
     rest = list(sync)
     assert sum(isinstance(i, SyncCheckpoint) for i in rest) == 2
     assert "bookmark:hl-new" in {getattr(i, "source_id", None) for i in rest}
+
+
+def test_a_damaged_newest_snapshot_stops_the_import(device: Path, tmp_path: Path) -> None:
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    newest = store.take(device, datetime(2026, 11, 8, tzinfo=UTC)).snapshot
+    (newest.path / "manifest.json").write_text("{")
+    with pytest.raises(RuntimeError, match="unreadable"):
+        list(KoboSource().sync({"store_dir": str(store.root)}))

@@ -4,13 +4,13 @@ Each title becomes a parent item (``source_id`` = the Kobo ContentID). Highlight
 notes, dog-ears and pen markups become its children, linked through
 ``metadata._parent_source_id``. Markup images are copied into LeStash's media folder.
 
-Columns are read by name, and missing ones read as empty, so a firmware update that
-adds or drops a column doesn't break the import.
+Columns are read by name. Optional ones read as empty when missing, so a firmware
+update that adds or drops one doesn't break the import; the keys (ContentID,
+BookmarkID, VolumeID) are required.
 """
 
 from __future__ import annotations
 
-import hashlib
 import html
 import os
 import re
@@ -25,7 +25,7 @@ from urllib.parse import quote
 
 from lestash.models.item import ItemCreate, MediaCreate
 
-from lestash_kobo.store import DB_PATH, KoboStore, Snapshot
+from lestash_kobo.store import DB_PATH, KoboStore, Snapshot, sha_file
 
 SOURCE_TYPE = "kobo"
 # Bump when the items change shape, so the next sync re-imports an unchanged snapshot
@@ -49,10 +49,6 @@ def parse_date(value: str | None) -> datetime | None:
 
 def _text(value: Any) -> str:
     return html.unescape(re.sub(r"<[^>]+>", " ", str(value or ""))).strip()
-
-
-def _sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _float(value: Any) -> float:
@@ -180,14 +176,13 @@ class KoboReader:
         author = (row.get("Attribution") or "").strip() or None
         description = _text(row.get("Description"))
         content = description or " — ".join(p for p in (title, author) if p)
+        # No reading progress here (percent read, last read): it changes with every
+        # reading session, and each change would add an item-history row. Progress
+        # is recorded as reading activity instead (#201).
         meta: dict[str, Any] = {
             "kind": kind,
             "content_id": row["ContentID"],
             "mime_type": row.get("MimeType"),
-            "percent_read": _num(row.get("___PercentRead")),
-            "read_status": _num(row.get("ReadStatus")),
-            "time_spent_reading": _num(row.get("TimeSpentReading")),
-            "last_read": row.get("DateLastRead") or None,
             "downloaded": str(row.get("IsDownloaded")).lower() == "true",
             "publisher": (row.get("Publisher") or "").strip("​ ") or None,
             "isbn": row.get("ISBN") or None,
@@ -264,7 +259,11 @@ class KoboReader:
                 continue
             rel = f"kobo/markup-{safe_id}.{ext}"
             dest = self.media_dir / rel
-            if not dest.exists() or dest.stat().st_size != entry.size or _sha(dest) != entry.sha256:
+            if (
+                not dest.exists()
+                or dest.stat().st_size != entry.size
+                or sha_file(dest) != entry.sha256
+            ):
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 fd, tmp_name = tempfile.mkstemp(prefix=f".tmp-{dest.name}-", dir=dest.parent)
                 os.close(fd)

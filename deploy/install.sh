@@ -19,7 +19,8 @@ cp "$SCRIPT_DIR/lestash-cert.timer" "$DEST/"
 
 # Deploy Kobo plug-in sync (started by udev, so nothing to enable)
 cp "$SCRIPT_DIR/lestash-kobo.service" "$DEST/"
-cp "$SCRIPT_DIR/lestash-kobo-sync.service" "$DEST/"
+cp "$SCRIPT_DIR/lestash-kobo-sync@.service" "$DEST/"
+rm -f "$DEST/lestash-kobo-sync.service"  # replaced by the template
 
 systemctl --user daemon-reload
 
