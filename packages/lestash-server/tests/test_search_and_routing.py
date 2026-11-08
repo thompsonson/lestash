@@ -59,6 +59,31 @@ def test_hybrid_keeps_keyword_hits_for_punctuated_words(client, seeded):
     assert "The Dual-State Architecture" in [i["title"] for i in resp.json()["items"]]
 
 
+def test_semantic_hits_respect_include_children(client, seeded, monkeypatch):
+    import lestash.core.embeddings as emb
+
+    with deps.get_db() as conn:
+        parent = conn.execute("SELECT id FROM items WHERE source_id = 'n-dual'").fetchone()[0]
+        child = conn.execute(
+            "INSERT INTO items (source_type, source_id, title, content, parent_id) "
+            "VALUES ('note', 'n-child', 'A child', 'x', ?)",
+            (parent,),
+        ).lastrowid
+        conn.commit()
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: [(child, 0.1), (parent, 0.2)])
+
+    def ids(include_children):
+        resp = client.get(
+            "/api/items/search",
+            params={"q": "zzz", "mode": "semantic", "include_children": include_children},
+        )
+        return [i["id"] for i in resp.json()["items"]]
+
+    assert ids(True) == [child, parent]
+    assert ids(False) == [parent]
+
+
 def test_nothing_searchable_returns_no_results(client):
     resp = client.get("/api/items/search", params={"q": "++", "mode": "keyword"})
     assert resp.status_code == 200
@@ -128,8 +153,30 @@ def test_fallback_never_serves_files_outside_the_frontend(web_client, path):
     assert resp.text == "<html>app</html>"
 
 
-def test_other_methods_on_app_paths_are_not_allowed(web_client):
-    assert web_client.post("/notes").status_code == 405
+def test_other_methods_on_app_paths_are_not_found(web_client):
+    assert web_client.post("/notes").status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("DELETE", "/api/health"), ("POST", "/api/items/search"), ("PUT", "/api/health")],
+)
+def test_known_api_path_with_the_wrong_method_is_405(web_client, client, method, path):
+    """The same answer with or without the web app served."""
+    assert web_client.request(method, path).status_code == 405
+    assert client.request(method, path).status_code == 405
+
+
+@pytest.mark.parametrize("path", ["//api/foo", "//api//nope"])
+def test_api_paths_with_extra_slashes_are_still_404(web_client, path):
+    # A full URL: httpx would read a bare "//api/foo" as host "api"
+    resp = web_client.get(f"http://testserver{path}")
+    assert resp.status_code == 404
+    assert resp.headers["content-type"].startswith("application/json")
+
+
+def test_head_on_an_app_path_gets_the_app(web_client):
+    assert web_client.head("/notes").status_code == 200
 
 
 def test_known_api_paths_still_work_with_a_frontend(web_client):

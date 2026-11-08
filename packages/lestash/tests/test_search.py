@@ -16,6 +16,8 @@ TITLES = {
     5: "Gödel, Escher, Bach",
     6: "Learning to learn",
     7: "Notes on title:case and a/b testing (draft)",
+    8: "ре\u0301бенок играет",
+    9: "हिन्दी भाषा",
 }
 
 
@@ -73,6 +75,14 @@ def _hits(conn, q: str) -> set[int]:
         ('don"t panic', {4}),  # a quote inside a word is an apostrophe
         ('don"t "a guide"', {4}),  # ...and a later phrase survives
         ("Go\u0308del", {5}),  # decomposed accent (NFD)
+        ("ре\u0301бенок", {8}),  # a combining accent NFC can't merge stays in the word
+        ("ребенок", {8}),
+        ("हिन्दी", {9}),  # marks the index splits on are split on here too
+        ("\u201creliable LLM\u201d", {1}),  # typographic quotes mark a phrase
+        ("\u201cLLM reliable\u201d", set()),
+        ('"a"b "reliable LLM"', set()),  # a stray quote doesn't steal the phrase's quote
+        ('"foo "reliable LLM"', set()),
+        ('panic "', {4}),
         ("panic AND OR guide", {4}),  # repeated operators collapse
         ("panic OR", {4}),
         ("++", set()),  # nothing searchable
@@ -98,6 +108,9 @@ def test_query_is_valid_fts5_and_matches(conn, q, found) -> None:
         ("   ", ""),
         ("--- ...", ""),
         ("OR AND NOT", ""),
+        ('"foo bar "baz qux"', '"foo"* "bar"* "baz qux"'),
+        ('say "hello" world"', '"say"* "hello" "world"*'),
+        ("\u201creliable LLM\u201d", '"reliable LLM"'),
     ],
 )
 def test_match_expression(q, match) -> None:
@@ -124,3 +137,19 @@ def test_cli_search_prints_markup_like_queries(test_db, conn, monkeypatch) -> No
     result = CliRunner().invoke(items_cli.app, ["search", "[/x]"])
     assert result.exit_code == 0, result.output
     assert "[/x]" in result.output
+
+
+def test_long_queries_stay_inside_fts5_limits(conn) -> None:
+    """FTS5 rejects expressions deeper than 256; the builder caps the terms."""
+    q = "panic " + " NOT x" * 2000
+    assert fts_match_query(q).count('"') // 2 == 64
+    conn.execute("SELECT rowid FROM items_fts WHERE items_fts MATCH ?", (fts_match_query(q),))
+
+
+def test_cli_search_reports_index_failures(test_db, conn, monkeypatch) -> None:
+    monkeypatch.setattr(items_cli.Config, "load", classmethod(lambda cls: test_db))
+    conn.execute("DROP TABLE items_fts")
+    conn.commit()
+    result = CliRunner().invoke(items_cli.app, ["search", "panic"])
+    assert result.exit_code == 1
+    assert "Search failed" in result.output

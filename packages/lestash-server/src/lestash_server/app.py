@@ -102,36 +102,32 @@ def create_app(static_dir: str | None = None) -> FastAPI:
             count = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
         return HealthResponse(version=__version__, items=count)
 
-    # Serve static frontend files with SPA fallback
+    # Serve the frontend: static files, and index.html for client-side routes. This runs
+    # as a 404 handler rather than a catch-all route, so routing is untouched: a known API
+    # path called with the wrong method stays a 405, and an unknown /api path stays a JSON
+    # 404 for every method, never HTTP 200 with the app page.
     if static_dir:
         from pathlib import Path
 
-        from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+        from fastapi.exception_handlers import http_exception_handler
+        from fastapi.responses import FileResponse
+        from starlette.exceptions import HTTPException as StarletteHTTPException
 
         static_root = Path(static_dir).resolve()
         index_path = static_root / "index.html"
 
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-        @app.api_route(
-            "/{path:path}",
-            methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            include_in_schema=False,
-        )
-        def spa_fallback(path: str, request: Request):
-            """Serve static files or index.html for SPA routing.
-
-            An unknown /api path is a 404 for every method, not the app page: a client
-            calling a missing endpoint must see an error, not HTTP 200 with HTML.
-            """
-            if path == "api" or path.startswith("api/"):
-                return JSONResponse({"detail": "Not Found"}, status_code=404)
-            if request.method not in ("GET", "HEAD"):
-                return JSONResponse({"detail": "Method Not Allowed"}, status_code=405)
+        @app.exception_handler(StarletteHTTPException)
+        async def spa_fallback(request: Request, exc: StarletteHTTPException):
+            path = request.url.path.lstrip("/")  # "//api/x" is still an API path
+            is_api = path == "api" or path.startswith("api/")
+            if exc.status_code != 404 or is_api or request.method not in ("GET", "HEAD"):
+                return await http_exception_handler(request, exc)
             # Resolve first: a decoded "../" must not reach outside the static folder
             file_path = (static_root / path).resolve()
             if file_path.is_relative_to(static_root) and file_path.is_file():
                 return FileResponse(file_path)
-            return HTMLResponse(index_path.read_text())
+            return FileResponse(index_path, media_type="text/html")
 
     return app

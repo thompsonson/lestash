@@ -17,7 +17,7 @@ from lestash.core.database import (
 )
 from lestash.core.embeddings import re_embed_item
 from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
-from lestash.core.search import fts_match_query
+from lestash.core.search import keyword_search
 from lestash.models.item import Item
 
 from lestash_server.deps import get_db
@@ -197,43 +197,27 @@ def search_items(
     Supports "phrase search", prefix* and AND, OR, NOT; other punctuation is plain text
     (see lestash.core.search).
     """
-    fts_query = fts_match_query(q)
-
     with get_db() as conn:
         fts_results: dict[int, dict] = {}
         vec_results: dict[int, float] = {}
 
         # FTS5 keyword search
-        if mode in ("keyword", "hybrid") and fts_query:
-            query = """
-                SELECT items.*,
-                       snippet(items_fts, 1, '<<', '>>', '...', 32) as search_snippet
-                FROM items
-                JOIN items_fts ON items.id = items_fts.rowid
-                WHERE items_fts MATCH ?
-            """
-            params: list = [fts_query]
-            if not include_children:
-                query += " AND items.parent_id IS NULL"
-            query += " ORDER BY rank LIMIT ?"
-            params.append(limit * 2)
-
+        if mode in ("keyword", "hybrid"):
             try:
-                rows = conn.execute(query, params).fetchall()
+                rows = keyword_search(
+                    conn, q, limit * 2, top_level_only=not include_children, snippets=True
+                )
                 for rank, row in enumerate(rows):
-                    snippet = row["search_snippet"]
                     fts_results[row["id"]] = {
                         "row": row,
                         "rank": rank,
-                        "snippet": snippet,
+                        "snippet": row["search_snippet"],
                     }
             except sqlite3.Error:
-                # fts_match_query leaves no syntax errors, so this is the index or the
+                # keyword_search leaves no syntax errors, so this is the index or the
                 # database (e.g. a damaged items_fts). Log it; hybrid still returns the
                 # semantic results, keyword mode reports it.
-                logger.warning(
-                    "Keyword search failed for %r (MATCH %r)", q, fts_query, exc_info=True
-                )
+                logger.warning("Keyword search failed for %r", q, exc_info=True)
                 if mode == "keyword":
                     raise HTTPException(
                         status_code=500, detail="Keyword search failed; see the server log"
@@ -253,7 +237,18 @@ def search_items(
                 ensure_vec_table(conn)
                 query_emb = embed_text(q)
                 similar = search_similar(conn, query_emb, limit=limit * 2)
-                for rank, (item_id, _distance) in enumerate(similar):
+                ids = [item_id for item_id, _distance in similar]
+                if not include_children and ids:
+                    marks = ",".join("?" * len(ids))
+                    top = {
+                        r[0]
+                        for r in conn.execute(
+                            f"SELECT id FROM items WHERE id IN ({marks}) AND parent_id IS NULL",
+                            ids,
+                        )
+                    }
+                    ids = [i for i in ids if i in top]
+                for rank, item_id in enumerate(ids):
                     vec_results[item_id] = rank
             except Exception:
                 logger.warning("Vector search failed, falling back to keyword", exc_info=True)

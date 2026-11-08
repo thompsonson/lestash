@@ -2,6 +2,7 @@
 
 import json
 import re
+import sqlite3
 from pathlib import Path
 from typing import Annotated
 
@@ -18,7 +19,7 @@ from lestash.core.enrichment import (
     get_preview,
     resolve_author,
 )
-from lestash.core.search import fts_match_query
+from lestash.core.search import keyword_search
 from lestash.models.item import Item
 
 
@@ -161,21 +162,13 @@ def search_items(
     Supports "phrase search", prefix* and AND, OR, NOT; other punctuation is plain text.
     """
     config = Config.load()
-    match = fts_match_query(query)
 
     with get_connection(config) as conn:
-        rows = []
-        if match:
-            rows = conn.execute(
-                """
-                SELECT items.* FROM items
-                JOIN items_fts ON items.id = items_fts.rowid
-                WHERE items_fts MATCH ?
-                ORDER BY rank
-                LIMIT ?
-                """,
-                (match, limit),
-            ).fetchall()
+        try:
+            rows = keyword_search(conn, query, limit)
+        except sqlite3.Error as e:
+            console.print(f"[red]Search failed: {escape(str(e))}[/red]")
+            raise typer.Exit(1) from None
 
         if not rows:
             console.print(f"[dim]No items found matching '{escape(query)}'.[/dim]")

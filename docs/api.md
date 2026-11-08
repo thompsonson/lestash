@@ -17,10 +17,10 @@ No API key required. Access is controlled via network (Tailscale) and CORS:
 
 ### `GET /api/health`
 
-Server health check.
+Server health check. `version` is the installed `lestash-server` release.
 
 ```json
-{ "status": "ok", "version": "1.41.0", "items": 21536 }
+{ "status": "ok", "version": "1.70.0", "items": 45555 }
 ```
 
 ---
@@ -57,12 +57,26 @@ Search items using keyword (FTS5), semantic (vector), or hybrid mode.
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `q` | string | **required** | Search query (supports FTS5 syntax: AND, OR, NOT, "phrase", prefix*) |
+| `q` | string | **required** | Search query; see the syntax below |
 | `limit` | int | 20 | Max results (1–100) |
 | `include_children` | bool | true | Include child items |
 | `mode` | string | hybrid | `keyword`, `semantic`, or `hybrid` |
 
 Hybrid mode combines keyword + semantic results via Reciprocal Rank Fusion (k=60).
+
+**Keyword syntax** (`lestash.core.search`, shared with `lestash items search`):
+
+- `"exact phrase"`, `word*` prefix, and `AND`, `OR`, `NOT` in upper case.
+- Every word also matches as a prefix: `learn` finds `learning`.
+- All other punctuation is plain text: `Dual-State`, `v2.0` and `don't` match the words as written.
+  - Characters the index drops, such as `+`, are dropped from the query too: `C++` searches `C*`.
+- FTS5 column filters (`title:x`), `NEAR` and `^` are not supported; they are searched as words.
+- `NOT x` on its own, or `a OR NOT b`, can't be expressed; the excluded term is dropped, never searched.
+- A query with nothing searchable (`++`) returns no keyword results.
+
+**Errors:** `422` without `q`. In `keyword` mode, `500` if the search index fails; `hybrid` then returns the semantic results and logs the failure.
+
+Unknown paths under `/api` return a JSON `404` for every method, even when the server also serves the web app.
 
 ---
 
