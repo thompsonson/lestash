@@ -28,10 +28,9 @@ def _lestash_test_environment(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
     home = tmp_path_factory.mktemp("home")
-    # Read before HOME moves: the real model cache
-    monkeypatch.setenv(
-        "HF_HOME", os.environ.get("HF_HOME") or str(Path.home() / ".cache/huggingface")
-    )
+    # Read before HOME moves: the real model cache, where huggingface_hub would look
+    cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    monkeypatch.setenv("HF_HOME", os.environ.get("HF_HOME") or str(Path(cache) / "huggingface"))
     monkeypatch.setenv("HOME", str(home))
     yield
     default_db = home / ".config" / "lestash" / "lestash.db"
