@@ -18,3 +18,7 @@ wheels/
 app/node_modules/
 app/src-tauri/target/
 app/src-tauri/gen/schemas/
+
+# Ad hoc test scripts (scripts/adhoc): npm packages and screenshot output
+scripts/adhoc/node_modules/
+screenshots-*/
