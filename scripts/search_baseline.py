@@ -30,7 +30,9 @@ DEFAULT_QUERIES = Path(__file__).resolve().parent.parent / "docs/search-baseline
 
 KINDS = ("title", "topic", "paraphrase", "deep")
 FIELDS = {"q", "kind", "expect"}
-_FTS_BREAKERS = re.compile(r"[-:,]")
+# Anything but letters, digits and spaces: the server adds "*" to each word and passes it
+# to FTS5, where "-", ":", ",", ".", "'", "(" or "/" in a word is a syntax error
+_FTS_BREAKERS = re.compile(r"[^\w\s]")
 
 
 def load_queries(path: Path) -> list[dict[str, Any]]:
@@ -46,7 +48,7 @@ def load_queries(path: Path) -> list[dict[str, Any]]:
             else "",
             f"unknown field(s) {sorted(set(query) - FIELDS)}" if set(query) - FIELDS else "",
             # The server passes these to FTS5, where they fail the keyword search
-            'q must be words only, without "-", ":" or ","'
+            "q must be words only: letters, digits and spaces"
             if _FTS_BREAKERS.search(str(query.get("q", "")))
             else "",
         ]

@@ -10,8 +10,8 @@
 #   deep        text more than 500 characters into the item; semantic search embeds
 #               only the title and first 500 characters, so only keyword search sees it
 #
-# Use words only, no "-", ":" or ",": the server passes them to FTS5, which reads
-# "Dual-State" as column "State" and fails (hybrid then quietly runs semantic only).
+# Use letters, digits and spaces only. The server passes punctuation to FTS5, which
+# reads "Dual-State" as column "State" and fails; hybrid then runs semantic only.
 #
 # Run: uv run python scripts/search_baseline.py --url https://pop-mini.monkey-ladon.ts.net:8444
 

@@ -157,10 +157,11 @@ class Config(BaseModel):
         data = self.model_dump()
         try:
             text = tomli_w.dumps(data)
-            reloaded = type(self)(**tomllib.loads(text)).model_dump()
+            reloaded = tomli_w.dumps(type(self)(**tomllib.loads(text)).model_dump())
         except Exception as e:
             raise ValueError(f"not saved: the config would not load again ({e!r})") from e
-        if reloaded != data:
+        # Compared as text, so a nan setting (nan != nan) doesn't block every save
+        if reloaded != text:
             raise ValueError("not saved: the config would not load back the same")
         _replace_file(get_config_path(), text)
 

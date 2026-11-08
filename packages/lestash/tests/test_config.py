@@ -196,6 +196,14 @@ def test_save_round_trips_values_the_old_toml_library_broke(
     assert Config.load().get_plugin_config("kobo") == {"value": value}
 
 
+def test_a_nan_setting_does_not_block_saving(config_file: Path) -> None:
+    import math
+
+    config_file.write_text("[kobo]\nthreshold = nan\n")
+    assert _set("general.database_path", "/tmp/x.db").exit_code == 0
+    assert math.isnan(Config.load().get_plugin_config("kobo")["threshold"])
+
+
 def test_save_refuses_a_config_that_would_not_load_again(config_file: Path) -> None:
     config_file.write_text('[kobo]\nstore_dir = "~/kobo"\n')
     before = config_file.read_text()

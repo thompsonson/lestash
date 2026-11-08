@@ -82,6 +82,7 @@ def test_the_committed_queries_parse() -> None:
         ('q = "x"\nkind = "title"\nexpect = ["no-colon"]', "expect must list"),
         ('q = "Dual-State"\nkind = "title"\nexpect = ["a:1"]', "words only"),
         ('q = "Markov property: x"\nkind = "deep"\nexpect = ["a:1"]', "words only"),
+        ('q = "what\'s new in v2.0"\nkind = "topic"\nexpect = ["a:1"]', "words only"),
     ],
 )
 def test_a_malformed_query_is_refused(tmp_path: Path, query: str, problem: str) -> None:
