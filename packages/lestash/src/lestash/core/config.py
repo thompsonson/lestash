@@ -1,10 +1,11 @@
 """Configuration management for Le Stash."""
 
+import copy
 from pathlib import Path
 from typing import Any, Literal
 
 import toml
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 def get_config_dir() -> Path:
@@ -73,8 +74,21 @@ class LoggingConfig(BaseModel):
             self.file_path = str(get_log_path())
 
 
+def as_bool(value: object) -> bool:
+    """Read a config switch. Older ``lestash config set`` stored strings, so "false" is False."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
 class Config(BaseModel):
-    """Application configuration."""
+    """Application configuration.
+
+    Besides ``[general]`` and ``[logging]``, each plugin reads its own table, e.g.
+    ``[kobo]``; those are kept as they are on load and save (#208).
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     general: GeneralConfig = GeneralConfig()
     logging: LoggingConfig = LoggingConfig()
@@ -96,9 +110,12 @@ class Config(BaseModel):
             toml.dump(self.model_dump(), f)
 
     def get_plugin_config(self, plugin_name: str) -> dict[str, Any]:
-        """Get configuration for a specific plugin."""
-        data = self.model_dump()
-        return data.get(plugin_name, {})
+        """The plugin's ``[plugin_name]`` table, or ``{}`` when it has none.
+
+        A copy, so a plugin changing it can't change the config.
+        """
+        section = (self.model_extra or {}).get(plugin_name)
+        return copy.deepcopy(section) if isinstance(section, dict) else {}
 
 
 def init_config() -> Config:

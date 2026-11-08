@@ -1,9 +1,11 @@
 """Config commands for Le Stash CLI."""
 
-from typing import Annotated
+import tomllib
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from lestash.core.config import Config, get_config_path, init_config
 
@@ -27,12 +29,13 @@ def show_config() -> None:
 
     data = config.model_dump()
     for section, values in data.items():
-        console.print(f"[bold][{section}][/bold]")
+        # escape(): Rich would read "[general]" as a style tag and drop it
+        console.print(f"[bold]{escape(f'[{section}]')}[/bold]")
         if isinstance(values, dict):
             for key, value in values.items():
-                console.print(f"  {key} = {value}")
+                console.print(f"  {key} = {escape(str(value))}")
         else:
-            console.print(f"  {values}")
+            console.print(f"  {escape(str(values))}")
         console.print()
 
 
@@ -52,12 +55,37 @@ def init_config_cmd(
     console.print(f"[green]Created config at {config_path}[/green]")
 
 
+def parse_value(raw: str) -> Any:
+    """A TOML value when ``raw`` is one (``true``, ``5``, ``["a"]``, ``"quoted"``), else ``raw``.
+
+    So ``lestash config set kobo.include_store_titles false`` stores a boolean, not "false".
+    Dates and tables stay text: no setting takes one.
+    """
+    try:
+        value = tomllib.loads(f"value = {raw}")["value"]
+    except tomllib.TOMLDecodeError:
+        return raw
+    return value if isinstance(value, bool | int | float | str | list) else raw
+
+
+def _known_sections() -> dict[str, set[str] | None]:
+    """Section -> its keys; None for a source plugin's section, whose keys the plugin owns."""
+    from lestash.plugins.loader import load_plugins
+
+    sections: dict[str, set[str] | None] = {
+        name: set(type(model).model_fields) for name, model in Config()
+    }
+    for name in load_plugins():
+        sections.setdefault(name, None)
+    return sections
+
+
 @app.command("set")
 def set_config(
     key: Annotated[str, typer.Argument(help="Config key (e.g., general.database_path)")],
-    value: Annotated[str, typer.Argument(help="Value to set")],
+    value: Annotated[str, typer.Argument(help='Value: true, 5, ["a", "b"] or text')],
 ) -> None:
-    """Set a configuration value."""
+    """Set a value in [general], [logging] or a source plugin's section."""
     config = Config.load()
 
     parts = key.split(".")
@@ -67,19 +95,30 @@ def set_config(
 
     section, setting = parts
 
-    # Get current config as dict
+    # Refuse typos, which would otherwise be saved where nothing reads them
+    known = _known_sections()
+    if section not in known:
+        console.print(f"[red]Unknown section: {section}[/red]")
+        console.print(f"[dim]Known: {', '.join(sorted(known))}[/dim]")
+        raise typer.Exit(1)
+    allowed = known[section]
+    if allowed is not None and setting not in allowed:
+        console.print(f"[red]Unknown key in {escape(f'[{section}]')}: {setting}[/red]")
+        console.print(f"[dim]Known: {', '.join(sorted(allowed))}[/dim]")
+        raise typer.Exit(1)
+
     data = config.model_dump()
-
-    if section not in data:
-        data[section] = {}
-
-    data[section][setting] = value
+    current = data.get(section)
+    if not isinstance(current, dict):
+        current = data[section] = {}
+    parsed = parse_value(value)
+    current[setting] = parsed
 
     # Save updated config
     try:
         updated_config = Config(**data)
         updated_config.save()
-        console.print(f"[green]Set {key} = {value}[/green]")
+        console.print(f"[green]Set {key} = {parsed!r}[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1) from None

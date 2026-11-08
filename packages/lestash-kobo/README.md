@@ -48,4 +48,4 @@ store_dir = "~/.local/share/lestash/kobo"   # default
 include_store_titles = false                # default
 ```
 
-These settings take effect once #208 is fixed: today LeStash drops plugin sections.
+Or set one from the command line: `lestash config set kobo.include_store_titles true`.

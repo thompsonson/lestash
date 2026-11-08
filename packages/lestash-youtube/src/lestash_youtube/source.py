@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Annotated, Any
 
 import typer
+from lestash.core.config import as_bool
 from lestash.core.database import mark_recent_history, max_history_id
 from lestash.core.google_auth import (
     get_client_secrets_path,
@@ -820,7 +821,7 @@ class YouTubeSource(SourcePlugin):
             raise RuntimeError(f"YouTube auth failed: {e}") from e
 
         # Sync liked videos
-        if config.get("sync_likes", True):
+        if as_bool(config.get("sync_likes", True)):
             for video in get_liked_videos(youtube):
                 try:
                     yield video_to_item(video, "liked")
@@ -828,7 +829,7 @@ class YouTubeSource(SourcePlugin):
                     logger.warning(f"Failed to process video {video.get('id')}: {e}")
 
         # Attempt watch history
-        if config.get("sync_history", True):
+        if as_bool(config.get("sync_history", True)):
             for video in get_watch_history(youtube):
                 try:
                     yield video_to_item(video, "history")
@@ -836,7 +837,7 @@ class YouTubeSource(SourcePlugin):
                     logger.warning(f"Failed to process video {video.get('id')}: {e}")
 
         # Sync subscriptions
-        if config.get("sync_subscriptions", False):
+        if as_bool(config.get("sync_subscriptions", False)):
             for sub in get_subscriptions(youtube):
                 try:
                     yield subscription_to_item(sub)

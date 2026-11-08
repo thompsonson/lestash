@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from lestash.core.config import Config
+from lestash.core.config import Config, as_bool
 from lestash.core.database import get_checkpoints, get_connection, get_media_dir
 from lestash.core.logging import get_plugin_logger
 from lestash.models.item import ItemCreate
@@ -33,13 +33,6 @@ logger = get_plugin_logger("kobo")
 
 DEFAULT_MOUNT = Path("/media/kobo")
 STATE_KEY = "imported"
-
-
-def flag(value: object) -> bool:
-    """A config switch. ``lestash config set`` stores strings, so "false" must be False."""
-    if isinstance(value, str):
-        return value.strip().lower() in ("1", "true", "yes", "on")
-    return bool(value)
 
 
 def parse_taken_at(value: str) -> datetime:
@@ -142,7 +135,7 @@ class KoboSource(SourcePlugin):
 
     def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:
         store = _store(config)
-        include_store = flag(config.get("include_store_titles"))
+        include_store = as_bool(config.get("include_store_titles"))
         if not store.root.is_dir():
             logger.info("No Kobo snapshots yet in %s; nothing to import", store.root)
             return
