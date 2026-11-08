@@ -8,7 +8,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
@@ -34,7 +34,7 @@ COMMIT_EVERY = 500
 
 @dataclass(frozen=True)
 class SyncCounts:
-    """What a sync wrote: new items, changed items, and items stored again unchanged."""
+    """What a sync wrote: new items, changed items, and items yielded again unchanged."""
 
     added: int = 0
     updated: int = 0
@@ -45,9 +45,33 @@ class SyncCounts:
         return self.added + self.updated + self.unchanged
 
 
-# What _store's upsert writes, so what decides whether an item changed. created_at is
-# kept on update, so it isn't compared. Keep in step with the upsert in _store.
-_COMPARED = ("url", "title", "content", "author", "is_own_content", "metadata", "parent_id")
+# Insert an item, or update its stored row only when a column would change, so an
+# unchanged re-import writes nothing: no FTS reindex and no item_history row. A plugin
+# naming no parent keeps one set earlier (e.g. by a resolver). created_at is kept.
+# RETURNING gives the id of a row written; none comes back for an unchanged one.
+_UPSERT = """
+    INSERT INTO items (
+        source_type, source_id, url, title, content,
+        author, created_at, is_own_content, metadata, parent_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(source_type, source_id) DO UPDATE SET
+        url = excluded.url,
+        title = excluded.title,
+        content = excluded.content,
+        author = excluded.author,
+        is_own_content = excluded.is_own_content,
+        metadata = excluded.metadata,
+        parent_id = COALESCE(excluded.parent_id, items.parent_id)
+    WHERE (
+        items.url, items.title, items.content, items.author,
+        items.is_own_content, items.metadata, items.parent_id
+    ) IS NOT (
+        excluded.url, excluded.title, excluded.content, excluded.author,
+        excluded.is_own_content, excluded.metadata,
+        COALESCE(excluded.parent_id, items.parent_id)
+    )
+    RETURNING id
+"""
 
 
 class SyncStore:
@@ -58,16 +82,19 @@ class SyncStore:
 
     def __init__(self, conn: sqlite3.Connection, source: str) -> None:
         self.conn, self.source = conn, source
-        self.counts = SyncCounts()
+        self.added = self.updated = self.unchanged = 0
         self.committed = SyncCounts()  # counts as of the last commit
         self.source_types: set[str] = set()
         self.linked = 0
-        self._counted: set[tuple[str, str | None]] = set()
+
+    @property
+    def counts(self) -> SyncCounts:
+        return SyncCounts(self.added, self.updated, self.unchanged)
 
     @property
     def items(self) -> int:
-        """Items written, new, changed or not; each counted once per run."""
-        return self.counts.total
+        """Items stored: new, changed or unchanged. One yielded twice counts twice."""
+        return self.added + self.updated + self.unchanged
 
     def run(self, items: Iterable[ItemCreate | SyncCheckpoint]) -> None:
         """Store every item, then link children to parents yielded later.
@@ -107,26 +134,12 @@ class SyncStore:
         resolve_parent_id(self.conn, item)
         if not merge_with_stored(self.conn, item):
             return False
-        metadata_json = json.dumps(item.metadata) if item.metadata else None
-        before = self._stored_columns(item)
-        (item_id,) = self.conn.execute(
-            """
-            INSERT INTO items (
-                source_type, source_id, url, title, content,
-                author, created_at, is_own_content, metadata, parent_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source_type, source_id) DO UPDATE SET
-                url = excluded.url,
-                title = excluded.title,
-                content = excluded.content,
-                author = excluded.author,
-                is_own_content = excluded.is_own_content,
-                metadata = excluded.metadata,
-                -- Keep a parent set earlier (e.g. by a resolver) when the
-                -- plugin doesn't name one
-                parent_id = COALESCE(excluded.parent_id, items.parent_id)
-            RETURNING id
-            """,
+        stored = self.conn.execute(
+            "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+            (item.source_type, item.source_id),
+        ).fetchone()
+        written = self.conn.execute(
+            _UPSERT,
             (
                 item.source_type,
                 item.source_id,
@@ -136,10 +149,11 @@ class SyncStore:
                 item.author,
                 item.created_at,
                 item.is_own_content,
-                metadata_json,
+                json.dumps(item.metadata) if item.metadata else None,
                 item.parent_id,
             ),
         ).fetchone()
+        item_id = written[0] if written else stored[0]
         self.source_types.add(item.source_type)
         changes_before_media = self.conn.total_changes
         try:
@@ -158,60 +172,13 @@ class SyncStore:
                 )
         finally:
             # Counted even when a media insert fails: run() commits the item row
-            new_media = self.conn.total_changes > changes_before_media
-            self._count(item, before, new_media)
+            if stored is None:
+                self.added += 1
+            elif written or self.conn.total_changes > changes_before_media:
+                self.updated += 1  # a column, or new media
+            else:
+                self.unchanged += 1
         return True
-
-    def _stored_columns(self, item: ItemCreate) -> dict[str, object] | None:
-        """The stored row's compared columns, normalised; None for a new item."""
-        row = self.conn.execute(
-            f"SELECT {', '.join(_COMPARED)} FROM items WHERE source_type = ? AND source_id = ?",
-            (item.source_type, item.source_id),
-        ).fetchone()
-        if row is None:
-            return None
-        stored = dict(zip(_COMPARED, row, strict=True))
-        stored["is_own_content"] = bool(stored["is_own_content"])
-        stored["metadata"] = _parsed_json(stored["metadata"])
-        return stored
-
-    def _count(self, item: ItemCreate, before: dict[str, object] | None, new_media: bool) -> None:
-        """Count the item as added, updated (a column or new media changed) or unchanged.
-
-        An item yielded twice in one run counts once, by its first write.
-        """
-        key = (item.source_type, item.source_id)
-        if key in self._counted:
-            return
-        self._counted.add(key)
-        c = self.counts
-        if before is None:
-            self.counts = replace(c, added=c.added + 1)
-            return
-        after = {
-            "url": item.url,
-            "title": item.title,
-            "content": item.content,
-            "author": item.author,
-            "is_own_content": bool(item.is_own_content),
-            "metadata": item.metadata or None,
-            # The upsert keeps a stored parent when the plugin names none
-            "parent_id": item.parent_id if item.parent_id is not None else before["parent_id"],
-        }
-        if new_media or after != before:
-            self.counts = replace(c, updated=c.updated + 1)
-        else:
-            self.counts = replace(c, unchanged=c.unchanged + 1)
-
-
-def _parsed_json(text: object) -> object:
-    """Stored metadata as a value, so key order doesn't count as a change."""
-    if not isinstance(text, str) or not text:
-        return None
-    try:
-        return json.loads(text) or None
-    except ValueError:
-        return text
 
 
 INTERRUPTED = "interrupted"

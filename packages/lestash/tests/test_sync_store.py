@@ -90,17 +90,40 @@ def _with_metadata(source_id: str, metadata: dict) -> ItemCreate:
     return ItemCreate(source_type="audible", source_id=source_id, content="x", metadata=metadata)
 
 
-def test_metadata_in_another_key_order_is_not_a_change(test_db, monkeypatch) -> None:
-    first = _with_metadata("a", {"times": [1, 2], "kind": "book"})
-    again = _with_metadata("a", {"kind": "book", "times": [1, 2]})
-    assert _sync(test_db, monkeypatch, _Yields(first)) == 0
-    assert _sync(test_db, monkeypatch, _Yields(again)) == 0
+def _history_rows(test_db) -> int:
+    with get_connection(test_db) as conn:
+        return conn.execute("SELECT COUNT(*) FROM item_history").fetchone()[0]
+
+
+def test_an_unchanged_item_is_not_written_again(test_db, monkeypatch) -> None:
+    item = _with_metadata("a", {"times": [1, 2], "kind": "book"})
+    assert _sync(test_db, monkeypatch, _Yields(item)) == 0
+    history = _history_rows(test_db)
+    assert _sync(test_db, monkeypatch, _Yields(item)) == 0
     assert _last_counts(test_db) == (0, 0)
+    assert _history_rows(test_db) == history  # no history row for a no-op re-import
 
 
-def test_an_item_yielded_twice_in_a_run_counts_once(test_db, monkeypatch) -> None:
+def test_a_changed_item_is_counted_as_its_history_records_it(test_db, monkeypatch) -> None:
+    """The count and item_history agree: both compare the stored text."""
+    assert _sync(test_db, monkeypatch, _Yields(_with_metadata("a", {"x": 1, "y": 2}))) == 0
+    history = _history_rows(test_db)
+    assert _sync(test_db, monkeypatch, _Yields(_with_metadata("a", {"y": 2, "x": 1}))) == 0
+    assert _last_counts(test_db) == (0, 1)
+    assert _history_rows(test_db) == history + 1
+
+
+def test_an_item_yielded_twice_in_a_run_is_new_once(test_db, monkeypatch) -> None:
     assert _sync(test_db, monkeypatch, _Yields(_item("a"), _item("a"))) == 0
-    assert _last_counts(test_db) == (1, 0)
+    assert _last_counts(test_db) == (1, 0)  # the second write changed nothing
+
+
+def test_items_without_a_source_id_each_count_as_new(test_db) -> None:
+    items = [ItemCreate(source_type="note", content=f"n{i}") for i in range(3)]
+    with get_connection(test_db) as conn:
+        store = core_sync.SyncStore(conn, "note")
+        store.run(iter(items))
+    assert store.counts == core_sync.SyncCounts(added=3)
 
 
 def test_an_item_whose_media_fails_is_still_counted(test_db) -> None:

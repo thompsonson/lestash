@@ -27,11 +27,25 @@ MODES = ("keyword", "semantic", "hybrid")
 DEFAULT_QUERIES = Path(__file__).resolve().parent.parent / "docs/search-baseline/queries.toml"
 
 
+KINDS = ("title", "topic", "paraphrase", "deep")
+FIELDS = {"q", "kind", "expect"}
+
+
 def load_queries(path: Path) -> list[dict[str, Any]]:
+    """The queries, each with q, a known kind and a non-empty expect list."""
     queries = tomllib.loads(path.read_text())["query"]
     for query in queries:
-        if not query.get("q") or not isinstance(query.get("expect", []), list):
-            raise SystemExit(f"{path}: each [[query]] needs q and an expect list: {query}")
+        expect = query.get("expect")
+        problems = [
+            "no q" if not query.get("q") else "",
+            f"kind not one of {', '.join(KINDS)}" if query.get("kind") not in KINDS else "",
+            "expect must list source_type:source_id keys"
+            if not (isinstance(expect, list) and expect and all(":" in k for k in expect))
+            else "",
+            f"unknown field(s) {sorted(set(query) - FIELDS)}" if set(query) - FIELDS else "",
+        ]
+        if any(problems):
+            raise SystemExit(f"{path}: {'; '.join(p for p in problems if p)}: {query}")
     return queries
 
 
@@ -64,8 +78,9 @@ def run(base_url: str, queries: list[dict[str, Any]], limit: int, timeout: float
             try:
                 entry[mode] = search(base_url, query["q"], mode, limit, timeout)
             # OSError covers URLError, timeouts and dropped connections; HTTPException
-            # covers IncompleteRead. One failed cell must not lose the whole recording.
-            except (OSError, http.client.HTTPException, KeyError, ValueError) as e:
+            # covers IncompleteRead; the rest, a response of an unexpected shape. One
+            # failed cell must not lose the whole recording.
+            except (OSError, http.client.HTTPException, KeyError, ValueError, TypeError) as e:
                 entry[mode] = {"error": str(e)}
         results.append(entry)
     return {

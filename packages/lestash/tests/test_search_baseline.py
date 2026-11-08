@@ -73,6 +73,34 @@ def test_the_committed_queries_parse() -> None:
     assert all(q["expect"] and q["kind"] in kinds for q in queries)
 
 
+@pytest.mark.parametrize(
+    ("query", "problem"),
+    [
+        ('q = "x"\nkind = "titel"\nexpect = ["arxiv:1"]', "kind not one of"),
+        ('q = "x"\nkind = "title"\nexpects = ["arxiv:1"]', "expect must list"),
+        ('q = "x"\nkind = "title"\nexpect = []', "expect must list"),
+        ('q = "x"\nkind = "title"\nexpect = ["no-colon"]', "expect must list"),
+    ],
+)
+def test_a_malformed_query_is_refused(tmp_path: Path, query: str, problem: str) -> None:
+    path = tmp_path / "queries.toml"
+    path.write_text(f"[[query]]\n{query}\n")
+    with pytest.raises(SystemExit, match=problem):
+        baseline.load_queries(path)
+
+
+def test_an_odd_response_is_one_error_cell(tmp_path: Path, monkeypatch) -> None:
+    def odd(base_url, q, mode, limit, timeout):
+        if mode == "hybrid":
+            raise TypeError("'NoneType' object is not iterable")  # {"items": null}
+        return []
+
+    monkeypatch.setattr(baseline, "search", odd)
+    report = baseline.run("http://x", [{"q": "a", "kind": "title", "expect": ["a:1"]}], 10, 1)
+    entry = report["results"][0]
+    assert entry["keyword"] == [] and "error" in entry["hybrid"]
+
+
 def test_it_records_each_mode_and_where_expected_items_rank(server: str, tmp_path: Path) -> None:
     queries = tmp_path / "queries.toml"
     queries.write_text(

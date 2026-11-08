@@ -18,7 +18,8 @@ def config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "config.toml"
     monkeypatch.setattr(core_config, "get_config_path", lambda: path)
     monkeypatch.setattr(config_cli, "get_config_path", lambda: path)
-    monkeypatch.setattr(loader, "load_plugins", lambda: {"kobo": object(), "arxiv": object()})
+    plugins = {"kobo": object(), "arxiv": object(), "linkedin": object()}
+    monkeypatch.setattr(loader, "load_plugins", lambda: plugins)
     return path
 
 
@@ -100,8 +101,13 @@ def test_config_set_stores_typed_plugin_values(config_file: Path) -> None:
     [
         ("true", True),
         ("false", False),
+        ("True", True),
+        ("FALSE", False),
         ("5", 5),
+        ("0", 0),
         ("-3", -3),
+        ("007", "007"),  # an ID keeps its leading zeros
+        ("+4412345", "+4412345"),
         ('["LLM agents", "ontology"]', ["LLM agents", "ontology"]),
         ('"007"', "007"),
         ("LLM agents", "LLM agents"),
@@ -123,6 +129,24 @@ def test_config_set_refuses_a_bare_word_for_a_list_setting(config_file: Path) ->
     assert result.exit_code == 1
     assert 'give it as ["a", "b"]' in result.output
     assert Config.load().get_plugin_config("arxiv") == {"keywords": ["ontology"]}
+
+
+def test_config_set_refuses_a_value_the_config_could_not_load_again(config_file: Path) -> None:
+    config_file.write_text('[kobo]\nstore_dir = "~/kobo"\n')
+    before = config_file.read_text()
+    result = _set("arxiv.keywords", '["agents", 2026]')  # TOML 1.0 allows it; `toml` can't
+    assert result.exit_code == 1
+    assert "would not load again" in result.output
+    assert config_file.read_text() == before
+    assert Config.load().get_plugin_config("kobo") == {"store_dir": "~/kobo"}
+
+
+def test_config_set_refuses_to_replace_a_table(config_file: Path) -> None:
+    config_file.write_text("[linkedin.feed_preview]\nenabled = true\n")
+    result = _set("linkedin.feed_preview", "false")
+    assert result.exit_code == 1
+    assert "is a table of settings" in result.output
+    assert Config.load().get_plugin_config("linkedin") == {"feed_preview": {"enabled": True}}
 
 
 def test_config_set_prints_brackets_in_values(config_file: Path) -> None:

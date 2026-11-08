@@ -103,11 +103,24 @@ class Config(BaseModel):
         return cls()
 
     def save(self) -> None:
-        """Save configuration to file."""
+        """Save configuration to file, only if ``load`` can read it back.
+
+        Raises:
+            ValueError: the config can't be written as TOML that ``load`` reads, e.g. a
+                list mixing text and numbers. The file is left as it was.
+        """
+        try:
+            text = toml.dumps(self.model_dump())
+            type(self)(**toml.loads(text))
+        # The toml library fails in several ways on what it can't write (e.g. a mixed
+        # list raises IndexError), so any error here means "would not load"
+        except Exception as e:
+            raise ValueError(f"not saved: the config would not load again ({e!r})") from e
         config_path = get_config_path()
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(config_path, "w") as f:
-            toml.dump(self.model_dump(), f)
+        tmp = config_path.with_suffix(".toml.tmp")
+        tmp.write_text(text)
+        tmp.replace(config_path)  # never a half-written config
 
     def get_plugin_config(self, plugin_name: str) -> dict[str, Any]:
         """The plugin's ``[plugin_name]`` table, or ``{}`` when it has none.

@@ -56,20 +56,23 @@ def init_config_cmd(
     console.print(f"[green]Created config at {config_path}[/green]")
 
 
-_INTEGER = re.compile(r"[+-]?\d+")
+# No leading zero or sign, so "007" and "+4412345" stay text
+_INTEGER = re.compile(r"-?(0|[1-9]\d*)")
 
 
 def parse_value(raw: str) -> Any:
     """A plugin setting's value, typed only where the text is unambiguous.
 
-    - ``true`` / ``false`` -> bool, so ``kobo.include_store_titles false`` is false.
-    - A whole number -> int, so ``arxiv.max_per_keyword 5`` is 5.
-    - A TOML array or quoted string -> its value: ``["LLM agents", "ontology"]``, ``"007"``.
+    - ``true`` / ``false``, in any case -> bool, so ``kobo.include_store_titles false``
+      is false.
+    - A whole number without a leading zero or ``+`` -> int, so
+      ``arxiv.max_per_keyword 5`` is 5.
+    - A TOML array or quoted string -> its value: ``["LLM agents", "ontology"]``, ``"5"``.
     - Anything else stays text. Decimals do too: ``1.10`` would read back as ``1.1``.
     """
     text = raw.strip()
-    if text in ("true", "false"):
-        return text == "true"
+    if text.lower() in ("true", "false"):
+        return text.lower() == "true"
     if _INTEGER.fullmatch(text):
         return int(text)
     if text[:1] in ("[", '"', "'"):
@@ -128,6 +131,9 @@ def set_config(
     current = data.get(section)
     if not isinstance(current, dict):
         current = data[section] = {}
+    if isinstance(current.get(setting), dict):
+        console.print(f"[red]{key} is a table of settings; edit it in {get_config_path()}[/red]")
+        raise typer.Exit(1)
     # A list setting given one bare word would be read as a list of its characters
     if isinstance(current.get(setting), list) and not isinstance(parsed, list):
         example = escape('["a", "b"]')
@@ -141,5 +147,5 @@ def set_config(
         updated_config.save()
         console.print(f"[green]Set {key} = {escape(repr(parsed))}[/green]")
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise typer.Exit(1) from None
