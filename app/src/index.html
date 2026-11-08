@@ -2250,7 +2250,7 @@
       if (!section || section.dataset.itemId !== String(itemId) || !data.total) return;
       const verb = v => v.charAt(0).toUpperCase() + v.slice(1);
       const rows = data.activities.map(a => {
-        const query = a.details && a.details.query ? ` “${escHtml(a.details.query)}”` : '';
+        const query = a.details && a.details.query ? ` “${escHtml(String(a.details.query))}”` : '';
         return `<div>${escHtml(verb(a.verb))}${query} · ${new Date(a.occurred_at).toLocaleString()}</div>`;
       }).join('');
       const more = data.total > data.activities.length

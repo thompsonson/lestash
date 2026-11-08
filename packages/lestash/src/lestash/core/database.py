@@ -466,8 +466,10 @@ MIGRATIONS = [
         );
         CREATE INDEX IF NOT EXISTS idx_activities_time ON activities(occurred_at);
         CREATE INDEX IF NOT EXISTS idx_activities_item ON activities(item_id);
+        CREATE INDEX IF NOT EXISTS idx_activities_context ON activities(context_id);
         """
-        + _activities_from_metadata("items")
+        # Triggers first, so an item another connection writes during the backfill is
+        # still recorded; NOT EXISTS keeps the backfill from adding it twice
         + f"""
         CREATE TRIGGER IF NOT EXISTS items_activities_ai AFTER INSERT ON items
         WHEN instr(NEW.metadata, '_times"') > 0 BEGIN
@@ -477,7 +479,8 @@ MIGRATIONS = [
         WHEN instr(NEW.metadata, '_times"') > 0 BEGIN
             {_activities_from_metadata("NEW")}
         END;
-        """,
+        """
+        + _activities_from_metadata("items"),
     ),
 ]
 
