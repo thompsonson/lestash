@@ -117,6 +117,26 @@ Get a single item by ID. Returns 404 if not found.
 
 ---
 
+### `GET /api/items/{item_id}/activities`
+
+The item's activities (watches, searches, prompts), newest first. `404` if the item doesn't exist.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | int | 100 | Most activities to return (1–1000) |
+
+```json
+{
+  "activities": [
+    {"id": 7, "verb": "searched", "occurred_at": "2026-01-17T23:20:58.043000Z",
+     "source": "takeout:youtube", "context_id": null, "details": {"query": "markov blanket"}}
+  ],
+  "total": 1
+}
+```
+
+---
+
 ### `PATCH /api/items/{item_id}`
 
 Partially update an item. Only provided fields are changed.

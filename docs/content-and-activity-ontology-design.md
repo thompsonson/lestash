@@ -334,6 +334,16 @@ CREATE INDEX idx_activities_item ON activities(item_id);
 - A search has no object item, so its text goes in `details`.
 - Activities that make content point at it: a prompt's reply is a turn item, linked as PROV `wasGeneratedBy`.
 
+### As built (#216, step 1)
+
+- Migration 14 creates the table and fills it from the times lists already in item metadata.
+- Two triggers on `items` record each new time a later import adds; a time already recorded is skipped.
+- `occurred_at` is UTC, as `2026-11-08T17:35:03.123Z`, so different exports' precisions match.
+- `actor_id` arrives with the `people` table, since SQLite refuses a foreign key to a table that doesn't exist.
+- `context_id` is set to null when its item is deleted, instead of blocking the delete.
+- A search points at its stored `search:` item, which holds the query; `details` repeats the query.
+- The item detail view lists the item's activities.
+
 ### What moves from metadata
 
 - `watched_times`, `searched_times` and `viewed_times` become rows.

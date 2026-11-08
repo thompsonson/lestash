@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -135,6 +135,51 @@ CREATE TABLE IF NOT EXISTS syndications (
 );
 CREATE INDEX IF NOT EXISTS idx_syndications_item ON syndications(item_id);
 """
+
+# Activities (docs/content-and-activity-ontology-design.md): one row per time someone
+# did something to an item. For now they come from the times lists that imports keep in
+# item metadata; the lists move out of metadata in a later step.
+ACTIVITY_VERBS = {
+    "watched_times": "watched",
+    "viewed_times": "viewed",
+    "searched_times": "searched",
+    "prompted_times": "prompted",
+}
+
+
+def _activities_from_metadata(row: str) -> str:
+    """An INSERT of one activity per time in each times list of ``row``'s metadata.
+
+    ``row`` is ``items`` (the backfill, every row) or ``NEW`` (a trigger, one row). Every
+    list comes from a Takeout import, hence the source. Times are stored in UTC, as
+    2026-11-08T17:35:03.123Z; one that won't parse is skipped.
+
+    A time already recorded is skipped by NOT EXISTS, not OR IGNORE: inside a trigger the
+    outer statement's conflict handling replaces OR IGNORE, so an upsert would fail.
+    Triggers can't use WITH, so the verbs are a UNION ALL subquery.
+    """
+    verbs = " UNION ALL ".join(
+        f"SELECT '{verb}' AS verb, '$.{key}' AS path" for key, verb in ACTIVITY_VERBS.items()
+    )
+    # json_each fails on invalid JSON, and SQLite may run it before a WHERE test
+    metadata = f"CASE WHEN json_valid({row}.metadata) THEN {row}.metadata ELSE '{{}}' END"
+    tables = "items, " if row == "items" else ""
+    source = f"'takeout:' || {row}.source_type"
+    at = "strftime('%Y-%m-%dT%H:%M:%fZ', t.value)"
+    return f"""
+    INSERT INTO activities (verb, item_id, occurred_at, source, details)
+    SELECT DISTINCT v.verb, {row}.id, {at}, {source},
+           CASE WHEN v.verb = 'searched'
+                THEN json_object('query', json_extract({metadata}, '$.query')) END
+    FROM {tables}({verbs}) AS v, json_each({metadata}, v.path) AS t
+    WHERE json_type({metadata}, v.path) = 'array' AND t.type = 'text' AND {at} IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM activities a
+          WHERE a.verb = v.verb AND a.item_id = {row}.id AND a.occurred_at = {at}
+            AND a.source = {source}
+      );
+    """
+
 
 # Migrations: list of (version, description, sql) tuples
 # Each migration brings the database from version N-1 to version N
@@ -401,6 +446,37 @@ MIGRATIONS = [
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (source, key)
         );
+        """,
+    ),
+    (
+        14,
+        "Add activities table, filled from the times lists in item metadata",
+        # actor_id (null means you) arrives with the people table: SQLite refuses rows
+        # whose foreign key names a table that doesn't exist yet
+        """
+        CREATE TABLE IF NOT EXISTS activities (
+            id INTEGER PRIMARY KEY,
+            verb TEXT NOT NULL,
+            item_id INTEGER REFERENCES items(id) ON DELETE CASCADE,
+            occurred_at TEXT NOT NULL,
+            source TEXT NOT NULL,
+            context_id INTEGER REFERENCES items(id) ON DELETE SET NULL,
+            details TEXT,
+            UNIQUE (verb, item_id, occurred_at, source)
+        );
+        CREATE INDEX IF NOT EXISTS idx_activities_time ON activities(occurred_at);
+        CREATE INDEX IF NOT EXISTS idx_activities_item ON activities(item_id);
+        """
+        + _activities_from_metadata("items")
+        + f"""
+        CREATE TRIGGER IF NOT EXISTS items_activities_ai AFTER INSERT ON items
+        WHEN instr(NEW.metadata, '_times"') > 0 BEGIN
+            {_activities_from_metadata("NEW")}
+        END;
+        CREATE TRIGGER IF NOT EXISTS items_activities_au AFTER UPDATE OF metadata ON items
+        WHEN instr(NEW.metadata, '_times"') > 0 BEGIN
+            {_activities_from_metadata("NEW")}
+        END;
         """,
     ),
 ]
