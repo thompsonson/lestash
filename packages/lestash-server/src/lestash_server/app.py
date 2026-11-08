@@ -120,7 +120,15 @@ def create_app(static_dir: str | None = None) -> FastAPI:
 
         @app.exception_handler(StarletteHTTPException)
         async def spa_fallback(request: Request, exc: StarletteHTTPException):
-            path = request.url.path.lstrip("/")  # "//api/x" is still an API path
+            # The decoded path as routed (url.path is rebuilt and loses an encoded "?"),
+            # without the app's root_path. Inside a mount (/static), root_path includes
+            # the mount and app_root_path holds the app's own
+            scope = request.scope
+            path = scope["path"]
+            root = scope.get("app_root_path", scope.get("root_path", ""))
+            if root and path.startswith(root):
+                path = path[len(root) :]
+            path = path.lstrip("/")  # "//api/x" is still an API path
             # /api and the /static mount answer for themselves: a missing endpoint or
             # asset is a 404, never the app page
             own_404 = any(path == p or path.startswith(p + "/") for p in ("api", "static"))

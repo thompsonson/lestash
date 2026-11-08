@@ -229,6 +229,21 @@ def test_api_paths_with_extra_slashes_are_still_404(web_client, path):
     assert resp.headers["content-type"].startswith("application/json")
 
 
+def test_an_encoded_question_mark_is_part_of_the_path(web_client, tmp_path):
+    (tmp_path / "web" / "a?b.txt").write_text("odd name")
+    assert web_client.get("/a%3Fb.txt").text == "odd name"
+
+
+def test_unknown_api_paths_404_under_a_root_path(test_config, tmp_path, monkeypatch):
+    (tmp_path / "index.html").write_text("<html>app</html>")
+    monkeypatch.setattr(deps, "_config", test_config)
+    app = create_app(static_dir=str(tmp_path))
+    with TestClient(app, root_path="/stash") as tc:
+        resp = tc.get("/stash/api/nope")
+    assert resp.status_code == 404
+    assert resp.headers["content-type"].startswith("application/json")
+
+
 def test_a_missing_static_asset_is_a_404(web_client):
     resp = web_client.get("/static/missing.js")
     assert resp.status_code == 404

@@ -35,27 +35,30 @@ def _searchable(text: str) -> bool:
 
 
 def _drop_stray_quotes(q: str) -> str:
-    """Make quotes pair up: a quote between two letters or digits (don"t) is an apostrophe,
-    and a lone quote left over is dropped. A quote opens a phrase at the start or after a
-    non-word character, and closes one at the end or before a non-word character. A quote
-    that can do neither is dropped, and an open quote is dropped when a later quote can
-    only open, so a stray quote never steals a later phrase's quote."""
+    """Make quotes pair up, reading left to right.
+
+    - A quote opens a phrase at the start or after a non-word character, and closes one
+      at the end or before a non-word character.
+    - A quote between two letters or digits closes an open phrase ("foo bar"baz);
+      with no phrase open it is an apostrophe (don"t).
+    - A quote that can do neither is dropped, and an open quote is dropped when a later
+      quote can only open, so a stray quote never steals a later phrase's quote. A phrase
+      still open at the end loses its quote.
+    """
     chars = list(q)
-    for i, c in enumerate(chars):
-        if (
-            c == '"'
-            and 0 < i < len(chars) - 1
-            and chars[i - 1].isalnum()
-            and chars[i + 1].isalnum()
-        ):
-            chars[i] = "'"
     open_at: int | None = None
     for i, c in enumerate(chars):
         if c != '"':
             continue
         can_open = i == 0 or not chars[i - 1].isalnum()
         can_close = i == len(chars) - 1 or not chars[i + 1].isalnum()
-        if open_at is None and can_open:
+        if not can_open and not can_close:  # between two letters or digits
+            if open_at is not None:
+                open_at = None
+                chars[i] = '" '  # "foo bar"baz: close, and keep baz a separate word
+            else:
+                chars[i] = "'"
+        elif open_at is None and can_open:
             open_at = i
         elif open_at is not None and can_close:
             open_at = None

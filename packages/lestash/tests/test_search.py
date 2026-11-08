@@ -111,6 +111,8 @@ def test_query_is_valid_fts5_and_matches(conn, q, found) -> None:
         ("a NOT NOT b", '"a"* NOT "b"*'),
         ("a OR AND NOT b", '"a"*'),
         ("a OR - b", '"a"* OR "b"*'),
+        ('"foo bar"baz', '"foo bar" "baz"*'),  # a phrase closed against a word
+        ('don"t', '"don\'t"*'),
         ('("x")', '"x"'),
         ('-"a b"', '"a b"'),
         ("Gödel", '"Gödel"*'),
