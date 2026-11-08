@@ -2,11 +2,13 @@
 
 import json
 import re
+import sqlite3
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from lestash.core.config import Config
@@ -17,6 +19,7 @@ from lestash.core.enrichment import (
     get_preview,
     resolve_author,
 )
+from lestash.core.search import keyword_search
 from lestash.models.item import Item
 
 
@@ -154,24 +157,21 @@ def search_items(
     query: Annotated[str, typer.Argument(help="Search query")],
     limit: Annotated[int, typer.Option("--limit", "-n", help="Limit results")] = 20,
 ) -> None:
-    """Search items using full-text search."""
+    """Search items using full-text search.
+
+    Supports "phrase search", prefix* and AND, OR, NOT; other punctuation is plain text.
+    """
     config = Config.load()
 
     with get_connection(config) as conn:
-        cursor = conn.execute(
-            """
-            SELECT items.* FROM items
-            JOIN items_fts ON items.id = items_fts.rowid
-            WHERE items_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (query, limit),
-        )
-        rows = cursor.fetchall()
+        try:
+            rows = keyword_search(conn, query, limit)
+        except sqlite3.Error as e:
+            console.print(f"[red]Search failed: {escape(str(e))}[/red]")
+            raise typer.Exit(1) from None
 
         if not rows:
-            console.print(f"[dim]No items found matching '{query}'.[/dim]")
+            console.print(f"[dim]No items found matching '{escape(query)}'.[/dim]")
             return
 
         table = Table(show_header=True, header_style="bold")

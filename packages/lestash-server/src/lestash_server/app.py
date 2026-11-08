@@ -1,6 +1,6 @@
 """FastAPI application factory."""
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -102,22 +102,37 @@ def create_app(static_dir: str | None = None) -> FastAPI:
             count = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
         return HealthResponse(version=__version__, items=count)
 
-    # Serve static frontend files with SPA fallback
+    # Serve the frontend: static files, and index.html for client-side routes. This runs
+    # as a 404 handler rather than a catch-all route, so routing is untouched: a known API
+    # path called with the wrong method stays a 405, and an unknown /api path stays a JSON
+    # 404 for every method, never HTTP 200 with the app page.
     if static_dir:
         from pathlib import Path
 
-        from fastapi.responses import FileResponse, HTMLResponse
+        from fastapi.exception_handlers import http_exception_handler
+        from fastapi.responses import FileResponse
+        from starlette.exceptions import HTTPException as StarletteHTTPException
 
-        index_path = Path(static_dir) / "index.html"
+        static_root = Path(static_dir).resolve()
+        index_path = static_root / "index.html"
 
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-        @app.get("/{path:path}", include_in_schema=False)
-        def spa_fallback(path: str):
-            """Serve static files or index.html for SPA routing."""
-            file_path = Path(static_dir) / path
-            if file_path.is_file():
+        @app.exception_handler(StarletteHTTPException)
+        async def spa_fallback(request: Request, exc: StarletteHTTPException):
+            path = request.url.path.lstrip("/")  # "//api/x" is still an API path
+            # /api and the /static mount answer for themselves: a missing endpoint or
+            # asset is a 404, never the app page
+            own_404 = any(path == p or path.startswith(p + "/") for p in ("api", "static"))
+            if exc.status_code != 404 or own_404 or request.method not in ("GET", "HEAD"):
+                return await http_exception_handler(request, exc)
+            # Resolve first: a decoded "../" must not reach outside the static folder
+            try:
+                file_path = (static_root / path).resolve()
+            except (ValueError, OSError):  # e.g. a decoded NUL byte
+                file_path = None
+            if file_path and file_path.is_relative_to(static_root) and file_path.is_file():
                 return FileResponse(file_path)
-            return HTMLResponse(index_path.read_text())
+            return FileResponse(index_path, media_type="text/html")
 
     return app

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import sqlite3
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -16,6 +17,7 @@ from lestash.core.database import (
 )
 from lestash.core.embeddings import re_embed_item
 from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
+from lestash.core.search import keyword_search
 from lestash.models.item import Item
 
 from lestash_server.deps import get_db
@@ -192,42 +194,35 @@ def search_items(
 ):
     """Search items using keyword (FTS5), semantic (vector), or hybrid mode.
 
-    Supports FTS5 query syntax: AND, OR, NOT, "phrase search", prefix*.
+    Supports "phrase search", prefix* and AND, OR, NOT; other punctuation is plain text
+    (see lestash.core.search).
     """
-    fts_query = _sanitize_fts_query(q)
-
     with get_db() as conn:
         fts_results: dict[int, dict] = {}
         vec_results: dict[int, float] = {}
+        keyword_failed = False
 
         # FTS5 keyword search
         if mode in ("keyword", "hybrid"):
-            query = """
-                SELECT items.*,
-                       snippet(items_fts, 1, '<<', '>>', '...', 32) as search_snippet
-                FROM items
-                JOIN items_fts ON items.id = items_fts.rowid
-                WHERE items_fts MATCH ?
-            """
-            params: list = [fts_query]
-            if not include_children:
-                query += " AND items.parent_id IS NULL"
-            query += " ORDER BY rank LIMIT ?"
-            params.append(limit * 2)
-
             try:
-                rows = conn.execute(query, params).fetchall()
+                rows = keyword_search(
+                    conn, q, limit * 2, top_level_only=not include_children, snippets=True
+                )
                 for rank, row in enumerate(rows):
-                    snippet = row["search_snippet"]
                     fts_results[row["id"]] = {
                         "row": row,
                         "rank": rank,
-                        "snippet": snippet,
+                        "snippet": row["search_snippet"],
                     }
-            except Exception:
+            except sqlite3.Error:
+                # keyword_search leaves no syntax errors, so this is the index or the
+                # database (e.g. a damaged items_fts). Log it; hybrid still returns the
+                # semantic results, keyword mode reports it.
+                logger.warning("Keyword search failed for %r", q, exc_info=True)
+                keyword_failed = True
                 if mode == "keyword":
                     raise HTTPException(
-                        status_code=400, detail=f"Invalid search query: {q}"
+                        status_code=500, detail="Keyword search failed; see the server log"
                     ) from None
 
         # Vector semantic search
@@ -243,14 +238,30 @@ def search_items(
                 load_vec_extension(conn)
                 ensure_vec_table(conn)
                 query_emb = embed_text(q)
-                similar = search_similar(conn, query_emb, limit=limit * 2)
-                for rank, (item_id, _distance) in enumerate(similar):
+                # Children are filtered out after the vector search, so ask for more
+                # to still fill the page with top-level items
+                want = limit * 2
+                fetch = want if include_children else want * 4
+                similar = search_similar(conn, query_emb, limit=fetch)
+                ids = [item_id for item_id, _distance in similar]
+                if not include_children and ids:
+                    marks = ",".join("?" * len(ids))
+                    top = {
+                        r[0]
+                        for r in conn.execute(
+                            f"SELECT id FROM items WHERE id IN ({marks}) AND parent_id IS NULL",
+                            ids,
+                        )
+                    }
+                    ids = [i for i in ids if i in top]
+                for rank, item_id in enumerate(ids[:want]):
                     vec_results[item_id] = rank
             except Exception:
                 logger.warning("Vector search failed, falling back to keyword", exc_info=True)
-                if mode == "semantic" and not fts_results:
+                # An empty 200 would read as "no results"; report it when nothing ran
+                if mode == "semantic" or keyword_failed:
                     raise HTTPException(
-                        status_code=500, detail="Vector search unavailable"
+                        status_code=500, detail="Search unavailable; see the server log"
                     ) from None
 
         # Merge results via RRF (Reciprocal Rank Fusion)
@@ -287,46 +298,6 @@ def search_items(
             items.append(enriched)
 
     return ItemListResponse(items=items, total=len(items), limit=limit, offset=0)
-
-
-def _sanitize_fts_query(q: str) -> str:
-    """Sanitize user input for FTS5 MATCH.
-
-    - Preserves quoted phrases ("exact match")
-    - Preserves explicit operators (AND, OR, NOT) when valid
-    - Adds implicit prefix matching (word -> word*) for better UX
-    - Strips dangling operators that would cause FTS5 syntax errors
-    """
-    q = q.strip()
-    if not q:
-        return q
-
-    # Strip unbalanced quotes
-    if q.count('"') % 2 != 0:
-        q = q.replace('"', "")
-
-    # Split into tokens, process each
-    words = q.split()
-    operators = {"AND", "OR", "NOT"}
-
-    # Remove leading/trailing operators
-    while words and words[0] in operators:
-        words.pop(0)
-    while words and words[-1] in operators:
-        words.pop()
-
-    if not words:
-        return q.replace('"', "").strip() + "*" if q.strip() else ""
-
-    # Add prefix matching to non-operator, non-quoted terms
-    result = []
-    for w in words:
-        if w in operators or w.endswith("*") or w.startswith('"'):
-            result.append(w)
-        else:
-            result.append(f"{w}*")
-
-    return " ".join(result)
 
 
 @router.post("", response_model=ItemResponse, status_code=201)

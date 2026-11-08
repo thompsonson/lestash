@@ -2392,12 +2392,16 @@
 
     /* ── Search ── */
     let searchTimer = null;
+    // Each search gets a number; only the newest may update the page, so a slow earlier
+    // request can't overwrite later results
+    let searchSeq = 0;
 
     document.getElementById('search-input').addEventListener('input', e => {
       clearTimeout(searchTimer);
       const q = e.target.value.trim();
       const status = document.getElementById('search-status');
       if (!q) {
+        searchSeq++;
         document.getElementById('search-list').innerHTML = '';
         status.textContent = 'Tip: use "quotes" for exact phrases, word* for prefix, AND/OR/NOT for boolean';
         return;
@@ -2409,10 +2413,12 @@
       const list = document.getElementById('search-list');
       const status = document.getElementById('search-status');
       const mode = document.getElementById('search-mode').value;
+      const seq = ++searchSeq;
       list.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
       status.textContent = `Searching (${mode})...`;
       try {
         const data = await api(`/api/items/search?q=${encodeURIComponent(q)}&limit=50&mode=${mode}`);
+        if (seq !== searchSeq) return;
         list.innerHTML = '';
         if (data.items.length === 0) {
           status.textContent = `No results for "${q}"`;
@@ -2433,9 +2439,22 @@
           list.appendChild(card);
         });
       } catch (e) {
-        list.innerHTML = '';
-        status.textContent = '';
-        showToast(`Search failed: ${e.message}`, 'error');
+        if (seq !== searchSeq) return;
+        // Keep the failure on the page, not only in a toast that fades.
+        // api() throws "<status>: <body>"; show the server's detail when there is one.
+        let reason = e.message;
+        const m = /^(\d{3}): (.*)$/s.exec(e.message);
+        if (m) {
+          try {
+            const detail = JSON.parse(m[2]).detail;
+            if (detail !== undefined) {
+              reason = `${m[1]}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
+            }
+          } catch { /* not JSON: keep the raw message */ }
+        }
+        status.textContent = `Search failed (${mode})`;
+        list.innerHTML = `<div class="empty-state">Search failed: ${escHtml(reason)}</div>`;
+        showToast(`Search failed: ${reason}`, 'error');
       }
     }
 
