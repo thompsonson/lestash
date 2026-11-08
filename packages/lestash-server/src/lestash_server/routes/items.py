@@ -24,6 +24,8 @@ from lestash.models.item import Item
 from lestash_server.deps import get_db
 from lestash_server.models import (
     _UNSET,
+    Activity,
+    ActivityListResponse,
     HistoryListResponse,
     HistoryVersion,
     HistoryVersionDetail,
@@ -447,11 +449,12 @@ def _content_preview(content: str | None, max_length: int = 200) -> str | None:
     return None
 
 
-def _parse_metadata_old(metadata_old: str | None) -> dict | None:
-    if not metadata_old:
+def _json_object(text: str | None) -> dict | None:
+    """A stored JSON object, or None when the text is empty or not an object."""
+    if not text:
         return None
     try:
-        parsed = json.loads(metadata_old)
+        parsed = json.loads(text)
         return parsed if isinstance(parsed, dict) else None
     except (json.JSONDecodeError, TypeError):
         return None
@@ -486,6 +489,39 @@ def list_item_history(item_id: int):
         return HistoryListResponse(versions=versions)
 
 
+@router.get("/{item_id}/activities", response_model=ActivityListResponse)
+def list_item_activities(
+    item_id: int,
+    limit: int = Query(100, ge=1, le=1000, description="Most activities to return"),
+):
+    """An item's activities (watches, searches, prompts), newest first."""
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        total = conn.execute(
+            "SELECT COUNT(*) FROM activities WHERE item_id = ?", (item_id,)
+        ).fetchone()[0]
+        rows = conn.execute(
+            """SELECT id, verb, occurred_at, source, context_id, details
+               FROM activities WHERE item_id = ? ORDER BY occurred_at DESC, id DESC LIMIT ?""",
+            (item_id, limit),
+        ).fetchall()
+        return ActivityListResponse(
+            activities=[
+                Activity(
+                    id=r["id"],
+                    verb=r["verb"],
+                    occurred_at=r["occurred_at"],
+                    source=r["source"],
+                    context_id=r["context_id"],
+                    details=_json_object(r["details"]),
+                )
+                for r in rows
+            ],
+            total=total,
+        )
+
+
 @router.get("/{item_id}/history/{version_id}", response_model=HistoryVersionDetail)
 def get_item_history_version(item_id: int, version_id: int):
     """Get the full snapshot for one history version."""
@@ -509,7 +545,7 @@ def get_item_history_version(item_id: int, version_id: int):
             content_old=row["content_old"],
             author_old=row["author_old"],
             url_old=row["url_old"],
-            metadata_old=_parse_metadata_old(row["metadata_old"]),
+            metadata_old=_json_object(row["metadata_old"]),
             is_own_content_old=bool(row["is_own_content_old"])
             if row["is_own_content_old"] is not None
             else None,

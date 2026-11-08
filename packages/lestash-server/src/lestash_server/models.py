@@ -153,6 +153,24 @@ class HistoryListResponse(BaseModel):
     versions: list[HistoryVersion]
 
 
+class Activity(BaseModel):
+    """Something done to an item at a time: watched, searched, prompted, ..."""
+
+    id: int
+    verb: str
+    occurred_at: datetime
+    source: str
+    context_id: int | None = None
+    details: dict[str, Any] | None = None
+
+
+class ActivityListResponse(BaseModel):
+    """An item's activities, newest first; ``total`` counts them all."""
+
+    activities: list[Activity]
+    total: int
+
+
 class CollectionCreate(BaseModel):
     """Request to create a collection."""
 

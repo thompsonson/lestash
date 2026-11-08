@@ -1765,6 +1765,12 @@
         </div>`;
       }
 
+      // Activity history: watches, searches, prompts (hidden until some load)
+      html += `<div class="item-view-children" id="activity-section" data-item-id="${item.id}" style="margin-top:1rem;display:none">
+        <div class="item-view-children-title" id="activity-title">Activity</div>
+        <div id="activity-list" style="font-size:0.8rem"></div>
+      </div>`;
+
       // Debug section
       html += `<div class="debug-only" style="margin-top:0.75rem">
         <hr style="border-color:var(--border);margin-bottom:0.75rem">
@@ -2207,6 +2213,8 @@
         }).catch(() => {});
       }
 
+      loadActivities(item.id);
+
       // Load similar items (parent items only)
       if (!item.parent_id) {
         api(`/api/embeddings/similar/${item.id}?limit=5`).then(data => {
@@ -2226,6 +2234,30 @@
           if (list) list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Unavailable</span>';
         });
       }
+    }
+
+    const ACTIVITY_SHOWN = 20;
+
+    async function loadActivities(itemId) {
+      let data;
+      try {
+        data = await api(`/api/items/${itemId}/activities?limit=${ACTIVITY_SHOWN}`);
+      } catch {
+        return;  // older server, or offline: the section stays hidden
+      }
+      const section = document.getElementById('activity-section');
+      // The view may have moved on to another item while this loaded
+      if (!section || section.dataset.itemId !== String(itemId) || !data.total) return;
+      const verb = v => v.charAt(0).toUpperCase() + v.slice(1);
+      const rows = data.activities.map(a => {
+        const query = a.details && a.details.query ? ` “${escHtml(String(a.details.query))}”` : '';
+        return `<div>${escHtml(verb(a.verb))}${query} · ${new Date(a.occurred_at).toLocaleString()}</div>`;
+      }).join('');
+      const more = data.total > data.activities.length
+        ? `<div style="color:var(--muted)">and ${data.total - data.activities.length} earlier</div>` : '';
+      document.getElementById('activity-title').textContent = `Activity (${data.total})`;
+      document.getElementById('activity-list').innerHTML = rows + more;
+      section.style.display = '';
     }
 
     function escHtml(s) {
