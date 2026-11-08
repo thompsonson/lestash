@@ -6,6 +6,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from lestash.core.config import Config
@@ -101,7 +102,12 @@ def sync_source(
     source_name: Annotated[str | None, typer.Argument(help="Source to sync (omit for all)")] = None,
     all_sources: Annotated[bool, typer.Option("--all", help="Sync all enabled sources")] = False,
 ) -> None:
-    """Sync items from a source."""
+    """Sync items from a source.
+
+    Exits 1 when any source failed or was unknown, after every source has run, so a
+    systemd unit shows the failure. A source skipped under --all because another sync
+    of it is running is not a failure: that sync logs its own result.
+    """
     plugins = load_plugins()
 
     if not plugins:
@@ -124,112 +130,143 @@ def sync_source(
         console.print("[red]Specify a source name or use --all[/red]")
         raise typer.Exit(1)
 
+    failed: list[str] = []
     for name in sources_to_sync:
         if name not in plugins:
             console.print(f"[red]Unknown source: {name}[/red]")
+            failed.append(name)
             continue
 
-        plugin = plugins[name]
-        plugin_config = config.get_plugin_config(name)
+        # Any error outside the plugin (say the database locked at the start) fails this
+        # source only, so the others still sync and the summary still prints
+        try:
+            plugin = plugins[name]
+            plugin_config = config.get_plugin_config(name)
 
-        console.print(f"[bold]Syncing {name}...[/bold]")
+            console.print(f"[bold]Syncing {name}...[/bold]")
 
-        with get_connection(config) as conn, sigterm_as_exit():
-            store = SyncStore(conn, name)
-            try:
-                # A source named on its own waits for a running sync of it, as the Kobo
-                # plug-in sync needs; --all (the timer) skips it
-                run = SyncRun.start(
-                    conn,
-                    name,
-                    store,
-                    wait=_say_waiting(name) if source_name else None,
-                )
-            except SyncAlreadyRunning as e:
-                console.print(f"[yellow]Skipping {name}: {e}[/yellow]")
-                continue
-
-            error_message = None
-
-            with run:
+            with get_connection(config) as conn, sigterm_as_exit():
+                store = SyncStore(conn, name)
                 try:
-                    store.run(plugin.sync(plugin_config))
-                    if store.linked:
-                        console.print(f"  [dim]Linked {store.linked} item(s) to their parent[/dim]")
-
-                    # Resolve parent_id for LinkedIn reactions/comments
-                    if name == "linkedin":
-                        try:
-                            from lestash_linkedin.source import (
-                                download_linkedin_media,
-                                resolve_linkedin_parents,
-                            )
-
-                            resolved = resolve_linkedin_parents(conn)
-                            if resolved:
-                                console.print(f"  [dim]Resolved {resolved} parent references[/dim]")
-
-                            # Cache previews of posts you've engaged with (bounded per
-                            # run so the sync stays quick; the rest catch up next run).
-                            from lestash_linkedin.feed_preview import run_during_sync
-
-                            run_during_sync(
-                                conn,
-                                plugin_config,
-                                on_message=lambda msg: console.print(f"  [dim]{msg}[/dim]"),
-                            )
-
-                            # Try to download LinkedIn images
-                            from lestash_linkedin.api import load_token
-
-                            token = load_token()
-                            if token and token.get("access_token"):
-                                downloaded = download_linkedin_media(conn, token["access_token"])
-                                if downloaded:
-                                    console.print(
-                                        f"  [dim]Downloaded {downloaded} LinkedIn image(s)[/dim]"
-                                    )
-                        except ImportError:
-                            pass
-
-                    # Resolve parent_id for YouTube transcripts captured before
-                    # (or alongside) their video item.
-                    if name == "youtube":
-                        try:
-                            from lestash_youtube.source import (
-                                resolve_youtube_transcript_parents,
-                            )
-
-                            resolved = resolve_youtube_transcript_parents(conn)
-                            if resolved:
-                                console.print(
-                                    f"  [dim]Resolved {resolved} transcript parent(s)[/dim]"
-                                )
-                        except ImportError:
-                            pass
-
-                    # Update source last_sync
-                    conn.execute(
-                        """
-                        INSERT INTO sources (source_type, last_sync)
-                        VALUES (?, ?)
-                        ON CONFLICT(source_type) DO UPDATE SET last_sync = excluded.last_sync
-                        """,
-                        (name, datetime.now()),
+                    # A source named on its own waits for a running sync of it, as the Kobo
+                    # plug-in sync needs; --all (the timer) skips it
+                    run = SyncRun.start(
+                        conn,
+                        name,
+                        store,
+                        wait=_say_waiting(name) if source_name else None,
                     )
-                    conn.commit()
+                except SyncAlreadyRunning as e:
+                    console.print(f"[yellow]Skipping {name}: {e}[/yellow]")
+                    continue
 
-                    status = "completed"
-                except Exception as e:
-                    status = "failed"
-                    error_message = str(e)
-                    console.print(f"[red]Error syncing {name}: {e}[/red]")
+                error_message = None
 
-                run.finish(status, error=error_message)
+                with run:
+                    try:
+                        store.run(plugin.sync(plugin_config))
+                        if store.linked:
+                            console.print(
+                                f"  [dim]Linked {store.linked} item(s) to their parent[/dim]"
+                            )
 
-        if status == "completed":
-            # Counts items written, new or updated alike (#210)
-            console.print(f"[green]Synced {name}: {store.items} items written[/green]")
+                        # Resolve parent_id for LinkedIn reactions/comments
+                        if name == "linkedin":
+                            try:
+                                from lestash_linkedin.source import (
+                                    download_linkedin_media,
+                                    resolve_linkedin_parents,
+                                )
+
+                                resolved = resolve_linkedin_parents(conn)
+                                if resolved:
+                                    console.print(
+                                        f"  [dim]Resolved {resolved} parent references[/dim]"
+                                    )
+
+                                # Cache previews of posts you've engaged with (bounded per
+                                # run so the sync stays quick; the rest catch up next run).
+                                from lestash_linkedin.feed_preview import run_during_sync
+
+                                run_during_sync(
+                                    conn,
+                                    plugin_config,
+                                    on_message=lambda msg: console.print(f"  [dim]{msg}[/dim]"),
+                                )
+
+                                # Try to download LinkedIn images
+                                from lestash_linkedin.api import load_token
+
+                                token = load_token()
+                                if token and token.get("access_token"):
+                                    downloaded = download_linkedin_media(
+                                        conn, token["access_token"]
+                                    )
+                                    if downloaded:
+                                        console.print(
+                                            f"  [dim]Downloaded {downloaded} "
+                                            "LinkedIn image(s)[/dim]"
+                                        )
+                            except ImportError:
+                                pass
+
+                        # Resolve parent_id for YouTube transcripts captured before
+                        # (or alongside) their video item.
+                        if name == "youtube":
+                            try:
+                                from lestash_youtube.source import (
+                                    resolve_youtube_transcript_parents,
+                                )
+
+                                resolved = resolve_youtube_transcript_parents(conn)
+                                if resolved:
+                                    console.print(
+                                        f"  [dim]Resolved {resolved} transcript parent(s)[/dim]"
+                                    )
+                            except ImportError:
+                                pass
+
+                        # Update source last_sync
+                        conn.execute(
+                            """
+                            INSERT INTO sources (source_type, last_sync)
+                            VALUES (?, ?)
+                            ON CONFLICT(source_type) DO UPDATE SET last_sync = excluded.last_sync
+                            """,
+                            (name, datetime.now()),
+                        )
+                        conn.commit()
+
+                        status = "completed"
+                    except Exception as e:
+                        status = "failed"
+                        error_message = str(e)
+                        # escape(): a "[/x]" in the error would make Rich raise here
+                        console.print(f"[red]Error syncing {name}: {escape(str(e))}[/red]")
+
+                    run.finish(status, error=error_message)
+
+            c = store.counts
+            if status == "completed":
+                console.print(
+                    f"[green]Synced {name}: {c.added} new, {c.updated} updated, "
+                    f"{c.unchanged} unchanged[/green]"
+                )
+            else:
+                failed.append(name)
+        except Exception as e:
+            console.print(f"[red]Error syncing {name}: {escape(str(e))}[/red]")
+            failed.append(name)
+
+    if failed:
+        console.print(f"[red]Failed: {', '.join(failed)}[/red]")
+        raise typer.Exit(1)
+
+
+def _items_cell(added: int | None, updated: int | None) -> str:
+    """'+3 ~5' for 3 new and 5 changed items; '-' for none."""
+    parts = [f"+{added}" if added else "", f"~{updated}" if updated else ""]
+    return " ".join(p for p in parts if p) or "-"
 
 
 @app.command("status")
@@ -262,7 +299,7 @@ def source_status() -> None:
 
     for row in rows:
         started = row["started_at"][:16] if row["started_at"] else "-"
-        items = f"+{row['items_added']}" if row["items_added"] else "-"
+        items = _items_cell(row["items_added"], row["items_updated"])
         error = (
             row["error_message"][:30] + "..."
             if row["error_message"] and len(row["error_message"]) > 30

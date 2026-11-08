@@ -31,6 +31,8 @@ from typing import Any, TypedDict
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from lestash.core.config import as_bool
+
 logger = logging.getLogger(__name__)
 
 UA = (
@@ -373,7 +375,7 @@ def run_during_sync(
     cfg = plugin_config.get("feed_preview", {})
     if not isinstance(cfg, dict):
         cfg = {}
-    if not cfg.get("enabled", True):
+    if not as_bool(cfg.get("enabled", True)):
         return None
     try:
         stats = cache_engaged_posts(

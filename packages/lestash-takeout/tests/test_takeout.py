@@ -9,6 +9,7 @@ from typing import Any
 
 import httplib2
 import pytest
+import typer
 from googleapiclient.errors import HttpError
 from lestash.cli import sources as sources_cli
 from lestash.core.database import get_checkpoints, get_connection
@@ -78,8 +79,14 @@ def drive(tmp_path, monkeypatch):
     return service
 
 
-def _sync() -> None:
-    sources_cli.sync_source(source_name="takeout", all_sources=False)
+def _sync(fails: bool = False) -> None:
+    """Run the CLI sync, which exits 1 when the sync failed (#209)."""
+    if not fails:
+        sources_cli.sync_source(source_name="takeout", all_sources=False)
+        return
+    with pytest.raises(typer.Exit) as exc:
+        sources_cli.sync_source(source_name="takeout", all_sources=False)
+    assert exc.value.exit_code == 1
 
 
 def _items(test_db) -> list[str]:
@@ -175,7 +182,7 @@ def test_a_zip_gone_from_drive_does_not_stop_the_others_but_fails_the_sync(
         return real(svc, file_id, dest)
 
     monkeypatch.setattr(source, "download", download)
-    _sync()
+    _sync(fails=True)
     state = _state(test_db)
     assert state["f1"]["status"] == "failed" and state["f1"]["attempts"] == 1
     assert state["f2"]["status"] == "unrecognized"
@@ -207,7 +214,7 @@ def test_a_systemic_download_error_stops_the_sync_and_counts_no_attempt(
     monkeypatch.setattr(source, "download", download)
     for _ in range(source.MAX_ATTEMPTS):
         drive.downloaded.clear()
-        _sync()
+        _sync(fails=True)
         # Stopped at the first zip: the second isn't tried
         assert [p.name for p in drive.downloaded] == ["takeout-1-001.zip"]
         assert _state(test_db) == {}
@@ -225,7 +232,7 @@ def test_a_systemic_error_after_a_bad_zip_reports_both(test_db, drive, monkeypat
         raise _http_error(404) if file_id == "f1" else ConnectionError("offline")
 
     monkeypatch.setattr(source, "download", download)
-    _sync()
+    _sync(fails=True)
     assert set(_state(test_db)) == {"f1"}
     status, message = _last_sync(test_db)
     assert status == "failed" and "offline" in message and "takeout-1-001.zip" in message
@@ -242,7 +249,7 @@ def test_a_zip_that_fails_to_parse_is_retried_then_given_up(test_db, drive, monk
     monkeypatch.setattr(source, "parse_zip", parse)
     for attempt in range(1, source.MAX_ATTEMPTS + 1):
         drive.downloaded.clear()
-        _sync()
+        _sync(fails=True)
         assert "takeout-1-001.zip" in [p.name for p in drive.downloaded]
         assert _state(test_db)["f1"]["attempts"] == attempt
         assert _last_sync(test_db)[0] == "failed"
@@ -297,7 +304,7 @@ def test_a_truncated_download_is_a_failure_not_unrecognized(test_db, drive, monk
         return dest
 
     monkeypatch.setattr(source, "download", truncated)
-    _sync()
+    _sync(fails=True)
     state = _state(test_db)
     assert state["f1"]["status"] == "failed"  # retried next time
     assert state["f2"]["status"] == "unrecognized"
@@ -308,7 +315,7 @@ def test_a_zip_too_big_for_the_disk_is_skipped_and_the_others_import(
 ) -> None:
     drive._files[0]["size"] = str(50 * 10**9)  # f1: far more than is free
     monkeypatch.setattr(source.shutil, "disk_usage", lambda path: SimpleNamespace(free=10**9))
-    _sync()
+    _sync(fails=True)
     state = _state(test_db)
     assert "f1" not in state  # no attempt counted: retried once there is room
     assert drive.downloaded and all("001" not in p.name for p in drive.downloaded)

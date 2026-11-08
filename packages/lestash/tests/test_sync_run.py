@@ -9,6 +9,7 @@ import sys
 from collections.abc import Iterator
 
 import pytest
+import typer
 from lestash.cli import sources as sources_cli
 from lestash.core.database import get_connection, get_db_path
 from lestash.core.sync import INTERRUPTED, SyncAlreadyRunning, SyncRun
@@ -149,8 +150,59 @@ class _Fails:
 
 
 def test_a_failed_cli_sync_keeps_its_error(test_db, monkeypatch) -> None:
-    _sync(test_db, monkeypatch, _Fails())
+    with pytest.raises(typer.Exit) as exc:  # so systemd shows the failure (#209)
+        _sync(test_db, monkeypatch, _Fails())
+    assert exc.value.exit_code == 1
     assert _rows(test_db) == [("audible", "failed", "API went away", 1)]
+
+
+class _Works:
+    def sync(self, config: dict) -> Iterator[ItemCreate]:
+        yield ItemCreate(source_type="kobo", source_id="k1", content="x")
+
+
+def test_an_all_sources_cli_sync_runs_every_source_then_exits_1_if_one_failed(
+    test_db, monkeypatch
+) -> None:
+    plugins = {"audible": _Fails(), "kobo": _Works()}
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: plugins)
+    monkeypatch.setattr(sources_cli.Config, "load", classmethod(lambda cls: test_db))
+    with pytest.raises(typer.Exit) as exc:
+        sources_cli.sync_source(source_name=None, all_sources=True)
+    assert exc.value.exit_code == 1
+    assert [(s, status) for s, status, _, _ in _rows(test_db)] == [
+        ("audible", "failed"),
+        ("kobo", "completed"),  # still ran after the failure
+    ]
+
+
+def test_an_error_starting_one_source_does_not_stop_the_others(test_db, monkeypatch) -> None:
+    import sqlite3
+
+    real_start = SyncRun.start
+
+    def start(conn, source, *args, **kwargs):
+        if source == "audible":
+            raise sqlite3.OperationalError("database is locked")
+        return real_start(conn, source, *args, **kwargs)
+
+    monkeypatch.setattr(SyncRun, "start", staticmethod(start))
+    monkeypatch.setattr(
+        sources_cli, "load_plugins", lambda: {"audible": _Works(), "kobo": _Works()}
+    )
+    monkeypatch.setattr(sources_cli.Config, "load", classmethod(lambda cls: test_db))
+    with pytest.raises(typer.Exit) as exc:
+        sources_cli.sync_source(source_name=None, all_sources=True)
+    assert exc.value.exit_code == 1
+    assert [(s, status) for s, status, _, _ in _rows(test_db)] == [("kobo", "completed")]
+
+
+def test_an_unknown_source_exits_1(test_db, monkeypatch) -> None:
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"kobo": _Works()})
+    monkeypatch.setattr(sources_cli.Config, "load", classmethod(lambda cls: test_db))
+    with pytest.raises(typer.Exit) as exc:
+        sources_cli.sync_source(source_name="kbo", all_sources=False)
+    assert exc.value.exit_code == 1
 
 
 def test_a_named_cli_sync_waits_for_a_running_one(test_db, monkeypatch) -> None:

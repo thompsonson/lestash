@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Annotated, Any
 
 import typer
+from lestash.core.config import as_bool
 from lestash.core.logging import get_plugin_logger
 from lestash.models.item import ItemCreate, MediaCreate
 from lestash.plugins.base import SourcePlugin
@@ -621,8 +622,9 @@ class MicroblogSource(SourcePlugin):
             logger.warning("No token found for Micro.blog sync")
             return
 
-        do_mentions = config.get("mentions", False) or config.get("all", False)
-        do_conversations = config.get("conversations", False) or config.get("all", False)
+        do_all = as_bool(config.get("all", False))
+        do_mentions = as_bool(config.get("mentions", False)) or do_all
+        do_conversations = as_bool(config.get("conversations", False)) or do_all
 
         try:
             with create_client(token) as client:

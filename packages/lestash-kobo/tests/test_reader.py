@@ -11,7 +11,7 @@ from lestash.core.sync import SyncStore
 from lestash.models.sync import SyncCheckpoint
 from lestash_kobo import KoboSource
 from lestash_kobo.reader import KoboReader, device_path, parse_date
-from lestash_kobo.source import flag, parse_taken_at
+from lestash_kobo.source import parse_taken_at
 from lestash_kobo.store import KoboStore
 
 from .conftest import DRIVE_PDF, NN, NOTEBOOK, STORE_UNOPENED
@@ -241,11 +241,6 @@ def test_a_second_import_waits_for_the_running_one(device: Path, tmp_path: Path,
         assert waiter.is_alive() and result == []  # blocked, not skipped
     waiter.join(5)
     assert result  # imported once the lock was free
-
-
-def test_flag_reads_config_strings() -> None:
-    assert flag("false") is False and flag("False") is False and flag("") is False
-    assert flag("true") is True and flag(True) is True and flag(None) is False
 
 
 def test_store_title_with_only_hidden_marks_is_skipped(device: Path, tmp_path: Path) -> None:

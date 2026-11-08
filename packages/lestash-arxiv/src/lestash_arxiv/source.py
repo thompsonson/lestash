@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from typing import Annotated
 
 import typer
+from lestash.core.config import as_list
 from lestash.models.item import ItemCreate, MediaCreate
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
@@ -408,10 +409,11 @@ class ArxivSource(SourcePlugin):
         seen: set[str] = set()
 
         # Phase 1: Legacy keywords from TOML config
-        keywords = config.get("keywords", [])
+        keywords = as_list(config.get("keywords"))
+        max_per_keyword = config.get("max_per_keyword", 5)
         for keyword in keywords:
             self.logger.info("Searching keyword: %s", keyword)
-            papers = search_papers(keyword, max_results=config.get("max_per_keyword", 5))
+            papers = search_papers(keyword, max_results=max_per_keyword)
             for paper in papers:
                 if paper.arxiv_id not in seen:
                     seen.add(paper.arxiv_id)

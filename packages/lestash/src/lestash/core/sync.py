@@ -8,6 +8,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
@@ -31,18 +32,65 @@ logger = logging.getLogger(__name__)
 COMMIT_EVERY = 500
 
 
+@dataclass(frozen=True)
+class SyncCounts:
+    """What a sync wrote: new items, changed items, and items yielded again unchanged."""
+
+    added: int = 0
+    updated: int = 0
+    unchanged: int = 0
+
+
+# Insert an item, or update its stored row only when a column would change, so an
+# unchanged re-import writes nothing: no FTS reindex and no item_history row. A plugin
+# naming no parent keeps one set earlier (e.g. by a resolver). created_at is kept.
+# RETURNING gives the id of a row written; none comes back for an unchanged one.
+_UPSERT = """
+    INSERT INTO items (
+        source_type, source_id, url, title, content,
+        author, created_at, is_own_content, metadata, parent_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(source_type, source_id) DO UPDATE SET
+        url = excluded.url,
+        title = excluded.title,
+        content = excluded.content,
+        author = excluded.author,
+        is_own_content = excluded.is_own_content,
+        metadata = excluded.metadata,
+        parent_id = COALESCE(excluded.parent_id, items.parent_id)
+    WHERE (
+        items.url, items.title, items.content, items.author,
+        items.is_own_content, items.metadata, items.parent_id
+    ) IS NOT (
+        excluded.url, excluded.title, excluded.content, excluded.author,
+        excluded.is_own_content, excluded.metadata,
+        COALESCE(excluded.parent_id, items.parent_id)
+    )
+    RETURNING id
+"""
+
+
 class SyncStore:
     """Writes a sync's items and checkpoints, and counts what it wrote.
 
-    Read ``items``, ``source_types`` and ``linked`` after ``run``, also when it raised.
+    Read ``counts``, ``source_types`` and ``linked`` after ``run``, also when it raised.
     """
 
     def __init__(self, conn: sqlite3.Connection, source: str) -> None:
         self.conn, self.source = conn, source
-        self.items = 0
-        self.committed = 0  # items as of the last commit
+        self.added = self.updated = self.unchanged = 0
+        self.committed = SyncCounts()  # counts as of the last commit
         self.source_types: set[str] = set()
         self.linked = 0
+
+    @property
+    def counts(self) -> SyncCounts:
+        return SyncCounts(self.added, self.updated, self.unchanged)
+
+    @property
+    def items(self) -> int:
+        """Items stored: new, changed or unchanged. One yielded twice counts twice."""
+        return self.added + self.updated + self.unchanged
 
     def run(self, items: Iterable[ItemCreate | SyncCheckpoint]) -> None:
         """Store every item, then link children to parents yielded later.
@@ -71,36 +119,28 @@ class SyncStore:
 
     def _commit(self) -> None:
         self.conn.commit()
-        self.committed = self.items
+        self.committed = self.counts
 
     def _sweep(self) -> None:
         self.linked = resolve_parent_source_ids(self.conn, self.source_types)
 
     def _store(self, item: ItemCreate) -> bool:
-        """Store one item; False when merge_with_stored() says a stored item holds it."""
+        """Store one item; False when merge_with_stored() says a stored item holds it.
+
+        Counts it as added (no stored row), updated (a column or new media) or
+        unchanged. A merge's own fix-ups to the stored row aren't counted.
+        """
         # Link to a parent yielded earlier (metadata._parent_source_id)
         resolve_parent_id(self.conn, item)
         if not merge_with_stored(self.conn, item):
             return False
-        metadata_json = json.dumps(item.metadata) if item.metadata else None
-        (item_id,) = self.conn.execute(
-            """
-            INSERT INTO items (
-                source_type, source_id, url, title, content,
-                author, created_at, is_own_content, metadata, parent_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source_type, source_id) DO UPDATE SET
-                url = excluded.url,
-                title = excluded.title,
-                content = excluded.content,
-                author = excluded.author,
-                is_own_content = excluded.is_own_content,
-                metadata = excluded.metadata,
-                -- Keep a parent set earlier (e.g. by a resolver) when the
-                -- plugin doesn't name one
-                parent_id = COALESCE(excluded.parent_id, items.parent_id)
-            RETURNING id
-            """,
+        stored = self.conn.execute(
+            "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+            (item.source_type, item.source_id),
+        ).fetchone()
+        # A row back means the upsert wrote one; none, that the stored row is the same
+        written = self.conn.execute(
+            _UPSERT,
             (
                 item.source_type,
                 item.source_id,
@@ -110,25 +150,49 @@ class SyncStore:
                 item.author,
                 item.created_at,
                 item.is_own_content,
-                metadata_json,
+                json.dumps(item.metadata) if item.metadata else None,
                 item.parent_id,
             ),
-        ).fetchone()
-        self.items += 1
-        self.source_types.add(item.source_type)
-        for media in item.media or []:
-            add_item_media(
-                self.conn,
-                item_id,
-                media_type=media.media_type,
-                url=media.url,
-                local_path=media.local_path,
-                mime_type=media.mime_type,
-                alt_text=media.alt_text,
-                position=media.position,
-                source_origin=media.source_origin,
-                _commit=False,
+        ).fetchall()
+        if written:
+            item_id = written[0][0]
+        else:
+            # Unchanged. If another writer stored the same item since the check above,
+            # read its id now (and count it unchanged), rather than fail the sync.
+            stored = (
+                stored
+                or self.conn.execute(
+                    "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+                    (item.source_type, item.source_id),
+                ).fetchone()
             )
+            item_id = stored[0]
+        self.source_types.add(item.source_type)
+        # item_media has no FTS index, so this count isn't moved by FTS5 flushing its
+        # buffered writes, as total_changes around the upsert would be
+        changes_before_media = self.conn.total_changes
+        try:
+            for media in item.media or []:
+                add_item_media(
+                    self.conn,
+                    item_id,
+                    media_type=media.media_type,
+                    url=media.url,
+                    local_path=media.local_path,
+                    mime_type=media.mime_type,
+                    alt_text=media.alt_text,
+                    position=media.position,
+                    source_origin=media.source_origin,
+                    _commit=False,
+                )
+        finally:
+            # Counted even when a media insert fails: run() commits the item row
+            if stored is None:
+                self.added += 1
+            elif written or self.conn.total_changes > changes_before_media:
+                self.updated += 1
+            else:
+                self.unchanged += 1
         return True
 
 
@@ -155,7 +219,7 @@ class SyncRun:
         self, conn: sqlite3.Connection, source: str, sync_id: int, lock: IO[bytes] | None
     ) -> None:
         self.conn, self.source, self.id, self._lock = conn, source, sync_id, lock
-        self.store: SyncStore | None = None  # counts items_added when not given
+        self.store: SyncStore | None = None  # gives the counts finish() is not given
         self.finished = False
 
     @classmethod
@@ -200,14 +264,21 @@ class SyncRun:
         self,
         status: str,
         items_added: int | None = None,
-        items_updated: int = 0,
+        items_updated: int | None = None,
         error: str | None = None,
     ) -> None:
-        """Record how the run ended. Only the first call counts."""
+        """Record how the run ended. Only the first call counts.
+
+        Counts not given come from the store: new items as added, changed items as
+        updated. Items stored again unchanged are in neither.
+        """
         if self.finished:
             return
+        counts = self.store.counts if self.store else SyncCounts()
         if items_added is None:
-            items_added = self.store.items if self.store else 0
+            items_added = counts.added
+        if items_updated is None:
+            items_updated = counts.updated
         self.conn.execute(
             """
             UPDATE sync_log SET completed_at = ?, status = ?, items_added = ?,
@@ -238,8 +309,10 @@ class SyncRun:
                     error = str(exc) or type(exc).__name__
                 # Drop what was stored since the last commit, and count only what stays
                 self.conn.rollback()
-                kept = self.store.committed if self.store else None
-                self.finish("failed", items_added=kept, error=error)
+                kept = self.store.committed if self.store else SyncCounts()
+                self.finish(
+                    "failed", items_added=kept.added, items_updated=kept.updated, error=error
+                )
         finally:
             if self._lock is not None:
                 self._lock.close()

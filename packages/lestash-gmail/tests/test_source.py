@@ -547,8 +547,15 @@ def _cli_sync(tmp_path, monkeypatch, queries, runner):
     monkeypatch.setattr(gmail_source, "find_gws", lambda path: "gws")
     monkeypatch.setattr(gmail_source, "GwsGmail", lambda path: GwsGmail(path, runner=runner))
 
-    def sync():
-        sources_cli.sync_source(source_name="gmail", all_sources=False)
+    def sync() -> int:
+        """The CLI's exit code: 1 when the sync failed (#209)."""
+        import typer
+
+        try:
+            sources_cli.sync_source(source_name="gmail", all_sources=False)
+        except typer.Exit as e:
+            return e.exit_code
+        return 0
 
     return sync, lambda: get_connection(config)
 
@@ -573,9 +580,9 @@ def test_a_failing_search_does_not_freeze_the_healthy_ones(tmp_path, monkeypatch
         return fake_gws(cmd, **kwargs)
 
     sync, connect = _cli_sync(tmp_path, monkeypatch, [bad, QUERY], runner)
-    sync()
+    assert sync() == 1
     fake_gws.calls.clear()
-    sync()
+    assert sync() == 1
 
     # The healthy search moved on from the first sync; the broken one still reads everything
     healthy = _searches(fake_gws.calls)
@@ -597,7 +604,7 @@ def test_cli_sync_commits_the_other_items_when_a_thread_is_skipped(
         return fake_gws(cmd, **kwargs)
 
     sync, connect = _cli_sync(tmp_path, monkeypatch, [QUERY], runner)
-    sync()
+    assert sync() == 1
     with connect() as conn:
         stored = [r[0] for r in conn.execute("SELECT source_id FROM items")]
         status, error = conn.execute("SELECT status, error_message FROM sync_log").fetchone()
@@ -835,7 +842,7 @@ def test_parent_stays_when_the_matching_searches_change(
     sync, connect = _cli_sync(tmp_path, monkeypatch, [QUERY, other], runner)
     snapshots = []
     for current["sync"] in (1, 2):
-        sync()
+        assert sync() == 0
         with connect() as conn:
             rows = conn.execute(
                 "SELECT source_id, json_extract(metadata, '$.message_id') FROM items"

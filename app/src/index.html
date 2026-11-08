@@ -2490,7 +2490,7 @@
               <td>${escHtml(s.source_type)}</td>
               <td style="font-size:0.8rem">${s.started_at ? relTime(s.started_at) : '-'}</td>
               <td><span class="sync-status ${s.status}">${s.status}</span></td>
-              <td>${s.items_added ? `+${s.items_added}` : '-'}</td>
+              <td title="new / changed">${[s.items_added ? `+${s.items_added}` : '', s.items_updated ? `~${s.items_updated}` : ''].filter(Boolean).join(' ') || '-'}</td>
               <td style="font-size:0.75rem;color:var(--muted)">${s.error_message ? escHtml(s.error_message.substring(0,60)) : '-'}</td>
             `;
             logTbody.appendChild(tr);
