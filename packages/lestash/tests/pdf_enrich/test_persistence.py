@@ -590,13 +590,3 @@ def test_same_file_in_a_folded_legacy_row_keeps_its_link(config, parent_pdf_item
             (parent_pdf_item,),
         ).fetchall()
     assert [tuple(r) for r in rows] == [("1/new.pdf", "https://drive.example/file")]
-
-
-def test_an_extraction_with_no_text_keeps_the_items_content(config, parent_pdf_item):
-    """Docling returns "" for a file it can't convert; that must not blank the item."""
-    with get_connection(config) as conn:
-        persist_enrichment(conn, config, parent_pdf_item, _enriched(content=""))
-        content = conn.execute(
-            "SELECT content FROM items WHERE id = ?", (parent_pdf_item,)
-        ).fetchone()[0]
-    assert content == "<!-- image -->\noriginal docling output"

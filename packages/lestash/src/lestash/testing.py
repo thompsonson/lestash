@@ -8,12 +8,17 @@ the default config (``Config.load()``) instead of the test's own then finds no c
 not the real ``~/.config/lestash/lestash.db``. A test that opens the default database
 there fails, so the code path that ignored the test's config is found and fixed.
 
-It only redirects HOME: a test can still reach any file by its full path.
+It only redirects HOME: a test can still reach any file by its full path. Model
+caches (HuggingFace, which Docling also uses) stay in the real home folder, so a test
+that loads a model doesn't download it again. The check covers only the default
+database, not tokens, logs or caches written under the temp HOME.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +28,10 @@ def _lestash_test_environment(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
     home = tmp_path_factory.mktemp("home")
+    # Read before HOME moves: the real model cache
+    monkeypatch.setenv(
+        "HF_HOME", os.environ.get("HF_HOME") or str(Path.home() / ".cache/huggingface")
+    )
     monkeypatch.setenv("HOME", str(home))
     yield
     default_db = home / ".config" / "lestash" / "lestash.db"

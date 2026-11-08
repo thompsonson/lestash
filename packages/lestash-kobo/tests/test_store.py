@@ -100,7 +100,7 @@ def test_latin1_mount_names_are_repaired() -> None:
 
 
 def test_default_root_is_under_local_share() -> None:
-    assert store_mod.DEFAULT_ROOT.parts[-3:] == ("share", "lestash", "kobo")
+    assert store_mod.default_root().parts[-3:] == ("share", "lestash", "kobo")
 
 
 def test_unchanged_files_are_not_read_again(device: Path, tmp_path: Path, monkeypatch) -> None:

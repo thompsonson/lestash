@@ -183,3 +183,30 @@ def test_extracted_image_count_propagates(config, item_with_local_source_pdf):
     with _stub_extractor(enriched):
         result = enrich_item(item_with_local_source_pdf, config=config)
     assert result.images == 1
+
+
+def test_an_extraction_with_no_text_writes_nothing(config, item_with_local_source_pdf):
+    """Docling returns "" for a file it can't convert: the item keeps its text, images
+    and metadata, and isn't marked enriched, so a later run retries."""
+    with get_connection(config) as conn:
+        before = conn.execute(
+            "SELECT content, metadata FROM items WHERE id = ?", (item_with_local_source_pdf,)
+        ).fetchone()
+        media_before = conn.execute("SELECT COUNT(*) FROM item_media").fetchone()[0]
+    empty = EnrichedPdf(
+        content="  \n",
+        pdf_sha256="b" * 64,
+        extractor_version=EXTRACTOR_VERSION,
+        images=[],
+        annotations=[],
+    )
+    with _stub_extractor(empty):
+        result = enrich_item(item_with_local_source_pdf, config=config, force=True)
+
+    assert (result.status, result.message) == ("failed", "no text extracted")
+    with get_connection(config) as conn:
+        after = conn.execute(
+            "SELECT content, metadata FROM items WHERE id = ?", (item_with_local_source_pdf,)
+        ).fetchone()
+        assert tuple(after) == tuple(before)
+        assert conn.execute("SELECT COUNT(*) FROM item_media").fetchone()[0] == media_before

@@ -28,7 +28,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ROOT = Path("~/.local/share/lestash/kobo").expanduser()
+
+def default_root() -> Path:
+    """The store's default folder, under the home folder at the time of the call."""
+    return Path("~/.local/share/lestash/kobo").expanduser()
+
+
 DB_PATH = ".kobo/KoboReader.sqlite"
 SNAPSHOT_NAME = re.compile(r"\d{8}T\d{6}Z")
 
@@ -141,7 +146,7 @@ def _iso(ns: int) -> str:
 
 class KoboStore:
     def __init__(self, root: Path | str | None = None) -> None:
-        self.root = Path(root).expanduser() if root else DEFAULT_ROOT
+        self.root = Path(root).expanduser() if root else default_root()
         self.blobs = self.root / "blobs"
         self.snapshots_dir = self.root / "snapshots"
 

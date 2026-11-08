@@ -598,9 +598,8 @@ def _update_parent_item(
     meta["enrichment_status"] = status
     meta["enriched_at"] = _now_iso()
     pre_max = max_history_id(conn)
-    # Docling returns "" when it can't convert the file: keep the text the item has
     conn.execute(
-        "UPDATE items SET content = COALESCE(NULLIF(?, ''), content), metadata = ? WHERE id = ?",
+        "UPDATE items SET content = ?, metadata = ? WHERE id = ?",
         (content, json.dumps(meta), item_id),
     )
     mark_recent_history(conn, pre_max, "enricher", item_ids=[item_id])

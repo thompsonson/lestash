@@ -83,6 +83,11 @@ def enrich_item(
             logger.exception("Extractor crashed for item %d", item_id)
             return EnrichmentResult(item_id=item_id, status="failed", message=str(exc))
 
+        if not enriched.content.strip():
+            # Docling returns "" for a file it can't convert. Write nothing: the item
+            # keeps its text and images, and isn't marked enriched, so a later run retries.
+            return EnrichmentResult(item_id=item_id, status="failed", message="no text extracted")
+
         if not force and is_already_enriched(conn, item_id, EXTRACTOR_VERSION, enriched.pdf_sha256):
             return EnrichmentResult(item_id=item_id, status="skipped")
 
