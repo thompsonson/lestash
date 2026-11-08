@@ -11,6 +11,17 @@ Kobo eReader source plugin: books, highlights, notes, dog-ears and pen markups.
 
 The Kobo is mounted read-only, so nothing writes to it.
 
+## Install the plug-in sync
+
+```bash
+deploy/install.sh              # user services, no sudo
+sudo deploy/install-root.sh    # once per machine: fstab line and udev rule
+```
+
+Then plug in the Kobo and tap Connect. udev starts `lestash-kobo.service`, which
+mounts the Kobo, takes a snapshot, unmounts it, and starts the import.
+`install-root.sh` is safe to re-run, and `install.sh` says when it is due.
+
 ## What becomes an item
 
 - Each downloaded book, sideloaded file and Drive PDF; store titles you never opened
