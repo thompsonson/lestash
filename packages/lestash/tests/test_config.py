@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
-import toml
 from lestash.cli import config as config_cli
 from lestash.core import config as core_config
 from lestash.core.config import Config, as_bool
@@ -37,7 +37,7 @@ def test_plugin_sections_are_kept_on_load_and_save(config_file: Path) -> None:
     assert config.get_plugin_config("arxiv") == {"keywords": ["ontology"]}
 
     config.save()
-    saved = toml.load(config_file)
+    saved = tomllib.loads(config_file.read_text())
     assert saved["kobo"]["include_store_titles"] is True
     assert saved["general"]["database_path"] == "/tmp/x.db"
 
@@ -180,21 +180,28 @@ def test_save_keeps_a_symlinked_config_and_its_permissions(
     assert [p.name for p in target.parent.iterdir()] == ["config.toml"]  # no temp file left
 
 
-def test_save_refuses_a_value_the_toml_library_would_change(config_file: Path) -> None:
-    config = Config(kobo={"store_dir": "x\x7f"})
-    with pytest.raises(ValueError, match="would not load back the same"):
-        config.save()
-    assert not config_file.exists()
+@pytest.mark.parametrize(
+    "value",
+    [
+        r"C:\Users\x",  # the old toml library wrote \U and \x unescaped
+        r"^\x20+$",
+        "x\x7f",  # and mangled control characters
+        ["agents", 2026],  # and couldn't write lists mixing kinds
+    ],
+)
+def test_save_round_trips_values_the_old_toml_library_broke(
+    config_file: Path, value: object
+) -> None:
+    Config(kobo={"value": value}).save()
+    assert Config.load().get_plugin_config("kobo") == {"value": value}
 
 
-def test_config_set_refuses_a_value_the_config_could_not_load_again(config_file: Path) -> None:
+def test_save_refuses_a_config_that_would_not_load_again(config_file: Path) -> None:
     config_file.write_text('[kobo]\nstore_dir = "~/kobo"\n')
     before = config_file.read_text()
-    result = _set("arxiv.keywords", '["agents", 2026]')  # TOML 1.0 allows it; `toml` can't
-    assert result.exit_code == 1
-    assert "would not load again" in result.output
+    with pytest.raises(ValueError, match="would not load again"):
+        Config(kobo={"value": None}).save()  # TOML has no null
     assert config_file.read_text() == before
-    assert Config.load().get_plugin_config("kobo") == {"store_dir": "~/kobo"}
 
 
 def test_config_set_refuses_to_replace_a_table(config_file: Path) -> None:
@@ -239,7 +246,7 @@ def test_config_set_refuses_unknown_sections_and_core_keys(config_file: Path) ->
 def test_config_set_keeps_other_sections(config_file: Path) -> None:
     config_file.write_text('[kobo]\nstore_dir = "~/kobo"\n')
     assert _set("general.database_path", "/tmp/x.db").exit_code == 0
-    saved = toml.load(config_file)
+    saved = tomllib.loads(config_file.read_text())
     assert saved["kobo"] == {"store_dir": "~/kobo"}
     assert saved["general"]["database_path"] == "/tmp/x.db"
 

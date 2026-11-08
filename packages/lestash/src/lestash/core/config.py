@@ -4,10 +4,11 @@ import copy
 import os
 import stat
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
-import toml
+import tomli_w
 from pydantic import BaseModel, ConfigDict
 
 
@@ -89,6 +90,8 @@ def _replace_file(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w") as f:
             f.write(text)
+            f.flush()
+            os.fsync(f.fileno())  # on disk before the rename, so a crash can't empty it
         if target.exists():
             mode = stat.S_IMODE(target.stat().st_mode)
         else:
@@ -137,26 +140,27 @@ class Config(BaseModel):
         """Load configuration from file."""
         config_path = get_config_path()
         if config_path.exists():
-            data = toml.load(config_path)
-            return cls(**data)
+            with config_path.open("rb") as f:
+                return cls(**tomllib.load(f))
         return cls()
 
     def save(self) -> None:
-        """Save configuration to file, only if ``load`` can read it back.
+        """Save configuration to file, only if ``load`` reads it back the same.
+
+        Written with tomli-w and read with tomllib, both TOML 1.0, so text with
+        backslashes and lists mixing kinds survive the round trip.
 
         Raises:
-            ValueError: the config can't be written as TOML that ``load`` reads, e.g. a
-                list mixing text and numbers. The file is left as it was.
+            ValueError: the config can't be written as TOML that ``load`` reads back
+                unchanged. The file is left as it was.
         """
         data = self.model_dump()
         try:
-            text = toml.dumps(data)
-            reloaded = type(self)(**toml.loads(text)).model_dump()
-        # The toml library fails in several ways on what it can't write (e.g. a mixed
-        # list raises IndexError), so any error here means "would not load"
+            text = tomli_w.dumps(data)
+            reloaded = type(self)(**tomllib.loads(text)).model_dump()
         except Exception as e:
             raise ValueError(f"not saved: the config would not load again ({e!r})") from e
-        if reloaded != data:  # e.g. a control character the library mangles
+        if reloaded != data:
             raise ValueError("not saved: the config would not load back the same")
         _replace_file(get_config_path(), text)
 

@@ -80,6 +80,8 @@ def test_the_committed_queries_parse() -> None:
         ('q = "x"\nkind = "title"\nexpects = ["arxiv:1"]', "expect must list"),
         ('q = "x"\nkind = "title"\nexpect = []', "expect must list"),
         ('q = "x"\nkind = "title"\nexpect = ["no-colon"]', "expect must list"),
+        ('q = "Dual-State"\nkind = "title"\nexpect = ["a:1"]', "words only"),
+        ('q = "Markov property: x"\nkind = "deep"\nexpect = ["a:1"]', "words only"),
     ],
 )
 def test_a_malformed_query_is_refused(tmp_path: Path, query: str, problem: str) -> None:
@@ -114,6 +116,7 @@ def test_it_records_each_mode_and_where_expected_items_rank(server: str, tmp_pat
     assert code == 1  # the semantic mode failed, and that is reported
     report = json.loads(out.read_text())
     assert report["vector_search"] is False  # so hybrid was keyword-only
+    assert report["results"][0]["hybrid_partial"] == ["semantic"]
     entry = report["results"][0]
     assert entry["keyword"][0] == {
         "rank": 1,

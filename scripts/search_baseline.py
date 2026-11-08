@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import re
 import sys
 import tomllib
 import urllib.parse
@@ -29,6 +30,7 @@ DEFAULT_QUERIES = Path(__file__).resolve().parent.parent / "docs/search-baseline
 
 KINDS = ("title", "topic", "paraphrase", "deep")
 FIELDS = {"q", "kind", "expect"}
+_FTS_BREAKERS = re.compile(r"[-:,]")
 
 
 def load_queries(path: Path) -> list[dict[str, Any]]:
@@ -43,6 +45,10 @@ def load_queries(path: Path) -> list[dict[str, Any]]:
             if not (isinstance(expect, list) and expect and all(":" in k for k in expect))
             else "",
             f"unknown field(s) {sorted(set(query) - FIELDS)}" if set(query) - FIELDS else "",
+            # The server passes these to FTS5, where they fail the keyword search
+            'q must be words only, without "-", ":" or ","'
+            if _FTS_BREAKERS.search(str(query.get("q", "")))
+            else "",
         ]
         if any(problems):
             raise SystemExit(f"{path}: {'; '.join(p for p in problems if p)}: {query}")
@@ -82,11 +88,11 @@ def run(base_url: str, queries: list[dict[str, Any]], limit: int, timeout: float
             # failed cell must not lose the whole recording.
             except (OSError, http.client.HTTPException, KeyError, ValueError, TypeError) as e:
                 entry[mode] = {"error": str(e)}
+        # Hybrid mode swallows a failure of either half and returns the other half's
+        # results, saying so only in the server log. A failed single mode shows it.
+        entry["hybrid_partial"] = [m for m in ("keyword", "semantic") if _failed(entry[m])]
         results.append(entry)
-    # The server falls back to keyword search when vector search fails, and says so
-    # only in its log. A semantic query that errors shows it: then "hybrid" here was
-    # keyword-only, and this recording is no baseline for semantic search.
-    vector_ok = all(not isinstance(e["semantic"], dict) for e in results)
+    vector_ok = all(not _failed(e["semantic"]) for e in results)
     return {
         "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "server": base_url,
@@ -94,6 +100,10 @@ def run(base_url: str, queries: list[dict[str, Any]], limit: int, timeout: float
         "vector_search": vector_ok,
         "results": results,
     }
+
+
+def _failed(cell: object) -> bool:
+    return isinstance(cell, dict)
 
 
 def expected_ranks(entry: dict[str, Any], mode: str) -> str:
@@ -110,6 +120,9 @@ def summary(report: dict) -> str:
     for entry in report["results"]:
         cells = [f"{expected_ranks(entry, mode):>9}" for mode in MODES]
         lines.append(f"{entry['kind'] or '':<11} {' '.join(cells)}  {entry['q'][:60]}")
+        if entry["hybrid_partial"]:
+            failed = " and ".join(entry["hybrid_partial"])
+            lines.append(f"{'':<11} hybrid above ran without {failed} search")
     if not report["vector_search"]:
         lines.append("WARNING: semantic search failed, so hybrid results are keyword-only.")
     return "\n".join(lines)

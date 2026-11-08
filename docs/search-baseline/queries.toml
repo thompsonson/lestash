@@ -10,10 +10,13 @@
 #   deep        text more than 500 characters into the item; semantic search embeds
 #               only the title and first 500 characters, so only keyword search sees it
 #
+# Use words only, no "-", ":" or ",": the server passes them to FTS5, which reads
+# "Dual-State" as column "State" and fails (hybrid then quietly runs semantic only).
+#
 # Run: uv run python scripts/search_baseline.py --url https://pop-mini.monkey-ladon.ts.net:8444
 
 [[query]]
-q = "Dual-State Architecture reliable LLM agents"
+q = "Dual State Architecture reliable LLM agents"
 kind = "title"
 expect = ["arxiv:2512.20660"]
 
@@ -112,6 +115,6 @@ expect = ["gemini:c_2ad0ab7680710049-reply-2025-05-05T08:12:33.808Z"]  # about 1
 
 [[query]]
 # A voice transcript spells it "mark off property", so keyword search can't match it
-q = "Markov property: each state holds enough information to choose the next action"
+q = "Markov property each state holds enough information to choose the next action"
 kind = "deep"
 expect = ["claude:019d121b-3029-7771-8de8-e46b2e55b608"]  # 1,607 in
