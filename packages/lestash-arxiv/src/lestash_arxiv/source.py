@@ -410,7 +410,7 @@ class ArxivSource(SourcePlugin):
 
         # Phase 1: Legacy keywords from TOML config
         keywords = as_list(config.get("keywords"))
-        max_per_keyword = int(config.get("max_per_keyword", 5))
+        max_per_keyword = config.get("max_per_keyword", 5)
         for keyword in keywords:
             self.logger.info("Searching keyword: %s", keyword)
             papers = search_papers(keyword, max_results=max_per_keyword)

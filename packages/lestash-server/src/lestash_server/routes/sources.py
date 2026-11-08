@@ -68,8 +68,13 @@ def _run_sync(source_name: str) -> None:
 
     config = get_config()
     # Read the file again, not the copy cached at startup, so a `lestash config set`
-    # made while the server runs takes effect at the next sync
-    plugin_config = Config.load().get_plugin_config(source_name)
+    # made while the server runs takes effect at the next sync. A file that can't be
+    # read (e.g. mid-edit) falls back to the cached copy rather than lose the sync.
+    try:
+        plugin_config = Config.load().get_plugin_config(source_name)
+    except Exception:
+        logger.warning("Could not read the config file; using the one loaded at startup")
+        plugin_config = config.get_plugin_config(source_name)
 
     with get_connection(config) as conn:
         store = SyncStore(conn, source_name)

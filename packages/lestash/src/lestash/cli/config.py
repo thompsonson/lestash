@@ -58,6 +58,7 @@ def init_config_cmd(
 
 # No leading zero or sign, so "007" and "+4412345" stay text
 _INTEGER = re.compile(r"-?(0|[1-9]\d*)")
+_DECIMAL = re.compile(r"-?(0|[1-9]\d*)\.\d+")
 
 
 def parse_value(raw: str) -> Any:
@@ -67,14 +68,17 @@ def parse_value(raw: str) -> Any:
       is false.
     - A whole number without a leading zero or ``+`` -> int, so
       ``arxiv.max_per_keyword 5`` is 5.
+    - A decimal that reads back exactly -> float: ``0.5``, but not ``1.10`` (1.1).
     - A TOML array or quoted string -> its value: ``["LLM agents", "ontology"]``, ``"5"``.
-    - Anything else stays text. Decimals do too: ``1.10`` would read back as ``1.1``.
+    - Anything else stays text.
     """
     text = raw.strip()
     if text.lower() in ("true", "false"):
         return text.lower() == "true"
     if _INTEGER.fullmatch(text):
         return int(text)
+    if _DECIMAL.fullmatch(text) and repr(float(text)) == text:
+        return float(text)
     if text[:1] in ("[", '"', "'"):
         try:
             value = tomllib.loads(f"value = {text}")["value"]
@@ -146,9 +150,15 @@ def set_config(
     if isinstance(existing, dict):
         console.print(f"[red]{key} is a table of settings; edit it in {get_config_path()}[/red]")
         raise typer.Exit(1)
-    # A plugin setting keeps its kind: "five" for a number, or a bare word for a list
-    # (read as a list of its letters), would only fail at the next sync
-    if section not in core and existing is not None and _kind(parsed) != _kind(existing):
+    # A typed plugin setting keeps its kind: "five" for a number, or a bare word for a
+    # list (read as a list of its letters), would only fail at the next sync. A setting
+    # stored as text, as older versions stored every value, may take any kind.
+    if (
+        section not in core
+        and existing is not None
+        and not isinstance(existing, str)
+        and _kind(parsed) != _kind(existing)
+    ):
         console.print(f"[red]{key} holds {escape(_kind(existing))}[/red]")
         raise typer.Exit(1)
     current[setting] = parsed

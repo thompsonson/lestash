@@ -112,6 +112,8 @@ def test_config_set_stores_typed_plugin_values(config_file: Path) -> None:
         ('"007"', "007"),
         ("LLM agents", "LLM agents"),
         ("1.10", "1.10"),  # not 1.1
+        ("0.5", 0.5),
+        ("-2.25", -2.25),
         ("inf", "inf"),
         ("2026-01-01", "2026-01-01"),
         ("~/kobo", "~/kobo"),
@@ -137,6 +139,21 @@ def test_config_set_refuses_text_for_a_number_setting(config_file: Path) -> None
     assert result.exit_code == 1
     assert "holds number" in result.output
     assert _set("arxiv.max_per_keyword", "8").exit_code == 0
+
+
+def test_config_set_replaces_a_value_an_older_version_stored_as_text(config_file: Path) -> None:
+    config_file.write_text('[kobo]\ninclude_store_titles = "false"\n\n[arxiv]\nlimit = "100"\n')
+    assert _set("kobo.include_store_titles", "true").exit_code == 0
+    assert _set("arxiv.limit", "100").exit_code == 0
+    assert Config.load().get_plugin_config("kobo") == {"include_store_titles": True}
+    assert Config.load().get_plugin_config("arxiv") == {"limit": 100}
+
+
+def test_config_set_takes_a_decimal_for_a_number_setting(config_file: Path) -> None:
+    config_file.write_text("[arxiv]\nmin_size_kb = 0.5\n")
+    assert _set("arxiv.min_size_kb", "1.5").exit_code == 0
+    assert _set("arxiv.min_size_kb", "2").exit_code == 0
+    assert Config.load().get_plugin_config("arxiv") == {"min_size_kb": 2}
 
 
 def test_config_set_trims_text_and_reports_the_stored_value(config_file: Path) -> None:

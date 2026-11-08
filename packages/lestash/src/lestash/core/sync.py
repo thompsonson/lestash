@@ -130,10 +130,6 @@ class SyncStore:
         Counts it as added (no stored row), updated (a column or new media) or
         unchanged. A merge's own fix-ups to the stored row aren't counted.
         """
-        if not self.conn.in_transaction:
-            # Take the write lock before reading, so no other writer can store this item
-            # between the read and the upsert. Python would only begin at the INSERT.
-            self.conn.execute("BEGIN IMMEDIATE")
         # Link to a parent yielded earlier (metadata._parent_source_id)
         resolve_parent_id(self.conn, item)
         if not merge_with_stored(self.conn, item):
@@ -158,7 +154,19 @@ class SyncStore:
                 item.parent_id,
             ),
         ).fetchall()
-        item_id = written[0][0] if written else stored[0]
+        if written:
+            item_id = written[0][0]
+        else:
+            # Unchanged. If another writer stored the same item since the check above,
+            # read its id now (and count it unchanged), rather than fail the sync.
+            stored = (
+                stored
+                or self.conn.execute(
+                    "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+                    (item.source_type, item.source_id),
+                ).fetchone()
+            )
+            item_id = stored[0]
         self.source_types.add(item.source_type)
         # item_media has no FTS index, so this count isn't moved by FTS5 flushing its
         # buffered writes, as total_changes around the upsert would be

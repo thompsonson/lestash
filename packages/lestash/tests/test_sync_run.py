@@ -176,6 +176,27 @@ def test_an_all_sources_cli_sync_runs_every_source_then_exits_1_if_one_failed(
     ]
 
 
+def test_an_error_starting_one_source_does_not_stop_the_others(test_db, monkeypatch) -> None:
+    import sqlite3
+
+    real_start = SyncRun.start
+
+    def start(conn, source, *args, **kwargs):
+        if source == "audible":
+            raise sqlite3.OperationalError("database is locked")
+        return real_start(conn, source, *args, **kwargs)
+
+    monkeypatch.setattr(SyncRun, "start", staticmethod(start))
+    monkeypatch.setattr(
+        sources_cli, "load_plugins", lambda: {"audible": _Works(), "kobo": _Works()}
+    )
+    monkeypatch.setattr(sources_cli.Config, "load", classmethod(lambda cls: test_db))
+    with pytest.raises(typer.Exit) as exc:
+        sources_cli.sync_source(source_name=None, all_sources=True)
+    assert exc.value.exit_code == 1
+    assert [(s, status) for s, status, _, _ in _rows(test_db)] == [("kobo", "completed")]
+
+
 def test_an_unknown_source_exits_1(test_db, monkeypatch) -> None:
     monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"kobo": _Works()})
     monkeypatch.setattr(sources_cli.Config, "load", classmethod(lambda cls: test_db))
