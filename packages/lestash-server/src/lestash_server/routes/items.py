@@ -4,6 +4,7 @@ import json
 import logging
 import sqlite3
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from lestash.core.database import (
@@ -190,7 +191,7 @@ def search_items(
     q: str = Query(..., min_length=1, description="Search query"),
     limit: int = Query(20, ge=1, le=100),
     include_children: bool = Query(True, description="Include child items in results"),
-    mode: str = Query("hybrid", description="Search mode: keyword, semantic, hybrid"),
+    mode: Literal["keyword", "semantic", "hybrid"] = Query("hybrid", description="Search mode"),
 ):
     """Search items using keyword (FTS5), semantic (vector), or hybrid mode.
 

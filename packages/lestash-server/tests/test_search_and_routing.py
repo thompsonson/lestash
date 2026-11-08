@@ -84,6 +84,13 @@ def test_semantic_hits_respect_include_children(client, seeded, monkeypatch):
     assert ids(False) == [parent]
 
 
+@pytest.mark.parametrize("mode", ["Keyword", "fts", ""])
+def test_an_unknown_search_mode_is_rejected(client, mode):
+    """Not an empty 200, which would read as "no results"."""
+    resp = client.get("/api/items/search", params={"q": "Python", "mode": mode})
+    assert resp.status_code == 422
+
+
 def test_nothing_searchable_returns_no_results(client):
     resp = client.get("/api/items/search", params={"q": "++", "mode": "keyword"})
     assert resp.status_code == 200

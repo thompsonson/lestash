@@ -43,8 +43,9 @@ def _closing_quote(q: str, start: int) -> int | None:
     The phrase ends at the first quote followed by the end or a non-word character. A
     quote between two letters or digits inside it is an apostrophe ("don"t panic"), unless
     no proper closing quote follows, in which case the first such quote closes it
-    ("foo bar"baz). A quote that can only open (after a space, before a letter) means the
-    one at start was stray: "foo bar "baz qux" is two words and a phrase.
+    ("foo bar"baz). A quote that can only open (after a space, before a letter) ends the
+    search: the phrase closes at that first inner quote if there was one, and otherwise
+    the quote at start was stray: "foo bar "baz qux" is two words and a phrase.
     """
     first_inner: int | None = None
     for j in range(start + 1, len(q)):
@@ -55,7 +56,9 @@ def _closing_quote(q: str, start: int) -> int | None:
         if not word_after:
             return j
         if not word_before:
-            return None
+            # A quote that can only open: close at an earlier quote against a word
+            # ("machine learning"s "deep nets"), or else the opener was stray
+            return first_inner
         if first_inner is None:
             first_inner = j
     return first_inner

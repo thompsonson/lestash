@@ -115,6 +115,7 @@ def test_query_is_valid_fts5_and_matches(conn, q, found) -> None:
         ("a OR AND NOT b", '"a"*'),
         ("a OR - b", '"a"* OR "b"*'),
         ('"foo bar"baz', '"foo bar" "baz"*'),  # a phrase closed against a word
+        ('"foo bar"s "deep nets"', '"foo bar" "s"* "deep nets"'),  # ...whatever follows
         ('"don"t panic"', '"don\'t panic"'),  # ...but an apostrophe inside a phrase stays
         ('"rock"n"roll"', "\"rock'n'roll\""),
         ('“don"t”', '"don\'t"'),
