@@ -1,0 +1,117 @@
+# Search baseline (#215): real queries, recorded before search changes, so later
+# results can be compared with today's. DRAFT: to be edited and approved before the
+# first results are recorded.
+#
+# Each query names the items it should find, as "source_type:source_id".
+# kind:
+#   title       words from the item's title
+#   topic       the subject, in other words than the title's
+#   paraphrase  meaning only; few or no words shared with the item
+#   deep        text more than 500 characters into the item; semantic search embeds
+#               only the title and first 500 characters, so only keyword search sees it
+#
+# Run: uv run python scripts/search_baseline.py --url https://pop-mini.monkey-ladon.ts.net:8444
+
+[[query]]
+q = "Dual-State Architecture reliable LLM agents"
+kind = "title"
+expect = ["arxiv:2512.20660"]
+
+[[query]]
+q = "Darwin Gödel Machine"
+kind = "title"
+expect = ["youtube:liked:KptCerr9D5I"]
+
+[[query]]
+q = "PDDL problem files from templates"
+kind = "title"
+expect = ["youtube:history:Uh5Idw0b-N8"]
+
+[[query]]
+q = "deontic policies for governing agentic AI at runtime"
+kind = "title"
+expect = ["arxiv:2606.19464"]
+
+[[query]]
+q = "ontologies doctrine ubiquitous language"
+kind = "title"
+expect = ["microblog:https://matt.thompson.gr/2026/08/13/ia-series-n-ontologies-doctrine.html"]
+
+[[query]]
+q = "survey of vibe coding"
+kind = "title"
+expect = ["google-drive:12vpJHt8QTKZ20p94AUyEb0XAtVxK_yA9"]
+
+[[query]]
+q = "from agent function to agent program"
+kind = "title"
+expect = ["claude:a738239e-f37a-406e-9b25-42717eada402"]
+
+[[query]]
+q = "reliable systems built from unreliable components"
+kind = "topic"
+expect = ["google-drive:1-RXxFQ4Z0o_93yr_kkUWCaZwPfkkj2ko"]  # pierce_1952; von Neumann's paper is close too
+
+[[query]]
+q = "encrypting model updates in federated learning"
+kind = "topic"
+expect = [
+  "claude:4512ee0a-5920-4b34-83d7-03284a108627",
+  "gemini:canvas-2025-10-30T06:59:06.004Z",
+]
+
+[[query]]
+q = "history of reinforcement learning from matchboxes to modern agents"
+kind = "topic"
+expect = ["notebooklm:Takeout/NotebookLM/The Reinforcement Learning Gym_ From Matchboxes to Modern Agents"]
+
+[[query]]
+q = "making code written by language models trustworthy with automatic checks"
+kind = "paraphrase"
+expect = ["arxiv:2512.20660"]
+
+[[query]]
+q = "an agent that critiques its own answer before replying"
+kind = "paraphrase"
+expect = ["microblog:https://matt.thompson.gr/2025/07/19/ia-series-n-building-a.html"]
+
+[[query]]
+q = "keeping secrets safe when many organisations train one model together"
+kind = "paraphrase"
+expect = ["claude:4512ee0a-5920-4b34-83d7-03284a108627"]
+
+[[query]]
+q = "how efficient is my swimming for my age"
+kind = "paraphrase"
+expect = ["gemini:c_87d37b84fab1f75b"]  # "Whats a good swolf for a 48 yearold"
+
+[[query]]
+q = "Pyrrhonian skepticism suspension of judgment"
+kind = "deep"
+expect = ["google-drive:1Z6lrD7C0xrB_3IPt1qcYgykS0zSf2opwe_oSIIQQeOk"]  # 40,473 characters in
+
+[[query]]
+q = "Workflow State Projection guard functions"
+kind = "deep"
+expect = ["google-drive:1bDqFpqBNq6v2mg_n9S0LSUGgizAyzd7K"]  # 20,167 in; 32 items share the phrase
+
+[[query]]
+q = "normalized entropy of the answer distribution"
+kind = "deep"
+expect = ["microblog:https://matt.thompson.gr/2025/07/19/ia-series-n-building-a.html"]  # 3,978 in
+
+[[query]]
+q = "Description Logics have limited quantification"
+kind = "deep"
+expect = ["gemini:c_382fb83b8d5424b4-reply-2025-05-04T21:56:30.066Z"]  # 1,631 in
+
+[[query]]
+q = "ground truth correctness of the called tool"
+kind = "deep"
+expect = ["gemini:c_2ad0ab7680710049-reply-2025-05-05T08:12:33.808Z"]  # about 1,500 in
+
+[[query]]
+# A voice transcript spells it "mark off property", so keyword search can't match it
+q = "Markov property: each state holds enough information to choose the next action"
+kind = "deep"
+expect = ["claude:019d121b-3029-7771-8de8-e46b2e55b608"]  # 1,607 in
