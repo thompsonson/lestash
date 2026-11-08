@@ -30,8 +30,8 @@ DEFAULT_QUERIES = Path(__file__).resolve().parent.parent / "docs/search-baseline
 
 KINDS = ("title", "topic", "paraphrase", "deep")
 FIELDS = {"q", "kind", "expect"}
-# Anything but letters, digits and spaces: the server adds "*" to each word and passes it
-# to FTS5, where "-", ":", ",", ".", "'", "(" or "/" in a word is a syntax error
+# Anything but letters, digits and spaces. The first recording ran before #227, when
+# punctuation broke keyword search; queries stay words-only so runs compare like with like
 _FTS_BREAKERS = re.compile(r"[^\w\s]")
 
 
@@ -47,7 +47,7 @@ def load_queries(path: Path) -> list[dict[str, Any]]:
             if not (isinstance(expect, list) and expect and all(":" in k for k in expect))
             else "",
             f"unknown field(s) {sorted(set(query) - FIELDS)}" if set(query) - FIELDS else "",
-            # The server passes these to FTS5, where they fail the keyword search
+            # Words only, as in the first recording
             "q must be words only: letters, digits and spaces"
             if _FTS_BREAKERS.search(str(query.get("q", "")))
             else "",

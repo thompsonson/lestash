@@ -1,0 +1,3281 @@
+{
+  "recorded_at": "2026-11-08T15:09:57+00:00",
+  "server": "https://pop-mini.monkey-ladon.ts.net:8444",
+  "limit": 10,
+  "vector_search": true,
+  "results": [
+    {
+      "q": "Dual State Architecture reliable LLM agents",
+      "kind": "title",
+      "expect": [
+        "arxiv:2512.20660"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 26522,
+          "key": "web:https://arxiv.org/abs/2512.20660",
+          "title": "[2512.20660] The Dual-State Architecture for Reliable LLM Agents"
+        },
+        {
+          "rank": 2,
+          "id": 1616,
+          "key": "notebooklm:Takeout/NotebookLM/Reliable Code Generation via Dual-State Neuro-Symb",
+          "title": "Reliable Code Generation via Dual-State Neuro-Symbolic Architecture"
+        },
+        {
+          "rank": 3,
+          "id": 41171,
+          "key": "notebooklm:Takeout/NotebookLM/Reliable Code Generation via Dual-State Neuro-Symbolic Architecture",
+          "title": "Reliable Code Generation via Dual-State Neuro-Symbolic Architecture"
+        },
+        {
+          "rank": 4,
+          "id": 42510,
+          "key": "gemini:c_b1aa21b5e9e949ae-reply-2026-08-09T17:14:18.082Z",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 42636,
+          "key": "gemini:c_d57e418e69f7d12f-reply-2026-07-27T21:07:25.586Z",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 2,
+          "key": "arxiv:2512.20660",
+          "title": "The Dual-State Architecture for Reliable LLM Agents"
+        },
+        {
+          "rank": 7,
+          "id": 44296,
+          "key": "gemini:c_92bb1a040a290a28-reply-2026-03-27T10:45:09.992Z",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 20462,
+          "key": "mistral:mistral-msg-0bd1f98a-549c-4b17-b1a2-59c299169427",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 43964,
+          "key": "gemini:c_a02d8c49b97ad02f-reply-2026-04-19T14:03:27.150Z",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 44303,
+          "key": "gemini:c_92bb1a040a290a28-prompt-2026-03-27T10:54:48.718Z",
+          "title": ""
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 26522,
+          "key": "web:https://arxiv.org/abs/2512.20660",
+          "title": "[2512.20660] The Dual-State Architecture for Reliable LLM Agents"
+        },
+        {
+          "rank": 2,
+          "id": 2413,
+          "key": "claude:e5e081e2-9592-4387-8be8-a472e736454d",
+          "title": "20251215 - Current"
+        },
+        {
+          "rank": 3,
+          "id": 2616,
+          "key": "claude-memory:project-memory-019927b0-d501-7678-adac-51ab1fe432ae",
+          "title": "Project Memory (019927b0...)"
+        },
+        {
+          "rank": 4,
+          "id": 2333,
+          "key": "claude:00cf99d2-b67d-4115-996b-65322a410a90",
+          "title": "!! Masters !! Distributed LLM Decision Making Framework"
+        },
+        {
+          "rank": 5,
+          "id": 2465,
+          "key": "claude:78476ec3-74ec-4333-adeb-9b88bde8e5b5",
+          "title": "Dual state framework and atomic pairs validation"
+        },
+        {
+          "rank": 6,
+          "id": 2585,
+          "key": "claude-project:019927b0-d501-7678-adac-51ab1fe432ae",
+          "title": "Book: AtomicGuard"
+        },
+        {
+          "rank": 7,
+          "id": 195,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3lsjggukk4p2w",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 24857,
+          "key": "share:share-1776100684915",
+          "title": "[2604.08224] Externalization in LLM Agents: A Unified Review of Memory, Skills, Protocols and Harness Engineering"
+        },
+        {
+          "rank": 9,
+          "id": 2369,
+          "key": "claude:dd4aa74a-8474-40e8-962d-1838d3737f4b",
+          "title": "Publishing framework guide on LeanPub"
+        },
+        {
+          "rank": 10,
+          "id": 2366,
+          "key": "claude:7bc389c8-75d7-42d8-9bae-bf77c2a1fc7c",
+          "title": "Framework alignment with BaseAgent dual-state architecture"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 26522,
+          "key": "web:https://arxiv.org/abs/2512.20660",
+          "title": "[2512.20660] The Dual-State Architecture for Reliable LLM Agents"
+        },
+        {
+          "rank": 2,
+          "id": 1616,
+          "key": "notebooklm:Takeout/NotebookLM/Reliable Code Generation via Dual-State Neuro-Symb",
+          "title": "Reliable Code Generation via Dual-State Neuro-Symbolic Architecture"
+        },
+        {
+          "rank": 3,
+          "id": 2413,
+          "key": "claude:e5e081e2-9592-4387-8be8-a472e736454d",
+          "title": "20251215 - Current"
+        },
+        {
+          "rank": 4,
+          "id": 2616,
+          "key": "claude-memory:project-memory-019927b0-d501-7678-adac-51ab1fe432ae",
+          "title": "Project Memory (019927b0...)"
+        },
+        {
+          "rank": 5,
+          "id": 41171,
+          "key": "notebooklm:Takeout/NotebookLM/Reliable Code Generation via Dual-State Neuro-Symbolic Architecture",
+          "title": "Reliable Code Generation via Dual-State Neuro-Symbolic Architecture"
+        },
+        {
+          "rank": 6,
+          "id": 42510,
+          "key": "gemini:c_b1aa21b5e9e949ae-reply-2026-08-09T17:14:18.082Z",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 2333,
+          "key": "claude:00cf99d2-b67d-4115-996b-65322a410a90",
+          "title": "!! Masters !! Distributed LLM Decision Making Framework"
+        },
+        {
+          "rank": 8,
+          "id": 42636,
+          "key": "gemini:c_d57e418e69f7d12f-reply-2026-07-27T21:07:25.586Z",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 2465,
+          "key": "claude:78476ec3-74ec-4333-adeb-9b88bde8e5b5",
+          "title": "Dual state framework and atomic pairs validation"
+        },
+        {
+          "rank": 10,
+          "id": 2,
+          "key": "arxiv:2512.20660",
+          "title": "The Dual-State Architecture for Reliable LLM Agents"
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "Darwin Gödel Machine",
+      "kind": "title",
+      "expect": [
+        "youtube:liked:KptCerr9D5I"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 535,
+          "key": "youtube:liked:KptCerr9D5I",
+          "title": "Darwin Gödel Machine Explained: Self-Improving AI Agents"
+        },
+        {
+          "rank": 2,
+          "id": 32224,
+          "key": "youtube:history:a1L0frpDE4k",
+          "title": "Darwin Gödel Machine (DGM) Explained Intuitively"
+        },
+        {
+          "rank": 3,
+          "id": 32222,
+          "key": "youtube:history:8Odu8BBG7_s",
+          "title": "Darwin Gödel Machine: Open-Ended Evolution of Self-Improving Agents"
+        },
+        {
+          "rank": 4,
+          "id": 1609,
+          "key": "notebooklm:Takeout/NotebookLM/Darwin Gödel Machine_ Self-Improving AI Agents",
+          "title": "Darwin Gödel Machine: Self-Improving AI Agents"
+        },
+        {
+          "rank": 5,
+          "id": 1626,
+          "key": "notebooklm:Takeout/NotebookLM/Darwin Gödel Machine_ Self-Improving AI Agents/Notes/AI Reasoning Benchmarks Catalogue.html",
+          "title": "Darwin Gödel Machine: Self-Improving AI Agents — AI Reasoning Benchmarks Catalogue"
+        },
+        {
+          "rank": 6,
+          "id": 27372,
+          "key": "youtube:liked:claxN4oxDuY",
+          "title": "Like Sabine Hossenfelder, I Was Offered Money to Tell You AI Will Kill Us"
+        },
+        {
+          "rank": 7,
+          "id": 1627,
+          "key": "notebooklm:Takeout/NotebookLM/Darwin Gödel Machine_ Self-Improving AI Agents/Notes/Ollama Models for Reflective Judgment and Reas.html",
+          "title": "Darwin Gödel Machine: Self-Improving AI Agents — Ollama Models for Reflective Judgment and Reas"
+        },
+        {
+          "rank": 8,
+          "id": 41110,
+          "key": "notebooklm:Takeout/NotebookLM/Darwin Gödel Machine_ Self-Improving AI Agents/Notes/Ollama Models for Reflective Judgment and Reasoning.html",
+          "title": "Darwin Gödel Machine: Self-Improving AI Agents — Ollama Models for Reflective Judgment and Reasoning"
+        },
+        {
+          "rank": 9,
+          "id": 1628,
+          "key": "notebooklm:Takeout/NotebookLM/Darwin Gödel Machine_ Self-Improving AI Agents/Notes/Self-Consistency_ Advancing LLM Performance an.html",
+          "title": "Darwin Gödel Machine: Self-Improving AI Agents — Self-Consistency_ Advancing LLM Performance an"
+        },
+        {
+          "rank": 10,
+          "id": 41111,
+          "key": "notebooklm:Takeout/NotebookLM/Darwin Gödel Machine_ Self-Improving AI Agents/Notes/Self-Consistency_ Advancing LLM Performance and Evaluation.html",
+          "title": "Darwin Gödel Machine: Self-Improving AI Agents — Self-Consistency_ Advancing LLM Performance and Evaluation"
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 535,
+          "key": "youtube:liked:KptCerr9D5I",
+          "title": "Darwin Gödel Machine Explained: Self-Improving AI Agents"
+        },
+        {
+          "rank": 2,
+          "id": 1609,
+          "key": "notebooklm:Takeout/NotebookLM/Darwin Gödel Machine_ Self-Improving AI Agents",
+          "title": "Darwin Gödel Machine: Self-Improving AI Agents"
+        },
+        {
+          "rank": 3,
+          "id": 2514,
+          "key": "claude:9ce0074e-7eb4-4301-86e6-b8657976bd0e",
+          "title": "Gödel, Hilbert's program, and mathematical structuralism"
+        },
+        {
+          "rank": 4,
+          "id": 76,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3lthdkklems2e",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 25451,
+          "key": "linkedin:changelog-socialActions/comments-7463470605468782592",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 693,
+          "key": "youtube:liked:URtF_UHYBSo",
+          "title": "The Elegant Math Behind Machine Learning"
+        },
+        {
+          "rank": 7,
+          "id": 198,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3lrwppgjrc32p",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 2070,
+          "key": "claude:56160e8e-d657-468d-a796-1bb74685bdeb",
+          "title": "Replacing Idempotence and Determinism in Software"
+        },
+        {
+          "rank": 9,
+          "id": 2423,
+          "key": "claude:4f1ccffd-00b4-456a-b0ed-3eb7d92511c7",
+          "title": "Intelligent Agents Research Series"
+        },
+        {
+          "rank": 10,
+          "id": 24107,
+          "key": "gemini:gemini-search-3178c6c5b13b",
+          "title": "Probability, Belief, and AI Evolution"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 535,
+          "key": "youtube:liked:KptCerr9D5I",
+          "title": "Darwin Gödel Machine Explained: Self-Improving AI Agents"
+        },
+        {
+          "rank": 2,
+          "id": 1609,
+          "key": "notebooklm:Takeout/NotebookLM/Darwin Gödel Machine_ Self-Improving AI Agents",
+          "title": "Darwin Gödel Machine: Self-Improving AI Agents"
+        },
+        {
+          "rank": 3,
+          "id": 32224,
+          "key": "youtube:history:a1L0frpDE4k",
+          "title": "Darwin Gödel Machine (DGM) Explained Intuitively"
+        },
+        {
+          "rank": 4,
+          "id": 2514,
+          "key": "claude:9ce0074e-7eb4-4301-86e6-b8657976bd0e",
+          "title": "Gödel, Hilbert's program, and mathematical structuralism"
+        },
+        {
+          "rank": 5,
+          "id": 32222,
+          "key": "youtube:history:8Odu8BBG7_s",
+          "title": "Darwin Gödel Machine: Open-Ended Evolution of Self-Improving Agents"
+        },
+        {
+          "rank": 6,
+          "id": 76,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3lthdkklems2e",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 1626,
+          "key": "notebooklm:Takeout/NotebookLM/Darwin Gödel Machine_ Self-Improving AI Agents/Notes/AI Reasoning Benchmarks Catalogue.html",
+          "title": "Darwin Gödel Machine: Self-Improving AI Agents — AI Reasoning Benchmarks Catalogue"
+        },
+        {
+          "rank": 8,
+          "id": 25451,
+          "key": "linkedin:changelog-socialActions/comments-7463470605468782592",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 27372,
+          "key": "youtube:liked:claxN4oxDuY",
+          "title": "Like Sabine Hossenfelder, I Was Offered Money to Tell You AI Will Kill Us"
+        },
+        {
+          "rank": 10,
+          "id": 693,
+          "key": "youtube:liked:URtF_UHYBSo",
+          "title": "The Elegant Math Behind Machine Learning"
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "PDDL problem files from templates",
+      "kind": "title",
+      "expect": [
+        "youtube:history:Uh5Idw0b-N8"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 22795,
+          "key": "google-drive:12vpJHt8QTKZ20p94AUyEb0XAtVxK_yA9",
+          "title": "2510.12399v1 - a survey on Vibe Coding"
+        },
+        {
+          "rank": 2,
+          "id": 41170,
+          "key": "notebooklm:Takeout/NotebookLM/Rational Psychology /Chat History/Chat Session - fa6e6b90-3f03-48d0-9007-3191cbcde7c9.html",
+          "title": "Rational Psychology  — Chat Session - fa6e6b90-3f03-48d0-9007-3191cbcde7c9"
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 1961,
+          "key": "claude:332f5518-2290-4b75-b26a-8b5c6f01e74e",
+          "title": "Searching for HTMX templates in Lease Analyser"
+        },
+        {
+          "rank": 2,
+          "id": 2023,
+          "key": "claude:c661ec24-c076-4632-acb6-e4f347680d3a",
+          "title": "Updating Django Templates to Match Models"
+        },
+        {
+          "rank": 3,
+          "id": 24010,
+          "key": "google-drive:10KZlgBsQ_YAOmCjQMbWf_iMGO6huqvYh",
+          "title": "20250429_assignment_mlp.pmml"
+        },
+        {
+          "rank": 4,
+          "id": 1969,
+          "key": "claude:7b58f1bd-aa1d-40be-bf5f-d6ff2a7e1cab",
+          "title": "Standardizing HTMX Usage Across Templates"
+        },
+        {
+          "rank": 5,
+          "id": 24859,
+          "key": "pdf:f38a09c2cd6ef76e",
+          "title": "[MODEL] Claude Code is unusable for complex engineering tasks with the Feb updates · Issue #42796 · anthropics_claude-co"
+        },
+        {
+          "rank": 6,
+          "id": 20416,
+          "key": "mistral:mistral-a9c4a3c2-dc38-4a96-9a0a-a0ec23b31074",
+          "title": "Find resources and examples that use the Observe(f) notation in PDDL"
+        },
+        {
+          "rank": 7,
+          "id": 1971,
+          "key": "claude:dda8751f-2006-40d1-89f1-3ddc84b50e8d",
+          "title": "Review and Suggest Fixes for leasedocument_detail.html"
+        },
+        {
+          "rank": 8,
+          "id": 1973,
+          "key": "claude:9361dbd4-5f1b-4a95-8eef-78bdfb05bf45",
+          "title": "Unifying Django Templates and Styles"
+        },
+        {
+          "rank": 9,
+          "id": 2148,
+          "key": "claude:9d852d4f-8418-48c8-9d24-e85f9b8fe6fb",
+          "title": "Troubleshooting Django Template Not Found Error"
+        },
+        {
+          "rank": 10,
+          "id": 2153,
+          "key": "claude:db66519c-e0de-4a6e-a433-d5bdb120ed08",
+          "title": "Refactoring Plan for Lease Document Templates"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 22795,
+          "key": "google-drive:12vpJHt8QTKZ20p94AUyEb0XAtVxK_yA9",
+          "title": "2510.12399v1 - a survey on Vibe Coding"
+        },
+        {
+          "rank": 2,
+          "id": 1961,
+          "key": "claude:332f5518-2290-4b75-b26a-8b5c6f01e74e",
+          "title": "Searching for HTMX templates in Lease Analyser"
+        },
+        {
+          "rank": 3,
+          "id": 41170,
+          "key": "notebooklm:Takeout/NotebookLM/Rational Psychology /Chat History/Chat Session - fa6e6b90-3f03-48d0-9007-3191cbcde7c9.html",
+          "title": "Rational Psychology  — Chat Session - fa6e6b90-3f03-48d0-9007-3191cbcde7c9"
+        },
+        {
+          "rank": 4,
+          "id": 2023,
+          "key": "claude:c661ec24-c076-4632-acb6-e4f347680d3a",
+          "title": "Updating Django Templates to Match Models"
+        },
+        {
+          "rank": 5,
+          "id": 24010,
+          "key": "google-drive:10KZlgBsQ_YAOmCjQMbWf_iMGO6huqvYh",
+          "title": "20250429_assignment_mlp.pmml"
+        },
+        {
+          "rank": 6,
+          "id": 1969,
+          "key": "claude:7b58f1bd-aa1d-40be-bf5f-d6ff2a7e1cab",
+          "title": "Standardizing HTMX Usage Across Templates"
+        },
+        {
+          "rank": 7,
+          "id": 24859,
+          "key": "pdf:f38a09c2cd6ef76e",
+          "title": "[MODEL] Claude Code is unusable for complex engineering tasks with the Feb updates · Issue #42796 · anthropics_claude-co"
+        },
+        {
+          "rank": 8,
+          "id": 20416,
+          "key": "mistral:mistral-a9c4a3c2-dc38-4a96-9a0a-a0ec23b31074",
+          "title": "Find resources and examples that use the Observe(f) notation in PDDL"
+        },
+        {
+          "rank": 9,
+          "id": 1971,
+          "key": "claude:dda8751f-2006-40d1-89f1-3ddc84b50e8d",
+          "title": "Review and Suggest Fixes for leasedocument_detail.html"
+        },
+        {
+          "rank": 10,
+          "id": 1973,
+          "key": "claude:9361dbd4-5f1b-4a95-8eef-78bdfb05bf45",
+          "title": "Unifying Django Templates and Styles"
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "deontic policies for governing agentic AI at runtime",
+      "kind": "title",
+      "expect": [
+        "arxiv:2606.19464"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 41793,
+          "key": "gemini:c_0c8980e81b34483b-reply-2026-10-21T21:35:08.487Z",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 27413,
+          "key": "atomicguard:intent_norms_prior_art_nov2026",
+          "title": "Intent and norms: prior art"
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 26573,
+          "key": "linkedin:changelog-socialActions/comments-7475861448754388993",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 2493,
+          "key": "claude:a738239e-f37a-406e-9b25-42717eada402",
+          "title": "Agent Function to Agent Program"
+        },
+        {
+          "rank": 3,
+          "id": 2272,
+          "key": "claude:c870b373-38f0-4d7a-a2ee-b6dedb2886eb",
+          "title": "AI Agent System Architecture"
+        },
+        {
+          "rank": 4,
+          "id": 2482,
+          "key": "claude:07cdea69-a182-40f8-8ecc-cd7d529ea099",
+          "title": "Definitions: Acting, planning, and learning overview"
+        },
+        {
+          "rank": 5,
+          "id": 272,
+          "key": "microblog:https://matt.thompson.gr/2025/06/26/ia-series-n-building-a.html",
+          "title": "[IA Series 7/n] Building a Self-Consistency LLM-Agent: From PEAS Analysis to Production Code"
+        },
+        {
+          "rank": 6,
+          "id": 598,
+          "key": "youtube:liked:FpJ9dPe1qYQ",
+          "title": "Reverse Conway's law and GenAI: How agents will take over the organisation - Patrick Debois"
+        },
+        {
+          "rank": 7,
+          "id": 24801,
+          "key": "voice:voice-file-924dcc31-Master introduction",
+          "title": "Master introduction"
+        },
+        {
+          "rank": 8,
+          "id": 25498,
+          "key": "linkedin:changelog-socialActions/comments-7464193453325803520",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 21535,
+          "key": "google-drive:1fK-95EWUMad3gBpc4Gjdy-QHhdoDNzdU_RGM6c8jqEo",
+          "title": "AI Search - Terms and Algorithms"
+        },
+        {
+          "rank": 10,
+          "id": 292,
+          "key": "microblog:https://matt.thompson.gr/2025/04/24/ia-series-n-ai-search.html",
+          "title": "[IA Series 1/n] AI Search - Terms and Algorithms"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 41793,
+          "key": "gemini:c_0c8980e81b34483b-reply-2026-10-21T21:35:08.487Z",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 26573,
+          "key": "linkedin:changelog-socialActions/comments-7475861448754388993",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 27413,
+          "key": "atomicguard:intent_norms_prior_art_nov2026",
+          "title": "Intent and norms: prior art"
+        },
+        {
+          "rank": 4,
+          "id": 2493,
+          "key": "claude:a738239e-f37a-406e-9b25-42717eada402",
+          "title": "Agent Function to Agent Program"
+        },
+        {
+          "rank": 5,
+          "id": 2272,
+          "key": "claude:c870b373-38f0-4d7a-a2ee-b6dedb2886eb",
+          "title": "AI Agent System Architecture"
+        },
+        {
+          "rank": 6,
+          "id": 2482,
+          "key": "claude:07cdea69-a182-40f8-8ecc-cd7d529ea099",
+          "title": "Definitions: Acting, planning, and learning overview"
+        },
+        {
+          "rank": 7,
+          "id": 272,
+          "key": "microblog:https://matt.thompson.gr/2025/06/26/ia-series-n-building-a.html",
+          "title": "[IA Series 7/n] Building a Self-Consistency LLM-Agent: From PEAS Analysis to Production Code"
+        },
+        {
+          "rank": 8,
+          "id": 598,
+          "key": "youtube:liked:FpJ9dPe1qYQ",
+          "title": "Reverse Conway's law and GenAI: How agents will take over the organisation - Patrick Debois"
+        },
+        {
+          "rank": 9,
+          "id": 24801,
+          "key": "voice:voice-file-924dcc31-Master introduction",
+          "title": "Master introduction"
+        },
+        {
+          "rank": 10,
+          "id": 25498,
+          "key": "linkedin:changelog-socialActions/comments-7464193453325803520",
+          "title": ""
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "ontologies doctrine ubiquitous language",
+      "kind": "title",
+      "expect": [
+        "microblog:https://matt.thompson.gr/2026/08/13/ia-series-n-ontologies-doctrine.html"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 42494,
+          "key": "gemini:c_92a5e737dad8b77d-prompt-2026-08-12T14:13:28.378Z",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 42495,
+          "key": "gemini:c_92a5e737dad8b77d-reply-2026-08-12T14:13:28.378Z",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 42496,
+          "key": "gemini:c_92a5e737dad8b77d-prompt-2026-08-12T14:17:21.830Z",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 41147,
+          "key": "notebooklm:Takeout/NotebookLM/Ontologies /Notes/Context Is All(1).html",
+          "title": "Ontologies  — Context Is All(1)"
+        },
+        {
+          "rank": 5,
+          "id": 42497,
+          "key": "gemini:c_92a5e737dad8b77d-reply-2026-08-12T14:17:21.830Z",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 41179,
+          "key": "notebooklm:Takeout/NotebookLM/The Cofounder Alignment Framework",
+          "title": "The Cofounder Alignment Framework"
+        },
+        {
+          "rank": 7,
+          "id": 41183,
+          "key": "notebooklm:Takeout/NotebookLM/The Cofounder Alignment Framework/Notes/Architectural Foundations and Strategic Alignment for Manta.html",
+          "title": "The Cofounder Alignment Framework — Architectural Foundations and Strategic Alignment for Manta"
+        },
+        {
+          "rank": 8,
+          "id": 42490,
+          "key": "gemini:c_92a5e737dad8b77d-prompt-2026-08-12T14:09:29.364Z",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 42486,
+          "key": "gemini:c_92a5e737dad8b77d-prompt-2026-08-12T14:02:47.417Z",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 42484,
+          "key": "gemini:c_92a5e737dad8b77d-prompt-2026-08-12T13:58:40.826Z",
+          "title": ""
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 25293,
+          "key": "linkedin:changelog-socialActions/comments-7458873119320002560",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 24550,
+          "key": "linkedin:changelog-socialActions/comments-7446926945239339008",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 20347,
+          "key": "arxiv:2308.04814",
+          "title": "Neuro-Symbolic RDF and Description Logic Reasoners: The State-Of-The-Art and Challenges"
+        },
+        {
+          "rank": 4,
+          "id": 25412,
+          "key": "linkedin:changelog-socialActions/comments-7463168070623092738",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 24981,
+          "key": "voice:voice-file-3b502428-insight 8 homoiconic language",
+          "title": "insight 8 homoiconic language"
+        },
+        {
+          "rank": 6,
+          "id": 282,
+          "key": "microblog:https://matt.thompson.gr/2025/05/10/building-an-intelligent-agent.html",
+          "title": "Building an Intelligent Agent"
+        },
+        {
+          "rank": 7,
+          "id": 24045,
+          "key": "arxiv:arxiv:2302.13971",
+          "title": "LLaMA: Open and Efficient Foundation Language Models"
+        },
+        {
+          "rank": 8,
+          "id": 25939,
+          "key": "linkedin:changelog-socialActions/comments-7469618471706710017",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 152,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3lgcsqz6omo2o",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 23368,
+          "key": "google-drive:1vMbPZTkTgsck_azTfS5dufRMlp_Bo_Dc",
+          "title": "Generic Agent Domain Design"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 25293,
+          "key": "linkedin:changelog-socialActions/comments-7458873119320002560",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 42494,
+          "key": "gemini:c_92a5e737dad8b77d-prompt-2026-08-12T14:13:28.378Z",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 24550,
+          "key": "linkedin:changelog-socialActions/comments-7446926945239339008",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 42495,
+          "key": "gemini:c_92a5e737dad8b77d-reply-2026-08-12T14:13:28.378Z",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 42496,
+          "key": "gemini:c_92a5e737dad8b77d-prompt-2026-08-12T14:17:21.830Z",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 20347,
+          "key": "arxiv:2308.04814",
+          "title": "Neuro-Symbolic RDF and Description Logic Reasoners: The State-Of-The-Art and Challenges"
+        },
+        {
+          "rank": 7,
+          "id": 41147,
+          "key": "notebooklm:Takeout/NotebookLM/Ontologies /Notes/Context Is All(1).html",
+          "title": "Ontologies  — Context Is All(1)"
+        },
+        {
+          "rank": 8,
+          "id": 25412,
+          "key": "linkedin:changelog-socialActions/comments-7463168070623092738",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 42497,
+          "key": "gemini:c_92a5e737dad8b77d-reply-2026-08-12T14:17:21.830Z",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 24981,
+          "key": "voice:voice-file-3b502428-insight 8 homoiconic language",
+          "title": "insight 8 homoiconic language"
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "survey of vibe coding",
+      "kind": "title",
+      "expect": [
+        "google-drive:12vpJHt8QTKZ20p94AUyEb0XAtVxK_yA9"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 22795,
+          "key": "google-drive:12vpJHt8QTKZ20p94AUyEb0XAtVxK_yA9",
+          "title": "2510.12399v1 - a survey on Vibe Coding"
+        },
+        {
+          "rank": 2,
+          "id": 44193,
+          "key": "gemini:c_92bb1a040a290a28-prompt-2026-03-21T21:08:59.820Z",
+          "title": ""
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 22795,
+          "key": "google-drive:12vpJHt8QTKZ20p94AUyEb0XAtVxK_yA9",
+          "title": "2510.12399v1 - a survey on Vibe Coding"
+        },
+        {
+          "rank": 2,
+          "id": 26661,
+          "key": "linkedin:changelog-socialActions/comments-7476675533762658306",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 508,
+          "key": "youtube:liked:XP7UXspsggw",
+          "title": "Vibe Coding Is Not Punk Rock w/ Kelly Betz"
+        },
+        {
+          "rank": 4,
+          "id": 260,
+          "key": "microblog:https://matt.thompson.gr/2025/07/12/lazy-vibing-isnt-a-good.html",
+          "title": "Lazy vibing isn't a good idea... 💥 VIbe Engineering though 🚀"
+        },
+        {
+          "rank": 5,
+          "id": 70,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3ltrjssxhe32y",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 25662,
+          "key": "linkedin:changelog-socialActions/comments-7467639116642512896",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 74,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3ltn2nfx2gm2x",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 1044,
+          "key": "linkedin:changelog-socialActions/comments-1769419613587",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 633,
+          "key": "youtube:liked:esw88_gKOpA",
+          "title": "Making an Following A.I. Drone so I can Vlog Hands-free"
+        },
+        {
+          "rank": 10,
+          "id": 25815,
+          "key": "youtube:liked:IQXNgBnRZro",
+          "title": "Voice Over Meshcore! Lowmesh LoRa & Meshtastic Innovation!"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 22795,
+          "key": "google-drive:12vpJHt8QTKZ20p94AUyEb0XAtVxK_yA9",
+          "title": "2510.12399v1 - a survey on Vibe Coding"
+        },
+        {
+          "rank": 2,
+          "id": 44193,
+          "key": "gemini:c_92bb1a040a290a28-prompt-2026-03-21T21:08:59.820Z",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 26661,
+          "key": "linkedin:changelog-socialActions/comments-7476675533762658306",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 508,
+          "key": "youtube:liked:XP7UXspsggw",
+          "title": "Vibe Coding Is Not Punk Rock w/ Kelly Betz"
+        },
+        {
+          "rank": 5,
+          "id": 260,
+          "key": "microblog:https://matt.thompson.gr/2025/07/12/lazy-vibing-isnt-a-good.html",
+          "title": "Lazy vibing isn't a good idea... 💥 VIbe Engineering though 🚀"
+        },
+        {
+          "rank": 6,
+          "id": 70,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3ltrjssxhe32y",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 25662,
+          "key": "linkedin:changelog-socialActions/comments-7467639116642512896",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 74,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3ltn2nfx2gm2x",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 1044,
+          "key": "linkedin:changelog-socialActions/comments-1769419613587",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 633,
+          "key": "youtube:liked:esw88_gKOpA",
+          "title": "Making an Following A.I. Drone so I can Vlog Hands-free"
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "from agent function to agent program",
+      "kind": "title",
+      "expect": [
+        "claude:a738239e-f37a-406e-9b25-42717eada402"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 8207,
+          "key": "claude:1f81debb-c98b-4df1-a83d-201a7f63289a",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 18108,
+          "key": "claude:019b77dc-d481-76c1-ade5-b46fd30a0cef",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 15456,
+          "key": "claude:91e6f51b-0b92-4d2c-9a4a-f6d454e218e8",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 18111,
+          "key": "claude:019b77e4-c3fe-73b9-b3cf-943204f10408",
+          "title": "Yes this is the gap. How can we go from the Agent Function to the Agent Program ..."
+        },
+        {
+          "rank": 5,
+          "id": 15452,
+          "key": "claude:beb4dd13-2f9b-42f0-8ab9-27d20914e80b",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 17818,
+          "key": "claude:019b847c-ebbf-778f-a0cb-2af394d5bfcf",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 7852,
+          "key": "claude:1cae876d-7d68-4d47-b6bf-edf8a0381a4a",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 9663,
+          "key": "claude:84667eda-08be-4d4f-8711-5c4de407c30c",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 16833,
+          "key": "claude:0017bfea-8338-4d05-9513-908ec9ab5aa6",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 17459,
+          "key": "claude:019b787f-007f-709d-b598-c02064ebaee2",
+          "title": "To clarify the high level goal. \n\nTake the algorithm/agent function (from my pap..."
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 2493,
+          "key": "claude:a738239e-f37a-406e-9b25-42717eada402",
+          "title": "Agent Function to Agent Program"
+        },
+        {
+          "rank": 2,
+          "id": 2554,
+          "key": "claude:5f771467-b376-45c4-b56e-1c63240edd73",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 2371,
+          "key": "claude:155c5b05-79ce-4a5d-9ab9-cfd417bed3d7",
+          "title": "Connecting agent design framework to coding agent architecture"
+        },
+        {
+          "rank": 4,
+          "id": 2262,
+          "key": "claude:a08f0f68-24cf-48cc-a829-e1cc24b9b1af",
+          "title": "ATDD and Agent Design: Technical Architecture Lessons"
+        },
+        {
+          "rank": 5,
+          "id": 2482,
+          "key": "claude:07cdea69-a182-40f8-8ecc-cd7d529ea099",
+          "title": "Definitions: Acting, planning, and learning overview"
+        },
+        {
+          "rank": 6,
+          "id": 23959,
+          "key": "google-drive:15eRzqcxApbTGgMeASxAmtWxJQGIMtLwq",
+          "title": "Agent Specification Generator - Code Structure v1"
+        },
+        {
+          "rank": 7,
+          "id": 2321,
+          "key": "claude:4ceea9c9-edca-4f16-9e02-4c024c2538ed",
+          "title": "!! Thesis plan with Coherence"
+        },
+        {
+          "rank": 8,
+          "id": 22659,
+          "key": "google-drive:1YINqcav3aAN6cnNbbycdQqFrUj_tIhpl",
+          "title": "README"
+        },
+        {
+          "rank": 9,
+          "id": 2394,
+          "key": "claude:76dd7bae-6654-47c9-947e-139a34096c30",
+          "title": "Designing a Generic Agent"
+        },
+        {
+          "rank": 10,
+          "id": 2423,
+          "key": "claude:4f1ccffd-00b4-456a-b0ed-3eb7d92511c7",
+          "title": "Intelligent Agents Research Series"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 8207,
+          "key": "claude:1f81debb-c98b-4df1-a83d-201a7f63289a",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 2493,
+          "key": "claude:a738239e-f37a-406e-9b25-42717eada402",
+          "title": "Agent Function to Agent Program"
+        },
+        {
+          "rank": 3,
+          "id": 18108,
+          "key": "claude:019b77dc-d481-76c1-ade5-b46fd30a0cef",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 2554,
+          "key": "claude:5f771467-b376-45c4-b56e-1c63240edd73",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 2371,
+          "key": "claude:155c5b05-79ce-4a5d-9ab9-cfd417bed3d7",
+          "title": "Connecting agent design framework to coding agent architecture"
+        },
+        {
+          "rank": 6,
+          "id": 15456,
+          "key": "claude:91e6f51b-0b92-4d2c-9a4a-f6d454e218e8",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 18111,
+          "key": "claude:019b77e4-c3fe-73b9-b3cf-943204f10408",
+          "title": "Yes this is the gap. How can we go from the Agent Function to the Agent Program ..."
+        },
+        {
+          "rank": 8,
+          "id": 2262,
+          "key": "claude:a08f0f68-24cf-48cc-a829-e1cc24b9b1af",
+          "title": "ATDD and Agent Design: Technical Architecture Lessons"
+        },
+        {
+          "rank": 9,
+          "id": 2482,
+          "key": "claude:07cdea69-a182-40f8-8ecc-cd7d529ea099",
+          "title": "Definitions: Acting, planning, and learning overview"
+        },
+        {
+          "rank": 10,
+          "id": 15452,
+          "key": "claude:beb4dd13-2f9b-42f0-8ab9-27d20914e80b",
+          "title": ""
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "reliable systems built from unreliable components",
+      "kind": "topic",
+      "expect": [
+        "google-drive:1-RXxFQ4Z0o_93yr_kkUWCaZwPfkkj2ko"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 47435,
+          "key": "gemini:c_b8cd0bd1ec31f76e-reply-2025-07-04T14:04:36.865Z",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 21525,
+          "key": "google-drive:16LdXv5sEJPjqm07IbU4Ba8e6I2qMZTHOTL31xgzcXPc",
+          "title": "[WIP] Final Year Project"
+        },
+        {
+          "rank": 3,
+          "id": 44193,
+          "key": "gemini:c_92bb1a040a290a28-prompt-2026-03-21T21:08:59.820Z",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 47299,
+          "key": "gemini:c_05846a5ad36979ae-reply-2025-09-05T12:21:51.041Z",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 22795,
+          "key": "google-drive:12vpJHt8QTKZ20p94AUyEb0XAtVxK_yA9",
+          "title": "2510.12399v1 - a survey on Vibe Coding"
+        },
+        {
+          "rank": 6,
+          "id": 23951,
+          "key": "google-drive:1-RXxFQ4Z0o_93yr_kkUWCaZwPfkkj2ko",
+          "title": "pierce_1952"
+        },
+        {
+          "rank": 7,
+          "id": 23952,
+          "key": "google-drive:1-PCZ8_8-JiJfh2VRoqM06PgAxDxk5Dq0",
+          "title": "Von_Neumann_Probabilistic_Logics_and_the_Synthesis_of_Reliable_Organisms_from_Unreliable_Components"
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 1285,
+          "key": "linkedin:changelog-socialActions/comments-1771402967256",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 169,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3lduxqkuonc2s",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 2008,
+          "key": "claude:df96344e-34d5-4a8d-871e-6104d73e50c0",
+          "title": "Handling Failures in Large Document Processing"
+        },
+        {
+          "rank": 4,
+          "id": 25395,
+          "key": "linkedin:changelog-socialActions/comments-7463077000430260226",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 23951,
+          "key": "google-drive:1-RXxFQ4Z0o_93yr_kkUWCaZwPfkkj2ko",
+          "title": "pierce_1952"
+        },
+        {
+          "rank": 6,
+          "id": 26522,
+          "key": "web:https://arxiv.org/abs/2512.20660",
+          "title": "[2512.20660] The Dual-State Architecture for Reliable LLM Agents"
+        },
+        {
+          "rank": 7,
+          "id": 24980,
+          "key": "voice:voice-file-29b01f15-LinkedIn post",
+          "title": "LinkedIn post"
+        },
+        {
+          "rank": 8,
+          "id": 25380,
+          "key": "linkedin:changelog-socialActions/comments-7462817309695528960",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 2466,
+          "key": "claude:001f5454-2e55-4cd1-96de-d84a50cd3e30",
+          "title": "Self-consistency for agent-generated test cases and workflows"
+        },
+        {
+          "rank": 10,
+          "id": 2369,
+          "key": "claude:dd4aa74a-8474-40e8-962d-1838d3737f4b",
+          "title": "Publishing framework guide on LeanPub"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 23951,
+          "key": "google-drive:1-RXxFQ4Z0o_93yr_kkUWCaZwPfkkj2ko",
+          "title": "pierce_1952"
+        },
+        {
+          "rank": 2,
+          "id": 1285,
+          "key": "linkedin:changelog-socialActions/comments-1771402967256",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 47435,
+          "key": "gemini:c_b8cd0bd1ec31f76e-reply-2025-07-04T14:04:36.865Z",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 21525,
+          "key": "google-drive:16LdXv5sEJPjqm07IbU4Ba8e6I2qMZTHOTL31xgzcXPc",
+          "title": "[WIP] Final Year Project"
+        },
+        {
+          "rank": 5,
+          "id": 169,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3lduxqkuonc2s",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 2008,
+          "key": "claude:df96344e-34d5-4a8d-871e-6104d73e50c0",
+          "title": "Handling Failures in Large Document Processing"
+        },
+        {
+          "rank": 7,
+          "id": 44193,
+          "key": "gemini:c_92bb1a040a290a28-prompt-2026-03-21T21:08:59.820Z",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 47299,
+          "key": "gemini:c_05846a5ad36979ae-reply-2025-09-05T12:21:51.041Z",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 25395,
+          "key": "linkedin:changelog-socialActions/comments-7463077000430260226",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 22795,
+          "key": "google-drive:12vpJHt8QTKZ20p94AUyEb0XAtVxK_yA9",
+          "title": "2510.12399v1 - a survey on Vibe Coding"
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "encrypting model updates in federated learning",
+      "kind": "topic",
+      "expect": [
+        "claude:4512ee0a-5920-4b34-83d7-03284a108627",
+        "gemini:canvas-2025-10-30T06:59:06.004Z"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 1649,
+          "key": "notebooklm:Takeout/NotebookLM/The Architecture of Federated and Collaborative Ma/Chat History/Chat Session - 4fd0e7f7-0ec6-45bb-88a6-404c929.html",
+          "title": "The Architecture of Federated and Collaborative Machine Learning — Chat Session - 4fd0e7f7-0ec6-45bb-88a6-404c929"
+        },
+        {
+          "rank": 2,
+          "id": 41178,
+          "key": "notebooklm:Takeout/NotebookLM/The Architecture of Federated and Collaborative Machine Learning/Chat History/Chat Session - 4fd0e7f7-0ec6-45bb-88a6-404c9294cb00.html",
+          "title": "The Architecture of Federated and Collaborative Machine Learning — Chat Session - 4fd0e7f7-0ec6-45bb-88a6-404c9294cb00"
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 20355,
+          "key": "arxiv:2207.02337",
+          "title": "Federated and Transfer Learning: A Survey on Adversaries and Defense Mechanisms"
+        },
+        {
+          "rank": 2,
+          "id": 20364,
+          "key": "arxiv:2006.07026",
+          "title": "Backdoor Attacks on Federated Meta-Learning"
+        },
+        {
+          "rank": 3,
+          "id": 20358,
+          "key": "arxiv:1908.07782",
+          "title": "Decentralized Federated Learning: A Segmented Gossip Approach"
+        },
+        {
+          "rank": 4,
+          "id": 20362,
+          "key": "arxiv:2409.13004",
+          "title": "Data Poisoning and Leakage Analysis in Federated Learning"
+        },
+        {
+          "rank": 5,
+          "id": 25309,
+          "key": "arxiv:1911.07963",
+          "title": "Can You Really Backdoor Federated Learning?"
+        },
+        {
+          "rank": 6,
+          "id": 20359,
+          "key": "arxiv:1910.07796",
+          "title": "Overcoming Forgetting in Federated Learning on Non-IID Data"
+        },
+        {
+          "rank": 7,
+          "id": 20360,
+          "key": "arxiv:2302.13473",
+          "title": "Towards Interpretable Federated Learning"
+        },
+        {
+          "rank": 8,
+          "id": 20099,
+          "key": "voice:voice-file-611d06e6-encrypted aggregation",
+          "title": "encrypted aggregation"
+        },
+        {
+          "rank": 9,
+          "id": 2527,
+          "key": "claude:ae51212d-41d8-4dc2-9c55-b9216bddebdc",
+          "title": "Privacy-enhancing techniques in federated learning"
+        },
+        {
+          "rank": 10,
+          "id": 23929,
+          "key": "google-drive:1qjKcGps-Uj9h8GOJtTnBd9vRVpVT4KFz-0t05OVAfkQ",
+          "title": "rl-federated-learning"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 20355,
+          "key": "arxiv:2207.02337",
+          "title": "Federated and Transfer Learning: A Survey on Adversaries and Defense Mechanisms"
+        },
+        {
+          "rank": 2,
+          "id": 1649,
+          "key": "notebooklm:Takeout/NotebookLM/The Architecture of Federated and Collaborative Ma/Chat History/Chat Session - 4fd0e7f7-0ec6-45bb-88a6-404c929.html",
+          "title": "The Architecture of Federated and Collaborative Machine Learning — Chat Session - 4fd0e7f7-0ec6-45bb-88a6-404c929"
+        },
+        {
+          "rank": 3,
+          "id": 20364,
+          "key": "arxiv:2006.07026",
+          "title": "Backdoor Attacks on Federated Meta-Learning"
+        },
+        {
+          "rank": 4,
+          "id": 41178,
+          "key": "notebooklm:Takeout/NotebookLM/The Architecture of Federated and Collaborative Machine Learning/Chat History/Chat Session - 4fd0e7f7-0ec6-45bb-88a6-404c9294cb00.html",
+          "title": "The Architecture of Federated and Collaborative Machine Learning — Chat Session - 4fd0e7f7-0ec6-45bb-88a6-404c9294cb00"
+        },
+        {
+          "rank": 5,
+          "id": 20358,
+          "key": "arxiv:1908.07782",
+          "title": "Decentralized Federated Learning: A Segmented Gossip Approach"
+        },
+        {
+          "rank": 6,
+          "id": 20362,
+          "key": "arxiv:2409.13004",
+          "title": "Data Poisoning and Leakage Analysis in Federated Learning"
+        },
+        {
+          "rank": 7,
+          "id": 25309,
+          "key": "arxiv:1911.07963",
+          "title": "Can You Really Backdoor Federated Learning?"
+        },
+        {
+          "rank": 8,
+          "id": 20359,
+          "key": "arxiv:1910.07796",
+          "title": "Overcoming Forgetting in Federated Learning on Non-IID Data"
+        },
+        {
+          "rank": 9,
+          "id": 20360,
+          "key": "arxiv:2302.13473",
+          "title": "Towards Interpretable Federated Learning"
+        },
+        {
+          "rank": 10,
+          "id": 20099,
+          "key": "voice:voice-file-611d06e6-encrypted aggregation",
+          "title": "encrypted aggregation"
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "history of reinforcement learning from matchboxes to modern agents",
+      "kind": "topic",
+      "expect": [
+        "notebooklm:Takeout/NotebookLM/The Reinforcement Learning Gym_ From Matchboxes to Modern Agents"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 41198,
+          "key": "notebooklm:Takeout/NotebookLM/The Reinforcement Learning Gym_ From Matchboxes to Modern Agents",
+          "title": "The Reinforcement Learning Gym: From Matchboxes to Modern Agents"
+        },
+        {
+          "rank": 2,
+          "id": 1619,
+          "key": "notebooklm:Takeout/NotebookLM/The Reinforcement Learning Gym_ From Matchboxes to",
+          "title": "The Reinforcement Learning Gym: From Matchboxes to Modern Agents"
+        },
+        {
+          "rank": 3,
+          "id": 23933,
+          "key": "google-drive:1oouiKiGamwVSbCFvuFO6u1zbxeI3eFTgSuPYCPpGs9c",
+          "title": "rl-series-overview"
+        },
+        {
+          "rank": 4,
+          "id": 19525,
+          "key": "claude:019cccd3-c5eb-7a5c-90db-94a026d73f7a",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 1654,
+          "key": "notebooklm:Takeout/NotebookLM/The Reinforcement Learning Gym_ From Matchboxes to/Chat History/Chat Session - a4a20cde-3a57-4122-8cfb-b6606cf.html",
+          "title": "The Reinforcement Learning Gym: From Matchboxes to Modern Agents — Chat Session - a4a20cde-3a57-4122-8cfb-b6606cf"
+        },
+        {
+          "rank": 6,
+          "id": 41201,
+          "key": "notebooklm:Takeout/NotebookLM/The Reinforcement Learning Gym_ From Matchboxes to Modern Agents/Chat History/Chat Session - a4a20cde-3a57-4122-8cfb-b6606cf0bb06.html",
+          "title": "The Reinforcement Learning Gym: From Matchboxes to Modern Agents — Chat Session - a4a20cde-3a57-4122-8cfb-b6606cf0bb06"
+        },
+        {
+          "rank": 7,
+          "id": 23930,
+          "key": "google-drive:1h0TY0sVoqVi7lb0MWZSp3DlHSbuPA2Q05ix6-MzCw1E",
+          "title": "rl-gym-history"
+        },
+        {
+          "rank": 8,
+          "id": 23928,
+          "key": "google-drive:1TeBazLTvD7b7Mf9Y0OyfPK7AQg4jKIZnnLtGUUfMElI",
+          "title": "rl-epilogue-oak-architecture"
+        },
+        {
+          "rank": 9,
+          "id": 23927,
+          "key": "google-drive:1EL0W2Ynhf9isiTnM0UleBKzduijpZWRD_86QXHTZHGU",
+          "title": "rl-continual-learning"
+        },
+        {
+          "rank": 10,
+          "id": 23931,
+          "key": "google-drive:1qwvpvACUBo3jrrtg1GaF5-KA3kXRtE-GWtqqIO-mStE",
+          "title": "rl-policy-storage-history"
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 23933,
+          "key": "google-drive:1oouiKiGamwVSbCFvuFO6u1zbxeI3eFTgSuPYCPpGs9c",
+          "title": "rl-series-overview"
+        },
+        {
+          "rank": 2,
+          "id": 1619,
+          "key": "notebooklm:Takeout/NotebookLM/The Reinforcement Learning Gym_ From Matchboxes to",
+          "title": "The Reinforcement Learning Gym: From Matchboxes to Modern Agents"
+        },
+        {
+          "rank": 3,
+          "id": 2529,
+          "key": "claude:03df685e-9363-48b3-ae96-0780b8703678",
+          "title": "Building RL environments from matchboxes to modern gyms"
+        },
+        {
+          "rank": 4,
+          "id": 23930,
+          "key": "google-drive:1h0TY0sVoqVi7lb0MWZSp3DlHSbuPA2Q05ix6-MzCw1E",
+          "title": "rl-gym-history"
+        },
+        {
+          "rank": 5,
+          "id": 2552,
+          "key": "claude:f85b57a1-17c8-49b6-baa7-d78bcdaec1d9",
+          "title": "History and evolution of reinforcement learning"
+        },
+        {
+          "rank": 6,
+          "id": 23928,
+          "key": "google-drive:1TeBazLTvD7b7Mf9Y0OyfPK7AQg4jKIZnnLtGUUfMElI",
+          "title": "rl-epilogue-oak-architecture"
+        },
+        {
+          "rank": 7,
+          "id": 23931,
+          "key": "google-drive:1qwvpvACUBo3jrrtg1GaF5-KA3kXRtE-GWtqqIO-mStE",
+          "title": "rl-policy-storage-history"
+        },
+        {
+          "rank": 8,
+          "id": 23932,
+          "key": "google-drive:1iqGaMcMAgD1wUobvOltD1hDN6KbCst7kMh5prMS1n4I",
+          "title": "rl-reward-design-alignment"
+        },
+        {
+          "rank": 9,
+          "id": 1879,
+          "key": "claude:061c5650-5af8-4026-875d-6e3f2d48367f",
+          "title": "Origins of Reinforcement Learning"
+        },
+        {
+          "rank": 10,
+          "id": 24802,
+          "key": "voice:voice-file-27e435b6-Masters Background",
+          "title": "Masters Background"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 23933,
+          "key": "google-drive:1oouiKiGamwVSbCFvuFO6u1zbxeI3eFTgSuPYCPpGs9c",
+          "title": "rl-series-overview"
+        },
+        {
+          "rank": 2,
+          "id": 1619,
+          "key": "notebooklm:Takeout/NotebookLM/The Reinforcement Learning Gym_ From Matchboxes to",
+          "title": "The Reinforcement Learning Gym: From Matchboxes to Modern Agents"
+        },
+        {
+          "rank": 3,
+          "id": 23930,
+          "key": "google-drive:1h0TY0sVoqVi7lb0MWZSp3DlHSbuPA2Q05ix6-MzCw1E",
+          "title": "rl-gym-history"
+        },
+        {
+          "rank": 4,
+          "id": 23928,
+          "key": "google-drive:1TeBazLTvD7b7Mf9Y0OyfPK7AQg4jKIZnnLtGUUfMElI",
+          "title": "rl-epilogue-oak-architecture"
+        },
+        {
+          "rank": 5,
+          "id": 23931,
+          "key": "google-drive:1qwvpvACUBo3jrrtg1GaF5-KA3kXRtE-GWtqqIO-mStE",
+          "title": "rl-policy-storage-history"
+        },
+        {
+          "rank": 6,
+          "id": 23932,
+          "key": "google-drive:1iqGaMcMAgD1wUobvOltD1hDN6KbCst7kMh5prMS1n4I",
+          "title": "rl-reward-design-alignment"
+        },
+        {
+          "rank": 7,
+          "id": 41198,
+          "key": "notebooklm:Takeout/NotebookLM/The Reinforcement Learning Gym_ From Matchboxes to Modern Agents",
+          "title": "The Reinforcement Learning Gym: From Matchboxes to Modern Agents"
+        },
+        {
+          "rank": 8,
+          "id": 2529,
+          "key": "claude:03df685e-9363-48b3-ae96-0780b8703678",
+          "title": "Building RL environments from matchboxes to modern gyms"
+        },
+        {
+          "rank": 9,
+          "id": 19525,
+          "key": "claude:019cccd3-c5eb-7a5c-90db-94a026d73f7a",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 2552,
+          "key": "claude:f85b57a1-17c8-49b6-baa7-d78bcdaec1d9",
+          "title": "History and evolution of reinforcement learning"
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "making code written by language models trustworthy with automatic checks",
+      "kind": "paraphrase",
+      "expect": [
+        "arxiv:2512.20660"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 41193,
+          "key": "notebooklm:Takeout/NotebookLM/The Cofounder Alignment Framework/Chat History/Chat Session - c76106f3-caff-43a4-b13d-9fde20c4acda.html",
+          "title": "The Cofounder Alignment Framework — Chat Session - c76106f3-caff-43a4-b13d-9fde20c4acda"
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 26531,
+          "key": "web:https://newsletter.kentbeck.com/p/trust-factory",
+          "title": "Trust Factory - by Kent Beck - Software Design: Tidy First?"
+        },
+        {
+          "rank": 2,
+          "id": 2488,
+          "key": "claude:a78a88d0-b2c0-4243-9089-e583b5886a1c",
+          "title": "ACL2-verified ReAct agent with formally proven safety properties"
+        },
+        {
+          "rank": 3,
+          "id": 26793,
+          "key": "linkedin:changelog-ugcPosts-urn:li:share:7478678617716240384",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 2264,
+          "key": "claude:e3230623-8e09-4e68-91e0-b166dd132c35",
+          "title": "Small Language Models for IP Protection"
+        },
+        {
+          "rank": 5,
+          "id": 26798,
+          "key": "linkedin:changelog-socialActions/comments-7478681195577384962",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 26945,
+          "key": "linkedin:changelog-socialActions/comments-7480661257742692352",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 2104,
+          "key": "claude:da9898d3-8f00-4e6f-829d-2c556297210c",
+          "title": "Datasets for Evaluating Tool Calling in Language Models"
+        },
+        {
+          "rank": 8,
+          "id": 1804,
+          "key": "claude:3fa3f0c0-f2a1-488d-9864-de625988721d",
+          "title": "Implementing a Custom Scripting Language"
+        },
+        {
+          "rank": 9,
+          "id": 25371,
+          "key": "linkedin:changelog-socialActions/comments-7462778832379383808",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 26562,
+          "key": "microblog:https://matt.thompson.gr/2026/06/25/programming-languages-designed-for-ai.html",
+          "title": ""
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 26531,
+          "key": "web:https://newsletter.kentbeck.com/p/trust-factory",
+          "title": "Trust Factory - by Kent Beck - Software Design: Tidy First?"
+        },
+        {
+          "rank": 2,
+          "id": 41193,
+          "key": "notebooklm:Takeout/NotebookLM/The Cofounder Alignment Framework/Chat History/Chat Session - c76106f3-caff-43a4-b13d-9fde20c4acda.html",
+          "title": "The Cofounder Alignment Framework — Chat Session - c76106f3-caff-43a4-b13d-9fde20c4acda"
+        },
+        {
+          "rank": 3,
+          "id": 2488,
+          "key": "claude:a78a88d0-b2c0-4243-9089-e583b5886a1c",
+          "title": "ACL2-verified ReAct agent with formally proven safety properties"
+        },
+        {
+          "rank": 4,
+          "id": 26793,
+          "key": "linkedin:changelog-ugcPosts-urn:li:share:7478678617716240384",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 2264,
+          "key": "claude:e3230623-8e09-4e68-91e0-b166dd132c35",
+          "title": "Small Language Models for IP Protection"
+        },
+        {
+          "rank": 6,
+          "id": 26798,
+          "key": "linkedin:changelog-socialActions/comments-7478681195577384962",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 26945,
+          "key": "linkedin:changelog-socialActions/comments-7480661257742692352",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 2104,
+          "key": "claude:da9898d3-8f00-4e6f-829d-2c556297210c",
+          "title": "Datasets for Evaluating Tool Calling in Language Models"
+        },
+        {
+          "rank": 9,
+          "id": 1804,
+          "key": "claude:3fa3f0c0-f2a1-488d-9864-de625988721d",
+          "title": "Implementing a Custom Scripting Language"
+        },
+        {
+          "rank": 10,
+          "id": 25371,
+          "key": "linkedin:changelog-socialActions/comments-7462778832379383808",
+          "title": ""
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "an agent that critiques its own answer before replying",
+      "kind": "paraphrase",
+      "expect": [
+        "microblog:https://matt.thompson.gr/2025/07/19/ia-series-n-building-a.html"
+      ],
+      "keyword": [],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 2431,
+          "key": "claude:e36e07fe-571f-44ca-bb21-171f5a1b71e3",
+          "title": "ML agents documentation review"
+        },
+        {
+          "rank": 2,
+          "id": 1315,
+          "key": "linkedin:changelog-ugcPosts-1771458403296",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 25879,
+          "key": "linkedin:changelog-socialActions/comments-7469190826582261760",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 272,
+          "key": "microblog:https://matt.thompson.gr/2025/06/26/ia-series-n-building-a.html",
+          "title": "[IA Series 7/n] Building a Self-Consistency LLM-Agent: From PEAS Analysis to Production Code"
+        },
+        {
+          "rank": 5,
+          "id": 2081,
+          "key": "claude:049a00ec-5363-482d-9580-36a7d9944d34",
+          "title": "Intelligent Agent Terminology Explained"
+        },
+        {
+          "rank": 6,
+          "id": 2559,
+          "key": "claude:2eec6607-ab57-490e-aa26-2a2178ac97f2",
+          "title": "One pager feedback"
+        },
+        {
+          "rank": 7,
+          "id": 2415,
+          "key": "claude:d15517f1-3247-4da9-ac65-13eddd155b63",
+          "title": "Intelligent agent series review"
+        },
+        {
+          "rank": 8,
+          "id": 2554,
+          "key": "claude:5f771467-b376-45c4-b56e-1c63240edd73",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 1960,
+          "key": "claude:a6186a17-a957-46b6-9af9-ec702716dd97",
+          "title": "Analyzing Tone of Response to AI Security Concerns"
+        },
+        {
+          "rank": 10,
+          "id": 25973,
+          "key": "linkedin:changelog-socialActions/comments-7469739546763628544",
+          "title": ""
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 2431,
+          "key": "claude:e36e07fe-571f-44ca-bb21-171f5a1b71e3",
+          "title": "ML agents documentation review"
+        },
+        {
+          "rank": 2,
+          "id": 1315,
+          "key": "linkedin:changelog-ugcPosts-1771458403296",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 25879,
+          "key": "linkedin:changelog-socialActions/comments-7469190826582261760",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 272,
+          "key": "microblog:https://matt.thompson.gr/2025/06/26/ia-series-n-building-a.html",
+          "title": "[IA Series 7/n] Building a Self-Consistency LLM-Agent: From PEAS Analysis to Production Code"
+        },
+        {
+          "rank": 5,
+          "id": 2081,
+          "key": "claude:049a00ec-5363-482d-9580-36a7d9944d34",
+          "title": "Intelligent Agent Terminology Explained"
+        },
+        {
+          "rank": 6,
+          "id": 2559,
+          "key": "claude:2eec6607-ab57-490e-aa26-2a2178ac97f2",
+          "title": "One pager feedback"
+        },
+        {
+          "rank": 7,
+          "id": 2415,
+          "key": "claude:d15517f1-3247-4da9-ac65-13eddd155b63",
+          "title": "Intelligent agent series review"
+        },
+        {
+          "rank": 8,
+          "id": 2554,
+          "key": "claude:5f771467-b376-45c4-b56e-1c63240edd73",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 1960,
+          "key": "claude:a6186a17-a957-46b6-9af9-ec702716dd97",
+          "title": "Analyzing Tone of Response to AI Security Concerns"
+        },
+        {
+          "rank": 10,
+          "id": 25973,
+          "key": "linkedin:changelog-socialActions/comments-7469739546763628544",
+          "title": ""
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "keeping secrets safe when many organisations train one model together",
+      "kind": "paraphrase",
+      "expect": [
+        "claude:4512ee0a-5920-4b34-83d7-03284a108627"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 41191,
+          "key": "notebooklm:Takeout/NotebookLM/The Cofounder Alignment Framework/Artifacts/cto-cofounder-alignment-form-v2.md.md",
+          "title": "The Cofounder Alignment Framework — cto-cofounder-alignment-form-v2.md"
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 20099,
+          "key": "voice:voice-file-611d06e6-encrypted aggregation",
+          "title": "encrypted aggregation"
+        },
+        {
+          "rank": 2,
+          "id": 26906,
+          "key": "linkedin:changelog-socialActions/comments-7480530129593667585",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 1396,
+          "key": "linkedin:changelog-messages-1773145618445",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 20362,
+          "key": "arxiv:2409.13004",
+          "title": "Data Poisoning and Leakage Analysis in Federated Learning"
+        },
+        {
+          "rank": 5,
+          "id": 26375,
+          "key": "linkedin:changelog-socialActions/comments-7473638822820519936",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 1747,
+          "key": "claude:f8cfd49d-4d9a-414c-aad1-5b8e88f935ec",
+          "title": "Secure Class Diagram for CrewAI and Django Tools"
+        },
+        {
+          "rank": 7,
+          "id": 25574,
+          "key": "linkedin:changelog-messages-2-MTc4MDA1ODA2NTU4M2I5MTkyMy0xMDAmYjNlYmU5MGItYTRhZi00ODEwLTg2M2YtNTgxOWI5ZTI4NGViXzEwMA==",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 20364,
+          "key": "arxiv:2006.07026",
+          "title": "Backdoor Attacks on Federated Meta-Learning"
+        },
+        {
+          "rank": 9,
+          "id": 1300,
+          "key": "linkedin:changelog-socialActions/comments-1771414310958",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 26137,
+          "key": "linkedin:changelog-socialActions/comments-7471073608845516800",
+          "title": ""
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 20099,
+          "key": "voice:voice-file-611d06e6-encrypted aggregation",
+          "title": "encrypted aggregation"
+        },
+        {
+          "rank": 2,
+          "id": 41191,
+          "key": "notebooklm:Takeout/NotebookLM/The Cofounder Alignment Framework/Artifacts/cto-cofounder-alignment-form-v2.md.md",
+          "title": "The Cofounder Alignment Framework — cto-cofounder-alignment-form-v2.md"
+        },
+        {
+          "rank": 3,
+          "id": 26906,
+          "key": "linkedin:changelog-socialActions/comments-7480530129593667585",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 1396,
+          "key": "linkedin:changelog-messages-1773145618445",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 20362,
+          "key": "arxiv:2409.13004",
+          "title": "Data Poisoning and Leakage Analysis in Federated Learning"
+        },
+        {
+          "rank": 6,
+          "id": 26375,
+          "key": "linkedin:changelog-socialActions/comments-7473638822820519936",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 1747,
+          "key": "claude:f8cfd49d-4d9a-414c-aad1-5b8e88f935ec",
+          "title": "Secure Class Diagram for CrewAI and Django Tools"
+        },
+        {
+          "rank": 8,
+          "id": 25574,
+          "key": "linkedin:changelog-messages-2-MTc4MDA1ODA2NTU4M2I5MTkyMy0xMDAmYjNlYmU5MGItYTRhZi00ODEwLTg2M2YtNTgxOWI5ZTI4NGViXzEwMA==",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 20364,
+          "key": "arxiv:2006.07026",
+          "title": "Backdoor Attacks on Federated Meta-Learning"
+        },
+        {
+          "rank": 10,
+          "id": 1300,
+          "key": "linkedin:changelog-socialActions/comments-1771414310958",
+          "title": ""
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "how efficient is my swimming for my age",
+      "kind": "paraphrase",
+      "expect": [
+        "gemini:c_87d37b84fab1f75b"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 43619,
+          "key": "gemini:c_4c467813b7c5bd62-reply-2026-05-21T13:54:39.355Z",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 47760,
+          "key": "gemini:canvas-2026-05-21T14:00:22.678Z",
+          "title": "Technology's Role in 1930s Germany"
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 464,
+          "key": "youtube:liked:SJF24XUkFuI",
+          "title": "Beginner Cardio Plank Workout | Follow Along"
+        },
+        {
+          "rank": 2,
+          "id": 24773,
+          "key": "youtube:liked:X5-cAQpGwn8",
+          "title": "The Science Behind Running Faster"
+        },
+        {
+          "rank": 3,
+          "id": 653,
+          "key": "youtube:liked:bLNUH7-T_o4",
+          "title": "6 Acrobatic Skills Every Adult Beginner Can Master (No Gym Required)"
+        },
+        {
+          "rank": 4,
+          "id": 485,
+          "key": "youtube:liked:WNYLy3A8uTc",
+          "title": "I did 100 kettlebell swings a day for 107 days!"
+        },
+        {
+          "rank": 5,
+          "id": 736,
+          "key": "youtube:liked:XIVVI693VMA",
+          "title": "Why Should You Run With A Low Heart Rate?"
+        },
+        {
+          "rank": 6,
+          "id": 24529,
+          "key": "youtube:liked:Ys5lX9IBWls",
+          "title": "Improve your High Jump ft. Erik Kynard Jr. | Olympians' Tips"
+        },
+        {
+          "rank": 7,
+          "id": 1359,
+          "key": "youtube:liked:AASjClbFEFE",
+          "title": "Calisthenics Programming (Part 2) - Exercises"
+        },
+        {
+          "rank": 8,
+          "id": 24888,
+          "key": "linkedin:changelog-socialActions/comments-7449769661837266944",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 646,
+          "key": "youtube:liked:LpZ4-3eRgf4",
+          "title": "The Ultimate Full Body Mobility Workout - Move Better, Feel Better:"
+        },
+        {
+          "rank": 10,
+          "id": 686,
+          "key": "youtube:liked:CnhZo6rUo_Y",
+          "title": "Knee Ability For Young Athletes"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 464,
+          "key": "youtube:liked:SJF24XUkFuI",
+          "title": "Beginner Cardio Plank Workout | Follow Along"
+        },
+        {
+          "rank": 2,
+          "id": 43619,
+          "key": "gemini:c_4c467813b7c5bd62-reply-2026-05-21T13:54:39.355Z",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 24773,
+          "key": "youtube:liked:X5-cAQpGwn8",
+          "title": "The Science Behind Running Faster"
+        },
+        {
+          "rank": 4,
+          "id": 47760,
+          "key": "gemini:canvas-2026-05-21T14:00:22.678Z",
+          "title": "Technology's Role in 1930s Germany"
+        },
+        {
+          "rank": 5,
+          "id": 653,
+          "key": "youtube:liked:bLNUH7-T_o4",
+          "title": "6 Acrobatic Skills Every Adult Beginner Can Master (No Gym Required)"
+        },
+        {
+          "rank": 6,
+          "id": 485,
+          "key": "youtube:liked:WNYLy3A8uTc",
+          "title": "I did 100 kettlebell swings a day for 107 days!"
+        },
+        {
+          "rank": 7,
+          "id": 736,
+          "key": "youtube:liked:XIVVI693VMA",
+          "title": "Why Should You Run With A Low Heart Rate?"
+        },
+        {
+          "rank": 8,
+          "id": 24529,
+          "key": "youtube:liked:Ys5lX9IBWls",
+          "title": "Improve your High Jump ft. Erik Kynard Jr. | Olympians' Tips"
+        },
+        {
+          "rank": 9,
+          "id": 1359,
+          "key": "youtube:liked:AASjClbFEFE",
+          "title": "Calisthenics Programming (Part 2) - Exercises"
+        },
+        {
+          "rank": 10,
+          "id": 24888,
+          "key": "linkedin:changelog-socialActions/comments-7449769661837266944",
+          "title": ""
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "Pyrrhonian skepticism suspension of judgment",
+      "kind": "deep",
+      "expect": [
+        "google-drive:1Z6lrD7C0xrB_3IPt1qcYgykS0zSf2opwe_oSIIQQeOk"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 47661,
+          "key": "gemini:c_8545f0bb99e07bba-reply-2025-05-07T03:05:13.681Z",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 21536,
+          "key": "google-drive:1Z6lrD7C0xrB_3IPt1qcYgykS0zSf2opwe_oSIIQQeOk",
+          "title": "IA Series X/n - Rational Agents"
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 1614,
+          "key": "notebooklm:Takeout/NotebookLM/LLM as Judge_ Evaluation, Improvement, and Refinem",
+          "title": "LLM as Judge: Evaluation, Improvement, and Refinement"
+        },
+        {
+          "rank": 2,
+          "id": 24248,
+          "key": "gemini:gemini-search-58b1ff395915",
+          "title": "Understanding Task-Agnostic and Judgement Biases"
+        },
+        {
+          "rank": 3,
+          "id": 26254,
+          "key": "linkedin:changelog-socialActions/comments-7472141306547585024",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 916,
+          "key": "youtube:liked:8j0SZFUToU4",
+          "title": "The Truth About Lies with Daniel Levitin"
+        },
+        {
+          "rank": 5,
+          "id": 20308,
+          "key": "share:share-1775152485826",
+          "title": "[2602.19141] Sycophantic Chatbots Cause Delusional Spiraling, Even in Ideal Bayesians"
+        },
+        {
+          "rank": 6,
+          "id": 77,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3ltfdqd6s5d2h",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 55,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3m2ddmi35up2t",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 24806,
+          "key": "share:share-1775910961488",
+          "title": "Reflections on trusting trust"
+        },
+        {
+          "rank": 9,
+          "id": 26279,
+          "key": "linkedin:changelog-socialActions/comments-7472324889933422592",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 24963,
+          "key": "image:image-1776356378022",
+          "title": "Graham's Hierarchy of Disagreement"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 1614,
+          "key": "notebooklm:Takeout/NotebookLM/LLM as Judge_ Evaluation, Improvement, and Refinem",
+          "title": "LLM as Judge: Evaluation, Improvement, and Refinement"
+        },
+        {
+          "rank": 2,
+          "id": 47661,
+          "key": "gemini:c_8545f0bb99e07bba-reply-2025-05-07T03:05:13.681Z",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 21536,
+          "key": "google-drive:1Z6lrD7C0xrB_3IPt1qcYgykS0zSf2opwe_oSIIQQeOk",
+          "title": "IA Series X/n - Rational Agents"
+        },
+        {
+          "rank": 4,
+          "id": 24248,
+          "key": "gemini:gemini-search-58b1ff395915",
+          "title": "Understanding Task-Agnostic and Judgement Biases"
+        },
+        {
+          "rank": 5,
+          "id": 26254,
+          "key": "linkedin:changelog-socialActions/comments-7472141306547585024",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 916,
+          "key": "youtube:liked:8j0SZFUToU4",
+          "title": "The Truth About Lies with Daniel Levitin"
+        },
+        {
+          "rank": 7,
+          "id": 20308,
+          "key": "share:share-1775152485826",
+          "title": "[2602.19141] Sycophantic Chatbots Cause Delusional Spiraling, Even in Ideal Bayesians"
+        },
+        {
+          "rank": 8,
+          "id": 77,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3ltfdqd6s5d2h",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 55,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3m2ddmi35up2t",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 24806,
+          "key": "share:share-1775910961488",
+          "title": "Reflections on trusting trust"
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "Workflow State Projection guard functions",
+      "kind": "deep",
+      "expect": [
+        "google-drive:1bDqFpqBNq6v2mg_n9S0LSUGgizAyzd7K"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 14107,
+          "key": "claude:019b18ab-0c9d-75e2-83fe-ab804e4ec287",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 45760,
+          "key": "gemini:c_d11010e21b0b700c-prompt-2025-11-25T13:23:41.940Z",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 43974,
+          "key": "gemini:c_92bb1a040a290a28-prompt-2025-11-26T17:50:29.807Z",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 14161,
+          "key": "claude:019b0ba0-d5a7-74ac-84cf-b3b9dad0833e",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 45659,
+          "key": "gemini:c_7b13d25417ed1f1b-prompt-2025-11-28T09:00:29.894Z",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 45728,
+          "key": "gemini:c_7b13d25417ed1f1b-reply-2025-11-29T08:24:39.406Z",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 46407,
+          "key": "gemini:c_b8083446c9da0546-reply-2025-12-01T14:26:21.175Z",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 46454,
+          "key": "gemini:c_3084d372d34b105f-prompt-2025-11-28T16:32:31.692Z",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 45701,
+          "key": "gemini:c_7b13d25417ed1f1b-prompt-2025-11-29T05:17:11.542Z",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 45699,
+          "key": "gemini:c_7b13d25417ed1f1b-prompt-2025-11-29T05:10:14.099Z",
+          "title": ""
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 2469,
+          "key": "claude:9789cc21-0a65-4334-8ccf-01184b901d89",
+          "title": "Extracting workflow state as predicate values"
+        },
+        {
+          "rank": 2,
+          "id": 23343,
+          "key": "google-drive:16QYeUTpj3S9r4yEwgzAcAgWSMAzb6N-6",
+          "title": "Formalizing Workflow Enforcement with Composite State Goals"
+        },
+        {
+          "rank": 3,
+          "id": 213,
+          "key": "microblog:https://matt.thompson.gr/2025/12/30/dual-state-domain.html",
+          "title": "Dual state domain"
+        },
+        {
+          "rank": 4,
+          "id": 2384,
+          "key": "claude:5f1241ba-b8a2-4c2c-858d-8c4e293d9df0",
+          "title": "Guard function documentation review"
+        },
+        {
+          "rank": 5,
+          "id": 22916,
+          "key": "google-drive:1RogGdHXfWHZtdJM3K_2cdr7VqecgfAxs",
+          "title": "Contingent Planning over Opaque Generative AI Outputs via Guard-Based Workflow State Sensing"
+        },
+        {
+          "rank": 6,
+          "id": 21503,
+          "key": "google-drive:1A7aSWV3NbvJixMVYjaLtRQNKQ2p_-5Q1",
+          "title": "FYP"
+        },
+        {
+          "rank": 7,
+          "id": 2520,
+          "key": "claude:d2767def-fda0-4cc7-bb11-b9b52d1ea773",
+          "title": "Decomposed workflow with backtracking for SWE-Bench"
+        },
+        {
+          "rank": 8,
+          "id": 2378,
+          "key": "claude:d3bb184f-9aca-49a3-987a-e3885345a159",
+          "title": "Conference paper draft review and feedback"
+        },
+        {
+          "rank": 9,
+          "id": 2364,
+          "key": "claude:36feecb2-6fa8-4534-a01b-e54f04586130",
+          "title": "Guard Function Appendix"
+        },
+        {
+          "rank": 10,
+          "id": 23321,
+          "key": "google-drive:1_58T9IFYJMCqhqkmg9dA153WVK2deUvw",
+          "title": "Formal System Graph_ Workflow Enforcement"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 14107,
+          "key": "claude:019b18ab-0c9d-75e2-83fe-ab804e4ec287",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 2469,
+          "key": "claude:9789cc21-0a65-4334-8ccf-01184b901d89",
+          "title": "Extracting workflow state as predicate values"
+        },
+        {
+          "rank": 3,
+          "id": 23343,
+          "key": "google-drive:16QYeUTpj3S9r4yEwgzAcAgWSMAzb6N-6",
+          "title": "Formalizing Workflow Enforcement with Composite State Goals"
+        },
+        {
+          "rank": 4,
+          "id": 45760,
+          "key": "gemini:c_d11010e21b0b700c-prompt-2025-11-25T13:23:41.940Z",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 43974,
+          "key": "gemini:c_92bb1a040a290a28-prompt-2025-11-26T17:50:29.807Z",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 213,
+          "key": "microblog:https://matt.thompson.gr/2025/12/30/dual-state-domain.html",
+          "title": "Dual state domain"
+        },
+        {
+          "rank": 7,
+          "id": 2384,
+          "key": "claude:5f1241ba-b8a2-4c2c-858d-8c4e293d9df0",
+          "title": "Guard function documentation review"
+        },
+        {
+          "rank": 8,
+          "id": 14161,
+          "key": "claude:019b0ba0-d5a7-74ac-84cf-b3b9dad0833e",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 22916,
+          "key": "google-drive:1RogGdHXfWHZtdJM3K_2cdr7VqecgfAxs",
+          "title": "Contingent Planning over Opaque Generative AI Outputs via Guard-Based Workflow State Sensing"
+        },
+        {
+          "rank": 10,
+          "id": 45659,
+          "key": "gemini:c_7b13d25417ed1f1b-prompt-2025-11-28T09:00:29.894Z",
+          "title": ""
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "normalized entropy of the answer distribution",
+      "kind": "deep",
+      "expect": [
+        "microblog:https://matt.thompson.gr/2025/07/19/ia-series-n-building-a.html"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 13136,
+          "key": "claude:f25ecf1a-cee9-48a0-974c-217c68014031",
+          "title": "I have posted the datasets earlier in the conversation. \nI plan on focusing on L..."
+        },
+        {
+          "rank": 2,
+          "id": 13145,
+          "key": "claude:b34c93ea-2ebd-40c0-b289-816237ce00ce",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 47431,
+          "key": "gemini:c_b8cd0bd1ec31f76e-reply-2025-07-04T13:42:17.224Z",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 9641,
+          "key": "claude:eac4df4c-a228-4665-a1c0-03baca1f493e",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 11682,
+          "key": "claude:2e5eaada-6df1-4c6d-a070-71ca6a1b5213",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 257,
+          "key": "microblog:https://matt.thompson.gr/2025/07/19/ia-series-n-building-a.html",
+          "title": "[IA Series 8/n] Building a Self-Reflection LLM Agent: From Theory to Proof of Concept"
+        },
+        {
+          "rank": 7,
+          "id": 12857,
+          "key": "claude:23c4b7d0-5b11-4fd9-9999-ae20b063ac33",
+          "title": "**Core Mathematical Relationships**\nThe agent operates on several key mathematic..."
+        },
+        {
+          "rank": 8,
+          "id": 12872,
+          "key": "claude:e0c10367-b1e3-4ee1-8da8-2b8aadf3f380",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 11897,
+          "key": "claude:42a06a29-87f9-4293-a82c-486010bb9e43",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 11585,
+          "key": "claude:3ab18666-0143-4108-8e07-0d99727849fa",
+          "title": "If semantic entropy and related evaluation was be included, what additions to th..."
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 2160,
+          "key": "claude:d93f9cce-513f-43df-ac9d-78974a8f3d68",
+          "title": "High-Entropy Token Entropy Calculation"
+        },
+        {
+          "rank": 2,
+          "id": 20277,
+          "key": "audible:audible:annotation:1536695173:aY165A0ZXKVTW",
+          "title": "Note in The Alignment Problem — Chapter 8: Inference at 10:38:15"
+        },
+        {
+          "rank": 3,
+          "id": 2060,
+          "key": "claude:51ce7216-4d5d-42d7-bded-14f4700c1476",
+          "title": "Principle of Maximum Entropy"
+        },
+        {
+          "rank": 4,
+          "id": 1945,
+          "key": "claude:580b3567-1a60-40d0-9d44-487b77499007",
+          "title": "Understanding Language Entropy"
+        },
+        {
+          "rank": 5,
+          "id": 2263,
+          "key": "claude:574e32f8-7645-4b46-99b6-e68a1ec1029e",
+          "title": "Entropy Mode Implementation Stages"
+        },
+        {
+          "rank": 6,
+          "id": 641,
+          "key": "youtube:liked:bT1p5tJwn_0",
+          "title": "Introduction to the Bernoulli Distribution"
+        },
+        {
+          "rank": 7,
+          "id": 162,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3ldwigmc2qc27",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 24154,
+          "key": "gemini:gemini-search-aca3d85be98e",
+          "title": "Maximum Entropy Models for Inference"
+        },
+        {
+          "rank": 9,
+          "id": 61,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3lvkx74np3r2s",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 20276,
+          "key": "audible:audible:annotation:1536695173:a1X6AJBGGYYRS4",
+          "title": "Note in The Alignment Problem — Chapter 8: Inference at 10:37:59"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 13136,
+          "key": "claude:f25ecf1a-cee9-48a0-974c-217c68014031",
+          "title": "I have posted the datasets earlier in the conversation. \nI plan on focusing on L..."
+        },
+        {
+          "rank": 2,
+          "id": 2160,
+          "key": "claude:d93f9cce-513f-43df-ac9d-78974a8f3d68",
+          "title": "High-Entropy Token Entropy Calculation"
+        },
+        {
+          "rank": 3,
+          "id": 20277,
+          "key": "audible:audible:annotation:1536695173:aY165A0ZXKVTW",
+          "title": "Note in The Alignment Problem — Chapter 8: Inference at 10:38:15"
+        },
+        {
+          "rank": 4,
+          "id": 13145,
+          "key": "claude:b34c93ea-2ebd-40c0-b289-816237ce00ce",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 2060,
+          "key": "claude:51ce7216-4d5d-42d7-bded-14f4700c1476",
+          "title": "Principle of Maximum Entropy"
+        },
+        {
+          "rank": 6,
+          "id": 47431,
+          "key": "gemini:c_b8cd0bd1ec31f76e-reply-2025-07-04T13:42:17.224Z",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 1945,
+          "key": "claude:580b3567-1a60-40d0-9d44-487b77499007",
+          "title": "Understanding Language Entropy"
+        },
+        {
+          "rank": 8,
+          "id": 9641,
+          "key": "claude:eac4df4c-a228-4665-a1c0-03baca1f493e",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 11682,
+          "key": "claude:2e5eaada-6df1-4c6d-a070-71ca6a1b5213",
+          "title": ""
+        },
+        {
+          "rank": 10,
+          "id": 2263,
+          "key": "claude:574e32f8-7645-4b46-99b6-e68a1ec1029e",
+          "title": "Entropy Mode Implementation Stages"
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "Description Logics have limited quantification",
+      "kind": "deep",
+      "expect": [
+        "gemini:c_382fb83b8d5424b4-reply-2025-05-04T21:56:30.066Z"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 47695,
+          "key": "gemini:c_382fb83b8d5424b4-reply-2025-05-04T21:56:30.066Z",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 47693,
+          "key": "gemini:c_382fb83b8d5424b4-reply-2025-05-04T21:35:15.781Z",
+          "title": ""
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 20347,
+          "key": "arxiv:2308.04814",
+          "title": "Neuro-Symbolic RDF and Description Logic Reasoners: The State-Of-The-Art and Challenges"
+        },
+        {
+          "rank": 2,
+          "id": 25606,
+          "key": "linkedin:changelog-messages-2-MTc4MDEyNzc1ODY4NmI4MzcwOS0xMDAmYjNlYmU5MGItYTRhZi00ODEwLTg2M2YtNTgxOWI5ZTI4NGViXzEwMA==",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 25425,
+          "key": "linkedin:changelog-socialActions/comments-7463309975205904384",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 26387,
+          "key": "linkedin:changelog-socialActions/comments-7473677276199587841",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 1120,
+          "key": "linkedin:changelog-messages-1770283658314",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 211,
+          "key": "microblog:https://matt.thompson.gr/2026/01/02/classical-logic-versus-paraconsistent-logic.html",
+          "title": "Classical Logic versus Paraconsistent Logic"
+        },
+        {
+          "rank": 7,
+          "id": 2250,
+          "key": "claude:8a5d7c5b-f055-428a-a31d-9ca41e5c74f1",
+          "title": "Comprehensive List of Logics Used in AI"
+        },
+        {
+          "rank": 8,
+          "id": 24084,
+          "key": "gemini:gemini-html-7f959dcffb8e",
+          "title": "What is the name for a statement used in logic... Like an assumption but begins ..."
+        },
+        {
+          "rank": 9,
+          "id": 2248,
+          "key": "claude:db042a27-aad9-459d-89be-cebbacfaea53",
+          "title": "Logical Reasoning Explained"
+        },
+        {
+          "rank": 10,
+          "id": 552,
+          "key": "youtube:liked:ry3R7k6x1Pg",
+          "title": "ULTIMATE Fact Checking AI (Johns Hopkins, Stanford)"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 47695,
+          "key": "gemini:c_382fb83b8d5424b4-reply-2025-05-04T21:56:30.066Z",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 20347,
+          "key": "arxiv:2308.04814",
+          "title": "Neuro-Symbolic RDF and Description Logic Reasoners: The State-Of-The-Art and Challenges"
+        },
+        {
+          "rank": 3,
+          "id": 25606,
+          "key": "linkedin:changelog-messages-2-MTc4MDEyNzc1ODY4NmI4MzcwOS0xMDAmYjNlYmU5MGItYTRhZi00ODEwLTg2M2YtNTgxOWI5ZTI4NGViXzEwMA==",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 47693,
+          "key": "gemini:c_382fb83b8d5424b4-reply-2025-05-04T21:35:15.781Z",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 25425,
+          "key": "linkedin:changelog-socialActions/comments-7463309975205904384",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 26387,
+          "key": "linkedin:changelog-socialActions/comments-7473677276199587841",
+          "title": ""
+        },
+        {
+          "rank": 7,
+          "id": 1120,
+          "key": "linkedin:changelog-messages-1770283658314",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 211,
+          "key": "microblog:https://matt.thompson.gr/2026/01/02/classical-logic-versus-paraconsistent-logic.html",
+          "title": "Classical Logic versus Paraconsistent Logic"
+        },
+        {
+          "rank": 9,
+          "id": 2250,
+          "key": "claude:8a5d7c5b-f055-428a-a31d-9ca41e5c74f1",
+          "title": "Comprehensive List of Logics Used in AI"
+        },
+        {
+          "rank": 10,
+          "id": 24084,
+          "key": "gemini:gemini-html-7f959dcffb8e",
+          "title": "What is the name for a statement used in logic... Like an assumption but begins ..."
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "ground truth correctness of the called tool",
+      "kind": "deep",
+      "expect": [
+        "gemini:c_2ad0ab7680710049-reply-2025-05-05T08:12:33.808Z"
+      ],
+      "keyword": [
+        {
+          "rank": 1,
+          "id": 47678,
+          "key": "gemini:c_2ad0ab7680710049-reply-2025-05-05T08:12:33.808Z",
+          "title": ""
+        },
+        {
+          "rank": 2,
+          "id": 8314,
+          "key": "claude:4d7c5d33-2d8b-49cf-b7de-23c5b3cae538",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 47688,
+          "key": "gemini:c_c6ff03b4e561bce2-reply-2025-05-05T05:42:33.954Z",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 21536,
+          "key": "google-drive:1Z6lrD7C0xrB_3IPt1qcYgykS0zSf2opwe_oSIIQQeOk",
+          "title": "IA Series X/n - Rational Agents"
+        },
+        {
+          "rank": 5,
+          "id": 47661,
+          "key": "gemini:c_8545f0bb99e07bba-reply-2025-05-07T03:05:13.681Z",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 41193,
+          "key": "notebooklm:Takeout/NotebookLM/The Cofounder Alignment Framework/Chat History/Chat Session - c76106f3-caff-43a4-b13d-9fde20c4acda.html",
+          "title": "The Cofounder Alignment Framework — Chat Session - c76106f3-caff-43a4-b13d-9fde20c4acda"
+        }
+      ],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 552,
+          "key": "youtube:liked:ry3R7k6x1Pg",
+          "title": "ULTIMATE Fact Checking AI (Johns Hopkins, Stanford)"
+        },
+        {
+          "rank": 2,
+          "id": 72,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3ltocqfydk324",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 666,
+          "key": "youtube:liked:Zuc3FQ3uAN8",
+          "title": "First Order Logic | Craft vs Cruft 38"
+        },
+        {
+          "rank": 4,
+          "id": 667,
+          "key": "youtube:liked:TLGEUfh6zl4",
+          "title": "English To Theorems (Z3 + GPT-4) | Craft vs Cruft 43"
+        },
+        {
+          "rank": 5,
+          "id": 20231,
+          "key": "audible:audible:annotation:0593148630:a273ZYJU61Q3ET",
+          "title": "Note in Human Compatible — Can We Fix It? at 26:51"
+        },
+        {
+          "rank": 6,
+          "id": 2104,
+          "key": "claude:da9898d3-8f00-4e6f-829d-2c556297210c",
+          "title": "Datasets for Evaluating Tool Calling in Language Models"
+        },
+        {
+          "rank": 7,
+          "id": 261,
+          "key": "microblog:https://matt.thompson.gr/2025/07/11/grok-wouldnt-know-truth-if.html",
+          "title": "Grok wouldn't know \"truth\" if it slapped it"
+        },
+        {
+          "rank": 8,
+          "id": 171,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3lduxhscoqk2s",
+          "title": ""
+        },
+        {
+          "rank": 9,
+          "id": 1614,
+          "key": "notebooklm:Takeout/NotebookLM/LLM as Judge_ Evaluation, Improvement, and Refinem",
+          "title": "LLM as Judge: Evaluation, Improvement, and Refinement"
+        },
+        {
+          "rank": 10,
+          "id": 20282,
+          "key": "audible:audible:annotation:1536695173:a1DY29EGUDP3Z4",
+          "title": "Note in The Alignment Problem — Chapter 8: Inference at 11:11:58"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 552,
+          "key": "youtube:liked:ry3R7k6x1Pg",
+          "title": "ULTIMATE Fact Checking AI (Johns Hopkins, Stanford)"
+        },
+        {
+          "rank": 2,
+          "id": 47678,
+          "key": "gemini:c_2ad0ab7680710049-reply-2025-05-05T08:12:33.808Z",
+          "title": ""
+        },
+        {
+          "rank": 3,
+          "id": 72,
+          "key": "bluesky:at://did:plc:zkcplpoihk6jcmsmmq6g3oxp/app.bsky.feed.post/3ltocqfydk324",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 8314,
+          "key": "claude:4d7c5d33-2d8b-49cf-b7de-23c5b3cae538",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 47688,
+          "key": "gemini:c_c6ff03b4e561bce2-reply-2025-05-05T05:42:33.954Z",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 666,
+          "key": "youtube:liked:Zuc3FQ3uAN8",
+          "title": "First Order Logic | Craft vs Cruft 38"
+        },
+        {
+          "rank": 7,
+          "id": 667,
+          "key": "youtube:liked:TLGEUfh6zl4",
+          "title": "English To Theorems (Z3 + GPT-4) | Craft vs Cruft 43"
+        },
+        {
+          "rank": 8,
+          "id": 21536,
+          "key": "google-drive:1Z6lrD7C0xrB_3IPt1qcYgykS0zSf2opwe_oSIIQQeOk",
+          "title": "IA Series X/n - Rational Agents"
+        },
+        {
+          "rank": 9,
+          "id": 20231,
+          "key": "audible:audible:annotation:0593148630:a273ZYJU61Q3ET",
+          "title": "Note in Human Compatible — Can We Fix It? at 26:51"
+        },
+        {
+          "rank": 10,
+          "id": 47661,
+          "key": "gemini:c_8545f0bb99e07bba-reply-2025-05-07T03:05:13.681Z",
+          "title": ""
+        }
+      ],
+      "hybrid_partial": []
+    },
+    {
+      "q": "Markov property each state holds enough information to choose the next action",
+      "kind": "deep",
+      "expect": [
+        "claude:019d121b-3029-7771-8de8-e46b2e55b608"
+      ],
+      "keyword": [],
+      "semantic": [
+        {
+          "rank": 1,
+          "id": 1849,
+          "key": "claude:9a097cea-ae2e-4a8b-806a-5a2643d027c6",
+          "title": "Sampling Next State and Reward in Reinforcement Learning"
+        },
+        {
+          "rank": 2,
+          "id": 683,
+          "key": "youtube:liked:my207WNoeyA",
+          "title": "Markov Decision Processes (MDPs) - Structuring a Reinforcement Learning Problem"
+        },
+        {
+          "rank": 3,
+          "id": 25853,
+          "key": "linkedin:changelog-socialActions/comments-7468996111647731712",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 25959,
+          "key": "linkedin:changelog-socialActions/comments-7469701963291549698",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 25403,
+          "key": "linkedin:changelog-socialActions/comments-7463083735727525888",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 685,
+          "key": "youtube:liked:rHdX3ANxofs",
+          "title": "Intro to Markov Chains & Transition Diagrams"
+        },
+        {
+          "rank": 7,
+          "id": 27211,
+          "key": "linkedin:changelog-socialActions/comments-7486047785922916352",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 2018,
+          "key": "claude:d29cefbe-36a8-40b6-828e-93f817bbde9f",
+          "title": "Reinforcement Learning with State-Dependent Action Spaces"
+        },
+        {
+          "rank": 9,
+          "id": 668,
+          "key": "youtube:liked:bpUszPiWM7o",
+          "title": "Monte Carlo And Off-Policy Methods | Reinforcement Learning Part 3"
+        },
+        {
+          "rank": 10,
+          "id": 684,
+          "key": "youtube:liked:JHwyHIz6a8A",
+          "title": "Introducing Markov Chains"
+        }
+      ],
+      "hybrid": [
+        {
+          "rank": 1,
+          "id": 1849,
+          "key": "claude:9a097cea-ae2e-4a8b-806a-5a2643d027c6",
+          "title": "Sampling Next State and Reward in Reinforcement Learning"
+        },
+        {
+          "rank": 2,
+          "id": 683,
+          "key": "youtube:liked:my207WNoeyA",
+          "title": "Markov Decision Processes (MDPs) - Structuring a Reinforcement Learning Problem"
+        },
+        {
+          "rank": 3,
+          "id": 25853,
+          "key": "linkedin:changelog-socialActions/comments-7468996111647731712",
+          "title": ""
+        },
+        {
+          "rank": 4,
+          "id": 25959,
+          "key": "linkedin:changelog-socialActions/comments-7469701963291549698",
+          "title": ""
+        },
+        {
+          "rank": 5,
+          "id": 25403,
+          "key": "linkedin:changelog-socialActions/comments-7463083735727525888",
+          "title": ""
+        },
+        {
+          "rank": 6,
+          "id": 685,
+          "key": "youtube:liked:rHdX3ANxofs",
+          "title": "Intro to Markov Chains & Transition Diagrams"
+        },
+        {
+          "rank": 7,
+          "id": 27211,
+          "key": "linkedin:changelog-socialActions/comments-7486047785922916352",
+          "title": ""
+        },
+        {
+          "rank": 8,
+          "id": 2018,
+          "key": "claude:d29cefbe-36a8-40b6-828e-93f817bbde9f",
+          "title": "Reinforcement Learning with State-Dependent Action Spaces"
+        },
+        {
+          "rank": 9,
+          "id": 668,
+          "key": "youtube:liked:bpUszPiWM7o",
+          "title": "Monte Carlo And Off-Policy Methods | Reinforcement Learning Part 3"
+        },
+        {
+          "rank": 10,
+          "id": 684,
+          "key": "youtube:liked:JHwyHIz6a8A",
+          "title": "Introducing Markov Chains"
+        }
+      ],
+      "hybrid_partial": []
+    }
+  ]
+}

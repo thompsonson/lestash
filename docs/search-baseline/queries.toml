@@ -1,6 +1,6 @@
 # Search baseline (#215): real queries, recorded before search changes, so later
-# results can be compared with today's. DRAFT: to be edited and approved before the
-# first results are recorded.
+# results can be compared with the first recording. Approved 8 Nov 2026; the first
+# results, from before the W0 search fixes, are in results-20261108-pre-w0.json.
 #
 # Each query names the items it should find, as "source_type:source_id".
 # kind:
@@ -10,8 +10,9 @@
 #   deep        text more than 500 characters into the item; semantic search embeds
 #               only the title and first 500 characters, so only keyword search sees it
 #
-# Use letters, digits and spaces only. The server passes punctuation to FTS5, which
-# reads "Dual-State" as column "State" and fails; hybrid then runs semantic only.
+# Use letters, digits and spaces only. The first recording ran on a server where
+# punctuation broke keyword search (fixed in #227), so later runs keep the same rule
+# to compare like with like.
 #
 # Run: uv run python scripts/search_baseline.py --url https://pop-mini.monkey-ladon.ts.net:8444
 
