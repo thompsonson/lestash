@@ -86,7 +86,8 @@ def _hits(conn, q: str) -> set[int]:
         ("guide NOT - panic", {4}),  # NOT applied to "-", which can't be searched
         ("panic OR - Escher", {4, 5}),  # ...but an OR stays an OR
         ('("reliable LLM")', {1}),  # a phrase inside punctuation is still a phrase
-        ("notes -draft", {2}),  # "-" excludes, as in web search
+        ("notes -draft", {7}),  # "-" before a word is part of it (flags: --dry-run)
+        ('notes -"draft"', {2}),  # "-" before a phrase excludes, as in web search
         ('notes -"testing (draft)"', {2}),
         ('notes NOT ("a/b testing")', {2}),  # "(" stuck to a phrase stays out of the way
         ("Dual-State", {1}),  # a "-" inside a word is not an exclusion
@@ -123,7 +124,14 @@ def test_query_is_valid_fts5_and_matches(conn, q, found) -> None:
         ('don"t', '"don\'t"*'),
         ('("x")', '"x"'),
         ('x -"a b"', '"x"* NOT "a b"'),
-        ("x -y", '"x"* NOT "y"*'),
+        ("x -y", '"x"* "-y"*'),
+        ("chezmoi --dry-run", '"chezmoi"* "--dry-run"*'),
+        ("temp -40", '"temp"* "-40"*'),
+        ("x -OR y", '"x"* "-OR"* "y"*'),
+        ('"x"-y', '"x" "-y"*'),
+        ('x -("a b")', '"x"* NOT "a b"'),
+        ('"don"t', '"don\'t"*'),  # one word: the leading quote was stray
+        ('"foo"bar "baz"', '"foo\'bar"* "baz"'),
         ('rust NOT ("async io")', '"rust"* NOT "async io"'),
         ('a OR NOT ("b c")', '"a"*'),  # the excluded phrase is never searched
         ('-"a b"', ""),  # nothing to exclude from

@@ -41,11 +41,13 @@ def _closing_quote(q: str, start: int) -> int | None:
     """Where the phrase opened by the quote at start ends, or None if that quote is stray.
 
     The phrase ends at the first quote followed by the end or a non-word character. A
-    quote between two letters or digits inside it is an apostrophe ("don"t panic"), unless
-    no proper closing quote follows, in which case the first such quote closes it
-    ("foo bar"baz). A quote that can only open (after a space, before a letter) ends the
-    search: the phrase closes at that first inner quote if there was one, and otherwise
-    the quote at start was stray: "foo bar "baz qux" is two words and a phrase.
+    quote between two letters or digits inside it is an apostrophe ("don"t panic").
+
+    If no such closing quote comes first, the first inner quote closes a phrase of more
+    than one word ("foo bar"baz, "machine learning"s "deep nets"). For a single word the
+    quote at start was stray and the inner one an apostrophe ("don"t). A quote that can
+    only open (after a space, before a letter) also ends the search: "foo bar "baz qux"
+    is two words and a phrase.
     """
     first_inner: int | None = None
     for j in range(start + 1, len(q)):
@@ -56,12 +58,12 @@ def _closing_quote(q: str, start: int) -> int | None:
         if not word_after:
             return j
         if not word_before:
-            # A quote that can only open: close at an earlier quote against a word
-            # ("machine learning"s "deep nets"), or else the opener was stray
-            return first_inner
+            break
         if first_inner is None:
             first_inner = j
-    return first_inner
+    if first_inner is not None and any(c.isspace() for c in q[start + 1 : first_inner]):
+        return first_inner
+    return None
 
 
 def _tokens(q: str) -> list[_Token]:
@@ -71,22 +73,18 @@ def _tokens(q: str) -> list[_Token]:
     quote follows (see _closing_quote). Any other quote is an apostrophe between two
     letters or digits (don"t), and a separator elsewhere.
 
-    A "-" in front of a word or phrase excludes it, as in web search: -draft and
-    -"draft copy" become NOT and the term. Other punctuation stuck to the front of a
-    phrase, like the "(" in ("a b"), is dropped, so it can't come between an operator and
-    the phrase it applies to.
+    A "-" in front of a phrase excludes it, as in web search: -"draft copy" becomes NOT
+    and the phrase. A "-" in front of a word stays part of the word, since searches for
+    flags and numbers (--dry-run, rm -rf, -40) are common; NOT excludes a word. Other
+    punctuation stuck to the front of a phrase, like the "(" in ("a b"), is dropped, so
+    it can't come between an operator and the phrase it applies to.
     """
     tokens: list[_Token] = []
     word: list[str] = []
-    not_ = _Token("NOT", phrase=False, star=False)
 
     def end_word() -> None:
         if word:
-            text = "".join(word)
-            if len(text) > 1 and text[0] == "-" and _searchable(text[1:]):
-                tokens.append(not_)
-                text = text[1:]
-            tokens.append(_Token(text, phrase=False, star=False))
+            tokens.append(_Token("".join(word), phrase=False, star=False))
             word.clear()
 
     i, n = 0, len(q)
@@ -105,8 +103,8 @@ def _tokens(q: str) -> list[_Token]:
                     end_word()  # foo-"bar baz": the word foo, then the phrase
                 else:
                     word.clear()  # "(" or "-" stuck to the phrase is not a word
-                    if lead.endswith("-"):
-                        tokens.append(not_)
+                    if "-" in lead:  # -"a b", -("a b")
+                        tokens.append(_Token("NOT", phrase=False, star=False))
                 star = end + 1 < n and q[end + 1] == "*"
                 text = q[i + 1 : end].replace('"', "'")  # inner quotes are apostrophes
                 tokens.append(_Token(text, phrase=True, star=star))

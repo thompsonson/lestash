@@ -195,7 +195,8 @@ def search_items(
 ):
     """Search items using keyword (FTS5), semantic (vector), or hybrid mode.
 
-    Supports "phrase search", prefix* and AND, OR, NOT; other punctuation is plain text
+    Supports "phrase search", -"excluded phrase", prefix* and AND, OR, NOT; other
+    punctuation is plain text
     (see lestash.core.search).
     """
     with get_db() as conn:
