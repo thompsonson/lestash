@@ -83,10 +83,15 @@ def run(base_url: str, queries: list[dict[str, Any]], limit: int, timeout: float
             except (OSError, http.client.HTTPException, KeyError, ValueError, TypeError) as e:
                 entry[mode] = {"error": str(e)}
         results.append(entry)
+    # The server falls back to keyword search when vector search fails, and says so
+    # only in its log. A semantic query that errors shows it: then "hybrid" here was
+    # keyword-only, and this recording is no baseline for semantic search.
+    vector_ok = all(not isinstance(e["semantic"], dict) for e in results)
     return {
         "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "server": base_url,
         "limit": limit,
+        "vector_search": vector_ok,
         "results": results,
     }
 
@@ -105,6 +110,8 @@ def summary(report: dict) -> str:
     for entry in report["results"]:
         cells = [f"{expected_ranks(entry, mode):>9}" for mode in MODES]
         lines.append(f"{entry['kind'] or '':<11} {' '.join(cells)}  {entry['q'][:60]}")
+    if not report["vector_search"]:
+        lines.append("WARNING: semantic search failed, so hybrid results are keyword-only.")
     return "\n".join(lines)
 
 

@@ -113,6 +113,7 @@ def test_it_records_each_mode_and_where_expected_items_rank(server: str, tmp_pat
 
     assert code == 1  # the semantic mode failed, and that is reported
     report = json.loads(out.read_text())
+    assert report["vector_search"] is False  # so hybrid was keyword-only
     entry = report["results"][0]
     assert entry["keyword"][0] == {
         "rank": 1,

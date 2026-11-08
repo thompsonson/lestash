@@ -72,8 +72,8 @@ def _run_sync(source_name: str) -> None:
     # read (e.g. mid-edit) falls back to the cached copy rather than lose the sync.
     try:
         plugin_config = Config.load().get_plugin_config(source_name)
-    except Exception:
-        logger.warning("Could not read the config file; using the one loaded at startup")
+    except Exception as e:
+        logger.warning("Could not read the config file (%s); using the one loaded at startup", e)
         plugin_config = config.get_plugin_config(source_name)
 
     with get_connection(config) as conn:

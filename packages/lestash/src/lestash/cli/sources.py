@@ -241,7 +241,8 @@ def sync_source(
                     except Exception as e:
                         status = "failed"
                         error_message = str(e)
-                        console.print(f"[red]Error syncing {name}: {e}[/red]")
+                        # escape(): a "[/x]" in the error would make Rich raise here
+                        console.print(f"[red]Error syncing {name}: {escape(str(e))}[/red]")
 
                     run.finish(status, error=error_message)
 

@@ -81,7 +81,7 @@ def _replace_file(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` all at once, never leaving a half-written file.
 
     A symlinked config stays a symlink (its target is replaced), and the file keeps its
-    permissions.
+    permissions. A new file gets the umask's usual mode, as open() would give it.
     """
     target = path.resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -90,7 +90,12 @@ def _replace_file(path: Path, text: str) -> None:
         with os.fdopen(fd, "w") as f:
             f.write(text)
         if target.exists():
-            os.chmod(tmp, stat.S_IMODE(target.stat().st_mode))
+            mode = stat.S_IMODE(target.stat().st_mode)
+        else:
+            umask = os.umask(0)
+            os.umask(umask)
+            mode = 0o666 & ~umask
+        os.chmod(tmp, mode)
         os.replace(tmp, target)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
