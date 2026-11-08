@@ -40,10 +40,6 @@ class SyncCounts:
     updated: int = 0
     unchanged: int = 0
 
-    @property
-    def total(self) -> int:
-        return self.added + self.updated + self.unchanged
-
 
 # Insert an item, or update its stored row only when a column would change, so an
 # unchanged re-import writes nothing: no FTS reindex and no item_history row. A plugin
@@ -129,7 +125,15 @@ class SyncStore:
         self.linked = resolve_parent_source_ids(self.conn, self.source_types)
 
     def _store(self, item: ItemCreate) -> bool:
-        """Store one item; False when merge_with_stored() says a stored item holds it."""
+        """Store one item; False when merge_with_stored() says a stored item holds it.
+
+        Counts it as added (no stored row), updated (a column or new media) or
+        unchanged. A merge's own fix-ups to the stored row aren't counted.
+        """
+        if not self.conn.in_transaction:
+            # Take the write lock before reading, so no other writer can store this item
+            # between the read and the upsert. Python would only begin at the INSERT.
+            self.conn.execute("BEGIN IMMEDIATE")
         # Link to a parent yielded earlier (metadata._parent_source_id)
         resolve_parent_id(self.conn, item)
         if not merge_with_stored(self.conn, item):
@@ -138,6 +142,7 @@ class SyncStore:
             "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
             (item.source_type, item.source_id),
         ).fetchone()
+        # A row back means the upsert wrote one; none, that the stored row is the same
         written = self.conn.execute(
             _UPSERT,
             (
@@ -152,9 +157,11 @@ class SyncStore:
                 json.dumps(item.metadata) if item.metadata else None,
                 item.parent_id,
             ),
-        ).fetchone()
-        item_id = written[0] if written else stored[0]
+        ).fetchall()
+        item_id = written[0][0] if written else stored[0]
         self.source_types.add(item.source_type)
+        # item_media has no FTS index, so this count isn't moved by FTS5 flushing its
+        # buffered writes, as total_changes around the upsert would be
         changes_before_media = self.conn.total_changes
         try:
             for media in item.media or []:
@@ -175,7 +182,7 @@ class SyncStore:
             if stored is None:
                 self.added += 1
             elif written or self.conn.total_changes > changes_before_media:
-                self.updated += 1  # a column, or new media
+                self.updated += 1
             else:
                 self.unchanged += 1
         return True

@@ -79,10 +79,21 @@ def parse_value(raw: str) -> Any:
         try:
             value = tomllib.loads(f"value = {text}")["value"]
         except tomllib.TOMLDecodeError:
-            return raw
+            return text
         if isinstance(value, str | list):
             return value
-    return raw
+    return text
+
+
+def _kind(value: object) -> str:
+    """The kind of value a setting holds, as a user would name it."""
+    if isinstance(value, bool):
+        return "true or false"
+    if isinstance(value, int | float):
+        return "number"
+    if isinstance(value, list):
+        return 'list, like ["a", "b"]'
+    return 'text (quote it if it looks like a number, like "007")'
 
 
 def _core_sections() -> dict[str, set[str]]:
@@ -131,13 +142,14 @@ def set_config(
     current = data.get(section)
     if not isinstance(current, dict):
         current = data[section] = {}
-    if isinstance(current.get(setting), dict):
+    existing = current.get(setting)
+    if isinstance(existing, dict):
         console.print(f"[red]{key} is a table of settings; edit it in {get_config_path()}[/red]")
         raise typer.Exit(1)
-    # A list setting given one bare word would be read as a list of its characters
-    if isinstance(current.get(setting), list) and not isinstance(parsed, list):
-        example = escape('["a", "b"]')
-        console.print(f"[red]{key} is a list: give it as {example}[/red]")
+    # A plugin setting keeps its kind: "five" for a number, or a bare word for a list
+    # (read as a list of its letters), would only fail at the next sync
+    if section not in core and existing is not None and _kind(parsed) != _kind(existing):
+        console.print(f"[red]{key} holds {escape(_kind(existing))}[/red]")
         raise typer.Exit(1)
     current[setting] = parsed
 
@@ -145,7 +157,12 @@ def set_config(
     try:
         updated_config = Config(**data)
         updated_config.save()
-        console.print(f"[green]Set {key} = {escape(repr(parsed))}[/green]")
+        stored = (
+            getattr(getattr(updated_config, section), setting)
+            if section in core
+            else updated_config.get_plugin_config(section)[setting]
+        )
+        console.print(f"[green]Set {key} = {escape(repr(stored))}[/green]")
     except Exception as e:
         console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise typer.Exit(1) from None

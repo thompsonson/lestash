@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from typing import Annotated
 
 import typer
+from lestash.core.config import as_list
 from lestash.models.item import ItemCreate, MediaCreate
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
@@ -408,9 +409,7 @@ class ArxivSource(SourcePlugin):
         seen: set[str] = set()
 
         # Phase 1: Legacy keywords from TOML config
-        keywords = config.get("keywords", [])
-        if isinstance(keywords, str):  # one keyword, not a list of its characters
-            keywords = [keywords]
+        keywords = as_list(config.get("keywords"))
         max_per_keyword = int(config.get("max_per_keyword", 5))
         for keyword in keywords:
             self.logger.info("Searching keyword: %s", keyword)

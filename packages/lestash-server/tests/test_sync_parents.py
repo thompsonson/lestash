@@ -111,3 +111,23 @@ def test_run_sync_commits_checkpoints_with_their_items(test_config, monkeypatch)
     # What the failed sync stored is still linked
     book_id, note_parent = _ids(test_config)
     assert note_parent == book_id
+
+
+def test_run_sync_reads_plugin_settings_saved_after_startup(test_config, monkeypatch) -> None:
+    """A `lestash config set` made while the server runs reaches the next sync (#208)."""
+    from lestash.core.config import Config
+
+    seen: list[dict] = []
+
+    class _Recorder:
+        def sync(self, config: dict):
+            seen.append(config)
+            return iter(())
+
+    monkeypatch.setattr(deps, "_config", test_config)  # the copy cached at startup
+    monkeypatch.setattr(sources_route, "load_plugins", lambda: {"audible": _Recorder()})
+    saved = Config(general=test_config.general, audible={"locale": "uk"})
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: saved))
+
+    sources_route._run_sync("audible")
+    assert seen == [{"locale": "uk"}]

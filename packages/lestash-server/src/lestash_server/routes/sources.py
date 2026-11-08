@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
+from lestash.core.config import Config
 from lestash.core.database import get_connection
 from lestash.core.sync import SyncAlreadyRunning, SyncRun, SyncStore
 from lestash.plugins.loader import load_plugins
@@ -66,7 +67,9 @@ def _run_sync(source_name: str) -> None:
         return
 
     config = get_config()
-    plugin_config = config.get_plugin_config(source_name)
+    # Read the file again, not the copy cached at startup, so a `lestash config set`
+    # made while the server runs takes effect at the next sync
+    plugin_config = Config.load().get_plugin_config(source_name)
 
     with get_connection(config) as conn:
         store = SyncStore(conn, source_name)

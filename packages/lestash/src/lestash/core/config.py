@@ -1,6 +1,9 @@
 """Configuration management for Le Stash."""
 
 import copy
+import os
+import stat
+import tempfile
 from pathlib import Path
 from typing import Any, Literal
 
@@ -74,6 +77,37 @@ class LoggingConfig(BaseModel):
             self.file_path = str(get_log_path())
 
 
+def _replace_file(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` all at once, never leaving a half-written file.
+
+    A symlinked config stays a symlink (its target is replaced), and the file keeps its
+    permissions.
+    """
+    target = path.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        if target.exists():
+            os.chmod(tmp, stat.S_IMODE(target.stat().st_mode))
+        os.replace(tmp, target)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def as_list(value: object) -> list[Any]:
+    """Read a list setting. One value given as text is a one-item list, not its letters."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list | tuple):
+        return list(value)
+    return [value]
+
+
 def as_bool(value: object) -> bool:
     """Read a config switch. Older ``lestash config set`` stored strings, so "false" is False."""
     if isinstance(value, str):
@@ -109,18 +143,17 @@ class Config(BaseModel):
             ValueError: the config can't be written as TOML that ``load`` reads, e.g. a
                 list mixing text and numbers. The file is left as it was.
         """
+        data = self.model_dump()
         try:
-            text = toml.dumps(self.model_dump())
-            type(self)(**toml.loads(text))
+            text = toml.dumps(data)
+            reloaded = type(self)(**toml.loads(text)).model_dump()
         # The toml library fails in several ways on what it can't write (e.g. a mixed
         # list raises IndexError), so any error here means "would not load"
         except Exception as e:
             raise ValueError(f"not saved: the config would not load again ({e!r})") from e
-        config_path = get_config_path()
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = config_path.with_suffix(".toml.tmp")
-        tmp.write_text(text)
-        tmp.replace(config_path)  # never a half-written config
+        if reloaded != data:  # e.g. a control character the library mangles
+            raise ValueError("not saved: the config would not load back the same")
+        _replace_file(get_config_path(), text)
 
     def get_plugin_config(self, plugin_name: str) -> dict[str, Any]:
         """The plugin's ``[plugin_name]`` table, or ``{}`` when it has none.

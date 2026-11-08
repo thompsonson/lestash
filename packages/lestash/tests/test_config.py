@@ -127,8 +127,47 @@ def test_config_set_refuses_a_bare_word_for_a_list_setting(config_file: Path) ->
     config_file.write_text('[arxiv]\nkeywords = ["ontology"]\n')
     result = _set("arxiv.keywords", "LLM agents")
     assert result.exit_code == 1
-    assert 'give it as ["a", "b"]' in result.output
+    assert 'holds list, like ["a", "b"]' in result.output
     assert Config.load().get_plugin_config("arxiv") == {"keywords": ["ontology"]}
+
+
+def test_config_set_refuses_text_for_a_number_setting(config_file: Path) -> None:
+    config_file.write_text("[arxiv]\nmax_per_keyword = 5\n")
+    result = _set("arxiv.max_per_keyword", "five")
+    assert result.exit_code == 1
+    assert "holds number" in result.output
+    assert _set("arxiv.max_per_keyword", "8").exit_code == 0
+
+
+def test_config_set_trims_text_and_reports_the_stored_value(config_file: Path) -> None:
+    result = _set("kobo.store_dir", " ~/kobo ")
+    assert "Set kobo.store_dir = '~/kobo'" in result.output
+    assert Config.load().get_plugin_config("kobo") == {"store_dir": "~/kobo"}
+    result = _set("logging.console_enabled", "false")
+    assert "Set logging.console_enabled = False" in result.output  # the model's bool
+
+
+def test_save_keeps_a_symlinked_config_and_its_permissions(
+    config_file: Path, tmp_path: Path
+) -> None:
+    target = tmp_path / "dotfiles" / "config.toml"
+    target.parent.mkdir()
+    target.write_text('[kobo]\nstore_dir = "~/kobo"\n')
+    target.chmod(0o600)
+    config_file.symlink_to(target)
+
+    assert _set("kobo.include_store_titles", "true").exit_code == 0
+    assert config_file.is_symlink()
+    assert (target.stat().st_mode & 0o777) == 0o600
+    assert "include_store_titles = true" in target.read_text()
+    assert [p.name for p in target.parent.iterdir()] == ["config.toml"]  # no temp file left
+
+
+def test_save_refuses_a_value_the_toml_library_would_change(config_file: Path) -> None:
+    config = Config(kobo={"store_dir": "x\x7f"})
+    with pytest.raises(ValueError, match="would not load back the same"):
+        config.save()
+    assert not config_file.exists()
 
 
 def test_config_set_refuses_a_value_the_config_could_not_load_again(config_file: Path) -> None:
