@@ -1,6 +1,6 @@
 # Content and Activity Ontology Design
 
-*Proposed 2026-11-07 — not yet implemented*
+*Proposed 2026-11-07 — the Gemini importer has shipped (#214); the rest is planned in #222*
 
 ## Overview
 
@@ -372,16 +372,28 @@ flowchart LR
 
 ## Plan
 
-1. Gemini activity importer: chats with prompt and reply turns, matched to the 19 existing chats by id.
-2. `activities` table, then moving timestamp lists into it.
-3. YouTube activity importer: the 76,328 watches, merged into history items by video id, plus comments.
-4. `items.held`, the `item_links` table and the linker pass.
-5. `people`, `person_identities`, `item_agents` and `item_mentions`, filled from `items.author`, then `person_profiles` retired.
-6. Drive Activity API source; needs the `drive.activity.readonly` scope and a new sign-in.
+The roadmap is tracked in #222, one issue per waypoint.
+
+**Done:** the Gemini activity importer (#214): chats with prompt and reply turns, matched to the 19 existing chats by id.
+
+0. **Fix-ups (#215):** #208, #209 and #210, plus about 20 search queries recorded as a baseline.
+1. **Ontology (#216):**
+   1. `activities` table, then moving timestamp lists into it.
+   2. YouTube activity importer: the 76,328 watches, merged into history items by video id, plus comments.
+   3. `items.held`, the `item_links` table and the linker pass.
+   4. `people`, `person_identities`, `item_agents` and `item_mentions`, filled from `items.author`, then `person_profiles` retired.
+2. **Blob store (#217):** one SHA-256 file store in `~/.local/share/lestash/`, versioned `item_media`,
+   and NotebookLM generated artifacts as child items with their files, slide images included.
+3. **Text extraction (#218):** Docling, OCR and faster-whisper write a file's text into its item's `content`,
+   with `## Slide 7` or `## 12:34` style headings.
+4. **Related items (#219):** nearest neighbours in `vec_items` become `item_links` rows with status `suggested`.
+5. **Drive Activity (#220):** needs the `drive.activity.readonly` scope and a new sign-in.
    Google's reference does not say how far back activity goes, so the first query records the oldest date found.
 
-The `activities` table comes second, so the YouTube import writes its watches there from the start.
-Steps 1 and 3 gain links and people as those land.
+**Later (#221):** review whether semantic search needs to cover whole items, by rerunning the waypoint 0 baseline.
+
+The `activities` table comes first in waypoint 1, so the YouTube import writes its watches there from the start.
+Each waypoint ends when its result shows in the item detail view, not only in the database.
 
 ## Decided
 
@@ -392,6 +404,9 @@ Steps 1 and 3 gain links and people as those land.
 - Item links from exact identifiers count at once and can be removed; name matches wait for you.
 - Gemini turns keep `user` and `model` as their author until the people tables exist.
 - Imports never guess which item something belongs to; unmatched data stays separate.
+- No chunking for now: keyword search covers full text, and semantic search keeps one vector per item (#221).
+- Extracted text goes into item `content`; `item_history` keeps the text a re-extraction replaces.
+- NotebookLM slide decks keep the PDF, the PPTX and every per-slide image.
 
 ## References
 
