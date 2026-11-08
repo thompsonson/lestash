@@ -83,6 +83,9 @@ def _hits(conn, q: str) -> set[int]:
         ('"a"b "reliable LLM"', set()),  # a stray quote doesn't steal the phrase's quote
         ('"foo "reliable LLM"', set()),
         ('panic "', {4}),
+        ("guide NOT - panic", {4}),  # NOT applied to "-", which can't be searched
+        ("notes NOT NOT draft", {2}),
+        ("x\u0336y", set()),
         ("panic AND OR guide", {4}),  # repeated operators collapse
         ("panic OR", {4}),
         ("++", set()),  # nothing searchable
@@ -98,9 +101,12 @@ def test_query_is_valid_fts5_and_matches(conn, q, found) -> None:
 @pytest.mark.parametrize(
     ("q", "match"),
     [
-        ("Dual-State Architecture", '"Dual State"* "Architecture"*'),
-        ("v2.0", '"v2 0"*'),
-        ("C++", '"C"*'),
+        ("Dual-State Architecture", '"Dual-State"* "Architecture"*'),
+        ("v2.0", '"v2.0"*'),
+        ("C++", '"C++"*'),
+        ("rust NOT - async", '"rust"* "async"*'),  # NOT went with the dropped "-"
+        ("a NOT NOT b", '"a"* NOT "b"*'),
+        ("a OR AND NOT b", '"a"*'),
         ("Gödel", '"Gödel"*'),
         ('"exact phrase" word', '"exact phrase" "word"*'),
         ('"a phrase"*', '"a phrase"*'),

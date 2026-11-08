@@ -200,6 +200,7 @@ def search_items(
     with get_db() as conn:
         fts_results: dict[int, dict] = {}
         vec_results: dict[int, float] = {}
+        keyword_failed = False
 
         # FTS5 keyword search
         if mode in ("keyword", "hybrid"):
@@ -218,6 +219,7 @@ def search_items(
                 # database (e.g. a damaged items_fts). Log it; hybrid still returns the
                 # semantic results, keyword mode reports it.
                 logger.warning("Keyword search failed for %r", q, exc_info=True)
+                keyword_failed = True
                 if mode == "keyword":
                     raise HTTPException(
                         status_code=500, detail="Keyword search failed; see the server log"
@@ -236,7 +238,11 @@ def search_items(
                 load_vec_extension(conn)
                 ensure_vec_table(conn)
                 query_emb = embed_text(q)
-                similar = search_similar(conn, query_emb, limit=limit * 2)
+                # Children are filtered out after the vector search, so ask for more
+                # to still fill the page with top-level items
+                want = limit * 2
+                fetch = want if include_children else want * 4
+                similar = search_similar(conn, query_emb, limit=fetch)
                 ids = [item_id for item_id, _distance in similar]
                 if not include_children and ids:
                     marks = ",".join("?" * len(ids))
@@ -248,13 +254,14 @@ def search_items(
                         )
                     }
                     ids = [i for i in ids if i in top]
-                for rank, item_id in enumerate(ids):
+                for rank, item_id in enumerate(ids[:want]):
                     vec_results[item_id] = rank
             except Exception:
                 logger.warning("Vector search failed, falling back to keyword", exc_info=True)
-                if mode == "semantic" and not fts_results:
+                # An empty 200 would read as "no results"; report it when nothing ran
+                if mode == "semantic" or keyword_failed:
                     raise HTTPException(
-                        status_code=500, detail="Vector search unavailable"
+                        status_code=500, detail="Search unavailable; see the server log"
                     ) from None
 
         # Merge results via RRF (Reciprocal Rank Fusion)

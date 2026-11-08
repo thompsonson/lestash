@@ -5,9 +5,9 @@ AND, OR and NOT. Anything else is plain text, so punctuation must never reach FT
 syntax: "Dual-State", "v2.0", "C++", "don't" and "title:x" are all FTS5 syntax errors
 when passed through as they are. Column filters (title:x), NEAR and ^ are not offered.
 
-Each plain word is split the way the index's tokenizer (unicode61) splits text, and
-becomes a quoted phrase: "Dual-State" -> "Dual State"*, which matches the indexed tokens
-dual, state in order. Every word gets an implicit prefix, as the search box has always
+Each plain word becomes a quoted FTS5 string, which FTS5 splits with the index's own
+tokenizer: "Dual-State" -> "Dual-State"*, the phrase dual state, as the indexed text was
+split. Every word gets an implicit prefix, as the search box has always
 done, so "learn" also finds "learning".
 """
 
@@ -27,26 +27,10 @@ _QUOTES = str.maketrans({c: '"' for c in "“”„‟«»＂"})
 _TOKEN = re.compile(r'"([^"]*)"(\*?)|(\S+)')
 
 
-def _is_token_char(c: str) -> bool:
-    """What unicode61 keeps in a token: letters, numbers, private use, and the combining
-    accents it folds away (U+0300-U+036F). Everything else, "_" included, separates."""
-    cat = unicodedata.category(c)
-    return cat[0] in "LN" or cat == "Co" or (cat == "Mn" and "̀" <= c <= "ͯ")
-
-
-def _word_parts(text: str) -> list[str]:
-    """text split into runs of token characters, as the index splits it."""
-    parts: list[str] = []
-    run: list[str] = []
-    for c in text:
-        if _is_token_char(c):
-            run.append(c)
-        elif run:
-            parts.append("".join(run))
-            run = []
-    if run:
-        parts.append("".join(run))
-    return parts
+def _searchable(text: str) -> bool:
+    """Whether text holds a letter or digit, so the index's tokenizer finds a token in it.
+    FTS5 splits the text itself; this only drops words that would be empty phrases."""
+    return any(c.isalnum() for c in text)
 
 
 def _drop_stray_quotes(q: str) -> str:
@@ -60,8 +44,8 @@ def _drop_stray_quotes(q: str) -> str:
         if (
             c == '"'
             and 0 < i < len(chars) - 1
-            and _is_token_char(chars[i - 1])
-            and _is_token_char(chars[i + 1])
+            and chars[i - 1].isalnum()
+            and chars[i + 1].isalnum()
         ):
             chars[i] = "'"
     open_at: int | None = None
@@ -69,7 +53,7 @@ def _drop_stray_quotes(q: str) -> str:
         if c != '"':
             continue
         can_open = i == 0 or chars[i - 1].isspace()
-        can_close = i == len(chars) - 1 or not _is_token_char(chars[i + 1])
+        can_close = i == len(chars) - 1 or not chars[i + 1].isalnum()
         if open_at is None and can_open:
             open_at = i
         elif open_at is not None and can_close:
@@ -85,9 +69,10 @@ def _drop_stray_quotes(q: str) -> str:
     return "".join(chars)
 
 
-def _phrase(parts: list[str], prefix: bool) -> str:
-    """Parts as one FTS5 string; they hold only token characters, so no escaping."""
-    return '"' + " ".join(parts) + '"' + ("*" if prefix else "")
+def _phrase(text: str, prefix: bool) -> str:
+    """text as one FTS5 string, which FTS5 tokenizes as it tokenized the indexed text:
+    "Dual-State" is the phrase dual state. Quotes inside are doubled, as FTS5 escapes them."""
+    return '"' + text.replace('"', '""') + '"' + ("*" if prefix else "")
 
 
 def fts_match_query(q: str) -> str:
@@ -101,8 +86,9 @@ def fts_match_query(q: str) -> str:
       A NOT with no term before it (or after OR) is dropped with the term it would
       exclude, since FTS5 can't search "everything but x": "NOT x" searches nothing,
       and "a OR NOT b" searches a, never b itself.
-    - Every other word is split as the index splits text, quoted, and given a prefix *.
-      A word with nothing searchable in it ("++", "-") is dropped.
+    - Every other word is quoted, so FTS5 tokenizes it exactly as it tokenized the indexed
+      text, and given a prefix *. A word with no letter or digit ("++", "-") is dropped,
+      with an operator just before it.
     - Only the first MAX_TERMS terms are kept, so FTS5's depth limit is never reached.
     """
     q = _drop_stray_quotes(unicodedata.normalize("NFC", q).translate(_QUOTES))
@@ -110,16 +96,14 @@ def fts_match_query(q: str) -> str:
     terms: list[str] = []
     for m in _TOKEN.finditer(q):
         quoted, star, word = m.group(1), m.group(2), m.group(3)
-        if quoted is not None:
-            parts = _word_parts(quoted)
-            if parts:
-                terms.append(_phrase(parts, prefix=bool(star)))
-        elif word in OPERATORS:
+        if word in OPERATORS:
             terms.append(word)
-        else:
-            parts = _word_parts(word)
-            if parts:
-                terms.append(_phrase(parts, prefix=True))
+            continue
+        text, prefix = (quoted, bool(star)) if quoted is not None else (word, True)
+        if _searchable(text):
+            terms.append(_phrase(text, prefix))
+        elif terms and terms[-1] in OPERATORS:
+            terms.pop()  # "rust NOT - async": the NOT was about "-", not "async"
 
     # Operators only between two search terms: drop leading, trailing and repeated ones.
     # A NOT with no term before it also drops the term it would have excluded.
@@ -131,9 +115,12 @@ def fts_match_query(q: str) -> str:
             if term == "NOT" and out and out[-1] == "AND":
                 out[-1] = "NOT"  # "a AND NOT b" is FTS5's "a NOT b"
                 continue
-            if not out or out[-1] in OPERATORS:
+            if not out or out[-1] == "OR":
+                # Nothing for NOT to exclude from: drop it with the term it excludes
                 skip_next_term = skip_next_term or term == "NOT"
                 continue
+            if out[-1] in OPERATORS:
+                continue  # "a NOT NOT b" is "a NOT b"
             out.append(term)
         elif skip_next_term:
             skip_next_term = False

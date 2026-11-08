@@ -121,12 +121,17 @@ def create_app(static_dir: str | None = None) -> FastAPI:
         @app.exception_handler(StarletteHTTPException)
         async def spa_fallback(request: Request, exc: StarletteHTTPException):
             path = request.url.path.lstrip("/")  # "//api/x" is still an API path
-            is_api = path == "api" or path.startswith("api/")
-            if exc.status_code != 404 or is_api or request.method not in ("GET", "HEAD"):
+            # /api and the /static mount answer for themselves: a missing endpoint or
+            # asset is a 404, never the app page
+            own_404 = any(path == p or path.startswith(p + "/") for p in ("api", "static"))
+            if exc.status_code != 404 or own_404 or request.method not in ("GET", "HEAD"):
                 return await http_exception_handler(request, exc)
             # Resolve first: a decoded "../" must not reach outside the static folder
-            file_path = (static_root / path).resolve()
-            if file_path.is_relative_to(static_root) and file_path.is_file():
+            try:
+                file_path = (static_root / path).resolve()
+            except (ValueError, OSError):  # e.g. a decoded NUL byte
+                file_path = None
+            if file_path and file_path.is_relative_to(static_root) and file_path.is_file():
                 return FileResponse(file_path)
             return FileResponse(index_path, media_type="text/html")
 

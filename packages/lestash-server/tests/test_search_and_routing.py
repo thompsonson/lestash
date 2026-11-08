@@ -107,6 +107,48 @@ def test_hybrid_keeps_semantic_results_when_the_keyword_index_fails(client, monk
     assert resp.status_code == 500
 
 
+def test_hybrid_reports_when_both_halves_fail(client, monkeypatch):
+    """An empty 200 would read as "no results"."""
+    import lestash.core.embeddings as emb
+
+    def broken(q):
+        raise RuntimeError("no model")
+
+    monkeypatch.setattr(emb, "embed_text", broken)
+    with deps.get_db() as conn:
+        conn.execute("DROP TABLE items_fts")
+        conn.commit()
+    resp = client.get("/api/items/search", params={"q": "Python", "mode": "hybrid"})
+    assert resp.status_code == 500
+
+
+def test_hybrid_still_answers_when_only_semantic_fails(client, monkeypatch):
+    import lestash.core.embeddings as emb
+
+    def broken(q):
+        raise RuntimeError("no model")
+
+    monkeypatch.setattr(emb, "embed_text", broken)
+    resp = client.get("/api/items/search", params={"q": "Python", "mode": "hybrid"})
+    assert resp.status_code == 200
+    assert resp.json()["items"]
+
+
+def test_semantic_without_children_asks_for_more_hits(client, monkeypatch):
+    """Children are filtered after the vector search, so it must fetch extra."""
+    import lestash.core.embeddings as emb
+
+    asked = []
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: asked.append(limit) or [])
+    client.get("/api/items/search", params={"q": "x", "mode": "semantic", "limit": 5})
+    client.get(
+        "/api/items/search",
+        params={"q": "x", "mode": "semantic", "limit": 5, "include_children": False},
+    )
+    assert asked == [10, 40]
+
+
 @pytest.fixture
 def web_client(test_config, tmp_path, monkeypatch):
     """An app serving a static frontend, so the SPA fallback is active.
@@ -173,6 +215,19 @@ def test_api_paths_with_extra_slashes_are_still_404(web_client, path):
     resp = web_client.get(f"http://testserver{path}")
     assert resp.status_code == 404
     assert resp.headers["content-type"].startswith("application/json")
+
+
+def test_a_missing_static_asset_is_a_404(web_client):
+    resp = web_client.get("/static/missing.js")
+    assert resp.status_code == 404
+    assert "app" not in resp.text
+
+
+@pytest.mark.parametrize("path", ["/%00", "/a%00b"])
+def test_a_nul_byte_in_the_path_gets_the_app_not_a_500(web_client, path):
+    resp = web_client.get(path)
+    assert resp.status_code == 200
+    assert resp.text == "<html>app</html>"
 
 
 def test_head_on_an_app_path_gets_the_app(web_client):
