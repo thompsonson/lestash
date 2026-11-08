@@ -227,14 +227,16 @@ def search_items(
                         "rank": rank,
                         "snippet": snippet,
                     }
-            except sqlite3.OperationalError:
-                # fts_match_query should make this unreachable; never hide it
+            except sqlite3.Error:
+                # fts_match_query leaves no syntax errors, so this is the index or the
+                # database (e.g. a damaged items_fts). Log it; hybrid still returns the
+                # semantic results, keyword mode reports it.
                 logger.warning(
                     "Keyword search failed for %r (MATCH %r)", q, fts_query, exc_info=True
                 )
                 if mode == "keyword":
                     raise HTTPException(
-                        status_code=400, detail=f"Invalid search query: {q}"
+                        status_code=500, detail="Keyword search failed; see the server log"
                     ) from None
 
         # Vector semantic search

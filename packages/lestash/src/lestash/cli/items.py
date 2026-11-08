@@ -7,6 +7,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from lestash.core.config import Config
@@ -177,7 +178,7 @@ def search_items(
             ).fetchall()
 
         if not rows:
-            console.print(f"[dim]No items found matching '{query}'.[/dim]")
+            console.print(f"[dim]No items found matching '{escape(query)}'.[/dim]")
             return
 
         table = Table(show_header=True, header_style="bold")

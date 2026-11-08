@@ -65,21 +65,43 @@ def test_nothing_searchable_returns_no_results(client):
     assert resp.json()["items"] == []
 
 
+def test_hybrid_keeps_semantic_results_when_the_keyword_index_fails(client, monkeypatch):
+    """A broken items_fts must not take hybrid search down with it."""
+    import lestash.core.embeddings as emb
+
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: [(1, 0.1)])
+    with deps.get_db() as conn:
+        conn.execute("DROP TABLE items_fts")
+        conn.commit()
+
+    resp = client.get("/api/items/search", params={"q": "Python", "mode": "hybrid"})
+    assert resp.status_code == 200
+    assert [i["id"] for i in resp.json()["items"]] == [1]
+    resp = client.get("/api/items/search", params={"q": "Python", "mode": "keyword"})
+    assert resp.status_code == 500
+
+
 @pytest.fixture
-def web_client(test_config, tmp_path):
-    """An app serving a static frontend, so the SPA fallback is active."""
-    (tmp_path / "index.html").write_text("<html>app</html>")
-    (tmp_path / "app.js").write_text("console.log(1)")
-    original = deps._config
-    deps._config = test_config
-    with TestClient(create_app(static_dir=str(tmp_path))) as tc:
+def web_client(test_config, tmp_path, monkeypatch):
+    """An app serving a static frontend, so the SPA fallback is active.
+
+    The frontend sits in tmp_path/web, beside a file the fallback must never serve.
+    """
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text("<html>app</html>")
+    (web / "app.js").write_text("console.log(1)")
+    (tmp_path / "secret.txt").write_text("TOP SECRET")
+    monkeypatch.setattr(deps, "_config", test_config)
+    with TestClient(create_app(static_dir=str(web))) as tc:
         yield tc
-    deps._config = original
 
 
 @pytest.mark.parametrize("path", ["/api/does-not-exist", "/api/items/1/nope", "/api", "/api/"])
-def test_unknown_api_path_is_a_json_404(web_client, path):
-    resp = web_client.get(path)
+@pytest.mark.parametrize("method", ["GET", "POST", "PUT", "DELETE"])
+def test_unknown_api_path_is_a_json_404(web_client, path, method):
+    resp = web_client.request(method, path)
     assert resp.status_code == 404
     assert resp.headers["content-type"].startswith("application/json")
     assert resp.json() == {"detail": "Not Found"}
@@ -94,6 +116,20 @@ def test_other_paths_still_get_the_app(web_client, path):
 
 def test_static_files_are_served(web_client):
     assert web_client.get("/app.js").text == "console.log(1)"
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/..%2fsecret.txt", "/%2e%2e/secret.txt", "/..%2F..%2Fsecret.txt", "/a/..%2f..%2fsecret.txt"],
+)
+def test_fallback_never_serves_files_outside_the_frontend(web_client, path):
+    resp = web_client.get(path)
+    assert "TOP SECRET" not in resp.text
+    assert resp.text == "<html>app</html>"
+
+
+def test_other_methods_on_app_paths_are_not_allowed(web_client):
+    assert web_client.post("/notes").status_code == 405
 
 
 def test_known_api_paths_still_work_with_a_frontend(web_client):

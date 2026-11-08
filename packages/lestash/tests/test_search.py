@@ -67,7 +67,12 @@ def _hits(conn, q: str) -> set[int]:
         ("notes AND draft", {7}),
         ("notes NOT draft", {2}),
         ("AND", set()),  # bare operators search nothing
-        ("NOT panic", {4}),  # a leading NOT is dropped
+        ("NOT panic", set()),  # "everything but panic" can't be searched: nothing, not panic
+        ("panic OR NOT guide", {4}),  # the excluded term is never searched for
+        ("notes AND NOT draft", {2}),  # AND NOT is NOT
+        ('don"t panic', {4}),  # a quote inside a word is an apostrophe
+        ('don"t "a guide"', {4}),  # ...and a later phrase survives
+        ("Go\u0308del", {5}),  # decomposed accent (NFD)
         ("panic AND OR guide", {4}),  # repeated operators collapse
         ("panic OR", {4}),
         ("++", set()),  # nothing searchable
@@ -111,3 +116,11 @@ def test_cli_search_with_nothing_searchable(test_db, conn, monkeypatch) -> None:
     result = CliRunner().invoke(items_cli.app, ["search", "++"])
     assert result.exit_code == 0, result.output
     assert "No items found" in result.output
+
+
+def test_cli_search_prints_markup_like_queries(test_db, conn, monkeypatch) -> None:
+    """A query such as "[/x]" is text, not Rich markup."""
+    monkeypatch.setattr(items_cli.Config, "load", classmethod(lambda cls: test_db))
+    result = CliRunner().invoke(items_cli.app, ["search", "[/x]"])
+    assert result.exit_code == 0, result.output
+    assert "[/x]" in result.output

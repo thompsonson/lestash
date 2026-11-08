@@ -1,6 +1,6 @@
 """FastAPI application factory."""
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -108,21 +108,29 @@ def create_app(static_dir: str | None = None) -> FastAPI:
 
         from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
-        index_path = Path(static_dir) / "index.html"
+        static_root = Path(static_dir).resolve()
+        index_path = static_root / "index.html"
 
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-        @app.get("/{path:path}", include_in_schema=False)
-        def spa_fallback(path: str):
+        @app.api_route(
+            "/{path:path}",
+            methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            include_in_schema=False,
+        )
+        def spa_fallback(path: str, request: Request):
             """Serve static files or index.html for SPA routing.
 
-            An unknown /api path is a 404, not the app page: a client calling a missing
-            endpoint must see an error, not HTTP 200 with HTML.
+            An unknown /api path is a 404 for every method, not the app page: a client
+            calling a missing endpoint must see an error, not HTTP 200 with HTML.
             """
             if path == "api" or path.startswith("api/"):
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
-            file_path = Path(static_dir) / path
-            if file_path.is_file():
+            if request.method not in ("GET", "HEAD"):
+                return JSONResponse({"detail": "Method Not Allowed"}, status_code=405)
+            # Resolve first: a decoded "../" must not reach outside the static folder
+            file_path = (static_root / path).resolve()
+            if file_path.is_relative_to(static_root) and file_path.is_file():
                 return FileResponse(file_path)
             return HTMLResponse(index_path.read_text())
 
