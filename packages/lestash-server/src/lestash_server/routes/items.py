@@ -258,8 +258,9 @@ def search_items(
                     vec_results[item_id] = rank
             except Exception:
                 logger.warning("Vector search failed, falling back to keyword", exc_info=True)
-                # An empty 200 would read as "no results"; report it when nothing ran
-                if mode == "semantic" or keyword_failed:
+                # Semantic mode has nothing else to show; hybrid with a failed keyword
+                # half is caught by the check below
+                if mode == "semantic":
                     raise HTTPException(
                         status_code=500, detail="Search unavailable; see the server log"
                     ) from None

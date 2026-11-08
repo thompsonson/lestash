@@ -123,15 +123,20 @@ def test_hybrid_reports_when_both_halves_fail(client, monkeypatch):
 
 
 def test_hybrid_reports_a_keyword_failure_with_no_semantic_hits(client, monkeypatch):
+    """The semantic half succeeds with nothing; the 500 must come from the keyword check."""
     import lestash.core.embeddings as emb
 
+    ran = []
+    monkeypatch.setattr(emb, "load_vec_extension", lambda conn: None)
+    monkeypatch.setattr(emb, "ensure_vec_table", lambda conn: None)
     monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
-    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: [])
+    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: ran.append(1) or [])
     with deps.get_db() as conn:
         conn.execute("DROP TABLE items_fts")
         conn.commit()
     resp = client.get("/api/items/search", params={"q": "Python", "mode": "hybrid"})
     assert resp.status_code == 500
+    assert ran == [1]  # the vector search ran and returned nothing
 
 
 def test_hybrid_still_answers_when_only_semantic_fails(client, monkeypatch):
@@ -238,10 +243,14 @@ def test_unknown_api_paths_404_under_a_root_path(test_config, tmp_path, monkeypa
     (tmp_path / "index.html").write_text("<html>app</html>")
     monkeypatch.setattr(deps, "_config", test_config)
     app = create_app(static_dir=str(tmp_path))
+    (tmp_path / "ed.js").write_text("ED")
     with TestClient(app, root_path="/stash") as tc:
         resp = tc.get("/stash/api/nope")
-    assert resp.status_code == 404
-    assert resp.headers["content-type"].startswith("application/json")
+        assert resp.status_code == 404
+        assert resp.headers["content-type"].startswith("application/json")
+        # Only a whole "/stash" segment is the root path
+        assert tc.get("/stashed.js").text == "<html>app</html>"
+        assert tc.get("/stashapi/nope").text == "<html>app</html>"
 
 
 def test_a_missing_static_asset_is_a_404(web_client):
