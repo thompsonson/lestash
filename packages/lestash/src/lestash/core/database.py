@@ -147,7 +147,7 @@ ACTIVITY_VERBS = {
 }
 
 
-def _activities_from_metadata(row: str) -> str:
+def _activities_from_metadata(row: str, dates_only: bool = False) -> str:
     """An INSERT of one activity per time in each times list of ``row``'s metadata.
 
     ``row`` is ``items`` (the backfill, every row) or ``NEW`` (a trigger, one row). Every
@@ -157,6 +157,10 @@ def _activities_from_metadata(row: str) -> str:
     A time already recorded is skipped by NOT EXISTS, not OR IGNORE: inside a trigger the
     outer statement's conflict handling replaces OR IGNORE, so an upsert would fail.
     Triggers can't use WITH, so the verbs are a UNION ALL subquery.
+
+    ``dates_only`` (migration 15 on) skips anything not starting with a date, such as
+    "now", "10:00" or a number, which strftime would turn into a time. Migration 14 ran
+    without it on the live database, so its SQL stays as it was.
     """
     verbs = " UNION ALL ".join(
         f"SELECT '{verb}' AS verb, '$.{key}' AS path" for key, verb in ACTIVITY_VERBS.items()
@@ -166,13 +170,14 @@ def _activities_from_metadata(row: str) -> str:
     tables = "items, " if row == "items" else ""
     source = f"'takeout:' || {row}.source_type"
     at = "strftime('%Y-%m-%dT%H:%M:%fZ', t.value)"
+    dates = " AND t.value GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'" if dates_only else ""
     return f"""
     INSERT INTO activities (verb, item_id, occurred_at, source, details)
     SELECT DISTINCT v.verb, {row}.id, {at}, {source},
            CASE WHEN v.verb = 'searched'
                 THEN json_object('query', json_extract({metadata}, '$.query')) END
     FROM {tables}({verbs}) AS v, json_each({metadata}, v.path) AS t
-    WHERE json_type({metadata}, v.path) = 'array' AND t.type = 'text' AND {at} IS NOT NULL
+    WHERE json_type({metadata}, v.path) = 'array' AND t.type = 'text' AND {at} IS NOT NULL{dates}
       AND NOT EXISTS (
           SELECT 1 FROM activities a
           WHERE a.verb = v.verb AND a.item_id = {row}.id AND a.occurred_at = {at}
@@ -481,10 +486,23 @@ MIGRATIONS = [
     ),
     (
         15,
-        "Index activities.context_id",
-        # Without it, deleting an item scans every activity for the ON DELETE SET NULL.
-        # A separate migration because the live database already ran 14 as it stands.
-        "CREATE INDEX IF NOT EXISTS idx_activities_context ON activities(context_id);",
+        "Index activities.context_id; triggers record only date-shaped times",
+        # Changes to 14, kept separate because the live database already ran 14 as it
+        # stands. Without the index, deleting an item scans every activity for the
+        # ON DELETE SET NULL. The triggers are replaced to skip times that aren't dates.
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_activities_context ON activities(context_id);
+        DROP TRIGGER IF EXISTS items_activities_ai;
+        DROP TRIGGER IF EXISTS items_activities_au;
+        CREATE TRIGGER items_activities_ai AFTER INSERT ON items
+        WHEN instr(NEW.metadata, '_times"') > 0 BEGIN
+            {_activities_from_metadata("NEW", dates_only=True)}
+        END;
+        CREATE TRIGGER items_activities_au AFTER UPDATE OF metadata ON items
+        WHEN instr(NEW.metadata, '_times"') > 0 BEGIN
+            {_activities_from_metadata("NEW", dates_only=True)}
+        END;
+        """,
     ),
 ]
 

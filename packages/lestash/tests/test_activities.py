@@ -141,3 +141,16 @@ def test_the_migration_fills_the_table_from_items_already_stored(test_db) -> Non
             ("viewed", "post:P", "2026-01-20T18:48:57.000Z"),
             ("watched", "history:A", "2026-01-22T14:36:35.783Z"),
         ]
+
+
+def test_times_that_are_not_dates_are_skipped(test_db) -> None:
+    """strftime would read "now", "10:00" or a number as a time; none is recorded."""
+    item = ItemCreate(
+        source_type="gemini",
+        source_id="c_2",
+        content="x",
+        metadata={"prompted_times": ["now", "10:00", "100", "2026-11-05T15:11:06.941+00:00"]},
+    )
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "gemini").run(iter([item]))
+        assert [r[2] for r in _activities(conn)] == ["2026-11-05T15:11:06.941Z"]
