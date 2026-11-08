@@ -125,7 +125,7 @@ def create_app(static_dir: str | None = None) -> FastAPI:
             # the mount and app_root_path holds the app's own
             scope = request.scope
             path = scope["path"]
-            root = scope.get("app_root_path", scope.get("root_path", ""))
+            root = scope.get("app_root_path", scope.get("root_path", "")).rstrip("/")
             if root and (path == root or path.startswith(root + "/")):
                 path = path[len(root) :]  # /stash/x -> /x, but /stashed.js stays whole
             path = path.lstrip("/")  # "//api/x" is still an API path

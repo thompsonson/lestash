@@ -257,7 +257,7 @@ def search_items(
                 for rank, item_id in enumerate(ids[:want]):
                     vec_results[item_id] = rank
             except Exception:
-                logger.warning("Vector search failed, falling back to keyword", exc_info=True)
+                logger.warning("Vector search failed for %r", q, exc_info=True)
                 # Semantic mode has nothing else to show; hybrid with a failed keyword
                 # half is caught by the check below
                 if mode == "semantic":

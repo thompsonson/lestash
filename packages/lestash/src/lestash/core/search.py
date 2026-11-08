@@ -67,13 +67,23 @@ def _tokens(q: str) -> list[_Token]:
     A quote opens a phrase at the start or after a non-word character, when a closing
     quote follows (see _closing_quote). Any other quote is an apostrophe between two
     letters or digits (don"t), and a separator elsewhere.
+
+    A "-" in front of a word or phrase excludes it, as in web search: -draft and
+    -"draft copy" become NOT and the term. Other punctuation stuck to the front of a
+    phrase, like the "(" in ("a b"), is dropped, so it can't come between an operator and
+    the phrase it applies to.
     """
     tokens: list[_Token] = []
     word: list[str] = []
+    not_ = _Token("NOT", phrase=False, star=False)
 
     def end_word() -> None:
         if word:
-            tokens.append(_Token("".join(word), phrase=False, star=False))
+            text = "".join(word)
+            if len(text) > 1 and text[0] == "-" and _searchable(text[1:]):
+                tokens.append(not_)
+                text = text[1:]
+            tokens.append(_Token(text, phrase=False, star=False))
             word.clear()
 
     i, n = 0, len(q)
@@ -87,7 +97,13 @@ def _tokens(q: str) -> list[_Token]:
             word_before = i > 0 and q[i - 1].isalnum()
             end = None if word_before else _closing_quote(q, i)
             if end is not None:
-                end_word()
+                lead = "".join(word)
+                if _searchable(lead):
+                    end_word()  # foo-"bar baz": the word foo, then the phrase
+                else:
+                    word.clear()  # "(" or "-" stuck to the phrase is not a word
+                    if lead.endswith("-"):
+                        tokens.append(not_)
                 star = end + 1 < n and q[end + 1] == "*"
                 text = q[i + 1 : end].replace('"', "'")  # inner quotes are apostrophes
                 tokens.append(_Token(text, phrase=True, star=star))
@@ -104,7 +120,8 @@ def _tokens(q: str) -> list[_Token]:
 
 def _phrase(text: str, prefix: bool) -> str:
     """text as one FTS5 string, which FTS5 tokenizes as it tokenized the indexed text:
-    "Dual-State" is the phrase dual state. Quotes inside are doubled, as FTS5 escapes them."""
+    "Dual-State" is the phrase dual state. _tokens leaves no quotes in text; any that did
+    reach here would be doubled, as FTS5 escapes them, rather than end the string."""
     return '"' + text.replace('"', '""') + '"' + ("*" if prefix else "")
 
 

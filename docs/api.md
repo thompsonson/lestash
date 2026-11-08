@@ -67,6 +67,7 @@ Hybrid mode combines keyword + semantic results via Reciprocal Rank Fusion (k=60
 **Keyword syntax** (`lestash.core.search`, shared with `lestash items search`):
 
 - `"exact phrase"`, `word*` prefix, and `AND`, `OR`, `NOT` in upper case.
+- A `-` in front of a word or phrase excludes it, as in web search: `notes -draft` is `notes NOT draft`. A `-` inside a word (`Dual-State`) is part of the word.
 - Every word also matches as a prefix: `learn` finds `learning`.
 - All other punctuation is plain text: `Dual-State`, `v2.0` and `don't` match the words as written.
   - Characters the index drops, such as `+`, are dropped from the query too: `C++` searches `C*`.

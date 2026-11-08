@@ -253,6 +253,15 @@ def test_unknown_api_paths_404_under_a_root_path(test_config, tmp_path, monkeypa
         assert tc.get("/stashapi/nope").text == "<html>app</html>"
 
 
+def test_a_root_path_with_a_trailing_slash(test_config, tmp_path, monkeypatch):
+    (tmp_path / "index.html").write_text("<html>app</html>")
+    monkeypatch.setattr(deps, "_config", test_config)
+    with TestClient(create_app(static_dir=str(tmp_path)), root_path="/stash/") as tc:
+        resp = tc.get("/stash/api/nope")
+    assert resp.status_code == 404
+    assert resp.headers["content-type"].startswith("application/json")
+
+
 def test_a_missing_static_asset_is_a_404(web_client):
     resp = web_client.get("/static/missing.js")
     assert resp.status_code == 404
