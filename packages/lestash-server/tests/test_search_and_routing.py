@@ -122,6 +122,18 @@ def test_hybrid_reports_when_both_halves_fail(client, monkeypatch):
     assert resp.status_code == 500
 
 
+def test_hybrid_reports_a_keyword_failure_with_no_semantic_hits(client, monkeypatch):
+    import lestash.core.embeddings as emb
+
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: [])
+    with deps.get_db() as conn:
+        conn.execute("DROP TABLE items_fts")
+        conn.commit()
+    resp = client.get("/api/items/search", params={"q": "Python", "mode": "hybrid"})
+    assert resp.status_code == 500
+
+
 def test_hybrid_still_answers_when_only_semantic_fails(client, monkeypatch):
     import lestash.core.embeddings as emb
 
@@ -223,8 +235,8 @@ def test_a_missing_static_asset_is_a_404(web_client):
     assert "app" not in resp.text
 
 
-@pytest.mark.parametrize("path", ["/%00", "/a%00b"])
-def test_a_nul_byte_in_the_path_gets_the_app_not_a_500(web_client, path):
+@pytest.mark.parametrize("path", ["/%00", "/a%00b", "/" + "a" * 300])
+def test_unusual_paths_get_the_app_not_a_500(web_client, path):
     resp = web_client.get(path)
     assert resp.status_code == 200
     assert resp.text == "<html>app</html>"

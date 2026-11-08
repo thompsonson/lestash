@@ -84,6 +84,9 @@ def _hits(conn, q: str) -> set[int]:
         ('"foo "reliable LLM"', set()),
         ('panic "', {4}),
         ("guide NOT - panic", {4}),  # NOT applied to "-", which can't be searched
+        ("panic OR - Escher", {4, 5}),  # ...but an OR stays an OR
+        ('("reliable LLM")', {1}),  # a phrase inside punctuation is still a phrase
+        ('-"LLM reliable"', set()),
         ("notes NOT NOT draft", {2}),
         ("x\u0336y", set()),
         ("panic AND OR guide", {4}),  # repeated operators collapse
@@ -107,6 +110,9 @@ def test_query_is_valid_fts5_and_matches(conn, q, found) -> None:
         ("rust NOT - async", '"rust"* "async"*'),  # NOT went with the dropped "-"
         ("a NOT NOT b", '"a"* NOT "b"*'),
         ("a OR AND NOT b", '"a"*'),
+        ("a OR - b", '"a"* OR "b"*'),
+        ('("x")', '"x"'),
+        ('-"a b"', '"a b"'),
         ("Gödel", '"Gödel"*'),
         ('"exact phrase" word', '"exact phrase" "word"*'),
         ('"a phrase"*', '"a phrase"*'),

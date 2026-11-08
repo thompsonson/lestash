@@ -129,9 +129,10 @@ def create_app(static_dir: str | None = None) -> FastAPI:
             # Resolve first: a decoded "../" must not reach outside the static folder
             try:
                 file_path = (static_root / path).resolve()
-            except (ValueError, OSError):  # e.g. a decoded NUL byte
-                file_path = None
-            if file_path and file_path.is_relative_to(static_root) and file_path.is_file():
+                is_asset = file_path.is_relative_to(static_root) and file_path.is_file()
+            except (ValueError, OSError):  # a decoded NUL byte, a name too long, ...
+                is_asset = False
+            if is_asset:
                 return FileResponse(file_path)
             return FileResponse(index_path, media_type="text/html")
 
