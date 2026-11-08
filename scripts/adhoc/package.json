@@ -1,0 +1,9 @@
+{
+  "name": "lestash-adhoc-scripts",
+  "private": true,
+  "description": "Ad hoc test scripts: screenshots of the LeStash web UI",
+  "type": "module",
+  "dependencies": {
+    "puppeteer-core": "^25.12.0"
+  }
+}
