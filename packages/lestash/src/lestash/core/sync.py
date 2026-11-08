@@ -8,6 +8,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
@@ -31,18 +32,40 @@ logger = logging.getLogger(__name__)
 COMMIT_EVERY = 500
 
 
+@dataclass(frozen=True)
+class SyncCounts:
+    """What a sync wrote: new items, changed items, and items stored again unchanged."""
+
+    added: int = 0
+    updated: int = 0
+    unchanged: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.added + self.updated + self.unchanged
+
+
+# The columns an upsert overwrites; created_at is kept, so it isn't compared
+_UPSERT_COLUMNS = ("url", "title", "content", "author", "is_own_content", "metadata")
+
+
 class SyncStore:
     """Writes a sync's items and checkpoints, and counts what it wrote.
 
-    Read ``items``, ``source_types`` and ``linked`` after ``run``, also when it raised.
+    Read ``counts``, ``source_types`` and ``linked`` after ``run``, also when it raised.
     """
 
     def __init__(self, conn: sqlite3.Connection, source: str) -> None:
         self.conn, self.source = conn, source
-        self.items = 0
-        self.committed = 0  # items as of the last commit
+        self.counts = SyncCounts()
+        self.committed = SyncCounts()  # counts as of the last commit
         self.source_types: set[str] = set()
         self.linked = 0
+
+    @property
+    def items(self) -> int:
+        """Items written, new, changed or not."""
+        return self.counts.total
 
     def run(self, items: Iterable[ItemCreate | SyncCheckpoint]) -> None:
         """Store every item, then link children to parents yielded later.
@@ -71,7 +94,7 @@ class SyncStore:
 
     def _commit(self) -> None:
         self.conn.commit()
-        self.committed = self.items
+        self.committed = self.counts
 
     def _sweep(self) -> None:
         self.linked = resolve_parent_source_ids(self.conn, self.source_types)
@@ -83,6 +106,12 @@ class SyncStore:
         if not merge_with_stored(self.conn, item):
             return False
         metadata_json = json.dumps(item.metadata) if item.metadata else None
+        row = self.conn.execute(
+            f"SELECT {', '.join(_UPSERT_COLUMNS)}, parent_id FROM items "
+            "WHERE source_type = ? AND source_id = ?",
+            (item.source_type, item.source_id),
+        ).fetchone()
+        stored = tuple(row) if row is not None else None
         (item_id,) = self.conn.execute(
             """
             INSERT INTO items (
@@ -114,8 +143,8 @@ class SyncStore:
                 item.parent_id,
             ),
         ).fetchone()
-        self.items += 1
         self.source_types.add(item.source_type)
+        changes_before_media = self.conn.total_changes
         for media in item.media or []:
             add_item_media(
                 self.conn,
@@ -129,7 +158,36 @@ class SyncStore:
                 source_origin=media.source_origin,
                 _commit=False,
             )
+        new_media = self.conn.total_changes > changes_before_media
+        self._count(stored, item, metadata_json, new_media)
         return True
+
+    def _count(
+        self,
+        stored: tuple[object, ...] | None,
+        item: ItemCreate,
+        metadata_json: str | None,
+        new_media: bool,
+    ) -> None:
+        """Count the item as added, updated (a column or new media changed) or unchanged."""
+        c = self.counts
+        if stored is None:
+            self.counts = replace(c, added=c.added + 1)
+            return
+        written = (
+            item.url,
+            item.title,
+            item.content,
+            item.author,
+            int(bool(item.is_own_content)),
+            metadata_json,
+            item.parent_id if item.parent_id is not None else stored[-1],
+        )
+        before = (*stored[:4], int(bool(stored[4])), *stored[5:])
+        if new_media or written != before:
+            self.counts = replace(c, updated=c.updated + 1)
+        else:
+            self.counts = replace(c, unchanged=c.unchanged + 1)
 
 
 INTERRUPTED = "interrupted"
@@ -155,7 +213,7 @@ class SyncRun:
         self, conn: sqlite3.Connection, source: str, sync_id: int, lock: IO[bytes] | None
     ) -> None:
         self.conn, self.source, self.id, self._lock = conn, source, sync_id, lock
-        self.store: SyncStore | None = None  # counts items_added when not given
+        self.store: SyncStore | None = None  # gives the counts finish() is not given
         self.finished = False
 
     @classmethod
@@ -200,14 +258,21 @@ class SyncRun:
         self,
         status: str,
         items_added: int | None = None,
-        items_updated: int = 0,
+        items_updated: int | None = None,
         error: str | None = None,
     ) -> None:
-        """Record how the run ended. Only the first call counts."""
+        """Record how the run ended. Only the first call counts.
+
+        Counts not given come from the store: new items as added, changed items as
+        updated. Items stored again unchanged are in neither.
+        """
         if self.finished:
             return
+        counts = self.store.counts if self.store else SyncCounts()
         if items_added is None:
-            items_added = self.store.items if self.store else 0
+            items_added = counts.added
+        if items_updated is None:
+            items_updated = counts.updated
         self.conn.execute(
             """
             UPDATE sync_log SET completed_at = ?, status = ?, items_added = ?,
@@ -238,8 +303,10 @@ class SyncRun:
                     error = str(exc) or type(exc).__name__
                 # Drop what was stored since the last commit, and count only what stays
                 self.conn.rollback()
-                kept = self.store.committed if self.store else None
-                self.finish("failed", items_added=kept, error=error)
+                kept = self.store.committed if self.store else SyncCounts()
+                self.finish(
+                    "failed", items_added=kept.added, items_updated=kept.updated, error=error
+                )
         finally:
             if self._lock is not None:
                 self._lock.close()

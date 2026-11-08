@@ -101,7 +101,12 @@ def sync_source(
     source_name: Annotated[str | None, typer.Argument(help="Source to sync (omit for all)")] = None,
     all_sources: Annotated[bool, typer.Option("--all", help="Sync all enabled sources")] = False,
 ) -> None:
-    """Sync items from a source."""
+    """Sync items from a source.
+
+    Exits 1 when any source failed or was unknown, after every source has run, so a
+    systemd unit shows the failure. A source skipped under --all because another sync
+    of it is running is not a failure: that sync logs its own result.
+    """
     plugins = load_plugins()
 
     if not plugins:
@@ -124,9 +129,11 @@ def sync_source(
         console.print("[red]Specify a source name or use --all[/red]")
         raise typer.Exit(1)
 
+    failed: list[str] = []
     for name in sources_to_sync:
         if name not in plugins:
             console.print(f"[red]Unknown source: {name}[/red]")
+            failed.append(name)
             continue
 
         plugin = plugins[name]
@@ -227,9 +234,24 @@ def sync_source(
 
                 run.finish(status, error=error_message)
 
+        c = store.counts
         if status == "completed":
-            # Counts items written, new or updated alike (#210)
-            console.print(f"[green]Synced {name}: {store.items} items written[/green]")
+            console.print(
+                f"[green]Synced {name}: {c.added} new, {c.updated} updated, "
+                f"{c.unchanged} unchanged[/green]"
+            )
+        else:
+            failed.append(name)
+
+    if failed:
+        console.print(f"[red]Failed: {', '.join(failed)}[/red]")
+        raise typer.Exit(1)
+
+
+def _items_cell(added: int | None, updated: int | None) -> str:
+    """'+3 ~5' for 3 new and 5 changed items; '-' for none."""
+    parts = [f"+{added}" if added else "", f"~{updated}" if updated else ""]
+    return " ".join(p for p in parts if p) or "-"
 
 
 @app.command("status")
@@ -262,7 +284,7 @@ def source_status() -> None:
 
     for row in rows:
         started = row["started_at"][:16] if row["started_at"] else "-"
-        items = f"+{row['items_added']}" if row["items_added"] else "-"
+        items = _items_cell(row["items_added"], row["items_updated"])
         error = (
             row["error_message"][:30] + "..."
             if row["error_message"] and len(row["error_message"]) > 30

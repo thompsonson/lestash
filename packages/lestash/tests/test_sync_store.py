@@ -6,6 +6,7 @@ from collections.abc import Iterator
 
 import lestash.core.sync as core_sync
 import pytest
+import typer
 from lestash.cli import sources as sources_cli
 from lestash.core.database import get_connection
 from lestash.models.item import ItemCreate
@@ -20,10 +21,15 @@ def _item(source_id: str, parent: str | None = None) -> ItemCreate:
     )
 
 
-def _sync(test_db, monkeypatch, plugin) -> None:
+def _sync(test_db, monkeypatch, plugin) -> int:
+    """The CLI's exit code: 1 when the sync failed (#209)."""
     monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"audible": plugin})
     monkeypatch.setattr(sources_cli.Config, "load", classmethod(lambda cls: test_db))
-    sources_cli.sync_source(source_name="audible", all_sources=False)
+    try:
+        sources_cli.sync_source(source_name="audible", all_sources=False)
+    except typer.Exit as e:
+        return e.exit_code
+    return 0
 
 
 def _last_sync(test_db) -> tuple[str, int]:
@@ -35,6 +41,64 @@ def _last_sync(test_db) -> tuple[str, int]:
         )
 
 
+def _last_counts(test_db) -> tuple[int, int]:
+    with get_connection(test_db) as conn:
+        return tuple(
+            conn.execute(
+                "SELECT items_added, items_updated FROM sync_log ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        )
+
+
+class _Yields:
+    def __init__(self, *items: ItemCreate) -> None:
+        self.items = items
+
+    def sync(self, config: dict) -> Iterator[ItemCreate]:
+        yield from self.items
+
+
+def test_a_sync_counts_new_changed_and_unchanged_items_apart(test_db, monkeypatch) -> None:
+    """#210: a re-import doesn't count every item as added again."""
+    assert _sync(test_db, monkeypatch, _Yields(_item("a"), _item("b"))) == 0
+    assert _last_counts(test_db) == (2, 0)
+
+    # The same items again: nothing new, nothing changed
+    assert _sync(test_db, monkeypatch, _Yields(_item("a"), _item("b"))) == 0
+    assert _last_counts(test_db) == (0, 0)
+
+    # One changed, one new, one the same
+    changed = _item("a")
+    changed.content = "edited"
+    assert _sync(test_db, monkeypatch, _Yields(changed, _item("b"), _item("c"))) == 0
+    assert _last_counts(test_db) == (1, 1)
+
+
+def test_new_media_on_a_stored_item_counts_as_an_update(test_db, monkeypatch) -> None:
+    from lestash.models.item import MediaCreate
+
+    assert _sync(test_db, monkeypatch, _Yields(_item("a"))) == 0
+    with_cover = _item("a")
+    with_cover.media = [MediaCreate(media_type="image", url="https://example.org/a.jpg")]
+    assert _sync(test_db, monkeypatch, _Yields(with_cover)) == 0
+    assert _last_counts(test_db) == (0, 1)
+    assert _sync(test_db, monkeypatch, _Yields(with_cover)) == 0  # the same media again
+    assert _last_counts(test_db) == (0, 0)
+
+
+def test_a_parent_kept_from_a_resolver_is_not_a_change(test_db, monkeypatch) -> None:
+    """The upsert keeps a stored parent when the plugin names none."""
+    assert _sync(test_db, monkeypatch, _Yields(_item("book"), _item("note"))) == 0
+    with get_connection(test_db) as conn:  # as a post-sync resolver does
+        conn.execute(
+            "UPDATE items SET parent_id = (SELECT id FROM items WHERE source_id = 'book')"
+            " WHERE source_id = 'note'"
+        )
+        conn.commit()
+    assert _sync(test_db, monkeypatch, _Yields(_item("book"), _item("note"))) == 0
+    assert _last_counts(test_db) == (0, 0)
+
+
 class _ChildThenParentThenFail:
     def sync(self, config: dict) -> Iterator[ItemCreate]:
         yield _item("note", parent="book")
@@ -43,7 +107,7 @@ class _ChildThenParentThenFail:
 
 
 def test_a_failed_sync_still_links_what_it_stored(test_db, monkeypatch) -> None:
-    _sync(test_db, monkeypatch, _ChildThenParentThenFail())
+    assert _sync(test_db, monkeypatch, _ChildThenParentThenFail()) == 1
 
     assert _last_sync(test_db) == ("failed", 2)
     with get_connection(test_db) as conn:
