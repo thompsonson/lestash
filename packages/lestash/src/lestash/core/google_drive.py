@@ -11,7 +11,11 @@ from lestash.models.item import ItemCreate
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path.home() / ".config" / "lestash" / "cache" / "drive"
+
+def _cache_dir() -> Path:
+    """Downloaded Drive files, under the home folder at the time of the call."""
+    return Path.home() / ".config" / "lestash" / "cache" / "drive"
+
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
 
@@ -147,8 +151,9 @@ def _download_file(service, file_id: str, file_name: str) -> Path:
     """Download a file from Google Drive to the cache directory."""
     from googleapiclient.http import MediaIoBaseDownload
 
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = CACHE_DIR / _safe_filename(file_id, file_name)
+    cache_dir = _cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    output_path = cache_dir / _safe_filename(file_id, file_name)
 
     request = service.files().get_media(fileId=file_id)
     with open(output_path, "wb") as f:
@@ -164,8 +169,9 @@ def _export_google_file(service, file_id: str, file_name: str, mime_type: str) -
     """Export a Google Workspace file (Docs, Sheets, Slides) to a local file."""
     export_mime, ext = EXPORTABLE_MIMES[mime_type]
 
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = CACHE_DIR / _safe_filename(file_id, file_name, ext)
+    cache_dir = _cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    output_path = cache_dir / _safe_filename(file_id, file_name, ext)
 
     data = service.files().export(fileId=file_id, mimeType=export_mime).execute()
     output_path.write_bytes(data)

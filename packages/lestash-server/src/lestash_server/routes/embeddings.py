@@ -17,7 +17,7 @@ from lestash.core.enrichment import get_author_actor, get_item_subtype, get_prev
 from lestash.models.item import Item
 from pydantic import BaseModel
 
-from lestash_server.deps import get_db
+from lestash_server.deps import get_config, get_db
 from lestash_server.models import ItemResponse
 
 logger = logging.getLogger(__name__)
@@ -88,6 +88,8 @@ def trigger_rebuild():
     if _rebuild_running:
         return RebuildResponse(status="already_running", message="Rebuild is already in progress")
 
+    config = get_config()  # the server's database, read before the thread starts
+
     def _do_rebuild():
         global _rebuild_running  # noqa: PLW0603
         with _rebuild_lock:
@@ -95,7 +97,7 @@ def trigger_rebuild():
             try:
                 from lestash.core.database import get_connection
 
-                with get_connection() as conn:
+                with get_connection(config) as conn:
                     load_vec_extension(conn)
                     count = rebuild_embeddings(conn)
                     logger.info(f"Rebuild complete: {count} items embedded")

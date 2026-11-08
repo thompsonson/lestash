@@ -10,13 +10,14 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException
-from lestash.core.database import get_connection
 from lestash.core.pdf_enrich import (
     backfill_source_pdfs,
     enrich_item,
     list_pdf_items,
 )
 from pydantic import BaseModel
+
+from lestash_server.deps import get_config, get_db
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ class BackfillResponse(BaseModel):
 @router.post("/api/items/{item_id}/enrich", response_model=EnrichResponse)
 def enrich_one(item_id: int, body: EnrichRequest | None = None) -> EnrichResponse:
     force = bool(body and body.force)
-    result = enrich_item(item_id, force=force)
+    result = enrich_item(item_id, config=get_config(), force=force)
     if result.status == "failed" and result.message == "item not found":
         raise HTTPException(status_code=404, detail="item not found")
     return EnrichResponse(
@@ -68,12 +69,12 @@ def enrich_one(item_id: int, body: EnrichRequest | None = None) -> EnrichRespons
 @router.post("/api/enrich/all", response_model=EnrichAllResponse)
 def enrich_all(body: EnrichRequest | None = None) -> EnrichAllResponse:
     force = bool(body and body.force)
-    with get_connection() as conn:
+    with get_db() as conn:
         ids = list_pdf_items(conn)
 
     counts = {"enriched": 0, "skipped": 0, "source_unavailable": 0, "failed": 0}
     for item_id in ids:
-        result = enrich_item(item_id, force=force)
+        result = enrich_item(item_id, config=get_config(), force=force)
         counts[result.status] = counts.get(result.status, 0) + 1
     return EnrichAllResponse(
         total=len(ids),
@@ -86,7 +87,7 @@ def enrich_all(body: EnrichRequest | None = None) -> EnrichAllResponse:
 
 @router.post("/api/enrich/backfill-sources", response_model=BackfillResponse)
 def backfill() -> BackfillResponse:
-    stats = backfill_source_pdfs()
+    stats = backfill_source_pdfs(config=get_config())
     return BackfillResponse(
         inspected=stats.inspected,
         backfilled=stats.backfilled,

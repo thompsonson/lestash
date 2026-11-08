@@ -183,3 +183,52 @@ def test_extracted_image_count_propagates(config, item_with_local_source_pdf):
     with _stub_extractor(enriched):
         result = enrich_item(item_with_local_source_pdf, config=config)
     assert result.images == 1
+
+
+def test_an_unreadable_file_writes_nothing(config, item_with_local_source_pdf):
+    """Nothing extracted (no text, images or annotations): the item keeps its text,
+    images and metadata, and isn't marked enriched, so a later run retries."""
+    with get_connection(config) as conn:
+        before = conn.execute(
+            "SELECT content, metadata FROM items WHERE id = ?", (item_with_local_source_pdf,)
+        ).fetchone()
+        media_before = conn.execute("SELECT COUNT(*) FROM item_media").fetchone()[0]
+    empty = EnrichedPdf(
+        content="  \n",
+        pdf_sha256="b" * 64,
+        extractor_version=EXTRACTOR_VERSION,
+        images=[],
+        annotations=[],
+    )
+    with _stub_extractor(empty):
+        result = enrich_item(item_with_local_source_pdf, config=config, force=True)
+
+    assert (result.status, result.message) == ("failed", "nothing extracted")
+    with get_connection(config) as conn:
+        after = conn.execute(
+            "SELECT content, metadata FROM items WHERE id = ?", (item_with_local_source_pdf,)
+        ).fetchone()
+        assert tuple(after) == tuple(before)
+        assert conn.execute("SELECT COUNT(*) FROM item_media").fetchone()[0] == media_before
+
+
+def test_a_pdf_of_pictures_only_still_gets_its_images(config, item_with_local_source_pdf):
+    """OCR can find no text in a scan or photo; its images are still stored."""
+    enriched = EnrichedPdf(
+        content="",
+        pdf_sha256="d" * 64,
+        extractor_version=EXTRACTOR_VERSION,
+        images=[
+            ExtractedImage(
+                placeholder_index=0,
+                page=0,
+                bbox=(0, 0, 10, 10),
+                bytes_=b"png-bytes",
+                mime_type="image/png",
+                xref_hash="y" * 64,
+            )
+        ],
+    )
+    with _stub_extractor(enriched):
+        result = enrich_item(item_with_local_source_pdf, config=config)
+    assert (result.status, result.images) == ("enriched", 1)

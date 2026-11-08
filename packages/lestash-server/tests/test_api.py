@@ -443,14 +443,19 @@ class TestSources:
         resp = client.post("/api/sources/nonexistent/sync")
         assert resp.status_code == 404
 
-    def test_sync_known_source(self, client):
-        # arxiv sync won't actually fetch anything without a query,
-        # but the endpoint should accept the request
+    def test_sync_known_source(self, client, monkeypatch):
+        # Only the request is under test: the background sync would call arXiv, and the
+        # plugin reads its tracking config from the default database (Config.load())
+        import lestash_server.routes.sources as sources_routes
+
+        started = []
+        monkeypatch.setattr(sources_routes, "_run_sync", started.append)
         resp = client.post("/api/sources/arxiv/sync")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "started"
         assert data["source"] == "arxiv"
+        assert started == ["arxiv"]
 
 
 class TestProfiles:

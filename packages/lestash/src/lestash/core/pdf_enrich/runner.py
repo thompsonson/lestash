@@ -86,6 +86,12 @@ def enrich_item(
         if not force and is_already_enriched(conn, item_id, EXTRACTOR_VERSION, enriched.pdf_sha256):
             return EnrichmentResult(item_id=item_id, status="skipped")
 
+        if not (enriched.content.strip() or enriched.images or enriched.annotations):
+            # A file neither Docling nor PyMuPDF could read. Write nothing: the item keeps
+            # its text and images, and isn't marked enriched, so a later run retries. A
+            # PDF of pictures only (no text) still has its images, and is persisted.
+            return EnrichmentResult(item_id=item_id, status="failed", message="nothing extracted")
+
         try:
             persist_enrichment(conn, config, item_id, enriched)
         except Exception as exc:

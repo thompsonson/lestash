@@ -26,6 +26,10 @@ dependencies = [
 [project.scripts]
 lestash = "lestash.cli.main:app"
 
+# Tests in every workspace package run in the test environment (lestash/testing.py)
+[project.entry-points.pytest11]
+lestash = "lestash.testing"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

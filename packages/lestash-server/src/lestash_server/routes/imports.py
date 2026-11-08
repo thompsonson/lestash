@@ -247,7 +247,9 @@ def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse
         from lestash.core.pdf_enrich import enrich_item
 
         try:
-            enrich_item(enrich_item_id)
+            result = enrich_item(enrich_item_id, config=get_config())
+            if result.status == "failed":
+                errors.append(f"enrich: {result.message}")
         except Exception as e:
             logger.exception("Failed to enrich uploaded PDF item %d", enrich_item_id)
             errors.append(f"enrich: {e}")
@@ -385,7 +387,11 @@ def sync_from_drive(body: DriveSyncRequest):
 
     for item_id, pdf_bytes, filename, drive_url in pdf_followups:
         try:
-            attach_source_pdf_and_enrich(item_id, pdf_bytes, filename, drive_url=drive_url)
+            result = attach_source_pdf_and_enrich(
+                item_id, pdf_bytes, filename, drive_url=drive_url, config=get_config()
+            )
+            if result.status == "failed":
+                errors.append(f"enrich item {item_id}: {result.message}")
         except Exception as e:
             logger.exception("Failed to enrich item %d", item_id)
             errors.append(f"enrich item {item_id}: {e}")
