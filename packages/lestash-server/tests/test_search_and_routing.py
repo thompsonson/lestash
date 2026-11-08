@@ -84,6 +84,13 @@ def test_semantic_hits_respect_include_children(client, seeded, monkeypatch):
     assert ids(False) == [parent]
 
 
+@pytest.mark.parametrize("mode", ["Keyword", "fts", ""])
+def test_an_unknown_search_mode_is_rejected(client, mode):
+    """Not an empty 200, which would read as "no results"."""
+    resp = client.get("/api/items/search", params={"q": "Python", "mode": mode})
+    assert resp.status_code == 422
+
+
 def test_nothing_searchable_returns_no_results(client):
     resp = client.get("/api/items/search", params={"q": "++", "mode": "keyword"})
     assert resp.status_code == 200
@@ -120,6 +127,23 @@ def test_hybrid_reports_when_both_halves_fail(client, monkeypatch):
         conn.commit()
     resp = client.get("/api/items/search", params={"q": "Python", "mode": "hybrid"})
     assert resp.status_code == 500
+
+
+def test_hybrid_reports_a_keyword_failure_with_no_semantic_hits(client, monkeypatch):
+    """The semantic half succeeds with nothing; the 500 must come from the keyword check."""
+    import lestash.core.embeddings as emb
+
+    ran = []
+    monkeypatch.setattr(emb, "load_vec_extension", lambda conn: None)
+    monkeypatch.setattr(emb, "ensure_vec_table", lambda conn: None)
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: ran.append(1) or [])
+    with deps.get_db() as conn:
+        conn.execute("DROP TABLE items_fts")
+        conn.commit()
+    resp = client.get("/api/items/search", params={"q": "Python", "mode": "hybrid"})
+    assert resp.status_code == 500
+    assert ran == [1]  # the vector search ran and returned nothing
 
 
 def test_hybrid_still_answers_when_only_semantic_fails(client, monkeypatch):
@@ -217,14 +241,42 @@ def test_api_paths_with_extra_slashes_are_still_404(web_client, path):
     assert resp.headers["content-type"].startswith("application/json")
 
 
+def test_an_encoded_question_mark_is_part_of_the_path(web_client, tmp_path):
+    (tmp_path / "web" / "a?b.txt").write_text("odd name")
+    assert web_client.get("/a%3Fb.txt").text == "odd name"
+
+
+def test_unknown_api_paths_404_under_a_root_path(test_config, tmp_path, monkeypatch):
+    (tmp_path / "index.html").write_text("<html>app</html>")
+    monkeypatch.setattr(deps, "_config", test_config)
+    app = create_app(static_dir=str(tmp_path))
+    (tmp_path / "ed.js").write_text("ED")
+    with TestClient(app, root_path="/stash") as tc:
+        resp = tc.get("/stash/api/nope")
+        assert resp.status_code == 404
+        assert resp.headers["content-type"].startswith("application/json")
+        # Only a whole "/stash" segment is the root path
+        assert tc.get("/stashed.js").text == "<html>app</html>"
+        assert tc.get("/stashapi/nope").text == "<html>app</html>"
+
+
+def test_a_root_path_with_a_trailing_slash(test_config, tmp_path, monkeypatch):
+    (tmp_path / "index.html").write_text("<html>app</html>")
+    monkeypatch.setattr(deps, "_config", test_config)
+    with TestClient(create_app(static_dir=str(tmp_path)), root_path="/stash/") as tc:
+        resp = tc.get("/stash/api/nope")
+    assert resp.status_code == 404
+    assert resp.headers["content-type"].startswith("application/json")
+
+
 def test_a_missing_static_asset_is_a_404(web_client):
     resp = web_client.get("/static/missing.js")
     assert resp.status_code == 404
     assert "app" not in resp.text
 
 
-@pytest.mark.parametrize("path", ["/%00", "/a%00b"])
-def test_a_nul_byte_in_the_path_gets_the_app_not_a_500(web_client, path):
+@pytest.mark.parametrize("path", ["/%00", "/a%00b", "/" + "a" * 300])
+def test_unusual_paths_get_the_app_not_a_500(web_client, path):
     resp = web_client.get(path)
     assert resp.status_code == 200
     assert resp.text == "<html>app</html>"

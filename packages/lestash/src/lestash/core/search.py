@@ -13,18 +13,22 @@ done, so "learn" also finds "learning".
 
 from __future__ import annotations
 
-import re
 import sqlite3
 import unicodedata
+from typing import NamedTuple
 
 OPERATORS = frozenset({"AND", "OR", "NOT"})
 # FTS5 rejects expressions deeper than 256; far more terms than anyone types
 MAX_TERMS = 64
 
 # Typographic quotes, as phone keyboards send them, mark phrases like '"'
-_QUOTES = str.maketrans({c: '"' for c in "“”„‟«»＂"})
-# A quoted phrase (optionally followed by *), or a run of non-space characters
-_TOKEN = re.compile(r'"([^"]*)"(\*?)|(\S+)')
+_QUOTES = str.maketrans({c: '"' for c in "\u201c\u201d\u201e\u201f\u00ab\u00bb\uff02"})
+
+
+class _Token(NamedTuple):
+    text: str
+    phrase: bool  # from "quotes": searched exactly, not as a prefix unless starred
+    star: bool  # a phrase followed by *
 
 
 def _searchable(text: str) -> bool:
@@ -33,45 +37,92 @@ def _searchable(text: str) -> bool:
     return any(c.isalnum() for c in text)
 
 
-def _drop_stray_quotes(q: str) -> str:
-    """Make quotes pair up: a quote between two token characters (don"t) is an apostrophe,
-    and a lone quote left over is dropped. A quote opens a phrase at the start or after a
-    space, and closes one at the end or before a non-word character. A quote that can do
-    neither is dropped, and an open quote is dropped when a later quote can only open, so
-    a stray quote never steals a later phrase's quote."""
-    chars = list(q)
-    for i, c in enumerate(chars):
-        if (
-            c == '"'
-            and 0 < i < len(chars) - 1
-            and chars[i - 1].isalnum()
-            and chars[i + 1].isalnum()
-        ):
-            chars[i] = "'"
-    open_at: int | None = None
-    for i, c in enumerate(chars):
-        if c != '"':
+def _closing_quote(q: str, start: int) -> int | None:
+    """Where the phrase opened by the quote at start ends, or None if that quote is stray.
+
+    The phrase ends at the first quote followed by the end or a non-word character. A
+    quote between two letters or digits inside it is an apostrophe ("don"t panic").
+
+    If no such closing quote comes first, the first inner quote closes a phrase of more
+    than one word ("foo bar"baz, "machine learning"s "deep nets"). For a single word the
+    quote at start was stray and the inner one an apostrophe ("don"t). A quote that can
+    only open (after a space, before a letter) also ends the search: "foo bar "baz qux"
+    is two words and a phrase.
+    """
+    first_inner: int | None = None
+    for j in range(start + 1, len(q)):
+        if q[j] != '"':
             continue
-        can_open = i == 0 or chars[i - 1].isspace()
-        can_close = i == len(chars) - 1 or not chars[i + 1].isalnum()
-        if open_at is None and can_open:
-            open_at = i
-        elif open_at is not None and can_close:
-            open_at = None
-        elif open_at is not None and can_open:
-            # Only an opening quote fits here, so the earlier one was stray
-            chars[open_at] = " "
-            open_at = i
+        word_before = q[j - 1].isalnum()
+        word_after = j + 1 < len(q) and q[j + 1].isalnum()
+        if not word_after:
+            return j
+        if not word_before:
+            break
+        if first_inner is None:
+            first_inner = j
+    if first_inner is not None and any(c.isspace() for c in q[start + 1 : first_inner]):
+        return first_inner
+    return None
+
+
+def _tokens(q: str) -> list[_Token]:
+    """q split, left to right, into words (runs of non-space characters) and phrases.
+
+    A quote opens a phrase at the start or after a non-word character, when a closing
+    quote follows (see _closing_quote). Any other quote is an apostrophe between two
+    letters or digits (don"t), and a separator elsewhere.
+
+    A "-" in front of a phrase excludes it, as in web search: -"draft copy" becomes NOT
+    and the phrase. A "-" in front of a word stays part of the word, since searches for
+    flags and numbers (--dry-run, rm -rf, -40) are common; NOT excludes a word. Other
+    punctuation stuck to the front of a phrase, like the "(" in ("a b"), is dropped, so
+    it can't come between an operator and the phrase it applies to.
+    """
+    tokens: list[_Token] = []
+    word: list[str] = []
+
+    def end_word() -> None:
+        if word:
+            tokens.append(_Token("".join(word), phrase=False, star=False))
+            word.clear()
+
+    i, n = 0, len(q)
+    while i < n:
+        c = q[i]
+        if c.isspace():
+            end_word()
+        elif c != '"':
+            word.append(c)
         else:
-            chars[i] = " "
-    if open_at is not None:
-        chars[open_at] = " "
-    return "".join(chars)
+            word_before = i > 0 and q[i - 1].isalnum()
+            end = None if word_before else _closing_quote(q, i)
+            if end is not None:
+                lead = "".join(word)
+                if _searchable(lead):
+                    end_word()  # foo-"bar baz": the word foo, then the phrase
+                else:
+                    word.clear()  # "(" or "-" stuck to the phrase is not a word
+                    if "-" in lead:  # -"a b", -("a b")
+                        tokens.append(_Token("NOT", phrase=False, star=False))
+                star = end + 1 < n and q[end + 1] == "*"
+                text = q[i + 1 : end].replace('"', "'")  # inner quotes are apostrophes
+                tokens.append(_Token(text, phrase=True, star=star))
+                i = end + 1 + star
+                continue
+            if word_before and i + 1 < n and q[i + 1].isalnum():
+                word.append("'")
+            else:
+                end_word()
+        i += 1
+    end_word()
+    return tokens
 
 
 def _phrase(text: str, prefix: bool) -> str:
     """text as one FTS5 string, which FTS5 tokenizes as it tokenized the indexed text:
-    "Dual-State" is the phrase dual state. Quotes inside are doubled, as FTS5 escapes them."""
+    "Dual-State" is the phrase dual state. _tokens leaves no quotes in text; any that did
+    reach here would be doubled, as FTS5 escapes them, rather than end the string."""
     return '"' + text.replace('"', '""') + '"' + ("*" if prefix else "")
 
 
@@ -79,31 +130,28 @@ def fts_match_query(q: str) -> str:
     """The FTS5 MATCH expression for search box input q; "" when nothing is searchable.
 
     - Input is NFC-normalised, and typographic quotes count as '"'.
-    - A balanced "quoted phrase" stays a phrase; a trailing * after it is kept. A quote
-      inside a word (don"t) is an apostrophe; a stray quote is dropped.
+    - "Quoted phrases" stay phrases, and a * right after one is kept. A quote between two
+      letters is an apostrophe (don"t, "don"t panic"); stray quotes are dropped. See
+      _tokens and _closing_quote.
     - AND, OR and NOT (upper case, as FTS5 reads them) stay operators between two terms.
       Leading, trailing and repeated operators are dropped; "AND NOT" is read as NOT.
       A NOT with no term before it (or after OR) is dropped with the term it would
       exclude, since FTS5 can't search "everything but x": "NOT x" searches nothing,
       and "a OR NOT b" searches a, never b itself.
     - Every other word is quoted, so FTS5 tokenizes it exactly as it tokenized the indexed
-      text, and given a prefix *. A word with no letter or digit ("++", "-") is dropped,
-      with an operator just before it.
+      text, and given a prefix *. A word or phrase with no letter or digit ("++", "-") is
+      dropped, with an AND or NOT just before it; an OR stays ("a OR - b" is a OR b).
     - Only the first MAX_TERMS terms are kept, so FTS5's depth limit is never reached.
     """
-    q = _drop_stray_quotes(unicodedata.normalize("NFC", q).translate(_QUOTES))
-
     terms: list[str] = []
-    for m in _TOKEN.finditer(q):
-        quoted, star, word = m.group(1), m.group(2), m.group(3)
-        if word in OPERATORS:
-            terms.append(word)
-            continue
-        text, prefix = (quoted, bool(star)) if quoted is not None else (word, True)
-        if _searchable(text):
-            terms.append(_phrase(text, prefix))
-        elif terms and terms[-1] in OPERATORS:
-            terms.pop()  # "rust NOT - async": the NOT was about "-", not "async"
+    for token in _tokens(unicodedata.normalize("NFC", q).translate(_QUOTES)):
+        if not token.phrase and token.text in OPERATORS:
+            terms.append(token.text)
+        elif _searchable(token.text):
+            terms.append(_phrase(token.text, prefix=token.star or not token.phrase))
+        elif terms and terms[-1] in ("AND", "NOT"):
+            # "rust NOT - async": the NOT was about "-", not "async"
+            terms.pop()
 
     # Operators only between two search terms: drop leading, trailing and repeated ones.
     # A NOT with no term before it also drops the term it would have excluded.

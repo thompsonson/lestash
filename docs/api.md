@@ -67,14 +67,20 @@ Hybrid mode combines keyword + semantic results via Reciprocal Rank Fusion (k=60
 **Keyword syntax** (`lestash.core.search`, shared with `lestash items search`):
 
 - `"exact phrase"`, `word*` prefix, and `AND`, `OR`, `NOT` in upper case.
+- A `-` in front of a quoted phrase excludes it, as in web search: `notes -"draft copy"` is `notes NOT "draft copy"`. In front of a word it is part of the word, so flags and numbers (`--dry-run`, `-40`) search as written; use `NOT` to exclude a word.
 - Every word also matches as a prefix: `learn` finds `learning`.
 - All other punctuation is plain text: `Dual-State`, `v2.0` and `don't` match the words as written.
   - Characters the index drops, such as `+`, are dropped from the query too: `C++` searches `C*`.
-- FTS5 column filters (`title:x`), `NEAR` and `^` are not supported; they are searched as words.
+- FTS5 column filters (`title:x`), `NEAR`, `^` and parentheses are not supported; they are searched as words. Without grouping, FTS5 binds `AND` tighter than `OR`.
 - `NOT x` on its own, or `a OR NOT b`, can't be expressed; the excluded term is dropped, never searched.
+- A word with no letter or digit (`-`, `++`) is dropped, with an `AND` or `NOT` just before it; an `OR` stays.
 - A query with nothing searchable (`++`) returns no keyword results.
 
-**Errors:** `422` without `q`. In `keyword` mode, `500` if the search index fails; `hybrid` then returns the semantic results and logs the failure.
+**Errors:** `422` without `q`. `500` ("Keyword search failed" or "Search unavailable") when the search can't run:
+
+- `keyword`: the search index fails.
+- `semantic`: the vector search fails.
+- `hybrid`: one half failing is logged and the other half's results are returned; `500` if both fail, or if the keyword half fails and semantic finds nothing.
 
 Unknown paths under `/api` return a JSON `404` for every method, even when the server also serves the web app.
 

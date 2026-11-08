@@ -159,7 +159,8 @@ def search_items(
 ) -> None:
     """Search items using full-text search.
 
-    Supports "phrase search", prefix* and AND, OR, NOT; other punctuation is plain text.
+    Supports "phrase search", -"excluded phrase", prefix* and AND, OR, NOT; other
+    punctuation is plain text.
     """
     config = Config.load()
 

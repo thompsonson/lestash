@@ -4,6 +4,7 @@ import json
 import logging
 import sqlite3
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from lestash.core.database import (
@@ -190,11 +191,12 @@ def search_items(
     q: str = Query(..., min_length=1, description="Search query"),
     limit: int = Query(20, ge=1, le=100),
     include_children: bool = Query(True, description="Include child items in results"),
-    mode: str = Query("hybrid", description="Search mode: keyword, semantic, hybrid"),
+    mode: Literal["keyword", "semantic", "hybrid"] = Query("hybrid", description="Search mode"),
 ):
     """Search items using keyword (FTS5), semantic (vector), or hybrid mode.
 
-    Supports "phrase search", prefix* and AND, OR, NOT; other punctuation is plain text
+    Supports "phrase search", -"excluded phrase", prefix* and AND, OR, NOT; other
+    punctuation is plain text
     (see lestash.core.search).
     """
     with get_db() as conn:
@@ -257,12 +259,18 @@ def search_items(
                 for rank, item_id in enumerate(ids[:want]):
                     vec_results[item_id] = rank
             except Exception:
-                logger.warning("Vector search failed, falling back to keyword", exc_info=True)
-                # An empty 200 would read as "no results"; report it when nothing ran
-                if mode == "semantic" or keyword_failed:
+                logger.warning("Vector search failed for %r", q, exc_info=True)
+                # Semantic mode has nothing else to show; hybrid with a failed keyword
+                # half is caught by the check below
+                if mode == "semantic":
                     raise HTTPException(
                         status_code=500, detail="Search unavailable; see the server log"
                     ) from None
+
+        if keyword_failed and not vec_results:
+            # Keyword search failed and semantic found nothing: an empty 200 would read as
+            # "no results" when the search never ran properly
+            raise HTTPException(status_code=500, detail="Search unavailable; see the server log")
 
         # Merge results via RRF (Reciprocal Rank Fusion)
         k = 60  # RRF constant

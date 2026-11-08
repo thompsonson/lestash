@@ -2403,7 +2403,7 @@
       if (!q) {
         searchSeq++;
         document.getElementById('search-list').innerHTML = '';
-        status.textContent = 'Tip: use "quotes" for exact phrases, word* for prefix, AND/OR/NOT for boolean';
+        status.textContent = 'Tip: use "quotes" for exact phrases, -"quotes" to exclude one, word* for prefix, AND/OR/NOT for boolean';
         return;
       }
       searchTimer = setTimeout(() => doSearch(q), 300);
