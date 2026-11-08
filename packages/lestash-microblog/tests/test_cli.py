@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from lestash.core.config import Config, GeneralConfig
 from lestash_microblog.source import MicroblogSource
 from typer.testing import CliRunner
 
@@ -190,7 +191,12 @@ class TestSyncCommand:
         mock_client.__enter__ = Mock(return_value=mock_client)
         mock_client.__exit__ = Mock(return_value=False)
 
-        with patch("lestash_microblog.client.create_client", return_value=mock_client):
+        # The sync opens its database before the network call: give it the test's own
+        config = Config(general=GeneralConfig(database_path=str(tmp_path / "test.db")))
+        with (
+            patch("lestash_microblog.client.create_client", return_value=mock_client),
+            patch("lestash.core.config.Config.load", return_value=config),
+        ):
             result = cli_runner.invoke(microblog_app, ["sync"])
 
         assert result.exit_code == 1

@@ -247,7 +247,7 @@ def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse
         from lestash.core.pdf_enrich import enrich_item
 
         try:
-            enrich_item(enrich_item_id)
+            enrich_item(enrich_item_id, config=get_config())
         except Exception as e:
             logger.exception("Failed to enrich uploaded PDF item %d", enrich_item_id)
             errors.append(f"enrich: {e}")

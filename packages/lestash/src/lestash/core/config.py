@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import tomli_w
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def get_config_dir() -> Path:
@@ -132,8 +132,10 @@ class Config(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    general: GeneralConfig = GeneralConfig()
-    logging: LoggingConfig = LoggingConfig()
+    # Built per Config, not once at import: the default paths follow the home folder
+    # at the time of loading
+    general: GeneralConfig = Field(default_factory=GeneralConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     @classmethod
     def load(cls) -> "Config":
