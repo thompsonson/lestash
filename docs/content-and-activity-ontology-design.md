@@ -206,6 +206,8 @@ These counts cover the 10,463 watches held today, and rise with the Takeout impo
 - A `user` turn is authored by you.
 - A specific model version can be its own agent when the source names it.
 - The role word stays in metadata, and `items.author` stays as display text.
+- Until the people tables land, a Gemini turn's `items.author` stays `user` or `model`.
+- The app's chat view reads that word and shows "You" or "Gemini".
 
 ### Roles
 
@@ -371,14 +373,15 @@ flowchart LR
 ## Plan
 
 1. Gemini activity importer: chats with prompt and reply turns, matched to the 19 existing chats by id.
-2. YouTube activity importer: the 76,328 watches, merged into history items by video id, plus comments.
-3. `items.held`, the `item_links` table and the linker pass.
-4. `people`, `person_identities`, `item_agents` and `item_mentions`, filled from `items.author`, then `person_profiles` retired.
-5. `activities` table, then moving timestamp lists into it.
+2. `activities` table, then moving timestamp lists into it.
+3. YouTube activity importer: the 76,328 watches, merged into history items by video id, plus comments.
+4. `items.held`, the `item_links` table and the linker pass.
+5. `people`, `person_identities`, `item_agents` and `item_mentions`, filled from `items.author`, then `person_profiles` retired.
 6. Drive Activity API source; needs the `drive.activity.readonly` scope and a new sign-in.
    Google's reference does not say how far back activity goes, so the first query records the oldest date found.
 
-Steps 1 and 2 work with today's shape and gain links, people and activities as those land.
+The `activities` table comes second, so the YouTube import writes its watches there from the start.
+Steps 1 and 3 gain links and people as those land.
 
 ## Decided
 
@@ -387,6 +390,8 @@ Steps 1 and 2 work with today's shape and gain links, people and activities as t
 - Every YouTube channel becomes an entity; listings filter by watch count.
 - Nothing links people automatically; every match is a suggestion you confirm.
 - Item links from exact identifiers count at once and can be removed; name matches wait for you.
+- Gemini turns keep `user` and `model` as their author until the people tables exist.
+- Imports never guess which item something belongs to; unmatched data stays separate.
 
 ## References
 

@@ -1,8 +1,9 @@
 # lestash-takeout
 
 Imports [Google Takeout](https://takeout.google.com) exports automatically, using LeStash's
-zip importer (`lestash.importers`): Google Keep, Gemini, NotebookLM and YouTube watch/search
-history. One export can hold several products; all of them are imported.
+zip importer (`lestash.importers`): Google Keep, Gemini (conversations and Gemini Apps
+activity), NotebookLM and YouTube watch/search history. One export can hold several products;
+all of them are imported.
 
 ## Setup
 
@@ -11,6 +12,7 @@ history. One export can hold several products; all of them are imported.
    by a script.)
 2. For YouTube, choose **JSON** as the history format (the default is HTML, which isn't read).
    The history parser expects an English-language Takeout (file names and "Watched …" titles).
+   For Gemini chats, include **My Activity → Gemini Apps**, also as **JSON**; the same applies.
 3. LeStash needs its Google sign-in with `drive.readonly` (already used by the Drive import).
 
 Each `lestash sources sync takeout` (and the sync timer) lists your own `takeout-*.zip` files in
@@ -41,7 +43,8 @@ never marks a zip done without its items; the zip is simply imported again.
   of headroom, is skipped before downloading, without counting an attempt. Smaller zips still
   import, and the sync is logged `failed` naming it, until there is room.
 - A zip with nothing recognisable (e.g. only photos) is recorded with the importer version and
-  retried when the importer learns a new format.
+  retried when the importer learns a new format. A zip already imported is not: to read a format
+  added since (such as Gemini Apps activity), run `lestash takeout forget <id>` on it.
 
 ## Re-imports and multi-part exports
 
@@ -51,6 +54,15 @@ Re-importing is safe: items are updated in place, not duplicated.
   export that no longer has old watches (YouTube auto-delete) doesn't erase them. A watched video
   you also liked nests under its `liked:` item. YouTube Music listens (songs and podcasts) are
   skipped for now.
+- **Gemini Apps activity:** each prompt names its chat, so prompts become chats with prompt and
+  reply turns. A chat already saved from the Gemini page or by the extension, matched by its
+  exact chat id or URL, keeps its item and turns; Takeout adds only the prompts it lacks. Page
+  turns have no times of their own, so the added turns sort after or before them, not between.
+  Chats that LeStash holds without a chat id are left alone, so such a chat can appear twice.
+  Attachments are listed by name.
+  Canvas documents become their own items, not tied to a chat, as Takeout doesn't say which.
+  A reply with lines reduced to a lone full stop (cause unconfirmed) is kept as it is and
+  flagged `takeout_gaps`.
 - **NotebookLM:** Takeout can split a notebook over several zips. Each part adds what it holds
   (sources, notes, chats, generated reports); only the part with the notebook's metadata sets its
   title, emoji and date.

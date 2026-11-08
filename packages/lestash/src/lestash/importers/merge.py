@@ -12,35 +12,49 @@ Upserts replace an item's content and metadata. That is wrong for two kinds of i
 - NotebookLM notes, reports and chats: a child in a part without that JSON has only the
   folder name for its title prefix, and no date. It takes both from its stored notebook,
   and the notebook's children are corrected when the JSON arrives later.
+- Gemini chats from Takeout activity: a chat already saved from the Gemini page or by the
+  extension (matched by its exact chat id) keeps its item, title and turns. Takeout adds
+  only the prompts that chat lacks, and never replaces a turn. A chat's prompt times are
+  merged across exports.
 
-Every writer that upserts sync or import items calls ``merge_with_stored`` first.
+Every writer that upserts sync or import items calls ``merge_with_stored`` first, and
+skips the item when it returns False.
 """
 
 import json
 import sqlite3
 from collections import Counter
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 
+from lestash.importers.gemini_activity import SOURCE as GEMINI_ACTIVITY_SOURCE
+from lestash.importers.gemini_activity import chat_content, prompt_key
+from lestash.importers.youtube_history import MAX_TIMES
 from lestash.models.item import ItemCreate
 
-MAX_TIMES = 200  # matches youtube_history.MAX_TIMES
-
+# Lists not capped: a chat has at most a few hundred prompts, and its count must stay exact
+UNCAPPED = frozenset({"prompted_times"})
 # times list -> count key
 TIME_KEYS = {
     "watched_times": "watched_count",
     "viewed_times": "viewed_count",
     "searched_times": "searched_count",
+    "prompted_times": "prompted_count",
 }
 YOUTUBE_KINDS = ("history", "search", "post")
 NOTEBOOK_CHILD_TYPES = ("note", "report", "chat")
 
 
-def merge_with_stored(conn: sqlite3.Connection, item: ItemCreate) -> None:
-    """Merge ``item`` with its stored copy, in place. No-op for other items or new items."""
+def merge_with_stored(conn: sqlite3.Connection, item: ItemCreate) -> bool:
+    """Merge ``item`` with its stored copy, in place. No-op for other items or new items.
+
+    Returns False when the item must not be stored, because a stored item already holds it.
+    """
     metadata = item.metadata or {}
     if not item.source_id:
-        return
+        return True
+    if item.source_type == "gemini" and metadata.get("source") == GEMINI_ACTIVITY_SOURCE:
+        return _merge_gemini(conn, item)
     if item.source_type == "youtube" and item.source_id.split(":", 1)[0] in YOUTUBE_KINDS:
         stored = _stored(conn, item)
         if stored:
@@ -51,6 +65,7 @@ def merge_with_stored(conn: sqlite3.Connection, item: ItemCreate) -> None:
             _merge_notebook(conn, item, stored)
     elif item.source_type == "notebooklm" and metadata.get("type") in NOTEBOOK_CHILD_TYPES:
         _take_from_notebook(conn, item)
+    return True
 
 
 def _stored(conn: sqlite3.Connection, item: ItemCreate) -> dict[str, Any] | None:
@@ -74,13 +89,15 @@ def _union_times(old: dict[str, Any], new: dict[str, Any], merged: dict[str, Any
         if key not in old and key not in new:
             continue
         times = sorted({*old.get(key, []), *new.get(key, [])})
-        merged[key] = times[-MAX_TIMES:]
-        capped = len(old.get(key, [])) >= MAX_TIMES or len(new.get(key, [])) >= MAX_TIMES
+        merged[key] = times if key in UNCAPPED else times[-MAX_TIMES:]
+        capped = key not in UNCAPPED and (
+            len(old.get(key, [])) >= MAX_TIMES or len(new.get(key, [])) >= MAX_TIMES
+        )
         merged[count_key] = (
             max(len(times), old.get(count_key, 0), new.get(count_key, 0)) if capped else len(times)
         )
         if times:
-            # The lists are capped, so an earlier first_at can live only in the stored copy
+            # A capped list can drop an earlier first_at, kept only in the stored copy
             firsts = [t for t in (times[0], old.get("first_at"), new.get("first_at")) if t]
             lasts = [t for t in (times[-1], old.get("last_at"), new.get("last_at")) if t]
             merged["first_at"], merged["last_at"] = min(firsts), max(lasts)
@@ -239,3 +256,176 @@ def _fix_notebook_children(
             (child_title, created_at.isoformat(" ") if created_at else None, child_id),
         )
     mark_recent_history(conn, since, "sync", item_ids=[row[0] for row in rows])
+
+
+class _GeminiChat(NamedTuple):
+    id: int
+    source_id: str
+    metadata: dict[str, Any]
+
+    @property
+    def from_takeout(self) -> bool:
+        return self.metadata.get("source") == GEMINI_ACTIVITY_SOURCE
+
+
+def _gemini_chat(conn: sqlite3.Connection, conversation_id: str) -> _GeminiChat | None:
+    """The stored chat with this exact id.
+
+    Ids match exactly: the extension's ``source_id`` (``c_<id>``), a saved page's URL
+    (also with ``/u/<n>/``, a trailing slash or a query), or a ``metadata.conversation_id``.
+    One stored as ``c_<id>`` wins, whoever wrote it; then page saves, the one with turns
+    first, then the oldest.
+    """
+    # The usual case, by the (source_type, source_id) index: Takeout's own chat
+    row = conn.execute(
+        "SELECT id, source_id, metadata FROM items WHERE source_type = 'gemini' AND source_id = ?",
+        (conversation_id,),
+    ).fetchone()
+    if not row:
+        chat_id = conversation_id.removeprefix("c_")
+        app_url = f"https://gemini.google.com/*app/{chat_id}"
+        # instr() cheaply skips rows that can't hold the id; json_extract raises on
+        # malformed JSON, so such rows are skipped too
+        row = conn.execute(
+            "SELECT p.id, p.source_id, p.metadata FROM items p "
+            "WHERE p.source_type = 'gemini' AND ("
+            "p.source_id GLOB ? OR p.source_id GLOB ? OR CASE WHEN instr(p.metadata, ?) "
+            "AND json_valid(p.metadata) "
+            "THEN json_extract(p.metadata, '$.conversation_id') = ? END) "
+            "ORDER BY EXISTS (SELECT 1 FROM items c WHERE c.parent_id = p.id "
+            "AND c.source_type = 'gemini') DESC, p.id "
+            "LIMIT 1",
+            (app_url, f"{app_url}[/?#]*", conversation_id, conversation_id),
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        metadata = json.loads(row[2]) if row[2] else {}
+    except json.JSONDecodeError:
+        metadata = {}
+    return _GeminiChat(row[0], row[1], metadata if isinstance(metadata, dict) else {})
+
+
+def _merge_gemini(conn: sqlite3.Connection, item: ItemCreate) -> bool:
+    metadata = dict(item.metadata or {})
+    prompt = metadata.pop("_prompt", None)
+    occurrence = int(metadata.pop("_occurrence", 1))
+    item.metadata = metadata
+    if metadata.get("type") == "chat":
+        chat = _gemini_chat(conn, item.source_id or "")
+        if chat is None:
+            return True
+        if not chat.from_takeout:
+            return False  # saved from the Gemini page: that item stays as it is
+        stored = _stored(conn, item)
+        if stored:
+            _merge_gemini_chat(conn, item, stored)
+        return True
+
+    if metadata.get("type") == "canvas":
+        # An export without the document must not blank the stored copy
+        return bool(metadata.get("content_in_export", True)) or not _stored(conn, item)
+
+    parent_source_id = metadata.get("_parent_source_id")
+    if not parent_source_id:
+        return True
+    chat = _gemini_chat(conn, parent_source_id)
+    if chat is None or chat.from_takeout:
+        return True
+    # A turn of a chat saved from the Gemini page
+    item.parent_id = chat.id
+    metadata["_parent_source_id"] = chat.source_id
+    if not prompt_key(prompt if item.author == "model" else item.content):
+        # A prompt with no text (an attachment only) can't be matched to the page's turns,
+        # and adding it could repeat one the page has: leave the page chat as it is
+        return False
+    turns = _page_turns(conn, chat)
+    if item.author != "model":
+        return _page_prompt(turns, item.content, occurrence) is None
+    # A reply: keep the page's when it has one right after the same prompt
+    index = _page_prompt(turns, prompt, occurrence)
+    if index is None:
+        return True
+    if index + 1 < len(turns) and not turns[index + 1].is_user:
+        return False
+    # The prompt is the page's, so point at that turn instead of Takeout's
+    if turns[index].source_id:
+        metadata["prompt_source_id"] = turns[index].source_id
+    else:
+        metadata.pop("prompt_source_id", None)
+    return True
+
+
+class _PageTurn(NamedTuple):
+    is_user: bool
+    text: str
+    source_id: str | None  # None for a turn kept in the extension's metadata
+
+
+def _page_turns(conn: sqlite3.Connection, chat: _GeminiChat) -> list[_PageTurn]:
+    """A page chat's turns in order.
+
+    The chat's child turns, not counting those Takeout added; or, for a chat saved by the
+    extension, the turns it keeps in metadata.
+    """
+    rows = conn.execute(
+        "SELECT author, content, source_id FROM items WHERE parent_id = ? "
+        "AND source_type = 'gemini' AND COALESCE("
+        "CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.source') END, '') != ? "
+        "ORDER BY id",
+        (chat.id, GEMINI_ACTIVITY_SOURCE),
+    ).fetchall()
+    if rows:
+        return [_PageTurn(author == "user", content or "", sid) for author, content, sid in rows]
+    turns = chat.metadata.get("turns")
+    if not isinstance(turns, list):
+        return []
+    return [
+        _PageTurn(t.get("role") == "user", str(t.get("text") or ""), None)
+        for t in turns
+        if isinstance(t, dict)
+    ]
+
+
+def _page_prompt(turns: list[_PageTurn], prompt: str | None, occurrence: int) -> int | None:
+    """Where the page has the ``occurrence``-th prompt with this text, matched by
+    prompt_key(), if it has.
+
+    ``occurrence`` counts within one export, which holds only the prompts Gemini still
+    keeps, so after auto-delete a repeated short prompt can match an older one.
+    """
+    key = prompt_key(prompt)
+    if not key:
+        return None
+    seen = 0
+    for index, turn in enumerate(turns):
+        if turn.is_user and prompt_key(turn.text) == key:
+            seen += 1
+            if seen == occurrence:
+                return index
+    return None
+
+
+def _merge_gemini_chat(conn: sqlite3.Connection, item: ItemCreate, stored: dict[str, Any]) -> None:
+    """Keep the prompt times of every export: each holds only what Gemini still keeps."""
+    old, new = stored["metadata"], dict(item.metadata or {})
+    merged = {**old, **new}
+    _union_times(old, new, merged)
+    notebooks = _union(old.get("notebooklm_notebooks"), new.get("notebooklm_notebooks"))
+    if notebooks:
+        merged["notebooklm_notebooks"] = notebooks
+    first_new, first_old = new.get("first_at"), old.get("first_at")
+    earlier = bool(first_new) and (not first_old or first_new < first_old)
+    generated = old.get("generated_title", stored["title"])
+    merged["generated_title"] = new.get("generated_title") if earlier else generated
+    if stored["title"] != generated or not earlier:
+        # A title you gave stays; so does one from a first prompt this export lacks
+        item.title = stored["title"]
+    if earlier and first_old and first_new:
+        # An older export: the upsert keeps created_at, so date the chat from it here
+        conn.execute(
+            "UPDATE items SET created_at = ? WHERE id = ?",
+            (datetime.fromisoformat(first_new).isoformat(" "), stored["id"]),
+        )
+    item.content = chat_content(merged.get("prompted_count", 0))
+    item.metadata = merged

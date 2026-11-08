@@ -57,8 +57,7 @@ class SyncStore:
                     save_checkpoint(self.conn, self.source, item.key, item.value)
                     self._commit()
                     continue
-                self._store(item)
-                if self.items % COMMIT_EVERY == 0:
+                if self._store(item) and self.items % COMMIT_EVERY == 0:
                     self._commit()
         except Exception:
             self._commit()
@@ -77,10 +76,12 @@ class SyncStore:
     def _sweep(self) -> None:
         self.linked = resolve_parent_source_ids(self.conn, self.source_types)
 
-    def _store(self, item: ItemCreate) -> None:
+    def _store(self, item: ItemCreate) -> bool:
+        """Store one item; False when merge_with_stored() says a stored item holds it."""
         # Link to a parent yielded earlier (metadata._parent_source_id)
         resolve_parent_id(self.conn, item)
-        merge_with_stored(self.conn, item)
+        if not merge_with_stored(self.conn, item):
+            return False
         metadata_json = json.dumps(item.metadata) if item.metadata else None
         (item_id,) = self.conn.execute(
             """
@@ -128,6 +129,7 @@ class SyncStore:
                 source_origin=media.source_origin,
                 _commit=False,
             )
+        return True
 
 
 INTERRUPTED = "interrupted"

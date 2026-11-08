@@ -76,8 +76,8 @@ def _store(conn, items: list[ItemCreate]) -> None:
     """What the sync loops do for each item."""
     for item in items:
         resolve_parent_id(conn, item)
-        merge_with_stored(conn, item)
-        upsert_item(conn, item)
+        if merge_with_stored(conn, item):
+            upsert_item(conn, item)
 
 
 def _row(conn, source_id: str):

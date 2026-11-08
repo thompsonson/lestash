@@ -12,6 +12,7 @@ from datetime import UTC
 from io import BytesIO
 from pathlib import Path
 
+from lestash.importers.gemini_activity import parse_gemini_activity
 from lestash.importers.json_items import parse_json_items
 from lestash.importers.mistral import detect_mistral_zip, parse_mistral_zip
 from lestash.importers.youtube_history import parse_search_history, parse_watch_history
@@ -21,7 +22,8 @@ logger = logging.getLogger(__name__)
 # Bump when parse_zip learns a new format, so zips it found nothing in are tried again.
 #   1: Keep, Gemini, NotebookLM, Mistral, JSON
 #   2: + YouTube watch/search history; several Takeout products per zip
-IMPORTER_VERSION = 2
+#   3: + Gemini Apps activity (chats with prompt and reply turns, Canvas documents)
+IMPORTER_VERSION = 3
 
 
 class CorruptZip(ValueError):
@@ -53,6 +55,7 @@ def parse_zip(data: bytes | Path):
             ]
             nlm_files = [n for n in names if "NotebookLM" in n and not n.endswith("/")]
             youtube_history = [n for n in names if YOUTUBE_HISTORY.match(n)]
+            gemini_activity = [n for n in names if GEMINI_ACTIVITY.match(n)]
 
             found: list[tuple[str, list]] = []
             if keep_files:
@@ -63,9 +66,12 @@ def parse_zip(data: bytes | Path):
                 found.append(("notebooklm", _parse_notebooklm_zip(zf, nlm_files, names)))
             if youtube_history:
                 found.append(("youtube", _parse_youtube_history_zip(zf, youtube_history)))
+            if gemini_activity:
+                found.append(("gemini", _parse_gemini_activity_zip(zf, gemini_activity)))
             if found:
                 all_items = [item for _, items in found for item in items]
-                return all_items, found[0][0] if len(found) == 1 else "takeout"
+                kinds = {kind for kind, _ in found}
+                return all_items, kinds.pop() if len(kinds) == 1 else "takeout"
 
             # Detect Mistral Le Chat export
             if detect_mistral_zip(names):
@@ -92,6 +98,25 @@ def parse_zip(data: bytes | Path):
 # The folder and file names (and the "Watched"/"Searched for" title prefixes parsed in
 # youtube_history) are those of an English-language Takeout; other languages translate them.
 YOUTUBE_HISTORY = re.compile(r"^Takeout/YouTube[^/]*/history/(watch|search)-history\.json$")
+
+
+# Gemini Apps activity, exported as JSON. Like YOUTUBE_HISTORY, the names are an
+# English-language Takeout's; some exports drop the space in the file name.
+GEMINI_ACTIVITY = re.compile(r"^Takeout/My Activity/Gemini Apps/My ?Activity\.json$")
+
+
+def _parse_gemini_activity_zip(zf, activity_files):
+    """Gemini chats and Canvas documents from Gemini Apps activity (JSON)."""
+    items = []
+    for name in activity_files:
+        try:
+            entries = json.loads(zf.read(name))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            logger.warning(f"Could not read Gemini activity file: {name}")
+            continue
+        if isinstance(entries, list):
+            items.extend(parse_gemini_activity(entries))
+    return items
 
 
 def _parse_youtube_history_zip(zf, history_files):
