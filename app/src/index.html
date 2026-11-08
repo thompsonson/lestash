@@ -2433,9 +2433,21 @@
           list.appendChild(card);
         });
       } catch (e) {
-        list.innerHTML = '';
-        status.textContent = '';
-        showToast(`Search failed: ${e.message}`, 'error');
+        // Keep the failure on the page, not only in a toast that fades.
+        // api() throws "<status>: <body>"; show the server's detail when there is one.
+        let reason = e.message;
+        const m = /^(\d{3}): (.*)$/s.exec(e.message);
+        if (m) {
+          try {
+            const detail = JSON.parse(m[2]).detail;
+            if (detail !== undefined) {
+              reason = `${m[1]}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
+            }
+          } catch { /* not JSON: keep the raw message */ }
+        }
+        status.textContent = `Search failed (${mode})`;
+        list.innerHTML = `<div class="empty-state">Search failed: ${escHtml(reason)}</div>`;
+        showToast(`Search failed: ${reason}`, 'error');
       }
     }
 

@@ -106,7 +106,7 @@ def create_app(static_dir: str | None = None) -> FastAPI:
     if static_dir:
         from pathlib import Path
 
-        from fastapi.responses import FileResponse, HTMLResponse
+        from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
         index_path = Path(static_dir) / "index.html"
 
@@ -114,7 +114,13 @@ def create_app(static_dir: str | None = None) -> FastAPI:
 
         @app.get("/{path:path}", include_in_schema=False)
         def spa_fallback(path: str):
-            """Serve static files or index.html for SPA routing."""
+            """Serve static files or index.html for SPA routing.
+
+            An unknown /api path is a 404, not the app page: a client calling a missing
+            endpoint must see an error, not HTTP 200 with HTML.
+            """
+            if path == "api" or path.startswith("api/"):
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
             file_path = Path(static_dir) / path
             if file_path.is_file():
                 return FileResponse(file_path)

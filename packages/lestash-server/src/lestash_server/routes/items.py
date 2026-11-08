@@ -2,6 +2,7 @@
 
 import json
 import logging
+import sqlite3
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -16,6 +17,7 @@ from lestash.core.database import (
 )
 from lestash.core.embeddings import re_embed_item
 from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
+from lestash.core.search import fts_match_query
 from lestash.models.item import Item
 
 from lestash_server.deps import get_db
@@ -192,16 +194,17 @@ def search_items(
 ):
     """Search items using keyword (FTS5), semantic (vector), or hybrid mode.
 
-    Supports FTS5 query syntax: AND, OR, NOT, "phrase search", prefix*.
+    Supports "phrase search", prefix* and AND, OR, NOT; other punctuation is plain text
+    (see lestash.core.search).
     """
-    fts_query = _sanitize_fts_query(q)
+    fts_query = fts_match_query(q)
 
     with get_db() as conn:
         fts_results: dict[int, dict] = {}
         vec_results: dict[int, float] = {}
 
         # FTS5 keyword search
-        if mode in ("keyword", "hybrid"):
+        if mode in ("keyword", "hybrid") and fts_query:
             query = """
                 SELECT items.*,
                        snippet(items_fts, 1, '<<', '>>', '...', 32) as search_snippet
@@ -224,7 +227,11 @@ def search_items(
                         "rank": rank,
                         "snippet": snippet,
                     }
-            except Exception:
+            except sqlite3.OperationalError:
+                # fts_match_query should make this unreachable; never hide it
+                logger.warning(
+                    "Keyword search failed for %r (MATCH %r)", q, fts_query, exc_info=True
+                )
                 if mode == "keyword":
                     raise HTTPException(
                         status_code=400, detail=f"Invalid search query: {q}"
@@ -287,46 +294,6 @@ def search_items(
             items.append(enriched)
 
     return ItemListResponse(items=items, total=len(items), limit=limit, offset=0)
-
-
-def _sanitize_fts_query(q: str) -> str:
-    """Sanitize user input for FTS5 MATCH.
-
-    - Preserves quoted phrases ("exact match")
-    - Preserves explicit operators (AND, OR, NOT) when valid
-    - Adds implicit prefix matching (word -> word*) for better UX
-    - Strips dangling operators that would cause FTS5 syntax errors
-    """
-    q = q.strip()
-    if not q:
-        return q
-
-    # Strip unbalanced quotes
-    if q.count('"') % 2 != 0:
-        q = q.replace('"', "")
-
-    # Split into tokens, process each
-    words = q.split()
-    operators = {"AND", "OR", "NOT"}
-
-    # Remove leading/trailing operators
-    while words and words[0] in operators:
-        words.pop(0)
-    while words and words[-1] in operators:
-        words.pop()
-
-    if not words:
-        return q.replace('"', "").strip() + "*" if q.strip() else ""
-
-    # Add prefix matching to non-operator, non-quoted terms
-    result = []
-    for w in words:
-        if w in operators or w.endswith("*") or w.startswith('"'):
-            result.append(w)
-        else:
-            result.append(f"{w}*")
-
-    return " ".join(result)
 
 
 @router.post("", response_model=ItemResponse, status_code=201)

@@ -17,6 +17,7 @@ from lestash.core.enrichment import (
     get_preview,
     resolve_author,
 )
+from lestash.core.search import fts_match_query
 from lestash.models.item import Item
 
 
@@ -154,21 +155,26 @@ def search_items(
     query: Annotated[str, typer.Argument(help="Search query")],
     limit: Annotated[int, typer.Option("--limit", "-n", help="Limit results")] = 20,
 ) -> None:
-    """Search items using full-text search."""
+    """Search items using full-text search.
+
+    Supports "phrase search", prefix* and AND, OR, NOT; other punctuation is plain text.
+    """
     config = Config.load()
+    match = fts_match_query(query)
 
     with get_connection(config) as conn:
-        cursor = conn.execute(
-            """
-            SELECT items.* FROM items
-            JOIN items_fts ON items.id = items_fts.rowid
-            WHERE items_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (query, limit),
-        )
-        rows = cursor.fetchall()
+        rows = []
+        if match:
+            rows = conn.execute(
+                """
+                SELECT items.* FROM items
+                JOIN items_fts ON items.id = items_fts.rowid
+                WHERE items_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (match, limit),
+            ).fetchall()
 
         if not rows:
             console.print(f"[dim]No items found matching '{query}'.[/dim]")
