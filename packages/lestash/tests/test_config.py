@@ -95,6 +95,55 @@ def test_config_set_stores_typed_plugin_values(config_file: Path) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("true", True),
+        ("false", False),
+        ("5", 5),
+        ("-3", -3),
+        ('["LLM agents", "ontology"]', ["LLM agents", "ontology"]),
+        ('"007"', "007"),
+        ("LLM agents", "LLM agents"),
+        ("1.10", "1.10"),  # not 1.1
+        ("inf", "inf"),
+        ("2026-01-01", "2026-01-01"),
+        ("~/kobo", "~/kobo"),
+        ("[agents", "[agents"),  # not valid TOML: kept as text
+    ],
+)
+def test_parse_value_types_only_unambiguous_text(raw: str, expected: object) -> None:
+    value = config_cli.parse_value(raw)
+    assert value == expected and type(value) is type(expected)
+
+
+def test_config_set_refuses_a_bare_word_for_a_list_setting(config_file: Path) -> None:
+    config_file.write_text('[arxiv]\nkeywords = ["ontology"]\n')
+    result = _set("arxiv.keywords", "LLM agents")
+    assert result.exit_code == 1
+    assert 'give it as ["a", "b"]' in result.output
+    assert Config.load().get_plugin_config("arxiv") == {"keywords": ["ontology"]}
+
+
+def test_config_set_prints_brackets_in_values(config_file: Path) -> None:
+    result = _set("arxiv.keywords", '["agents"]')
+    assert result.exit_code == 0
+    assert "Set arxiv.keywords = ['agents']" in result.output
+
+
+def test_a_core_key_is_set_without_loading_plugins(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_plugins() -> dict:
+        raise AssertionError("plugins loaded for a core key")
+
+    monkeypatch.setattr(loader, "load_plugins", no_plugins)
+    assert _set("logging.level", "DEBUG").exit_code == 0
+    assert Config.load().logging.level == "DEBUG"
+    # The model checks a core value
+    assert _set("logging.level", "LOUD").exit_code == 1
+
+
 def test_config_set_refuses_unknown_sections_and_core_keys(config_file: Path) -> None:
     result = _set("genral.database_path", "/tmp/x.db")
     assert result.exit_code == 1

@@ -1,5 +1,6 @@
 """Config commands for Le Stash CLI."""
 
+import re
 import tomllib
 from typing import Annotated, Any
 
@@ -55,29 +56,41 @@ def init_config_cmd(
     console.print(f"[green]Created config at {config_path}[/green]")
 
 
+_INTEGER = re.compile(r"[+-]?\d+")
+
+
 def parse_value(raw: str) -> Any:
-    """A TOML value when ``raw`` is one (``true``, ``5``, ``["a"]``, ``"quoted"``), else ``raw``.
+    """A plugin setting's value, typed only where the text is unambiguous.
 
-    So ``lestash config set kobo.include_store_titles false`` stores a boolean, not "false".
-    Dates and tables stay text: no setting takes one.
+    - ``true`` / ``false`` -> bool, so ``kobo.include_store_titles false`` is false.
+    - A whole number -> int, so ``arxiv.max_per_keyword 5`` is 5.
+    - A TOML array or quoted string -> its value: ``["LLM agents", "ontology"]``, ``"007"``.
+    - Anything else stays text. Decimals do too: ``1.10`` would read back as ``1.1``.
     """
-    try:
-        value = tomllib.loads(f"value = {raw}")["value"]
-    except tomllib.TOMLDecodeError:
-        return raw
-    return value if isinstance(value, bool | int | float | str | list) else raw
+    text = raw.strip()
+    if text in ("true", "false"):
+        return text == "true"
+    if _INTEGER.fullmatch(text):
+        return int(text)
+    if text[:1] in ("[", '"', "'"):
+        try:
+            value = tomllib.loads(f"value = {text}")["value"]
+        except tomllib.TOMLDecodeError:
+            return raw
+        if isinstance(value, str | list):
+            return value
+    return raw
 
 
-def _known_sections() -> dict[str, set[str] | None]:
-    """Section -> its keys; None for a source plugin's section, whose keys the plugin owns."""
+def _core_sections() -> dict[str, set[str]]:
+    return {name: set(type(model).model_fields) for name, model in Config()}
+
+
+def _plugin_sections() -> set[str]:
+    # Imports every plugin, so only for a section that isn't a core one
     from lestash.plugins.loader import load_plugins
 
-    sections: dict[str, set[str] | None] = {
-        name: set(type(model).model_fields) for name, model in Config()
-    }
-    for name in load_plugins():
-        sections.setdefault(name, None)
-    return sections
+    return set(load_plugins())
 
 
 @app.command("set")
@@ -96,29 +109,37 @@ def set_config(
     section, setting = parts
 
     # Refuse typos, which would otherwise be saved where nothing reads them
-    known = _known_sections()
-    if section not in known:
-        console.print(f"[red]Unknown section: {section}[/red]")
-        console.print(f"[dim]Known: {', '.join(sorted(known))}[/dim]")
-        raise typer.Exit(1)
-    allowed = known[section]
-    if allowed is not None and setting not in allowed:
-        console.print(f"[red]Unknown key in {escape(f'[{section}]')}: {setting}[/red]")
-        console.print(f"[dim]Known: {', '.join(sorted(allowed))}[/dim]")
-        raise typer.Exit(1)
+    core = _core_sections()
+    if section in core:
+        if setting not in core[section]:
+            console.print(f"[red]Unknown key in {escape(f'[{section}]')}: {setting}[/red]")
+            console.print(f"[dim]Known: {', '.join(sorted(core[section]))}[/dim]")
+            raise typer.Exit(1)
+        parsed: Any = value  # the model checks and converts it
+    else:
+        plugins = _plugin_sections()
+        if section not in plugins:
+            console.print(f"[red]Unknown section: {section}[/red]")
+            console.print(f"[dim]Known: {', '.join(sorted(set(core) | plugins))}[/dim]")
+            raise typer.Exit(1)
+        parsed = parse_value(value)
 
     data = config.model_dump()
     current = data.get(section)
     if not isinstance(current, dict):
         current = data[section] = {}
-    parsed = parse_value(value)
+    # A list setting given one bare word would be read as a list of its characters
+    if isinstance(current.get(setting), list) and not isinstance(parsed, list):
+        example = escape('["a", "b"]')
+        console.print(f"[red]{key} is a list: give it as {example}[/red]")
+        raise typer.Exit(1)
     current[setting] = parsed
 
     # Save updated config
     try:
         updated_config = Config(**data)
         updated_config.save()
-        console.print(f"[green]Set {key} = {parsed!r}[/green]")
+        console.print(f"[green]Set {key} = {escape(repr(parsed))}[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1) from None

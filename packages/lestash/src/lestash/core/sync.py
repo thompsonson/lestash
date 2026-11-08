@@ -45,8 +45,9 @@ class SyncCounts:
         return self.added + self.updated + self.unchanged
 
 
-# The columns an upsert overwrites; created_at is kept, so it isn't compared
-_UPSERT_COLUMNS = ("url", "title", "content", "author", "is_own_content", "metadata")
+# What _store's upsert writes, so what decides whether an item changed. created_at is
+# kept on update, so it isn't compared. Keep in step with the upsert in _store.
+_COMPARED = ("url", "title", "content", "author", "is_own_content", "metadata", "parent_id")
 
 
 class SyncStore:
@@ -61,10 +62,11 @@ class SyncStore:
         self.committed = SyncCounts()  # counts as of the last commit
         self.source_types: set[str] = set()
         self.linked = 0
+        self._counted: set[tuple[str, str | None]] = set()
 
     @property
     def items(self) -> int:
-        """Items written, new, changed or not."""
+        """Items written, new, changed or not; each counted once per run."""
         return self.counts.total
 
     def run(self, items: Iterable[ItemCreate | SyncCheckpoint]) -> None:
@@ -106,12 +108,7 @@ class SyncStore:
         if not merge_with_stored(self.conn, item):
             return False
         metadata_json = json.dumps(item.metadata) if item.metadata else None
-        row = self.conn.execute(
-            f"SELECT {', '.join(_UPSERT_COLUMNS)}, parent_id FROM items "
-            "WHERE source_type = ? AND source_id = ?",
-            (item.source_type, item.source_id),
-        ).fetchone()
-        stored = tuple(row) if row is not None else None
+        before = self._stored_columns(item)
         (item_id,) = self.conn.execute(
             """
             INSERT INTO items (
@@ -145,49 +142,76 @@ class SyncStore:
         ).fetchone()
         self.source_types.add(item.source_type)
         changes_before_media = self.conn.total_changes
-        for media in item.media or []:
-            add_item_media(
-                self.conn,
-                item_id,
-                media_type=media.media_type,
-                url=media.url,
-                local_path=media.local_path,
-                mime_type=media.mime_type,
-                alt_text=media.alt_text,
-                position=media.position,
-                source_origin=media.source_origin,
-                _commit=False,
-            )
-        new_media = self.conn.total_changes > changes_before_media
-        self._count(stored, item, metadata_json, new_media)
+        try:
+            for media in item.media or []:
+                add_item_media(
+                    self.conn,
+                    item_id,
+                    media_type=media.media_type,
+                    url=media.url,
+                    local_path=media.local_path,
+                    mime_type=media.mime_type,
+                    alt_text=media.alt_text,
+                    position=media.position,
+                    source_origin=media.source_origin,
+                    _commit=False,
+                )
+        finally:
+            # Counted even when a media insert fails: run() commits the item row
+            new_media = self.conn.total_changes > changes_before_media
+            self._count(item, before, new_media)
         return True
 
-    def _count(
-        self,
-        stored: tuple[object, ...] | None,
-        item: ItemCreate,
-        metadata_json: str | None,
-        new_media: bool,
-    ) -> None:
-        """Count the item as added, updated (a column or new media changed) or unchanged."""
+    def _stored_columns(self, item: ItemCreate) -> dict[str, object] | None:
+        """The stored row's compared columns, normalised; None for a new item."""
+        row = self.conn.execute(
+            f"SELECT {', '.join(_COMPARED)} FROM items WHERE source_type = ? AND source_id = ?",
+            (item.source_type, item.source_id),
+        ).fetchone()
+        if row is None:
+            return None
+        stored = dict(zip(_COMPARED, row, strict=True))
+        stored["is_own_content"] = bool(stored["is_own_content"])
+        stored["metadata"] = _parsed_json(stored["metadata"])
+        return stored
+
+    def _count(self, item: ItemCreate, before: dict[str, object] | None, new_media: bool) -> None:
+        """Count the item as added, updated (a column or new media changed) or unchanged.
+
+        An item yielded twice in one run counts once, by its first write.
+        """
+        key = (item.source_type, item.source_id)
+        if key in self._counted:
+            return
+        self._counted.add(key)
         c = self.counts
-        if stored is None:
+        if before is None:
             self.counts = replace(c, added=c.added + 1)
             return
-        written = (
-            item.url,
-            item.title,
-            item.content,
-            item.author,
-            int(bool(item.is_own_content)),
-            metadata_json,
-            item.parent_id if item.parent_id is not None else stored[-1],
-        )
-        before = (*stored[:4], int(bool(stored[4])), *stored[5:])
-        if new_media or written != before:
+        after = {
+            "url": item.url,
+            "title": item.title,
+            "content": item.content,
+            "author": item.author,
+            "is_own_content": bool(item.is_own_content),
+            "metadata": item.metadata or None,
+            # The upsert keeps a stored parent when the plugin names none
+            "parent_id": item.parent_id if item.parent_id is not None else before["parent_id"],
+        }
+        if new_media or after != before:
             self.counts = replace(c, updated=c.updated + 1)
         else:
             self.counts = replace(c, unchanged=c.unchanged + 1)
+
+
+def _parsed_json(text: object) -> object:
+    """Stored metadata as a value, so key order doesn't count as a change."""
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        return json.loads(text) or None
+    except ValueError:
+        return text
 
 
 INTERRUPTED = "interrupted"

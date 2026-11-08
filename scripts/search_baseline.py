@@ -13,10 +13,10 @@ Read-only: it only calls the search endpoint.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import sys
 import tomllib
-import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
@@ -63,7 +63,9 @@ def run(base_url: str, queries: list[dict[str, Any]], limit: int, timeout: float
         for mode in MODES:
             try:
                 entry[mode] = search(base_url, query["q"], mode, limit, timeout)
-            except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as e:
+            # OSError covers URLError, timeouts and dropped connections; HTTPException
+            # covers IncompleteRead. One failed cell must not lose the whole recording.
+            except (OSError, http.client.HTTPException, KeyError, ValueError) as e:
                 entry[mode] = {"error": str(e)}
         results.append(entry)
     return {

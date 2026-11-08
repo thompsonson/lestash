@@ -86,6 +86,43 @@ def test_new_media_on_a_stored_item_counts_as_an_update(test_db, monkeypatch) ->
     assert _last_counts(test_db) == (0, 0)
 
 
+def _with_metadata(source_id: str, metadata: dict) -> ItemCreate:
+    return ItemCreate(source_type="audible", source_id=source_id, content="x", metadata=metadata)
+
+
+def test_metadata_in_another_key_order_is_not_a_change(test_db, monkeypatch) -> None:
+    first = _with_metadata("a", {"times": [1, 2], "kind": "book"})
+    again = _with_metadata("a", {"kind": "book", "times": [1, 2]})
+    assert _sync(test_db, monkeypatch, _Yields(first)) == 0
+    assert _sync(test_db, monkeypatch, _Yields(again)) == 0
+    assert _last_counts(test_db) == (0, 0)
+
+
+def test_an_item_yielded_twice_in_a_run_counts_once(test_db, monkeypatch) -> None:
+    assert _sync(test_db, monkeypatch, _Yields(_item("a"), _item("a"))) == 0
+    assert _last_counts(test_db) == (1, 0)
+
+
+def test_an_item_whose_media_fails_is_still_counted(test_db) -> None:
+    from lestash.models.item import MediaCreate
+
+    with_cover = _item("a")
+    with_cover.media = [MediaCreate(media_type="image", url="https://example.org/a.jpg")]
+
+    def broken_media(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    with get_connection(test_db) as conn:
+        store = core_sync.SyncStore(conn, "audible")
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(core_sync, "add_item_media", broken_media)
+            with pytest.raises(RuntimeError):
+                store.run(iter([_item("b"), with_cover]))
+        assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 2
+    assert store.counts == core_sync.SyncCounts(added=2)
+    assert store.committed == store.counts  # the failed run commits what it wrote
+
+
 def test_a_parent_kept_from_a_resolver_is_not_a_change(test_db, monkeypatch) -> None:
     """The upsert keeps a stored parent when the plugin names none."""
     assert _sync(test_db, monkeypatch, _Yields(_item("book"), _item("note"))) == 0
