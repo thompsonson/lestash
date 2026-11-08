@@ -23,8 +23,9 @@ MAX_TERMS = 64
 
 # Typographic quotes, as phone keyboards send them, mark phrases like '"'
 _QUOTES = str.maketrans({c: '"' for c in "“”„‟«»＂"})
-# A quoted phrase (optionally followed by *), or a run of non-space characters
-_TOKEN = re.compile(r'"([^"]*)"(\*?)|(\S+)')
+# A quoted phrase (optionally followed by *), or a run of other non-space characters; a
+# quote always ends a word, so -"a b" is "-" then the phrase "a b"
+_TOKEN = re.compile(r'"([^"]*)"(\*?)|([^\s"]+)')
 
 
 def _searchable(text: str) -> bool:
@@ -34,11 +35,11 @@ def _searchable(text: str) -> bool:
 
 
 def _drop_stray_quotes(q: str) -> str:
-    """Make quotes pair up: a quote between two token characters (don"t) is an apostrophe,
+    """Make quotes pair up: a quote between two letters or digits (don"t) is an apostrophe,
     and a lone quote left over is dropped. A quote opens a phrase at the start or after a
-    space, and closes one at the end or before a non-word character. A quote that can do
-    neither is dropped, and an open quote is dropped when a later quote can only open, so
-    a stray quote never steals a later phrase's quote."""
+    non-word character, and closes one at the end or before a non-word character. A quote
+    that can do neither is dropped, and an open quote is dropped when a later quote can
+    only open, so a stray quote never steals a later phrase's quote."""
     chars = list(q)
     for i, c in enumerate(chars):
         if (
@@ -52,7 +53,7 @@ def _drop_stray_quotes(q: str) -> str:
     for i, c in enumerate(chars):
         if c != '"':
             continue
-        can_open = i == 0 or chars[i - 1].isspace()
+        can_open = i == 0 or not chars[i - 1].isalnum()
         can_close = i == len(chars) - 1 or not chars[i + 1].isalnum()
         if open_at is None and can_open:
             open_at = i
@@ -102,8 +103,10 @@ def fts_match_query(q: str) -> str:
         text, prefix = (quoted, bool(star)) if quoted is not None else (word, True)
         if _searchable(text):
             terms.append(_phrase(text, prefix))
-        elif terms and terms[-1] in OPERATORS:
-            terms.pop()  # "rust NOT - async": the NOT was about "-", not "async"
+        elif terms and terms[-1] in ("AND", "NOT"):
+            # "rust NOT - async": the NOT was about "-", not "async". An OR stays, so
+            # "a OR - b" is still a OR b
+            terms.pop()
 
     # Operators only between two search terms: drop leading, trailing and repeated ones.
     # A NOT with no term before it also drops the term it would have excluded.

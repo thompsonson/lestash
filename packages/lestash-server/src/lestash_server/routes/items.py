@@ -264,6 +264,11 @@ def search_items(
                         status_code=500, detail="Search unavailable; see the server log"
                     ) from None
 
+        if keyword_failed and not vec_results:
+            # Keyword search failed and semantic found nothing: an empty 200 would read as
+            # "no results" when the search never ran properly
+            raise HTTPException(status_code=500, detail="Search unavailable; see the server log")
+
         # Merge results via RRF (Reciprocal Rank Fusion)
         k = 60  # RRF constant
         scores: dict[int, float] = {}
