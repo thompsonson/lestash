@@ -336,7 +336,7 @@ CREATE INDEX idx_activities_item ON activities(item_id);
 
 ### As built (#216, step 1)
 
-- Migration 14 creates the table and fills it from the times lists already in item metadata.
+- Migration 14 creates the table and fills it from the times lists already in item metadata; 15 indexes `context_id`.
 - Two triggers on `items` record each new time a later import adds; a time already recorded is skipped.
 - `occurred_at` is UTC, as `2026-11-08T17:35:03.123Z`, so different exports' precisions match.
 - `actor_id` arrives with the `people` table, since SQLite refuses a foreign key to a table that doesn't exist.

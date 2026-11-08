@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -466,10 +466,8 @@ MIGRATIONS = [
         );
         CREATE INDEX IF NOT EXISTS idx_activities_time ON activities(occurred_at);
         CREATE INDEX IF NOT EXISTS idx_activities_item ON activities(item_id);
-        CREATE INDEX IF NOT EXISTS idx_activities_context ON activities(context_id);
         """
-        # Triggers first, so an item another connection writes during the backfill is
-        # still recorded; NOT EXISTS keeps the backfill from adding it twice
+        + _activities_from_metadata("items")
         + f"""
         CREATE TRIGGER IF NOT EXISTS items_activities_ai AFTER INSERT ON items
         WHEN instr(NEW.metadata, '_times"') > 0 BEGIN
@@ -479,8 +477,14 @@ MIGRATIONS = [
         WHEN instr(NEW.metadata, '_times"') > 0 BEGIN
             {_activities_from_metadata("NEW")}
         END;
-        """
-        + _activities_from_metadata("items"),
+        """,
+    ),
+    (
+        15,
+        "Index activities.context_id",
+        # Without it, deleting an item scans every activity for the ON DELETE SET NULL.
+        # A separate migration because the live database already ran 14 as it stands.
+        "CREATE INDEX IF NOT EXISTS idx_activities_context ON activities(context_id);",
     ),
 ]
 

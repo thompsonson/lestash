@@ -135,7 +135,7 @@ def test_the_migration_fills_the_table_from_items_already_stored(test_db) -> Non
             ],
         )
         conn.commit()
-        assert apply_migrations(conn) == 1
+        assert apply_migrations(conn) == 2  # 14 and 15
         assert [(r[0], r[1], r[2]) for r in _activities(conn)] == [
             ("watched", "history:A", "2025-06-01T10:00:00.000Z"),
             ("viewed", "post:P", "2026-01-20T18:48:57.000Z"),
