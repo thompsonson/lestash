@@ -94,7 +94,17 @@ def test_a_bluesky_cross_post_is_a_syndication_of_the_micro_blog_post(test_db) -
             created_at="2026-01-20T10:02:00Z",
             is_own_content=1,
         )
-        # Someone else's post at the same time, and your LinkedIn comment
+        # Your reply to someone (its parent isn't stored), someone else's post at the
+        # same time, and your LinkedIn comment
+        answer = _add(
+            conn,
+            "bluesky",
+            "b4",
+            content=f"I wrote {url}",
+            created_at="2026-01-20T10:03:00Z",
+            is_own_content=1,
+            metadata={"reply_to": {"uri": "at://someone/post/1"}},
+        )
         theirs = _add(
             conn, "bluesky", "b3", content=f"Look: {url}", created_at="2026-01-20T10:03:00Z"
         )
@@ -125,6 +135,7 @@ def test_a_bluesky_cross_post_is_a_syndication_of_the_micro_blog_post(test_db) -
         link_items(conn)
         assert [(r[0], r[1], r[2]) for r in _links(conn)] == [
             (original, copy, "syndication"),
+            (answer, original, "references"),
             (theirs, original, "references"),
             (comment, original, "references"),
             (reply, original, "references"),
@@ -133,10 +144,11 @@ def test_a_bluesky_cross_post_is_a_syndication_of_the_micro_blog_post(test_db) -
         ]
 
 
-def test_a_linkedin_reaction_is_never_a_link_target(test_db) -> None:
+def test_a_linkedin_reaction_or_comment_is_never_a_link_target(test_db) -> None:
     url = "https://www.linkedin.com/feed/update/urn:li:activity:1"
     with get_connection(test_db) as conn:
         _add(conn, "linkedin", "changelog-socialActions/likes-1", url=url)
+        _add(conn, "linkedin", "changelog-socialActions/comments-1", url=url)
         _add(conn, "claude", "c5", content=f"See {url}")
         assert link_items(conn) == 0
 

@@ -93,13 +93,13 @@ def _targets(conn: sqlite3.Connection) -> dict[str, _Target]:
     """Each address key -> the item at that address.
 
     Of several items at one address, the canonical video item (``history:``) wins, then a
-    top-level item, then the oldest. A LinkedIn reaction is never a target: it shares
-    the address of the post it reacts to.
+    top-level item, then the oldest. A LinkedIn reaction or comment is never a target: it
+    has the address of the post it is on.
     """
     rows = conn.execute(
         "SELECT id, source_type, url, metadata, created_at FROM items "
         "WHERE url IS NOT NULL AND url != '' "
-        "AND NOT (source_type = 'linkedin' AND source_id LIKE 'changelog-socialActions/likes-%') "
+        "AND NOT (source_type = 'linkedin' AND source_id LIKE 'changelog-socialActions/%') "
         "ORDER BY (source_id LIKE 'history:%') DESC, (parent_id IS NULL) DESC, id"
     )
     targets: dict[str, _Target] = {}
@@ -110,14 +110,23 @@ def _targets(conn: sqlite3.Connection) -> dict[str, _Target]:
     return targets
 
 
+def _is_reply(metadata: Any) -> bool:
+    """Whether a post replies to another (Bluesky's metadata.reply_to), stored or not."""
+    try:
+        value = json.loads(metadata) if metadata else {}
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return isinstance(value, dict) and bool(value.get("reply_to"))
+
+
 def _is_cross_post(copy: sqlite3.Row | tuple[Any, ...], original: _Target) -> bool:
     """Whether an item holding a Micro.blog post's address is that post's cross-post: your
     own top-level post on a service the original lists, made within the window."""
-    _, source_type, _, parent_id, created_at, source_id, is_own = copy
+    _, source_type, _, parent_id, created_at, source_id, is_own, metadata = copy
     service = SYNDICATED.get(source_type)
     if original.source_type != "microblog" or service not in _syndicated_to(original.metadata):
         return False
-    if parent_id is not None or not is_own:
+    if parent_id is not None or not is_own or _is_reply(metadata):
         return False
     if source_type == "linkedin" and not str(source_id).startswith(LINKEDIN_POSTS):
         return False
@@ -142,8 +151,8 @@ def find_links(conn: sqlite3.Connection) -> Iterator[Link]:
     """Every link the addresses in stored content make."""
     targets = _targets(conn)
     rows = conn.execute(
-        "SELECT id, source_type, content, parent_id, created_at, source_id, is_own_content "
-        "FROM items WHERE instr(content, 'http') > 0"
+        "SELECT id, source_type, content, parent_id, created_at, source_id, is_own_content, "
+        "metadata FROM items WHERE instr(content, 'http') > 0"
     )
     for row in rows:
         item_id, content = row[0], row[2]
