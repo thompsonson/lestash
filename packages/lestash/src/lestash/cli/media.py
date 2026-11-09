@@ -235,5 +235,9 @@ def adopt() -> None:
         f"Adopted {counts.adopted} media file(s) into {store_root(config)}: "
         f"{counts.new_blobs} new ({counts.new_bytes / 1e6:.1f} MB)."
     )
+    if counts.failed:
+        console.print(
+            f"[yellow]{counts.failed} media file(s) could not be read; see the log.[/yellow]"
+        )
     if counts.missing:
         console.print(f"[yellow]{counts.missing} media row(s) name a file that is gone.[/yellow]")

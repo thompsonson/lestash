@@ -2,6 +2,7 @@
 
 import logging
 import mimetypes
+import sqlite3
 
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
@@ -79,7 +80,11 @@ def upload_media(item_id: int, file: UploadFile):
             source_origin="upload",
         )
         conn.commit()
-        adopt_media(conn, get_config(), ids=[media_id])  # into the file store
+        try:
+            adopt_media(conn, get_config(), ids=[media_id])  # into the file store
+        except sqlite3.Error as e:
+            # The upload is saved; the next sync or `lestash media adopt` stores it
+            logger.warning("Upload %s not yet in the file store: %s", media_id, e)
 
     return MediaResponse(
         id=media_id,

@@ -20,6 +20,7 @@ W2 (#217): one store for every file LeStash keeps.
 
 - `lestash media adopt` copies each media file not yet in the store into it and sets its row's `sha256`. The file in the media folder stays.
 - Each `lestash sources sync` and each upload through `/api/items/{id}/media` adopts new media the same way.
+- Media written elsewhere (PDF enrichment, imports) wait for the next sync or `lestash media adopt`; until then they are served from the media folder.
 - `/api/media/{id}` serves the blob from the store, else the media folder's file, else redirects to the remote URL.
 
 ## As built (#217, step 1)
