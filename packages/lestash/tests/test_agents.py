@@ -314,3 +314,59 @@ def test_no_email_is_yours_until_your_name_is_known(test_db) -> None:
         mail = _item(conn, "email", "e1", "Ann", {"from_email": "ann@x.org"}, own=True)
         link_agents(conn)
         assert _agents(conn, mail) == [("author", None, "Ann", "person", False)]
+
+
+def _tagged(text: str, tags: list[tuple[int, int, str, str]]) -> dict[str, Any]:
+    """LinkedIn changelog metadata for a comment whose text tags members or companies."""
+    kinds = {
+        "member": "com.linkedin.common.MemberAttributedEntity",
+        "company": "com.linkedin.common.CompanyAttributedEntity",
+    }
+    attributes = [
+        {"start": start, "length": length, "value": {kinds[field]: {field: urn}}}
+        for start, length, field, urn in tags
+    ]
+    return {"raw": {"owner": ME, "activity": {"message": {"text": text, "attributes": attributes}}}}
+
+
+def test_a_tagged_member_is_a_confirmed_mention_named_as_written(test_db) -> None:
+    # The emoji is two UTF-16 units, as LinkedIn counts: "Ray Myers" starts at 3
+    text = "🎉 Ray Myers and Acme, see this"
+    meta = _tagged(
+        text, [(3, 9, "member", "urn:li:person:ray"), (17, 4, "company", "urn:li:company:1")]
+    )
+    with get_connection(test_db) as conn:
+        # Ray was first seen as an author, named by his URN
+        theirs = _item(conn, "linkedin", "c0", "urn:li:person:ray", {"raw": {"owner": ME}})
+        comment = _item(conn, "linkedin", "c1", ME, meta)
+        link_agents(conn)
+        assert _agents(conn, comment) == [
+            ("author", None, "You", "person", True),
+            ("mentioned", None, "Acme", "organization", False),
+            ("mentioned", None, "Ray Myers", "person", False),
+        ]
+        assert _agents(conn, theirs) == [("author", None, "Ray Myers", "person", False)]
+        row = conn.execute("SELECT status, evidence, origin FROM item_mentions LIMIT 1").fetchone()
+        assert tuple(row) == ("confirmed", "tagged", "import:linkedin")
+        assert link_agents(conn) == 0
+
+
+def test_the_longest_way_a_name_is_written_names_them(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            "linkedin",
+            "c1",
+            ME,
+            _tagged("Ray thanks", [(0, 3, "member", "urn:li:person:ray")]),
+        )
+        _item(
+            conn,
+            "linkedin",
+            "c2",
+            ME,
+            _tagged("Ray Myers yes", [(0, 9, "member", "urn:li:person:ray")]),
+        )
+        link_agents(conn)
+        names = [r[0] for r in conn.execute("SELECT name FROM people WHERE is_self = 0")]
+        assert names == ["Ray Myers"]

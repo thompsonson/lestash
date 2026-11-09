@@ -363,6 +363,21 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
   The pass takes 1.5 s, and 1.0 s when nothing is new.
 - Not yet: `item_mentions` (filled by a name linker), retiring `person_profiles`, and `actor_id` for others' LinkedIn reactions.
 
+### As built (#216, step 4b)
+
+- The agents pass also fills `item_mentions` from LinkedIn tags: a post, comment or message's text attributes name a member or company URN, and where its name sits.
+- Each is `confirmed`, with evidence `tagged` and origin `import:linkedin`, as a URN names one member for certain.
+- Offsets count UTF-16 code units, so an emoji before a name counts two.
+- A tag writes the member's name, so it also names people known only by URN.
+  The longest way a name is written wins ("Matthew Thompson" over "Matthew"); a `person_profiles` name wins over both.
+- The detail view lists mentions after the item's agents, as "Mentions".
+- On a copy of the live database: 462 mentions of 125 people, 9 companies and you (115).
+  People named by URN fall from 219 to 174.
+- Not yet:
+  - Hashtags, which wait for a decision on how topic tags sit beside your tags.
+  - Bluesky mentions, as the importer keeps only link facets.
+  - The name linker, which suggests that two people are the same.
+
 ## The activity ontology
 
 An activity is something someone did, at a time, usually to an item.

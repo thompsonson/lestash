@@ -168,7 +168,7 @@ The item's confirmed links to and from other items, found by the linker after ea
 
 Who made, voiced, published or received the item, ordered by role and position. `404` if the item doesn't exist.
 
-Roles: `author`, `creator` (a channel's video), `narrator`, `publisher`, `recipient`. A person's `kind` is `person`, `organization`, `group` or `software`; `is_self` marks you.
+Roles: `author`, `creator` (a channel's video), `narrator`, `publisher`, `recipient`. After them come the people the item mentions (tags), with role `mentioned`. A person's `kind` is `person`, `organization`, `group` or `software`; `is_self` marks you.
 
 ```json
 {

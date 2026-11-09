@@ -30,6 +30,13 @@ from typing import Any, NamedTuple
 
 YOU = "You"  # your name until a source gives it
 NAME = "name"  # the evidence of an agent known by name only, with no account
+# Not a role: the item names them without their taking part, so it is an item_mentions
+# row, not an item_agents one
+MENTIONED = "mentioned"
+LINKEDIN_ENTITIES = {
+    "com.linkedin.common.MemberAttributedEntity": ("member", "person"),
+    "com.linkedin.common.CompanyAttributedEntity": ("company", "organization"),
+}
 LIST_ID = re.compile(r"<([^<>]+)>")
 
 # Chat sources: the author word (or Claude's metadata.sender) -> the software agent that
@@ -45,7 +52,7 @@ CHAT_AUTHORS: dict[str, dict[str, str | None]] = {
 class AgentRef(NamedTuple):
     """One agent of an item, as its source names it."""
 
-    role: str  # author, creator, narrator, publisher, recipient
+    role: str  # author, creator, narrator, publisher, recipient; or MENTIONED
     platform: str
     identifier: str | None  # None: known by name only, so no account
     name: str
@@ -99,12 +106,65 @@ def _youtube(row: _Row, _: _Context) -> Iterator[AgentRef]:
     )
 
 
-def _linkedin(row: _Row, ctx: _Context) -> Iterator[AgentRef]:
-    """A member (urn:li:person) or a company page (urn:li:company). The API gives no
-    names: one comes from person_profiles, else the URN stands in for it."""
-    urn = row.author
-    if not urn:
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def linkedin_mentions(metadata: dict[str, Any]) -> Iterator[tuple[str, str, str]]:
+    """(URN, kind, name as written) for each member or company a LinkedIn post, comment
+    or message tags. Its attributes give the URN and where the name sits in the text,
+    counted in UTF-16 code units, as an emoji before it shows."""
+    activity = _dict(_dict(metadata.get("raw")).get("activity"))
+    message = _dict(activity.get("message"))
+    share = _dict(
+        _dict(_dict(activity.get("specificContent")).get("com.linkedin.ugc.ShareContent")).get(
+            "shareCommentary"
+        )
+    )
+    text = message.get("text") or share.get("text")
+    attributes = message.get("attributes") or share.get("attributes")
+    if not isinstance(text, str) or not isinstance(attributes, list):
         return
+    units = text.encode("utf-16-le")
+    for attribute in attributes:
+        attribute = _dict(attribute)
+        start, length = attribute.get("start"), attribute.get("length")
+        for entity, (field, kind) in LINKEDIN_ENTITIES.items():
+            urn = _dict(_dict(attribute.get("value")).get(entity)).get(field)
+            if (
+                not isinstance(urn, str)
+                or not isinstance(start, int)
+                or not isinstance(length, int)
+            ):
+                continue
+            name = units[start * 2 : (start + length) * 2].decode("utf-16-le", "replace")
+            yield urn, kind, " ".join(name.split())
+
+
+def _linkedin(row: _Row, ctx: _Context) -> Iterator[AgentRef]:
+    """The author, a member (urn:li:person) or a company page (urn:li:company), and the
+    members and companies the text tags. The API gives no names: one comes from
+    person_profiles, else from how a mention writes it, else the URN stands in."""
+    seen: set[str] = set()
+    for urn, kind, _ in linkedin_mentions(row.metadata):
+        if urn in seen:
+            continue
+        seen.add(urn)
+        name, url = ctx.linkedin_names.get(urn, (None, None))
+        yield AgentRef(
+            MENTIONED,
+            "linkedin",
+            urn,
+            name or urn,
+            kind,
+            url=url,
+            is_self=urn in ctx.linkedin_self,
+            evidence="tagged",
+        )
+    author = row.author
+    if not author:
+        return
+    urn = author
     if urn.startswith("urn:li:person:"):
         kind, evidence = "person", "member URN"
     elif urn.startswith("urn:li:company:"):
@@ -243,12 +303,24 @@ def _context(conn: sqlite3.Connection) -> _Context:
             "AND json_extract(metadata, '$.raw.owner') LIKE 'urn:li:person:%'"
         )
     )
-    names = {
-        urn: (name, url)
-        for urn, name, url in conn.execute(
-            "SELECT urn, display_name, profile_url FROM person_profiles"
-        )
-    }
+    # A name as mentions write it: the longest, as "Matthew Thompson" over "Matthew"
+    names: dict[str, tuple[str | None, str | None]] = {}
+    for (metadata_json,) in conn.execute(
+        "SELECT metadata FROM items WHERE source_type = 'linkedin' AND held = 1 "
+        "AND metadata LIKE '%AttributedEntity%'"
+    ):
+        try:
+            metadata = _dict(json.loads(metadata_json))
+        except (TypeError, ValueError):
+            continue
+        for urn, _, name in linkedin_mentions(metadata):
+            if name and len(name) > len(names.get(urn, (None, None))[0] or ""):
+                names[urn] = (name, None)
+    # A profile's name wins
+    for urn, name, url in conn.execute(
+        "SELECT urn, display_name, profile_url FROM person_profiles"
+    ):
+        names[urn] = (name or names.get(urn, (None, None))[0], url)
     stored = conn.execute(
         "SELECT name FROM people WHERE is_self = 1 AND name != ?", (YOU,)
     ).fetchone()
@@ -424,8 +496,9 @@ def _your_name(conn: sqlite3.Connection, ctx_self: frozenset[str]) -> str | None
 
 
 def link_agents(conn: sqlite3.Connection) -> int:
-    """Record the agents of every item whose source names them. Returns how many item
-    agents were added; safe to run again. The caller commits."""
+    """Record the agents of every item whose source names them, and the people it
+    mentions. Returns how many item agents and mentions were added; safe to run again.
+    The caller commits."""
     if not conn.in_transaction:
         # Write-lock first: two passes at once (a sync, an upload) would each make the
         # people known by name that the other is making
@@ -444,13 +517,17 @@ def link_agents(conn: sqlite3.Connection) -> int:
     # Yours first: an account of yours must not be made someone else's because an item
     # naming it as a recipient came first
     found = sorted(agents_of(conn, ctx), key=lambda found: not found[2].is_self)
-    rows = []
+    rows, mentions = [], []
     for item_id, source_type, ref in found:
         if ref.identifier is None and (item_id, ref.role, ref.position) in named:
             continue
         origin = f"import:{source_type}"
         person_id = people.person(ref, origin)
-        if person_id is not None:
+        if person_id is None:
+            continue
+        if ref.role == MENTIONED:
+            mentions.append((item_id, person_id, ref.evidence, origin))
+        else:
             rows.append((item_id, person_id, ref.role, ref.position, ref.evidence, origin))
     before = conn.total_changes
     conn.executemany(
@@ -458,19 +535,32 @@ def link_agents(conn: sqlite3.Connection) -> int:
         "origin) VALUES (?, ?, ?, ?, ?, ?)",
         rows,
     )
+    # An importer's tag names one member for certain: confirmed, as its accounts are
+    conn.executemany(
+        "INSERT OR IGNORE INTO item_mentions (item_id, person_id, status, evidence, origin) "
+        "VALUES (?, ?, 'confirmed', ?, ?)",
+        mentions,
+    )
     return conn.total_changes - before
 
 
 def agents_for(conn: sqlite3.Connection, item_id: int) -> list[dict[str, Any]]:
-    """An item's agents, by role and position, each with the person's accounts."""
+    """An item's agents, by role and position, then the people it mentions (role
+    ``mentioned``, confirmed only), each with the person's accounts."""
     rows = conn.execute(
         """
-        SELECT a.role, a.position, p.id, p.name, p.kind, p.is_self
-        FROM item_agents a JOIN people p ON p.id = a.person_id
-        WHERE a.item_id = ?
-        ORDER BY a.role, a.position IS NULL, a.position, p.name
+        SELECT role, position, id, name, kind, is_self FROM (
+            SELECT a.role, a.position, p.id, p.name, p.kind, p.is_self, 0 AS mention
+            FROM item_agents a JOIN people p ON p.id = a.person_id
+            WHERE a.item_id = :item
+            UNION ALL
+            SELECT :mentioned, NULL, p.id, p.name, p.kind, p.is_self, 1
+            FROM item_mentions m JOIN people p ON p.id = m.person_id
+            WHERE m.item_id = :item AND m.status = 'confirmed'
+        )
+        ORDER BY mention, role, position IS NULL, position, name
         """,
-        (item_id,),
+        {"item": item_id, "mentioned": MENTIONED},
     ).fetchall()
     agents = []
     for role, position, person_id, name, kind, is_self in rows:

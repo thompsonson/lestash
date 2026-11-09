@@ -510,7 +510,11 @@ def agents() -> None:
         conn.commit()
         people = conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
         total = conn.execute("SELECT COUNT(*) FROM item_agents").fetchone()[0]
-    console.print(f"Added {added} item agents; {total} stored, for {people} people.")
+        mentions = conn.execute("SELECT COUNT(*) FROM item_mentions").fetchone()[0]
+    console.print(
+        f"Added {added} item agents and mentions; {total} agents and {mentions} mentions "
+        f"stored, for {people} people."
+    )
 
 
 @app.command()
