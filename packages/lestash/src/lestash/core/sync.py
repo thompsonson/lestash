@@ -204,6 +204,8 @@ class SyncStore:
                     alt_text=media.alt_text,
                     position=media.position,
                     source_origin=media.source_origin,
+                    sha256=media.sha256,
+                    size=media.size,
                     _commit=False,
                 )
         finally:

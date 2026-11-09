@@ -1510,11 +1510,14 @@ def add_item_media(
     alt_text: str | None = None,
     position: int = 0,
     source_origin: str = "sync",
+    sha256: str | None = None,
+    size: int | None = None,
     _commit: bool = True,
 ) -> int:
     """Add a media attachment to an item.
 
-    Skips insert if an identical (item_id, media_type, url, local_path) row exists.
+    Skips insert if an identical (item_id, media_type, url, local_path, sha256) row
+    exists. ``sha256`` names a file already in the file store, of ``size`` bytes.
 
     Returns:
         The media row ID.
@@ -1523,17 +1526,34 @@ def add_item_media(
         """SELECT id FROM item_media
            WHERE item_id = ? AND media_type = ?
              AND (url = ? OR (url IS NULL AND ? IS NULL))
-             AND (local_path = ? OR (local_path IS NULL AND ? IS NULL))""",
-        (item_id, media_type, url, url, local_path, local_path),
+             AND (local_path = ? OR (local_path IS NULL AND ? IS NULL))
+             AND (sha256 = ? OR (sha256 IS NULL AND ? IS NULL))""",
+        (item_id, media_type, url, url, local_path, local_path, sha256, sha256),
     ).fetchone()
     if existing:
         return existing[0]
 
+    if sha256:
+        conn.execute(
+            "INSERT OR IGNORE INTO blobs (sha256, size, mime_type) VALUES (?, ?, ?)",
+            (sha256, size or 0, mime_type),
+        )
     cursor = conn.execute(
         """INSERT INTO item_media
-           (item_id, media_type, url, local_path, mime_type, alt_text, position, source_origin)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (item_id, media_type, url, local_path, mime_type, alt_text, position, source_origin),
+           (item_id, media_type, url, local_path, mime_type, alt_text, position, source_origin,
+            sha256)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            item_id,
+            media_type,
+            url,
+            local_path,
+            mime_type,
+            alt_text,
+            position,
+            source_origin,
+            sha256,
+        ),
     )
     if _commit:
         conn.commit()
@@ -1544,7 +1564,7 @@ def get_item_media(conn: sqlite3.Connection, item_id: int) -> list[dict]:
     """Get all media attachments for an item, ordered by position."""
     rows = conn.execute(
         """SELECT id, item_id, media_type, url, local_path, mime_type,
-                  alt_text, position, source_origin, created_at
+                  alt_text, position, source_origin, created_at, sha256
            FROM item_media WHERE item_id = ? ORDER BY position""",
         (item_id,),
     ).fetchall()
@@ -1558,7 +1578,7 @@ def get_item_media_batch(conn: sqlite3.Connection, item_ids: list[int]) -> dict[
     placeholders = ",".join("?" for _ in item_ids)
     rows = conn.execute(
         f"""SELECT id, item_id, media_type, url, local_path, mime_type,
-                   alt_text, position, source_origin, created_at
+                   alt_text, position, source_origin, created_at, sha256
             FROM item_media WHERE item_id IN ({placeholders})
             ORDER BY item_id, position""",
         item_ids,

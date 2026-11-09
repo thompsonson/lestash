@@ -16,6 +16,7 @@ class MediaResponse(BaseModel):
     alt_text: str | None = None
     position: int = 0
     available: bool = False
+    mime_type: str | None = None
 
 
 class ItemResponse(BaseModel):

@@ -42,7 +42,19 @@ def serve_media(media_id: int):
             or mimetypes.guess_type(str(media["local_path"] or file_path))[0]
             or "application/octet-stream"
         )
-        return FileResponse(file_path, media_type=content_type)
+        # Only types a browser shows safely stay inline: an HTML page (a NotebookLM app)
+        # would run its scripts in this app's origin, so it is a download
+        inline = content_type.startswith(("image/", "audio/", "video/")) or (
+            content_type == "application/pdf"
+        )
+        if content_type == "image/svg+xml":
+            inline = True  # as before; an <img> runs no scripts
+        return FileResponse(
+            file_path,
+            media_type=content_type,
+            content_disposition_type="inline" if inline else "attachment",
+            filename=(media["alt_text"] or file_path.name) if not inline else None,
+        )
 
     # Fall back to remote URL (only if it's an actual HTTP URL)
     if media["url"] and media["url"].startswith("http"):

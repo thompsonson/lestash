@@ -1654,7 +1654,15 @@
           if ((m.media_type === 'image' || m.media_type === 'thumbnail') && m.available) {
             html += `<img src="${getApiBase()}${escHtml(m.serve_url)}" alt="${escHtml(m.alt_text || '')}">`;
           } else if (m.media_type === 'pdf') {
-            html += `<a href="${escHtml(m.url)}" target="_blank" rel="noopener">📄 PDF</a>`;
+            // A stored PDF is served here; an unstored one is at its source
+            const href = m.available && !m.url ? getApiBase() + m.serve_url : m.url;
+            html += `<a href="${escHtml(href)}" target="_blank" rel="noopener">📄 PDF</a>`;
+          } else if (m.media_type === 'audio' && m.available) {
+            html += `<audio controls preload="none" src="${getApiBase()}${escHtml(m.serve_url)}"></audio>`;
+          } else if (m.media_type === 'video' && m.available) {
+            html += `<video controls preload="none" style="max-width:100%" src="${getApiBase()}${escHtml(m.serve_url)}"></video>`;
+          } else if (m.media_type === 'file' && m.available) {
+            html += `<a href="${getApiBase()}${escHtml(m.serve_url)}">📎 ${escHtml(m.alt_text || 'File')}</a>`;
           } else if (m.media_type === 'link') {
             html += `<a href="${escHtml(m.url)}" target="_blank" rel="noopener">🔗 ${escHtml(m.alt_text || m.url)}</a>`;
           }

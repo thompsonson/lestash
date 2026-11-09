@@ -59,7 +59,10 @@ def _media_responses(conn, item_id: int) -> list[MediaResponse]:
             serve_url=f"/api/media/{m['id']}",
             alt_text=m["alt_text"],
             position=m["position"],
-            available=bool(m["local_path"] or (m["url"] and m["url"].startswith("http"))),
+            available=bool(
+                m["sha256"] or m["local_path"] or (m["url"] and m["url"].startswith("http"))
+            ),
+            mime_type=m["mime_type"],
         )
         for m in get_item_media(conn, item_id)
     ]
