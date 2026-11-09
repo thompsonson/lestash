@@ -2254,7 +2254,12 @@
           } else {
             children.forEach(child => list.appendChild(renderCard(child)));
           }
-        }).catch(() => {});
+        }).catch(() => {
+          const list = document.getElementById('children-list');
+          if (list && list.dataset.itemId === String(item.id)) {
+            list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Could not load these items</span>';
+          }
+        });
       }
 
       loadActivities(item.id);
@@ -2362,11 +2367,13 @@
     const CHILDREN_PAGE = 100;
     async function loadAllChildren(parentId) {
       const children = [];
-      for (;;) {
+      const seen = new Set();
+      for (let offset = 0; ; offset += CHILDREN_PAGE) {
         const data = await api(`/api/items?parent_id=${parentId}&include_children=true`
-          + `&limit=${CHILDREN_PAGE}&offset=${children.length}`);
-        children.push(...data.items);
-        if (data.items.length < CHILDREN_PAGE || children.length >= data.total) return children;
+          + `&limit=${CHILDREN_PAGE}&offset=${offset}`);
+        // A child added while the pages load shifts the next page by one: skip repeats
+        data.items.forEach(child => { if (!seen.has(child.id)) { seen.add(child.id); children.push(child); } });
+        if (data.items.length < CHILDREN_PAGE || offset + CHILDREN_PAGE >= data.total) return children;
       }
     }
 
