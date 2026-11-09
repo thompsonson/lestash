@@ -98,8 +98,15 @@ def merge_item(
     deleted = conn.execute(
         "DELETE FROM items WHERE id = ?" + (" AND held = 0" if stub_only else ""), (from_id,)
     ).rowcount
-    # No vector table, or sqlite-vec not loaded: no embedding to remove
-    with suppress(sqlite3.OperationalError):
-        if deleted:
-            conn.execute("DELETE FROM vec_items WHERE item_id = ?", (from_id,))
+    if deleted:
+        # Its embedding goes too, or semantic search would return it. vec_items needs
+        # sqlite-vec, which get_connection doesn't load. No table: nothing to remove
+        with suppress(sqlite3.OperationalError, ImportError, AttributeError):
+            try:
+                conn.execute("DELETE FROM vec_items WHERE item_id = ?", (from_id,))
+            except sqlite3.OperationalError:
+                from lestash.core.embeddings import load_vec_extension
+
+                load_vec_extension(conn)  # once per connection: loading again fails
+                conn.execute("DELETE FROM vec_items WHERE item_id = ?", (from_id,))
     return moved

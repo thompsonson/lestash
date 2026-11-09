@@ -71,3 +71,27 @@ def test_media_are_not_added_twice(test_db) -> None:
             )
         dedupe_linkedin(conn)
         assert [tuple(r) for r in conn.execute("SELECT item_id FROM item_media")] == [(current,)]
+
+
+def test_a_merged_copy_takes_its_embedding_with_it(test_db) -> None:
+    from lestash.core.embeddings import EMBEDDING_DIM, ensure_vec_table, upsert_embedding
+
+    with get_connection(test_db) as conn:
+        ensure_vec_table(conn)
+        old = _item(conn, "changelog-ugcPosts-1774078761862", 1)
+        current = _item(conn, "changelog-ugcPosts-7441", 1)
+        old2 = _item(conn, "changelog-ugcPosts-1774078762000", 2, resource_id="7442")
+        current2 = _item(conn, "changelog-ugcPosts-7442", 2, resource_id="7442")
+        for item in (old, current, old2, current2):
+            upsert_embedding(conn, item, [0.1] * EMBEDDING_DIM)
+        conn.commit()
+    # A fresh connection, as the CLI's: sqlite-vec is not loaded
+    with get_connection(test_db) as conn:
+        dedupe_linkedin(conn)
+        conn.commit()
+        ensure_vec_table(conn)
+        # Each merged copy's, not only the first
+        assert sorted(r[0] for r in conn.execute("SELECT item_id FROM vec_items")) == [
+            current,
+            current2,
+        ]
