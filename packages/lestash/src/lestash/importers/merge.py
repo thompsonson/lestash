@@ -74,7 +74,8 @@ def merge_with_stored(conn: sqlite3.Connection, item: ItemCreate) -> bool:
 
 def _stored(conn: sqlite3.Connection, item: ItemCreate) -> dict[str, Any] | None:
     row = conn.execute(
-        "SELECT id, title, content, metadata FROM items WHERE source_type = ? AND source_id = ?",
+        "SELECT id, title, content, metadata, author FROM items "
+        "WHERE source_type = ? AND source_id = ?",
         (item.source_type, item.source_id),
     ).fetchone()
     if not row:
@@ -83,7 +84,13 @@ def _stored(conn: sqlite3.Connection, item: ItemCreate) -> dict[str, Any] | None
         metadata = json.loads(row[3]) if row[3] else {}
     except json.JSONDecodeError:
         metadata = {}
-    return {"id": row[0], "title": row[1], "content": row[2], "metadata": metadata}
+    return {
+        "id": row[0],
+        "title": row[1],
+        "content": row[2],
+        "metadata": metadata,
+        "author": row[4],
+    }
 
 
 def _union_times(
@@ -158,6 +165,11 @@ def _merge_youtube(conn: sqlite3.Connection, item: ItemCreate, stored: dict[str,
             # A video removed since: keep the real title we already had
             item.title = stored["title"]
             merged.pop("unavailable", None)
+        elif new_is_takeout and not new.get("unavailable"):
+            merged.pop("unavailable", None)  # a title came back: the stored flag is stale
+        if new_is_takeout and not item.author:
+            # An entry without a channel (often a removed video) keeps the one we had
+            item.author = stored["author"] or merged.get("channel_title")
         if "watched_count" in merged:
             item.content = video_content(
                 item.title or "", merged.get("channel_title"), times, merged.get("description")

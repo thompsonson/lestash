@@ -2,7 +2,8 @@
 
 Imports [Google Takeout](https://takeout.google.com) exports automatically, using LeStash's
 zip importer (`lestash.importers`): Google Keep, Gemini (conversations and Gemini Apps
-activity), NotebookLM and YouTube watch/search history. One export can hold several products;
+activity), NotebookLM and YouTube history (watch/search history, or YouTube's My Activity).
+One export can hold several products;
 all of them are imported.
 
 ## Setup
@@ -54,6 +55,10 @@ Re-importing is safe: items are updated in place, not duplicated.
   export that no longer has old watches (YouTube auto-delete) doesn't erase them. A watched video
   you also liked nests under its `liked:` item. YouTube Music listens (songs and podcasts) are
   skipped for now.
+- **YouTube My Activity** (`My Activity/YouTube/My Activity.json`) holds the watches and
+  searches too, kept longer than the history files. Its likes, dislikes and shares of a video
+  become activities of that video's `history:` item, made for a video you never watched.
+  Subscriptions, saved playlists, poll votes and dismissed suggestions are skipped.
 - **Gemini Apps activity:** each prompt names its chat, so prompts become chats with prompt and
   reply turns. A chat already saved from the Gemini page or by the extension, matched by its
   exact chat id or URL, keeps its item and turns; Takeout adds only the prompts it lacks. Page

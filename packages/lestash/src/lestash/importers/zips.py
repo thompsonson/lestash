@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 #   1: Keep, Gemini, NotebookLM, Mistral, JSON
 #   2: + YouTube watch/search history; several Takeout products per zip
 #   3: + Gemini Apps activity (chats with prompt and reply turns, Canvas documents)
-IMPORTER_VERSION = 3
+#   4: + YouTube activity (My Activity: watches, searches, likes, dislikes, shares)
+IMPORTER_VERSION = 4
 
 
 class CorruptZip(ValueError):
@@ -97,7 +98,10 @@ def parse_zip(data: bytes | Path):
 # Your own history only: supervised accounts live under .../children/<name>/.
 # The folder and file names (and the "Watched"/"Searched for" title prefixes parsed in
 # youtube_history) are those of an English-language Takeout; other languages translate them.
-YOUTUBE_HISTORY = re.compile(r"^Takeout/YouTube[^/]*/history/(watch|search)-history\.json$")
+YOUTUBE_HISTORY = re.compile(
+    r"^Takeout/(YouTube[^/]*/history/(watch|search)-history"
+    r"|My Activity/YouTube/My ?Activity)\.json$"
+)
 
 
 # Gemini Apps activity, exported as JSON. Like YOUTUBE_HISTORY, the names are an
@@ -132,8 +136,10 @@ def _parse_youtube_history_zip(zf, history_files):
             continue
         if name.endswith("watch-history.json"):
             items.extend(parse_watch_history(entries))
-        else:
+        elif name.endswith("search-history.json"):
             items.extend(parse_search_history(entries))
+        else:  # My Activity: watches, searches, likes and shares together
+            items.extend(parse_watch_history(entries) + parse_search_history(entries))
     return items
 
 

@@ -1,11 +1,17 @@
 """YouTube watch and search history from a Google Takeout export.
 
 Takeout's `YouTube and YouTube Music/history/watch-history.json` and `search-history.json`
-(choose JSON for history when creating the export). One item per video, search query or
-community post, with every time it happened kept as an activity, so "what was I watching in early
-March" works. Videos become the canonical `history:{video_id}` item; a video you also liked is
+(choose JSON for history when creating the export), or `My Activity/YouTube/My Activity.json`,
+which holds both and keeps them longer. One item per video, search query or community post,
+with every time it happened kept as an activity, so "what was I watching in early March"
+works. Videos become the canonical `history:{video_id}` item; a video you also liked is
 nested under its `liked:{video_id}` item instead of appearing twice. Ads and supervised
 (children's) accounts are skipped.
+
+My Activity also records likes, dislikes and shares. Those of a video are activities of its
+`history:` item, which is made for a video you never watched. Its other entries are skipped:
+subscriptions, saved playlists, poll votes, dismissed suggestions, likes of community posts,
+and shares of Shorts (a /shorts/ link, which has no ``v=`` video id).
 
 YouTube Music entries (songs, but also podcast episodes) are skipped for now: they will get
 their own item type rather than being treated as videos.
@@ -22,7 +28,9 @@ from lestash.models.item import ActivityCreate, ItemCreate
 SOURCE = "takeout:youtube"  # activities.source of what this importer writes
 VIDEO_ID = re.compile(r"[?&]v=([A-Za-z0-9_-]{11})")
 POST_ID = re.compile(r"/post/([A-Za-z0-9_-]+)")
-ACTION_PREFIX = re.compile(r"^(Watched|Viewed|Searched for)\s+", re.S)
+ACTION_PREFIX = re.compile(r"^(Watched|Viewed|Searched for|Liked|Disliked)\s+", re.S)
+# Title word -> verb, for the entries about a video
+VIDEO_VERBS = {"Watched": "watched", "Liked": "liked", "Disliked": "disliked", "Shared": "shared"}
 
 
 def _is_ad(entry: dict[str, Any]) -> bool:
@@ -109,28 +117,54 @@ class _Group:
         ]
 
 
+def _video_title(entry: dict[str, Any]) -> tuple[str, str | None, str | None]:
+    """A video entry's title, channel and channel URL.
+
+    A share's title is "Shared video": its subtitles hold the shared URL, then the video's
+    title, and no channel.
+    """
+    if entry.get("title", "").startswith("Shared"):
+        subs = entry.get("subtitles") or []
+        return (subs[-1].get("name") or "" if len(subs) > 1 else ""), None, None
+    channel, channel_url = _channel(entry)
+    return ACTION_PREFIX.sub("", entry.get("title", "")).strip(), channel, channel_url
+
+
 def parse_watch_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
-    """Watched videos and viewed community posts, one item each."""
-    videos: dict[str, _Group] = defaultdict(_Group)
+    """Watched videos and viewed community posts, one item each.
+
+    A video's likes, dislikes and shares are activities of its item too.
+    """
+    videos: dict[str, dict[str, _Group]] = defaultdict(lambda: defaultdict(_Group))
     posts: dict[str, _Group] = defaultdict(_Group)
     for entry in entries:
         if _is_ad(entry) or _is_music(entry):
             continue
         url = entry.get("titleUrl") or ""
-        if (match := VIDEO_ID.search(url)) and entry.get("title", "").startswith("Watched"):
-            videos[match.group(1)].add(entry)
-        elif match := POST_ID.search(url):
+        word = entry.get("title", "").split(" ", 1)[0]
+        if (match := VIDEO_ID.search(url)) and word in VIDEO_VERBS:
+            videos[match.group(1)][VIDEO_VERBS[word]].add(entry)
+        elif (match := POST_ID.search(url)) and word == "Viewed":
             posts[match.group(1)].add(entry)
 
     items = []
-    for video_id, group in videos.items():
-        latest = group.latest
-        title = ACTION_PREFIX.sub("", latest.get("title", "")).strip()
-        unavailable = title.startswith("https://")
+    for video_id, groups in videos.items():
+        watches = groups.get("watched") or _Group()
+        # The title of the latest watch; else of the latest like, dislike or share
+        named = watches if watches.entries else _latest_group(groups)
+        title, channel, channel_url = _video_title(named.latest)
+        if not channel:
+            # A share names no channel: take it from the latest entry that does
+            entries = [e for group in groups.values() for e in group.entries]
+            with_channel = [e for e in entries if _video_title(e)[1]]
+            if with_channel:
+                latest = max(with_channel, key=lambda e: e.get("time", ""))
+                _, channel, channel_url = _video_title(latest)
+        unavailable = title.startswith("https://") or not title
         if unavailable:
             title = "(video no longer available)"
-        channel, channel_url = _channel(latest)
-        product = latest.get("header") or "YouTube"
+        product = named.latest.get("header") or "YouTube"
+        every_time = [t for group in groups.values() for t in group.times]
         metadata = {
             "video_id": video_id,
             "channel_title": channel,
@@ -138,7 +172,7 @@ def parse_watch_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
             "source_subtype": "history",
             "product": product,
             "source": "takeout",
-            **group.time_metadata("watched"),
+            **(watches.time_metadata("watched") if watches.entries else {}),
             "_parent_source_id": f"liked:{video_id}",
         }
         if unavailable:
@@ -149,12 +183,12 @@ def parse_watch_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
                 source_id=f"history:{video_id}",
                 url=f"https://www.youtube.com/watch?v={video_id}",
                 title=title,
-                content=video_content(title, channel, group.times),
+                content=video_content(title, channel, watches.times),
                 author=channel,
-                created_at=min(group.times) if group.times else None,
+                created_at=min(watches.times or every_time) if every_time else None,
                 is_own_content=False,
                 metadata={k: v for k, v in metadata.items() if v is not None},
-                activities=group.activities("watched"),
+                activities=[a for verb, group in groups.items() for a in group.activities(verb)],
             )
         )
 
@@ -198,6 +232,11 @@ def _query(entry: dict[str, Any]) -> str | None:
         return values[0].strip()
     title = entry.get("title", "")
     return ACTION_PREFIX.sub("", title).strip() if title.startswith("Searched for") else None
+
+
+def _latest_group(groups: dict[str, _Group]) -> _Group:
+    """The group with the most recent entry."""
+    return max(groups.values(), key=lambda g: g.latest.get("time", ""))
 
 
 def parse_search_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:

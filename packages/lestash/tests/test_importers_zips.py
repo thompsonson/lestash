@@ -103,6 +103,23 @@ def test_every_takeout_product_in_one_zip_is_imported() -> None:
     assert {i.source_type for i in items} == {"google-keep", "gemini", "notebooklm", "youtube"}
 
 
+def test_my_activity_yields_watches_and_searches_of_youtube() -> None:
+    entries = [
+        _watch("AAAAAAAAAAA", "2026-01-01T10:00:00Z"),
+        {
+            "header": "YouTube",
+            "title": "Searched for markov blanket",
+            "titleUrl": "https://www.youtube.com/results?search_query=markov+blanket",
+            "time": "2026-01-02T10:00:00Z",
+        },
+    ]
+    items, source_type = parse_zip(
+        _zip({"Takeout/My Activity/YouTube/My Activity.json": json.dumps(entries)})
+    )
+    assert source_type == "youtube"
+    assert sorted(i.source_id for i in items) == ["history:AAAAAAAAAAA", "search:markov blanket"]
+
+
 def test_parse_zip_accepts_a_path(tmp_path) -> None:
     items, source_type = parse_zip(_zip(META, tmp_path / "p.zip"))
     assert source_type == "notebooklm"
@@ -288,6 +305,33 @@ def test_removed_video_keeps_the_title_we_had(test_db) -> None:
             vid, "2026-01-01T10:00:00Z", title=f"Watched https://www.youtube.com/watch?v={vid}"
         )
         _store(conn, parse_zip(_history_zip(gone))[0])
+        title, _, md, _, _ = _row(conn, f"history:{vid}")
+    assert title == "Markov blankets explained"
+    assert "unavailable" not in md
+
+
+def test_a_watch_without_a_channel_keeps_the_stored_author(test_db) -> None:
+    vid = "AAAAAAAAAAA"
+    with get_connection(test_db) as conn:
+        _store(conn, parse_zip(_history_zip(_watch(vid, "2025-01-01T10:00:00Z")))[0])
+        gone = _watch(
+            vid, "2026-01-01T10:00:00Z", title=f"Watched https://www.youtube.com/watch?v={vid}"
+        )
+        del gone["subtitles"]  # how My Activity lists a removed video
+        _store(conn, parse_zip(_history_zip(gone))[0])
+        author = conn.execute("SELECT author FROM items").fetchone()[0]
+    assert author == "Chan"
+
+
+def test_a_title_that_comes_back_clears_the_unavailable_flag(test_db) -> None:
+    vid = "AAAAAAAAAAA"
+    gone = _watch(
+        vid, "2025-01-01T10:00:00Z", title=f"Watched https://www.youtube.com/watch?v={vid}"
+    )
+    with get_connection(test_db) as conn:
+        _store(conn, parse_zip(_history_zip(gone))[0])
+        assert _row(conn, f"history:{vid}")[2]["unavailable"] is True
+        _store(conn, parse_zip(_history_zip(_watch(vid, "2026-01-01T10:00:00Z")))[0])
         title, _, md, _, _ = _row(conn, f"history:{vid}")
     assert title == "Markov blankets explained"
     assert "unavailable" not in md
