@@ -2,7 +2,7 @@
 
 Takeout's `YouTube and YouTube Music/history/watch-history.json` and `search-history.json`
 (choose JSON for history when creating the export). One item per video, search query or
-community post, with every time it happened in metadata, so "what was I watching in early
+community post, with every time it happened kept as an activity, so "what was I watching in early
 March" works. Videos become the canonical `history:{video_id}` item; a video you also liked is
 nested under its `liked:{video_id}` item instead of appearing twice. Ads and supervised
 (children's) accounts are skipped.
@@ -17,9 +17,9 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from lestash.models.item import ItemCreate
+from lestash.models.item import ActivityCreate, ItemCreate
 
-MAX_TIMES = 200  # watch/search times kept per item
+SOURCE = "takeout:youtube"  # activities.source of what this importer writes
 VIDEO_ID = re.compile(r"[?&]v=([A-Za-z0-9_-]{11})")
 POST_ID = re.compile(r"/post/([A-Za-z0-9_-]+)")
 ACTION_PREFIX = re.compile(r"^(Watched|Viewed|Searched for)\s+", re.S)
@@ -92,14 +92,21 @@ class _Group:
         """The most recent entry (has the current title for renamed videos)."""
         return max(self.entries, key=lambda e: e.get("time", ""))
 
-    def time_metadata(self, key: str) -> dict[str, Any]:
-        ordered = sorted(self.times)
+    def time_metadata(self, verb: str) -> dict[str, Any]:
+        """The metadata summing up the times: their count, the first and the last."""
+        ordered = sorted(set(self.times))  # an entry listed twice is one time
         return {
-            key: [t.isoformat() for t in ordered[-MAX_TIMES:]],
-            f"{key.removesuffix('_times')}_count": len(ordered),
+            f"{verb}_count": len(ordered),
             "first_at": ordered[0].isoformat() if ordered else None,
             "last_at": ordered[-1].isoformat() if ordered else None,
         }
+
+    def activities(self, verb: str, details: dict[str, Any] | None = None) -> list[ActivityCreate]:
+        """One activity per time, kept in the activities table, not in metadata."""
+        return [
+            ActivityCreate(verb=verb, occurred_at=t, source=SOURCE, details=details)
+            for t in sorted(set(self.times))
+        ]
 
 
 def parse_watch_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
@@ -131,7 +138,7 @@ def parse_watch_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
             "source_subtype": "history",
             "product": product,
             "source": "takeout",
-            **group.time_metadata("watched_times"),
+            **group.time_metadata("watched"),
             "_parent_source_id": f"liked:{video_id}",
         }
         if unavailable:
@@ -147,6 +154,7 @@ def parse_watch_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
                 created_at=min(group.times) if group.times else None,
                 is_own_content=False,
                 metadata={k: v for k, v in metadata.items() if v is not None},
+                activities=group.activities("watched"),
             )
         )
 
@@ -173,10 +181,11 @@ def parse_watch_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
                         "channel_url": channel_url,
                         "source_subtype": "post",
                         "source": "takeout",
-                        **group.time_metadata("viewed_times"),
+                        **group.time_metadata("viewed"),
                     }.items()
                     if v is not None
                 },
+                activities=group.activities("viewed"),
             )
         )
     return items
@@ -219,10 +228,11 @@ def parse_search_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
                         "query": query,
                         "source_subtype": "search",
                         "source": "takeout",
-                        **group.time_metadata("searched_times"),
+                        **group.time_metadata("searched"),
                     }.items()
                     if v is not None
                 },
+                activities=group.activities("searched", {"query": query}),
             )
         )
     return items

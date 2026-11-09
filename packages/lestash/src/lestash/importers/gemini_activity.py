@@ -31,7 +31,7 @@ from functools import cache
 from typing import Any
 
 from lestash.importers.youtube_history import _time
-from lestash.models.item import ItemCreate
+from lestash.models.item import ActivityCreate, ItemCreate
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +272,6 @@ def _chat_item(chat_id: str, chat: _Chat) -> ItemCreate:
         "type": "chat",
         "conversation_id": chat_source_id(chat_id),
         "generated_title": chat_title(chat.prompts[0].text),
-        "prompted_times": [_iso(t) for t in times],  # not capped: see merge.UNCAPPED
         "prompted_count": len(times),
         "first_at": _iso(times[0]),
         "last_at": _iso(times[-1]),
@@ -288,6 +287,10 @@ def _chat_item(chat_id: str, chat: _Chat) -> ItemCreate:
         created_at=times[0],
         is_own_content=True,
         metadata=metadata,
+        activities=[
+            ActivityCreate(verb="prompted", occurred_at=t, source="takeout:gemini")
+            for t in sorted(set(times))
+        ],
     )
 
 

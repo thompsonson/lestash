@@ -18,6 +18,19 @@ class MediaCreate(BaseModel):
     source_origin: str = "sync"
 
 
+class ActivityCreate(BaseModel):
+    """One time someone did something to an item, such as a watch, kept in ``activities``.
+
+    Imports attach these to the item they write, instead of keeping the times in its
+    metadata; record_activities() stores them once the item has an id.
+    """
+
+    verb: str  # 'watched', 'viewed', 'searched', 'prompted'
+    occurred_at: datetime
+    source: str  # where the record came from, e.g. 'takeout:youtube'
+    details: dict[str, Any] | None = None
+
+
 class MediaAttachment(BaseModel):
     """Model for a media attachment from the database."""
 
@@ -52,6 +65,7 @@ class ItemCreate(BaseModel):
     metadata: dict[str, Any] | None = None
     parent_id: int | None = None
     media: list[MediaCreate] | None = None
+    activities: list[ActivityCreate] | None = None
 
 
 class Item(BaseModel):

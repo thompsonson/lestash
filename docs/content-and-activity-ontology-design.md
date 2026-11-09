@@ -337,7 +337,7 @@ CREATE INDEX idx_activities_item ON activities(item_id);
 ### As built (#216, step 1)
 
 - Migration 14 creates the table and fills it from the times lists already in item metadata; 15 indexes `context_id`.
-- Two triggers on `items` record each new time a later import adds; a time already recorded is skipped.
+- Two triggers on `items` recorded each new time a later import added; migration 16 removed them (step 1b).
 - `occurred_at` is UTC, as `2026-11-08T17:35:03.123Z`, so different exports' precisions match.
 - `actor_id` arrives with the `people` table, since SQLite refuses a foreign key to a table that doesn't exist.
 - `context_id` is set to null when its item is deleted, instead of blocking the delete.
@@ -348,6 +348,17 @@ CREATE INDEX idx_activities_item ON activities(item_id);
 
 - `watched_times`, `searched_times` and `viewed_times` become rows.
 - The item keeps a summary (`first_at`, `last_at`, counts) for listings.
+
+### As built (#216, step 1b)
+
+- Migration 16 removes `watched_times`, `viewed_times`, `searched_times` and `prompted_times` from item metadata.
+  It first records any listed time not yet an activity.
+  `item_history` keeps each item's old metadata, tagged `migration 16: times lists moved to activities`.
+- The YouTube history and Gemini activity importers attach their times to each item as `ItemCreate.activities`.
+- The writers that store Takeout items call `record_activities()` once the item has an id.
+- A re-import reads the stored times from `activities`, then updates the count, `first_at`, `last_at` and the content summary.
+- Times are no longer capped at 200 per item.
+  A count can exceed the stored times for an item whose list was capped before.
 - `created_at` can then mean one thing: when the content was made, where known.
 
 ### What it enables

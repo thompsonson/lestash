@@ -51,10 +51,12 @@ def test_api_history_sync_keeps_takeout_watch_times(test_db, youtube_video_facto
     assert result.exit_code == 0, result.output
 
     with get_connection(test_db) as conn:
-        md = json.loads(
-            conn.execute(
-                "SELECT metadata FROM items WHERE source_id = ?", (f"history:{VID}",)
-            ).fetchone()[0]
-        )
-    assert len(md["watched_times"]) == 2
+        md, content = conn.execute(
+            "SELECT metadata, content FROM items WHERE source_id = ?", (f"history:{VID}",)
+        ).fetchone()
+        md = json.loads(md)
+        watches = conn.execute("SELECT COUNT(*) FROM activities WHERE verb = 'watched'")
+        assert watches.fetchone()[0] == 2
+    assert md["watched_count"] == 2
+    assert "Watched 2 times: 2026-02-01, 2026-01-01" in content
     assert md["description"] == "Test video description"  # the API's field is kept too

@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from lestash.core.activities import record_activities
 from lestash.core.config import Config
 
 if TYPE_CHECKING:
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -137,8 +138,9 @@ CREATE INDEX IF NOT EXISTS idx_syndications_item ON syndications(item_id);
 """
 
 # Activities (docs/content-and-activity-ontology-design.md): one row per time someone
-# did something to an item. For now they come from the times lists that imports keep in
-# item metadata; the lists move out of metadata in a later step.
+# did something to an item. Migrations 14 and 15 filled them from the times lists that
+# imports kept in item metadata; migration 16 removed the lists. Imports now attach
+# activities to their items, stored by core.activities.record_activities().
 ACTIVITY_VERBS = {
     "watched_times": "watched",
     "viewed_times": "viewed",
@@ -185,6 +187,8 @@ def _activities_from_metadata(row: str, dates_only: bool = False) -> str:
       );
     """
 
+
+_HAS_TIMES = " OR ".join(f"json_type(metadata, '$.{key}') IS NOT NULL" for key in ACTIVITY_VERBS)
 
 # Migrations: list of (version, description, sql) tuples
 # Each migration brings the database from version N-1 to version N
@@ -504,6 +508,14 @@ MIGRATIONS = [
         END;
         """,
     ),
+    (
+        16,
+        "Move the times lists out of item metadata: they are activities now",
+        # Run by _migrate_16(): the lists are removed in Python, so the metadata keeps
+        # json.dumps' format. SQLite's json_remove() would minify it, and the next
+        # import would then rewrite every item, though nothing changed.
+        "",
+    ),
 ]
 
 
@@ -523,6 +535,45 @@ def get_schema_version(conn: sqlite3.Connection) -> int:
 def set_schema_version(conn: sqlite3.Connection, version: int) -> None:
     """Set the schema version in the database."""
     conn.execute(f"PRAGMA user_version = {version}")
+
+
+MIGRATION_16_REASON = "migration 16: times lists moved to activities"
+
+
+def _migrate_16(conn: sqlite3.Connection) -> None:
+    """Drop the activity triggers and move the times lists out of item metadata.
+
+    Imports store their times as activities themselves now. Any listed time not yet an
+    activity is recorded first, then the lists are removed; the metadata keeps each
+    count, first_at and last_at. item_history keeps the old metadata of every item
+    changed, tagged MIGRATION_16_REASON. One transaction, with the schema version.
+    """
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")  # take the write lock now, not mid-migration
+    try:
+        conn.execute("DROP TRIGGER IF EXISTS items_activities_ai")
+        conn.execute("DROP TRIGGER IF EXISTS items_activities_au")
+        conn.execute(_activities_from_metadata("items", dates_only=True))
+        history_before = max_history_id(conn)
+        rows = conn.execute(
+            f"SELECT id, metadata FROM items WHERE json_valid(metadata) AND ({_HAS_TIMES})"
+        ).fetchall()
+        updates = []
+        for item_id, text in rows:
+            metadata = json.loads(text)
+            for key in ACTIVITY_VERBS:
+                metadata.pop(key, None)
+            updates.append((json.dumps(metadata) if metadata else None, item_id))
+        conn.executemany("UPDATE items SET metadata = ? WHERE id = ?", updates)
+        conn.execute(
+            "UPDATE item_history SET change_reason = ? WHERE id > ?",
+            (MIGRATION_16_REASON, history_before),
+        )
+        set_schema_version(conn, 16)
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
@@ -594,8 +645,11 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                 conn.execute("ALTER TABLE item_history ADD COLUMN parent_id_old INTEGER")
             if version == 10 and not _column_exists(conn, "tags", "kind"):
                 conn.execute("ALTER TABLE tags ADD COLUMN kind TEXT NOT NULL DEFAULT 'ad-hoc'")
-            conn.executescript(sql)
-            set_schema_version(conn, version)
+            if version == 16:
+                _migrate_16(conn)  # sets the version in its own transaction
+            else:
+                conn.executescript(sql)
+                set_schema_version(conn, version)
             conn.commit()
             applied += 1
             logger.info(f"Migration {version} complete")
@@ -778,6 +832,7 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
         (item.source_type, item.source_id),
     ).fetchone()
     item_id = row[0]
+    record_activities(conn, item_id, item.activities)
 
     mark_recent_history(conn, pre_max, "sync", item_ids=[item_id])
     conn.commit()

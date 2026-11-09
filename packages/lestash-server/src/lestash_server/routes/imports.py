@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile
+from lestash.core.activities import record_activities
 from lestash.core.database import resolve_parent_id
 from lestash.importers import merge_with_stored, parse_json_items, parse_zip
 
@@ -154,7 +155,9 @@ def _upsert_item(conn, item, parent_id=None):
     )
     # RETURNING gives the row's id on insert and on update. lastrowid doesn't: after
     # ON CONFLICT DO UPDATE it still holds the previous insert's id.
-    return cursor.fetchone()[0]
+    item_id = cursor.fetchone()[0]
+    record_activities(conn, item_id, item.activities)
+    return item_id
 
 
 def _insert_items_with_parents(conn, items):
