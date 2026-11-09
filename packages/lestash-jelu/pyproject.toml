@@ -1,6 +1,6 @@
 [project]
 name = "lestash-jelu"
-version = "1.81.0"
+version = "1.82.0"
 description = "Jelu reading tracker source plugin for Le Stash"
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}
