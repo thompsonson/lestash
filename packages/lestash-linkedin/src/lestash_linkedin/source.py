@@ -1403,6 +1403,35 @@ class LinkedInSource(SourcePlugin):
 
                 console.print(f"\n[bold green]Enriched {enriched_count} items[/bold green]")
 
+        @app.command("dedupe")
+        def dedupe(
+            apply: Annotated[
+                bool, typer.Option("--apply", help="Merge them; without it, only list them")
+            ] = False,
+        ) -> None:
+            """Merge LinkedIn items held twice: one changelog event under an old and a
+            current source id (#244). Lists them unless --apply is given."""
+            from collections import Counter
+
+            from lestash.core.config import Config
+            from lestash.core.database import get_connection
+
+            from lestash_linkedin.dedupe import dedupe_linkedin, find_duplicates
+
+            with get_connection(Config.load()) as conn:
+                if not apply:
+                    pairs = find_duplicates(conn)
+                else:
+                    pairs = dedupe_linkedin(conn)
+                    conn.commit()
+                    resolve_linkedin_parents(conn)
+                    conn.commit()
+            by_kind = Counter(p.resource_name for p in pairs)
+            for kind, count in sorted(by_kind.items()):
+                console.print(f"  {kind}: {count}")
+            verb = "Merged" if apply else "Would merge"
+            console.print(f"{verb} {len(pairs)} old copies into their current items.")
+
         @app.command("backfill-parents")
         def backfill_parents(
             dry_run: Annotated[

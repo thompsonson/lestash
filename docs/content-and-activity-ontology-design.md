@@ -412,6 +412,13 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
 - An account not yet seen is named by its DID until a post of theirs names it.
 - On a copy of the live database: 4 mentions of 2 accounts.
 
+### LinkedIn items held twice (#244)
+
+- Before #84 a changelog item's source id ended with the event's processedAt; now it ends with the resource id. Events imported under both made two items.
+- `lestash linkedin dedupe` lists the pairs that are the very same event (same changelog event id); `--apply` merges the old copy into the current one with `merge_item`, the general form of `merge_stub`.
+- Copies of different events for one resource, such as profile edits or a changed reaction, are kept.
+- On a copy of the live database: 105 pairs merged (39 likes, 33 messages, 21 comments, 6 invitations, 6 posts); 48 pairs of different events kept.
+
 ## The activity ontology
 
 An activity is something someone did, at a time, usually to an item.
