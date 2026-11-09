@@ -237,6 +237,19 @@ def sync_source(
                         )
                         conn.commit()
 
+                        # New media files into the file store (#217), once the sync's
+                        # own work is committed: a file that fails is tried next time
+                        try:
+                            from lestash.core.blobs import adopt_media
+
+                            adopted = adopt_media(conn, config)
+                            if adopted.adopted:
+                                console.print(
+                                    f"  [dim]Stored {adopted.adopted} media file(s)[/dim]"
+                                )
+                        except Exception as e:  # never fails the sync
+                            console.print(f"  [yellow]Media not stored: {escape(str(e))}[/yellow]")
+
                         status = "completed"
                     except Exception as e:
                         status = "failed"

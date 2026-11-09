@@ -218,3 +218,26 @@ def backfill(
             console.print(f"\n{prefix}[green]Total: {sum(totals.values())} media entries[/green]")
         else:
             console.print("No media found to backfill.")
+
+
+@app.command("adopt")
+def adopt() -> None:
+    """Copy media files not yet in the file store into it (#217). The files in the
+    media folder stay. Safe to run again."""
+    from lestash.core.blobs import adopt_media, store_root
+    from lestash.core.config import Config
+
+    config = Config.load()
+    with get_connection(config) as conn:
+        counts = adopt_media(conn, config)
+        conn.commit()
+    console.print(
+        f"Adopted {counts.adopted} media file(s) into {store_root(config)}: "
+        f"{counts.new_blobs} new ({counts.new_bytes / 1e6:.1f} MB)."
+    )
+    if counts.failed:
+        console.print(
+            f"[yellow]{counts.failed} media file(s) could not be read; see the log.[/yellow]"
+        )
+    if counts.missing:
+        console.print(f"[yellow]{counts.missing} media row(s) name a file that is gone.[/yellow]")

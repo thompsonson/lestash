@@ -290,7 +290,7 @@ def test_migration_21_keys_activities_by_actor_and_keeps_every_row(test_db) -> N
             "INSERT INTO activities VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [tuple(r) for r in before]
         )
         assert record_activities(conn, item, [_like(ann)]) == 0  # the old key drops it
-        assert apply_migrations(conn) == 1
+        assert apply_migrations(conn) == SCHEMA_VERSION - 20
         assert [tuple(r) for r in conn.execute("SELECT * FROM activities")] == [
             tuple(r) for r in before
         ]
@@ -299,4 +299,3 @@ def test_migration_21_keys_activities_by_actor_and_keeps_every_row(test_db) -> N
         # Ann's like at the same time is hers; yours again is still one
         assert record_activities(conn, item, [_like(ann), _like(None)]) == 1
         assert record_activities(conn, item, [_like(ann)]) == 0
-        assert SCHEMA_VERSION == 21
