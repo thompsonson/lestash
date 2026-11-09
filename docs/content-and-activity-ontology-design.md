@@ -345,6 +345,7 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
 - Deleting a person with an account keeps the account, belonging to no one, so the pass doesn't make them again.
 - The pass only adds: an agent whose item later names someone else stays, until a later step re-derives them.
 - `activities.actor_id` has no delete action: null means you, so a deleted person's activities must not become yours.
+  Deleting a person whom activities name is refused until those activities are moved or deleted.
 - An account the source marks as yours belongs to the one `is_self` person: your LinkedIn owner URN, your own Bluesky DID, the address on emails marked yours and sent under your name, and `user` turns.
   Gmail marks no message yours: a Gmail sender is you only when the address is already yours.
   Your accounts are recorded first, so an address of yours first seen on an email you received is still yours.

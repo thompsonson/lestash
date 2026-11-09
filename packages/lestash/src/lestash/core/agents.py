@@ -385,7 +385,12 @@ class _People:
             "UPDATE OR IGNORE item_agents SET person_id = ? WHERE person_id = ?",
             (you, person_id),
         )
-        self.conn.execute("UPDATE activities SET actor_id = ? WHERE actor_id = ?", (you, person_id))
+        # Null is you, as for every activity of yours
+        self.conn.execute("UPDATE activities SET actor_id = NULL WHERE actor_id = ?", (person_id,))
+        self.conn.execute(
+            "UPDATE OR IGNORE item_mentions SET person_id = ? WHERE person_id = ?",
+            (you, person_id),
+        )
         self.conn.execute("DELETE FROM people WHERE id = ? AND is_self = 0", (person_id,))
         self.accounts[key] = you
         self.unnamed.discard(person_id)
