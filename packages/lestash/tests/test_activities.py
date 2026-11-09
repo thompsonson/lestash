@@ -231,3 +231,21 @@ def test_after_migration_16_the_same_export_again_writes_nothing(test_db) -> Non
         store.run(iter(parse_watch_history(export)))
         assert _history_rows(conn) == history
         assert (store.counts.updated, store.counts.unchanged) == (0, 1)
+
+
+def test_a_later_like_keeps_the_watches_already_stored(test_db) -> None:
+    like = {
+        "header": "YouTube",
+        "title": "Liked A talk",
+        "titleUrl": "https://www.youtube.com/watch?v=AAAAAAAAAAA",
+        "time": "2026-02-01T10:00:00Z",
+    }
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "youtube").run(
+            iter(parse_watch_history([_watch("AAAAAAAAAAA", "2026-01-01T10:00:00Z")]))
+        )
+        SyncStore(conn, "youtube").run(iter(parse_watch_history([like])))
+        assert [r[0] for r in _activities(conn)] == ["watched", "liked"]
+        metadata, content = conn.execute("SELECT metadata, content FROM items").fetchone()
+    assert json.loads(metadata)["watched_count"] == 1
+    assert "Watched once: 2026-01-01" in content

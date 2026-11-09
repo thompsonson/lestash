@@ -118,3 +118,82 @@ def test_youtube_music_is_left_for_later() -> None:
         "time": "2026-01-01T00:00:00Z",
     }
     assert parse_search_history([search]) == []
+
+
+# --- My Activity: likes, dislikes and shares ------------------------------------------------
+
+
+def _entry(title: str, url: str, when: str, subtitles: list | None = None) -> dict:
+    entry = {"header": "YouTube", "title": title, "titleUrl": url, "time": when}
+    if subtitles is not None:
+        entry["subtitles"] = subtitles
+    return entry
+
+
+def test_likes_dislikes_and_shares_are_activities_of_the_video_item() -> None:
+    url = "https://www.youtube.com/watch?v=AAAAAAAAAAA"
+    items = parse_watch_history(
+        [
+            watch("AAAAAAAAAAA", "2026-01-01T10:00:00Z"),
+            _entry("Liked A talk", url, "2026-01-01T10:05:00Z", [{"name": "Chan"}]),
+            _entry(
+                "Shared video",
+                "https://youtube.com/watch?v=AAAAAAAAAAA&is=xyz",
+                "2026-01-02T10:00:00Z",
+                [{"name": f"Shared URL: {url}"}, {"name": "A talk", "url": url}],
+            ),
+        ]
+    )
+    [video] = items
+    assert video.title == "A talk"  # from the watch, not "Shared video"
+    assert video.metadata["watched_count"] == 1
+    assert [(a.verb, a.occurred_at.isoformat()) for a in video.activities] == [
+        ("watched", "2026-01-01T10:00:00+00:00"),
+        ("liked", "2026-01-01T10:05:00+00:00"),
+        ("shared", "2026-01-02T10:00:00+00:00"),
+    ]
+
+
+def test_a_video_only_liked_or_shared_still_gets_its_item() -> None:
+    liked = "https://www.youtube.com/watch?v=LLLLLLLLLLL"
+    shared = "https://www.youtube.com/watch?v=SSSSSSSSSSS"
+    items = parse_watch_history(
+        [
+            _entry("Liked Song of the day", liked, "2026-03-01T10:00:00Z", [{"name": "Band"}]),
+            _entry("Disliked Song of the day", liked, "2026-02-01T10:00:00Z", [{"name": "Band"}]),
+            _entry(
+                "Shared video",
+                f"{shared}&is=abc",
+                "2026-03-02T10:00:00Z",
+                [{"name": f"Shared URL: {shared}"}, {"name": "A shared talk", "url": shared}],
+            ),
+        ]
+    )
+    by_id = {i.source_id: i for i in items}
+    song = by_id["history:LLLLLLLLLLL"]
+    assert (song.title, song.author) == ("Song of the day", "Band")
+    assert "watched_count" not in song.metadata
+    assert song.created_at.isoformat().startswith("2026-02-01")  # the first activity
+    assert song.content == "Song of the day\nChannel: Band"
+    assert sorted(a.verb for a in song.activities) == ["disliked", "liked"]
+    talk = by_id["history:SSSSSSSSSSS"]
+    assert (talk.title, talk.author) == ("A shared talk", None)
+
+
+def test_other_my_activity_entries_are_skipped() -> None:
+    post = "https://www.youtube.com/post/UgkxPOST"
+    items = parse_watch_history(
+        [
+            _entry("Voted on Which is best?", post, "2026-01-01T10:00:00Z"),
+            _entry(
+                "Subscribed to Chan", "https://www.youtube.com/channel/UC1", "2026-01-01T10:00:00Z"
+            ),
+            _entry(
+                "Shared playlist",
+                "https://youtube.com/playlist?list=PL1",
+                "2026-01-01T10:00:00Z",
+                [{"name": "Shared URL: x"}, {"name": "Mix"}],
+            ),
+        ]
+    )
+    assert items == []

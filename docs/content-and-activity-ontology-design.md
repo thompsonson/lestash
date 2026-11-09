@@ -359,6 +359,15 @@ CREATE INDEX idx_activities_item ON activities(item_id);
 - A re-import reads the stored times from `activities`, then updates the count, `first_at`, `last_at` and the content summary.
 - Times are no longer capped at 200 per item.
   A count can exceed the stored times for an item whose list was capped before.
+
+### As built (#216, step 2)
+
+- The YouTube history importer also reads `My Activity/YouTube/My Activity.json`; importer version 4.
+- Watches, searches and community post views merge into the same items as the history files, by video id, query or post id.
+- Likes, dislikes and shares of a video are `liked`, `disliked` and `shared` activities of its `history:` item.
+  A video only liked, disliked or shared still gets that item, without a watch count.
+- Subscriptions, saved playlists, poll votes and dismissed suggestions are skipped; YouTube Music and ads are skipped as before.
+- Comments (`comments.csv`) are not in this export part, so they wait for a later step.
 - `created_at` can then mean one thing: when the content was made, where known.
 
 ### What it enables

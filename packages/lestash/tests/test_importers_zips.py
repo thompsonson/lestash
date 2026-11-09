@@ -103,6 +103,23 @@ def test_every_takeout_product_in_one_zip_is_imported() -> None:
     assert {i.source_type for i in items} == {"google-keep", "gemini", "notebooklm", "youtube"}
 
 
+def test_my_activity_yields_watches_and_searches_of_youtube() -> None:
+    entries = [
+        _watch("AAAAAAAAAAA", "2026-01-01T10:00:00Z"),
+        {
+            "header": "YouTube",
+            "title": "Searched for markov blanket",
+            "titleUrl": "https://www.youtube.com/results?search_query=markov+blanket",
+            "time": "2026-01-02T10:00:00Z",
+        },
+    ]
+    items, source_type = parse_zip(
+        _zip({"Takeout/My Activity/YouTube/My Activity.json": json.dumps(entries)})
+    )
+    assert source_type == "youtube"
+    assert sorted(i.source_id for i in items) == ["history:AAAAAAAAAAA", "search:markov blanket"]
+
+
 def test_parse_zip_accepts_a_path(tmp_path) -> None:
     items, source_type = parse_zip(_zip(META, tmp_path / "p.zip"))
     assert source_type == "notebooklm"
