@@ -40,6 +40,7 @@ from lestash_linkedin.api import (
     save_write_credentials,
 )
 from lestash_linkedin.importer import import_from_zip
+from lestash_linkedin.stubs import link_linkedin_targets
 
 console = Console()
 logger = get_plugin_logger("linkedin")
@@ -72,7 +73,8 @@ def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
     """Resolve parent_id for LinkedIn reactions and comments.
 
     Matches by exact URN (post_id, source_id) or by Snowflake timestamp
-    (handles share URN vs activity URN mismatch for the same post).
+    (handles share URN vs activity URN mismatch for the same post). A post still not
+    held gets a stub, linked from its comments and your reactions (stubs.py).
 
     Returns the number of items updated.
     """
@@ -98,6 +100,13 @@ def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
         )
         total += cursor.rowcount
     mark_recent_history(conn, pre_max, "sync")
+    # Posts still not held get stubs, so their comments and reactions link to something
+    counts = link_linkedin_targets(conn)
+    if any(counts):
+        logger.info(
+            "Stubs: %d merged into imported posts; %d reply links, %d reactions added",
+            *counts,
+        )
     conn.commit()
     return total
 

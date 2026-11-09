@@ -83,6 +83,8 @@ class Item(BaseModel):
     is_own_content: bool = False
     metadata: dict[str, Any] | None = None
     parent_id: int | None = None
+    # False for a stub: a thing known by its address, not held (core/stubs.py)
+    held: bool = True
 
     @classmethod
     def from_row(cls, row: Any) -> "Item":

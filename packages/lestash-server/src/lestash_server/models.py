@@ -33,6 +33,7 @@ class ItemResponse(BaseModel):
     is_own_content: bool = False
     metadata: dict[str, Any] | None = None
     parent_id: int | None = None
+    held: bool = True  # False for a stub, known by its address only
     # Enriched fields
     subtype: str
     author_display: str

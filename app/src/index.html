@@ -1619,9 +1619,14 @@
         ? new Date(item.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
         : '';
 
-      let html = `<div class="item-view-title" id="item-title-display">${emoji}${escHtml(item.title || item.preview || '(untitled)')}</div>`;
+      let html = `<div class="item-view-title" id="item-title-display">${emoji}${escHtml(item.title || item.preview || (item.held === false && item.url) || '(untitled)')}</div>`;
       html += `<div class="item-view-meta">${sourceName(item.subtype)}${dateFmt ? ' &middot; ' + dateFmt : ''}${item.url ? ' &middot; <a href="' + escHtml(item.url) + '" target="_blank" rel="noopener" style="color:var(--accent)">link</a>' : ''}</div>`;
-      html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(item.content)}</div>`;
+      if (item.held === false) {
+        // A stub: known by its address only, so it has no content to show
+        html += `<div class="item-view-content" id="item-content-display" style="color:var(--muted)">LeStash doesn't hold this; it knows it only by its address. Its links and activity are below.</div>`;
+      } else {
+        html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(item.content)}</div>`;
+      }
       html += `<div id="item-edit-form" style="display:none">
         <input type="text" id="item-edit-title" placeholder="Title" style="width:100%;font-size:1.05rem;font-weight:bold;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
         <textarea id="item-edit-content" rows="10" style="width:100%;resize:vertical;font-family:inherit;font-size:0.9rem;padding:0.5rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px"></textarea>
@@ -2291,6 +2296,7 @@
     const LINK_LABELS = {
       references: ['Links to', 'Linked from'],
       syndication: ['Cross-posted as', 'Cross-post of'],
+      in_reply_to: ['Reply to', 'Replies'],
     };
 
     async function loadLinks(itemId) {

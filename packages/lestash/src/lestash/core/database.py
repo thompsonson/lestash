@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -535,6 +535,13 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_item_links_to ON item_links(to_id, kind);
         """,
     ),
+    (
+        18,
+        "Add items.held: 0 marks a stub, a thing known by its address but not held",
+        # docs/content-and-activity-ontology-design.md, "Stub items for things not held".
+        # The column is added in apply_migrations: SQLite has no ADD COLUMN IF NOT EXISTS.
+        "",
+    ),
 ]
 
 
@@ -664,6 +671,8 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                 conn.execute("ALTER TABLE item_history ADD COLUMN parent_id_old INTEGER")
             if version == 10 and not _column_exists(conn, "tags", "kind"):
                 conn.execute("ALTER TABLE tags ADD COLUMN kind TEXT NOT NULL DEFAULT 'ad-hoc'")
+            if version == 18 and not _column_exists(conn, "items", "held"):
+                conn.execute("ALTER TABLE items ADD COLUMN held INTEGER NOT NULL DEFAULT 1")
             if version == 16:
                 _migrate_16(conn)  # sets the version in its own transaction
             else:

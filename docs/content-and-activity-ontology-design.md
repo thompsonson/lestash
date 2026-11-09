@@ -174,8 +174,24 @@ CREATE INDEX idx_item_links_to ON item_links(to_id, kind);
 - A Bluesky or LinkedIn post holding the address of a Micro.blog post that lists that service in its `syndication` is a `syndication` link; any other match is `references`.
 - All are `confirmed`. The detail view lists them both ways, and its remove action sets `rejected`.
 - On a copy of the live database: 959 links, 878 `references` and 81 `syndication`, in 0.7 s.
-- Not yet: `items.held` and stubs, which wait for an importer that makes them; NotebookLM source links, which wait for sources to become items.
+- Not yet: NotebookLM source links, which wait for sources to become items.
 - A link stays when its address is later edited out of the content.
+
+### As built (#216, step 3b)
+
+- Migration 18 adds `items.held`, default `1`; a stub has `0` and empty `content`.
+- `core/stubs.py` makes a stub once per identifier, with `source_id` `stub:<identifier>`, so no import writes over it.
+- When the thing itself is imported, its stub is merged into it: links and activities move to the imported item, and the stub is deleted.
+- Listings, keyword search, embeddings and `/api/stats` skip stubs. The detail view shows a stub's address, links and activity.
+- The first importer to make stubs is LinkedIn, after `resolve_linkedin_parents`:
+  - A comment on a post not held links to the post's stub as `in_reply_to`, and stays top-level, so listings still show it.
+  - Your own reaction is a `liked` activity on its post, held or stub, with the reaction type in `details`.
+  - Only the event that made a reaction counts; a change or a delete adds no like.
+  - Someone else's reaction waits for the people tables, since an activity without an actor is yours.
+  - A comment or reaction on a comment points at the post the comment is on; the comment's URN is the evidence, or `details.on`.
+  - A post the changelog names by two URN forms (activity and ugcPost) can get two stubs; both merge into the post once it is imported.
+- On a copy of the live database: 941 stubs, 720 `in_reply_to` links and 888 `liked` activities, 35 of them on held posts.
+  The pass takes 0.1 s.
 
 ## The people ontology
 

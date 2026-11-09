@@ -105,7 +105,7 @@ def list_items(
     config = Config.load()
 
     with get_connection(config) as conn:
-        query = "SELECT * FROM items WHERE 1=1"
+        query = "SELECT * FROM items WHERE held = 1"
         params: list = []
 
         if source:

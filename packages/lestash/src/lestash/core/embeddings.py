@@ -140,7 +140,9 @@ def re_embed_item(conn: sqlite3.Connection, item_id: int) -> bool:
 
 def get_embedding_stats(conn: sqlite3.Connection) -> dict:
     """Get embedding coverage statistics."""
-    total_parents = conn.execute("SELECT COUNT(*) FROM items WHERE parent_id IS NULL").fetchone()[0]
+    total_parents = conn.execute(
+        "SELECT COUNT(*) FROM items WHERE parent_id IS NULL AND held = 1"
+    ).fetchone()[0]
 
     try:
         embedded = conn.execute("SELECT COUNT(*) FROM vec_items").fetchone()[0]
@@ -169,7 +171,7 @@ def rebuild_embeddings(
         SELECT items.id, items.title, items.content
         FROM items
         LEFT JOIN vec_items ON items.id = vec_items.item_id
-        WHERE items.parent_id IS NULL AND vec_items.item_id IS NULL
+        WHERE items.parent_id IS NULL AND items.held = 1 AND vec_items.item_id IS NULL
         """
     ).fetchall()
 

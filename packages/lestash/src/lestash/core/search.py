@@ -200,7 +200,7 @@ def keyword_search(
     sql = (
         f"SELECT items.*{snippet if snippets else ''} FROM items"
         " JOIN items_fts ON items.id = items_fts.rowid"
-        " WHERE items_fts MATCH ?"
+        " WHERE items_fts MATCH ? AND items.held = 1"
         f"{' AND items.parent_id IS NULL' if top_level_only else ''}"
         " ORDER BY rank LIMIT ?"
     )
