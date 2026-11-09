@@ -33,7 +33,7 @@ W2 (#217): one store for every file LeStash keeps.
 
 - `lestash media notebooklm <zip>…` imports a Takeout's NotebookLM generated artifacts with their files. Give every part: a notebook's files are spread over them.
 - Each artifact (slides, audio overview, video overview, infographic, app) becomes a child item of its notebook, with `type: artifact`. Reports are skipped: they are notes already.
-- A file belongs to the description whose name is its own, else the longest one either name begins with, as both are cut short differently.
+- A file belongs to the description whose name is its own, else the longest one either name begins with, among descriptions of a type the file fits (a deck folder, `.mp4`, `.wav`, `.png`, an extensionless app page). Names are cut at 51 bytes, even through " metadata"; two artifacts of one title are "x metadata" and "x metadata(1)".
 - Slide images keep their numbers: `_-_Slide_7` is 7; in a deck named `_-_Slide`, `_-_Slide(1)`, … the bare name is 1 and `(n)` is n + 1. Each deck's image count matches its PDF's pages.
 - Each file goes into the store once, as a media row with `sha256`; the same export again adds no blobs and no rows.
 - The detail view shows slides in order, plays audio and video, and links the PDF and PPTX. An app's HTML page is served only as a download, so its scripts never run in LeStash's origin.

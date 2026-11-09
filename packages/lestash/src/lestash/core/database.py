@@ -1522,14 +1522,23 @@ def add_item_media(
     Returns:
         The media row ID.
     """
-    existing = conn.execute(
-        """SELECT id FROM item_media
-           WHERE item_id = ? AND media_type = ?
-             AND (url = ? OR (url IS NULL AND ? IS NULL))
-             AND (local_path = ? OR (local_path IS NULL AND ? IS NULL))
-             AND (sha256 = ? OR (sha256 IS NULL AND ? IS NULL))""",
-        (item_id, media_type, url, url, local_path, local_path, sha256, sha256),
-    ).fetchone()
+    if sha256:
+        # A stored file is the same media at the same place: two identical slides in
+        # one deck are two rows
+        existing = conn.execute(
+            "SELECT id FROM item_media WHERE item_id = ? AND media_type = ? "
+            "AND sha256 = ? AND position = ?",
+            (item_id, media_type, sha256, position),
+        ).fetchone()
+    else:
+        # sha256 is set later on a file the store adopts, so it isn't compared here
+        existing = conn.execute(
+            """SELECT id FROM item_media
+               WHERE item_id = ? AND media_type = ?
+                 AND (url = ? OR (url IS NULL AND ? IS NULL))
+                 AND (local_path = ? OR (local_path IS NULL AND ? IS NULL))""",
+            (item_id, media_type, url, url, local_path, local_path),
+        ).fetchone()
     if existing:
         return existing[0]
 

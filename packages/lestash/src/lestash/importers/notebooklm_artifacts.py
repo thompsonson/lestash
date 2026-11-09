@@ -29,7 +29,20 @@ from typing import Any
 from lestash.core.blobs import BlobStore
 from lestash.models.item import ItemCreate, MediaCreate
 
+NOTEBOOKLM = "Takeout/NotebookLM/"
 ARTIFACTS = "/Artifacts/"
+# A description's name is "<title> metadata.json", or "<title> metadata(1).json" for a
+# second artifact of that title, cut to 51 bytes with ".json": "…Data met.json"
+METADATA = re.compile(r" m(?:e(?:t(?:a(?:d(?:a(?:t(?:a)?)?)?)?)?)?)?(?:\(\d+\))?$")
+CUT_AT = 46  # bytes before ".json" in a name cut short
+# Which artifact type a file can belong to: its folder (a deck) or its extension
+FILE_TYPES = {
+    "folder": "ARTIFACT_TYPE_SLIDES",
+    ".mp4": "ARTIFACT_TYPE_EXPLAINER_VIDEO",
+    ".wav": "ARTIFACT_TYPE_AUDIO_OVERVIEW",
+    ".png": "ARTIFACT_TYPE_INFOGRAPHIC",
+    "": "ARTIFACT_TYPE_APP",
+}
 # A slide image's name ends "_-_Slide_7", or, for a deck downloaded as "x", "x(1)",
 # "x(2)"…, "_-_Slide", "_-_Slide(1)"…, cut as short as "_-_Slid(3)" or "_-(3)"
 SLIDE_NUMBERED = re.compile(r"_-_Slide_(\d+)$")
@@ -42,13 +55,14 @@ MEDIA_TYPES = {".pdf": "pdf", ".png": "image", ".wav": "audio", ".mp4": "video"}
 @dataclass
 class Artifact:
     notebook: str  # the notebook's folder, its item's source_id
-    stem: str  # the description's name, without " metadata.json" or ".json"
+    stem: str  # the description's title part, which its files' names begin with
     description: dict[str, Any]
     files: list[tuple[Path, str]] = field(default_factory=list)  # (zip, member)
+    key: str = ""  # the description's name without ".json": unique in its notebook
 
     @property
     def source_id(self) -> str:
-        return f"{self.notebook}{ARTIFACTS}{self.stem}"
+        return f"{self.notebook}{ARTIFACTS}{self.key or self.stem}"
 
     @property
     def kind(self) -> str:
@@ -56,7 +70,22 @@ class Artifact:
 
 
 def _stem(name: str) -> str:
-    return name.removesuffix(".json").removesuffix(" metadata")
+    """A description's title part. " metadata", " metadata(1)" and their cut forms go;
+    a cut form only from a name cut short, so a title ending " me" keeps it."""
+    base = name.removesuffix(".json")
+    full = re.sub(r" metadata(?:\(\d+\))?$", "", base)
+    if full != base or len(base.encode()) < CUT_AT:
+        return full
+    return METADATA.sub("", base)
+
+
+def _file_type(rest: str) -> str:
+    """The artifact type a file below Artifacts/ fits: see FILE_TYPES."""
+    if "/" in rest:
+        return FILE_TYPES["folder"]
+    name = rest.rsplit("/", 1)[-1]
+    suffix = ("." + name.rsplit(".", 1)[1].lower()) if "." in name else ""
+    return FILE_TYPES.get(suffix, "")
 
 
 def _head(rest: str) -> str:
@@ -83,7 +112,11 @@ def collect(zips: list[Path]) -> tuple[list[Artifact], list[str]]:
     for path in zips:
         with zipfile.ZipFile(path) as zf:
             for member in zf.namelist():
-                if ARTIFACTS not in member or member.endswith("/"):
+                if (
+                    not member.startswith(NOTEBOOKLM)
+                    or ARTIFACTS not in member
+                    or member.endswith("/")
+                ):
                     continue
                 notebook, rest = member.split(ARTIFACTS, 1)
                 if rest.endswith(".json") and "/" not in rest:
@@ -92,25 +125,32 @@ def collect(zips: list[Path]) -> tuple[list[Artifact], list[str]]:
                     except (ValueError, UnicodeDecodeError):
                         continue
                     if isinstance(description, dict):
-                        stem = _stem(rest)
-                        described[(notebook, stem)] = Artifact(notebook, stem, description)
+                        # Keyed by name: two descriptions can share a title part
+                        key = rest.removesuffix(".json")
+                        described[(notebook, key)] = Artifact(
+                            notebook, _stem(rest), description, key=key
+                        )
                 elif not rest.endswith(".md"):
                     files.append((notebook, rest, path, member))
-    stems: dict[str, list[str]] = defaultdict(list)
-    for notebook, stem in described:
-        stems[notebook].append(stem)
+    by_notebook: dict[str, list[Artifact]] = defaultdict(list)
+    for (notebook, _), artifact in described.items():
+        by_notebook[notebook].append(artifact)
     unmatched = []
     for notebook, rest, path, member in files:
         head = _head(rest)
-        candidates = [s for s in stems[notebook] if head.startswith(s) or s.startswith(head)]
-        if head in candidates:
-            owner = head
-        elif candidates:
-            owner = max(candidates, key=len)
+        kind = _file_type(rest)
+        candidates = [
+            a
+            for a in by_notebook[notebook]
+            if (head.startswith(a.stem) or a.stem.startswith(head))
+            and (not kind or a.description.get("type") in (kind, None))
+        ]
+        exact = [a for a in candidates if a.stem == head]
+        if exact or candidates:
+            owner = (exact or sorted(candidates, key=lambda a: -len(a.stem)))[0]
+            owner.files.append((path, member))
         else:
             unmatched.append(member)
-            continue
-        described[(notebook, owner)].files.append((path, member))
     return sorted(described.values(), key=lambda a: a.source_id), unmatched
 
 
@@ -159,7 +199,7 @@ def to_items(artifacts: list[Artifact], store: BlobStore) -> tuple[list[ItemCrea
                 mime = mimetypes.guess_type(name)[0]
             elif not suffix:
                 # An app: a web page NotebookLM made, served only as a download
-                media_type, mime, position, alt = "file", "text/html", 0, name
+                media_type, mime, position, alt = "file", "text/html", 0, f"{name}.html"
             else:
                 media_type = MEDIA_TYPES.get(suffix, "file")
                 mime, position, alt = mimetypes.guess_type(name)[0], 0, name

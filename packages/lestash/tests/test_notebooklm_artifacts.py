@@ -96,3 +96,45 @@ def test_artifacts_from_both_parts_become_children_with_stored_files(test_db, tm
         store_run.run(items)
         assert new_blobs == 0 and store_run.counts.added == 0
         assert conn.execute("SELECT count(*) FROM item_media").fetchone()[0] == media_before
+
+
+def test_two_artifacts_of_one_title_each_get_their_own_files(test_db, tmp_path) -> None:
+    store = BlobStore(store_root(test_db))
+    part = _zip(
+        tmp_path / "t.zip",
+        {
+            f"{ART}/Federated Learning metadata.json": {
+                "title": "Federated Learning",
+                "type": "ARTIFACT_TYPE_SLIDES",
+            },
+            f"{ART}/Federated Learning metadata(1).json": {
+                "title": "Federated Learning",
+                "type": "ARTIFACT_TYPE_EXPLAINER_VIDEO",
+            },
+            f"{ART}/Federated Learning/Federated_Learning_-_Slide_1": b"same",
+            f"{ART}/Federated Learning/Federated_Learning_-_Slide_2": b"same",
+            f"{ART}/Federated Learning.mp4": b"video",
+            # A description name cut short through " metadata"
+            f"{ART}/Federated Learning Brings Code To The Data met.json": {
+                "title": "Federated Learning Brings Code To The Data",
+                "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW",
+            },
+            f"{ART}/Federated Learning Brings Code To The Data.wav": b"audio",
+        },
+    )
+    artifacts, unmatched = collect([part])
+    assert unmatched == []
+    files = {a.description["type"]: [m.rsplit("/", 1)[-1] for _, m in a.files] for a in artifacts}
+    assert files == {
+        "ARTIFACT_TYPE_SLIDES": ["Federated_Learning_-_Slide_1", "Federated_Learning_-_Slide_2"],
+        "ARTIFACT_TYPE_EXPLAINER_VIDEO": ["Federated Learning.mp4"],
+        "ARTIFACT_TYPE_AUDIO_OVERVIEW": ["Federated Learning Brings Code To The Data.wav"],
+    }
+    items, _ = to_items(artifacts, store)
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run(items)
+        # Two identical slides are still two slides
+        positions = conn.execute(
+            "SELECT position FROM item_media WHERE media_type = 'image' ORDER BY position"
+        ).fetchall()
+        assert [r[0] for r in positions] == [1, 2]
