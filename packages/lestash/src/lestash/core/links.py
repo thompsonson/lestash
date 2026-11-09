@@ -36,6 +36,8 @@ SYNDICATED = {"bluesky": "bluesky", "linkedin": "linkedin"}
 LINKEDIN_POSTS = ("changelog-ugcPosts-", "urn:li:share:", "urn:li:ugcPost:")
 # A cross-post is made with its original; Micro.blog posts it within minutes
 CROSS_POST_WINDOW = timedelta(hours=1)
+# The start of the linked item's text that links_of returns, for one line in a list
+PREVIEW_CHARS = 120
 
 
 class Link(NamedTuple):
@@ -190,13 +192,13 @@ def links_of(conn: sqlite3.Connection, item_id: int) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
         SELECT l.from_id = :id AS outgoing, l.kind, l.evidence, l.origin,
-               i.id, i.source_type, i.title, i.url
+               i.id, i.source_type, i.title, i.url, substr(i.content, 1, :chars) AS preview
         FROM item_links l
         JOIN items i ON i.id = CASE WHEN l.from_id = :id THEN l.to_id ELSE l.from_id END
         WHERE (l.from_id = :id OR l.to_id = :id) AND l.status = 'confirmed'
         ORDER BY l.kind, outgoing DESC, i.id
         """,
-        {"id": item_id},
+        {"id": item_id, "chars": PREVIEW_CHARS},
     ).fetchall()
     return [
         {
@@ -204,7 +206,13 @@ def links_of(conn: sqlite3.Connection, item_id: int) -> list[dict[str, Any]]:
             "kind": row[1],
             "evidence": row[2],
             "origin": row[3],
-            "item": {"id": row[4], "source_type": row[5], "title": row[6], "url": row[7]},
+            "item": {
+                "id": row[4],
+                "source_type": row[5],
+                "title": row[6],
+                "url": row[7],
+                "preview": " ".join(row[8].split()) or None,
+            },
         }
         for row in rows
     ]

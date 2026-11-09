@@ -1766,8 +1766,8 @@
         }</div>
       </div>`;
 
-      // Similar items (parent items only)
-      if (!item.parent_id) {
+      // Similar items (held parent items only: a stub has no text to compare)
+      if (!item.parent_id && item.held !== false) {
         html += `<div class="item-view-children" style="margin-top:1rem">
           <div class="item-view-children-title">Similar items</div>
           <div class="item-list" id="similar-list"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
@@ -2251,8 +2251,8 @@
       loadActivities(item.id);
       loadLinks(item.id);
 
-      // Load similar items (parent items only)
-      if (!item.parent_id) {
+      // Load similar items (held parent items only)
+      if (!item.parent_id && item.held !== false) {
         api(`/api/embeddings/similar/${item.id}?limit=5`).then(data => {
           const list = document.getElementById('similar-list');
           if (!list) return;
@@ -2320,7 +2320,8 @@
       const rows = data.links.map(l => {
         const labels = LINK_LABELS[l.kind] || [l.kind, `${l.kind} (from)`];
         const label = labels[l.direction === 'outgoing' ? 0 : 1];
-        const title = l.item.title || l.item.url || `Item ${l.item.id}`;
+        // A comment has no title, and its address is its post's: its text tells it apart
+        const title = l.item.title || l.item.preview || l.item.url || `Item ${l.item.id}`;
         return `<div style="display:flex;gap:0.4rem;align-items:baseline;padding:0.1rem 0">
           <span style="color:var(--muted);white-space:nowrap">${escHtml(label)}</span>
           <a href="#" data-action="open-linked" data-id="${l.item.id}"

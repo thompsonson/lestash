@@ -154,10 +154,13 @@ The item's confirmed links to and from other items, found by the linker after ea
     {"direction": "incoming", "kind": "references",
      "evidence": "https://matt.thompson.gr/2026/01/18/definitions-reference.html",
      "origin": "linker:url",
-     "item": {"id": 2081, "source_type": "claude", "title": "Agents", "url": null}}
+     "item": {"id": 2081, "source_type": "claude", "title": "Agents", "url": null,
+              "preview": "Agents and the definitions they rely on..."}}
   ]
 }
 ```
+
+`item.preview` is the start of the item's text (120 characters, whitespace folded), so an item without a title, such as a comment, can be told apart.
 
 ---
 

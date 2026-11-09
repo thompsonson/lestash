@@ -179,6 +179,7 @@ class LinkedItem(BaseModel):
     source_type: str
     title: str | None = None
     url: str | None = None
+    preview: str | None = None  # the start of its text, whitespace folded
 
 
 class ItemLink(BaseModel):
