@@ -1627,6 +1627,14 @@
       } else {
         html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(item.content)}</div>`;
       }
+
+      // People: who made, voiced, published or received it. Under the content, as a
+      // reader asks who made a thing before what it links. Hidden until some load.
+      html += `<div class="item-view-children" id="people-section" data-item-id="${item.id}" style="margin-top:1rem;display:none">
+        <div class="item-view-children-title" id="people-title">People</div>
+        <div id="people-list" style="font-size:0.8rem"></div>
+      </div>`;
+
       html += `<div id="item-edit-form" style="display:none">
         <input type="text" id="item-edit-title" placeholder="Title" style="width:100%;font-size:1.05rem;font-weight:bold;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
         <textarea id="item-edit-content" rows="10" style="width:100%;resize:vertical;font-family:inherit;font-size:0.9rem;padding:0.5rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px"></textarea>
@@ -1773,12 +1781,6 @@
           <div class="item-list" id="similar-list"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
         </div>`;
       }
-
-      // People: who made, voiced, published or received it (hidden until some load)
-      html += `<div class="item-view-children" id="people-section" data-item-id="${item.id}" style="margin-top:1rem;display:none">
-        <div class="item-view-children-title" id="people-title">People</div>
-        <div id="people-list" style="font-size:0.8rem"></div>
-      </div>`;
 
       // Links to and from other items (hidden until some load)
       html += `<div class="item-view-children" id="links-section" data-item-id="${item.id}" style="margin-top:1rem;display:none">
