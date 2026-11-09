@@ -171,6 +171,31 @@ class ActivityListResponse(BaseModel):
     total: int
 
 
+class LinkedItem(BaseModel):
+    """The item at the other end of a link."""
+
+    id: int
+    source_type: str
+    title: str | None = None
+    url: str | None = None
+
+
+class ItemLink(BaseModel):
+    """A typed link: ``outgoing`` from this item to ``item``, or ``incoming`` from it."""
+
+    direction: Literal["outgoing", "incoming"]
+    kind: str  # references, syndication, ...
+    evidence: str | None = None
+    origin: str
+    item: LinkedItem
+
+
+class ItemLinkListResponse(BaseModel):
+    """An item's confirmed links, both directions."""
+
+    links: list[ItemLink]
+
+
 class CollectionCreate(BaseModel):
     """Request to create a collection."""
 

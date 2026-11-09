@@ -165,6 +165,18 @@ CREATE INDEX idx_item_links_to ON item_links(to_id, kind);
 - A rejected link keeps its row, so the linker never adds it again.
 - Listings and related-item views show `confirmed` links only.
 
+### As built (#216, step 3)
+
+- Migration 17 creates `item_links` as proposed.
+- The linker (`core/links.py`) runs after each sync that writes items, after an upload, and as `lestash db link`.
+- It matches web addresses in content against item addresses, after dropping the scheme, `www.`, a trailing slash and the fragment.
+  A YouTube address in any form (watch, `youtu.be`, shorts) matches by video id, preferring the `history:` item.
+- A Bluesky or LinkedIn post holding the address of a Micro.blog post that lists that service in its `syndication` is a `syndication` link; any other match is `references`.
+- All are `confirmed`. The detail view lists them both ways, and its remove action sets `rejected`.
+- On a copy of the live database: 959 links, 878 `references` and 81 `syndication`, in 0.7 s.
+- Not yet: `items.held` and stubs, which wait for an importer that makes them; NotebookLM source links, which wait for sources to become items.
+- A link stays when its address is later edited out of the content.
+
 ## The people ontology
 
 A person is an agent: whoever made, voiced, published or received an item.

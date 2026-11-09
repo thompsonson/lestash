@@ -38,7 +38,7 @@ cd app && npx tauri dev    # Run desktop app
 
 ## Documentation
 
-- [`docs/api.md`](docs/api.md) — REST API reference (all 45 endpoints)
+- [`docs/api.md`](docs/api.md) — REST API reference (all endpoints)
 - [`extensions/chrome/README.md`](extensions/chrome/README.md) — Chrome extension usage and architecture
 
 ## Android Build

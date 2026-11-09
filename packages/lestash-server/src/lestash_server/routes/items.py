@@ -18,6 +18,7 @@ from lestash.core.database import (
 )
 from lestash.core.embeddings import re_embed_item
 from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
+from lestash.core.links import links_of, reject_link
 from lestash.core.search import keyword_search
 from lestash.models.item import Item
 
@@ -30,6 +31,8 @@ from lestash_server.models import (
     HistoryVersion,
     HistoryVersionDetail,
     ItemCreateRequest,
+    ItemLink,
+    ItemLinkListResponse,
     ItemListResponse,
     ItemPatchRequest,
     ItemResponse,
@@ -520,6 +523,31 @@ def list_item_activities(
             ],
             total=total,
         )
+
+
+@router.get("/{item_id}/links", response_model=ItemLinkListResponse)
+def list_item_links(item_id: int):
+    """An item's confirmed links to and from other items, such as a post it links."""
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        return ItemLinkListResponse(links=[ItemLink(**link) for link in links_of(conn, item_id)])
+
+
+@router.delete("/{item_id}/links")
+def remove_item_link(
+    item_id: int,
+    other_id: int = Query(..., description="The item at the link's other end"),
+    kind: str = Query(..., description="The link's kind, such as references"),
+    direction: Literal["outgoing", "incoming"] = Query("outgoing"),
+):
+    """Remove a link: it is marked rejected, so the linker never adds it again."""
+    from_id, to_id = (item_id, other_id) if direction == "outgoing" else (other_id, item_id)
+    with get_db() as conn:
+        if not reject_link(conn, from_id, to_id, kind):
+            raise HTTPException(status_code=404, detail="No such link")
+        conn.commit()
+    return {"status": "rejected"}
 
 
 @router.get("/{item_id}/history/{version_id}", response_model=HistoryVersionDetail)

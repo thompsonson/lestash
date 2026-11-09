@@ -137,6 +137,41 @@ The item's activities (watches, searches, prompts), newest first. `404` if the i
 
 ---
 
+### `GET /api/items/{item_id}/links`
+
+The item's confirmed links to and from other items, found by the linker after each sync. `404` if the item doesn't exist.
+
+- `references`: the `from` item's content holds the `to` item's web address.
+- `syndication`: the `to` item is a cross-posted copy of the `from` item, a Micro.blog post.
+- `direction` is `outgoing` when this item is the link's `from` end.
+
+```json
+{
+  "links": [
+    {"direction": "incoming", "kind": "references",
+     "evidence": "https://matt.thompson.gr/2026/01/18/definitions-reference.html",
+     "origin": "linker:url",
+     "item": {"id": 2081, "source_type": "claude", "title": "Agents", "url": null}}
+  ]
+}
+```
+
+---
+
+### `DELETE /api/items/{item_id}/links`
+
+Remove a link. It is marked `rejected`, so it stops showing and the linker never adds it again. `404` if there is no such link.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `other_id` | int | — | The item at the link's other end |
+| `kind` | string | — | The link's kind, such as `references` |
+| `direction` | string | `outgoing` | `outgoing` or `incoming`, as `GET` lists it |
+
+Returns `{"status": "rejected"}`.
+
+---
+
 ### `PATCH /api/items/{item_id}`
 
 Partially update an item. Only provided fields are changed.

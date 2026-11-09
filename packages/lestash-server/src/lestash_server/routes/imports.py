@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, Form, HTTPException, UploadFile
 from lestash.core.activities import record_activities
 from lestash.core.database import resolve_parent_id
+from lestash.core.links import link_items
 from lestash.importers import merge_with_stored, parse_json_items, parse_zip
 
 from lestash_server.deps import get_config, get_db
@@ -203,6 +204,8 @@ def _insert_items_with_parents(conn, items):
             errors.append(f"Failed to import child: {e}")
 
     # Also handle items without parent markers (flat items)
+    if items_added:
+        link_items(conn)
     conn.commit()
     return items_added, errors
 
