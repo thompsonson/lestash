@@ -14,6 +14,7 @@ copy never leaves a half-written blob.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 import sqlite3
@@ -22,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from lestash.core.config import Config, get_database_path
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_ROOT = "~/.local/share/lestash"
 CHUNK = 1 << 20
@@ -68,9 +71,8 @@ class BlobStore:
         """Store a copy of the file at ``src``; one already stored is not copied again."""
         sha256 = sha_file(src)
         dest = self.path(sha256)
-        size = src.stat().st_size
-        if dest.is_file() and dest.stat().st_size == size:
-            return Blob(sha256, size, new=False)
+        if dest.is_file():
+            return Blob(sha256, dest.stat().st_size, new=False)
         dest.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(prefix=f".tmp-{sha256[:12]}-", dir=dest.parent)
         os.close(fd)
@@ -78,6 +80,8 @@ class BlobStore:
             shutil.copyfile(src, tmp_name)
             if sha_file(Path(tmp_name)) != sha256:
                 raise OSError(f"{src} changed while it was copied")
+            size = Path(tmp_name).stat().st_size  # of what was stored, not of src now
+            os.chmod(tmp_name, 0o644)  # mkstemp makes it 0600
             os.replace(tmp_name, dest)
         except BaseException:
             Path(tmp_name).unlink(missing_ok=True)
@@ -98,12 +102,19 @@ class AdoptCounts:
     new_blobs: int = 0
     new_bytes: int = 0
     missing: int = 0  # rows whose local file is gone
+    failed: int = 0  # rows whose file could not be read or copied; tried again next time
 
 
-def adopt_media(conn: sqlite3.Connection, config: Config | None = None) -> AdoptCounts:
-    """Copy each media file not yet in the store into it, and point its row at it.
+def adopt_media(
+    conn: sqlite3.Connection, config: Config | None = None, ids: list[int] | None = None
+) -> AdoptCounts:
+    """Copy each media file not yet in the store into it, and point its row at it; only
+    the rows ``ids`` if given. The file in the media folder stays. Safe to run again.
 
-    The file in the media folder stays. Safe to run again; the caller commits.
+    The files are copied first, with no write open, then the rows are written and
+    committed in one short transaction: a first run's backlog must not hold the write
+    lock while it copies. A file that can't be read is counted and skipped, so one bad
+    file never stops a sync. Call it with no transaction open.
     """
     from lestash.core.database import get_media_dir
 
@@ -111,22 +122,40 @@ def adopt_media(conn: sqlite3.Connection, config: Config | None = None) -> Adopt
     store = BlobStore(store_root(config))
     media_dir = get_media_dir(config)
     counts = AdoptCounts()
-    rows = conn.execute(
+    query = (
         "SELECT id, local_path, mime_type FROM item_media "
-        "WHERE local_path IS NOT NULL AND sha256 IS NULL ORDER BY id"
-    ).fetchall()
+        "WHERE local_path IS NOT NULL AND sha256 IS NULL"
+    )
+    params: list[int] = []
+    if ids is not None:
+        query += f" AND id IN ({','.join('?' * len(ids))})"
+        params = list(ids)
+    rows = conn.execute(query + " ORDER BY id", params).fetchall()
+    stored: list[tuple[int, Blob, str | None]] = []
     for media_id, local_path, mime_type in rows:
         src = media_dir / local_path
         if not src.is_file():
             counts.missing += 1
             continue
-        blob = store.put_file(src)
-        record_blob(conn, blob, mime_type)
-        conn.execute("UPDATE item_media SET sha256 = ? WHERE id = ?", (blob.sha256, media_id))
-        counts.adopted += 1
+        try:
+            blob = store.put_file(src)
+        except OSError as e:
+            logger.warning("Could not store media file %s: %s", src, e)
+            counts.failed += 1
+            continue
+        stored.append((media_id, blob, mime_type))
         if blob.new:
             counts.new_blobs += 1
             counts.new_bytes += blob.size
+    if stored:
+        with conn:
+            for media_id, blob, mime_type in stored:
+                record_blob(conn, blob, mime_type)
+                conn.execute(
+                    "UPDATE item_media SET sha256 = ? WHERE id = ? AND sha256 IS NULL",
+                    (blob.sha256, media_id),
+                )
+        counts.adopted = len(stored)
     return counts
 
 

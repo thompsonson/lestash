@@ -24,5 +24,6 @@ W2 (#217): one store for every file LeStash keeps.
 
 ## As built (#217, step 1)
 
+- Files are copied with no write open, then recorded in one short transaction; a file that cannot be read is skipped and tried next time, so it never fails a sync.
 - On a copy of the live database: 755 media files adopted as 617 blobs (155 MB, against 175 MB in the media folder); a second run adds none.
 - Not yet: the Kobo store's blobs moving into this store, media versions in use, NotebookLM artifacts, and removing the media folder's copies.

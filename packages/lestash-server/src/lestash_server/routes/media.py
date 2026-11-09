@@ -78,8 +78,8 @@ def upload_media(item_id: int, file: UploadFile):
             mime_type=mime,
             source_origin="upload",
         )
-        adopt_media(conn, get_config())  # into the file store
         conn.commit()
+        adopt_media(conn, get_config(), ids=[media_id])  # into the file store
 
     return MediaResponse(
         id=media_id,

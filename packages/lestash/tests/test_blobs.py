@@ -84,3 +84,25 @@ def test_migration_22_adds_blobs_and_media_versions(test_db) -> None:
         assert {"sha256", "version", "superseded_at"} <= columns
         assert apply_migrations(conn) == 0
         assert SCHEMA_VERSION == 22
+
+
+def test_a_file_that_cannot_be_read_is_skipped_and_tried_again(test_db, monkeypatch) -> None:
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        bad = _media(conn, test_db, item, f"{item}/bad.png", b"bad")
+        good = _media(conn, test_db, item, f"{item}/good.png", b"good")
+        real_put = BlobStore.put_file
+
+        def put_file(self, src):
+            if src.name == "bad.png":
+                raise OSError("unreadable")
+            return real_put(self, src)
+
+        monkeypatch.setattr(BlobStore, "put_file", put_file)
+        counts = adopt_media(conn, test_db)
+        assert (counts.adopted, counts.failed) == (1, 1)
+        assert not conn.in_transaction  # committed: no write lock held
+        rows = dict(conn.execute("SELECT id, sha256 FROM item_media").fetchall())
+        assert rows[bad] is None and rows[good] is not None
+        monkeypatch.setattr(BlobStore, "put_file", real_put)
+        assert adopt_media(conn, test_db, ids=[bad]).adopted == 1
