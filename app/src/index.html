@@ -1768,7 +1768,7 @@
       // Children section (always shown so new notes appear immediately)
       html += `<div class="item-view-children">
         <div class="item-view-children-title">${item.child_count > 0 ? item.child_count + ' items' : 'Notes'}</div>
-        <div class="item-list" id="children-list">${item.child_count > 0
+        <div class="item-list" id="children-list" data-item-id="${item.id}">${item.child_count > 0
           ? '<span style="color:var(--muted);font-size:0.8rem">Loading...</span>'
           : '<span style="color:var(--muted);font-size:0.8rem">No notes yet</span>'
         }</div>
@@ -2240,20 +2240,26 @@
 
       // Load children
       if (item.child_count > 0) {
-        api(`/api/items?parent_id=${item.id}&limit=50&include_children=true`).then(data => {
+        loadAllChildren(item.id).then(children => {
           const list = document.getElementById('children-list');
-          if (!list) return;
+          // The user may have opened another item while the pages loaded
+          if (!list || list.dataset.itemId !== String(item.id)) return;
           list.innerHTML = '';
-          const isChat = data.items.length > 0 && CHAT_ROLES.has(getChatRole(data.items[0]));
+          const isChat = children.length > 0 && CHAT_ROLES.has(getChatRole(children[0]));
           if (isChat) {
             const thread = document.createElement('div');
             thread.className = 'chat-thread';
-            data.items.slice().reverse().forEach(child => thread.appendChild(renderChatBubble(child)));
+            children.slice().reverse().forEach(child => thread.appendChild(renderChatBubble(child)));
             list.appendChild(thread);
           } else {
-            data.items.forEach(child => list.appendChild(renderCard(child)));
+            children.forEach(child => list.appendChild(renderCard(child)));
           }
-        }).catch(() => {});
+        }).catch(() => {
+          const list = document.getElementById('children-list');
+          if (list && list.dataset.itemId === String(item.id)) {
+            list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Could not load these items</span>';
+          }
+        });
       }
 
       loadActivities(item.id);
@@ -2355,6 +2361,21 @@
       syndication: ['Cross-posted as', 'Cross-post of'],
       in_reply_to: ['Reply to', 'Replies'],
     };
+
+    // Children come newest first, a page at a time: load every page, so a long chat
+    // shows every turn
+    const CHILDREN_PAGE = 100;
+    async function loadAllChildren(parentId) {
+      const children = [];
+      const seen = new Set();
+      for (let offset = 0; ; offset += CHILDREN_PAGE) {
+        const data = await api(`/api/items?parent_id=${parentId}&include_children=true`
+          + `&limit=${CHILDREN_PAGE}&offset=${offset}`);
+        // A child added while the pages load shifts the next page by one: skip repeats
+        data.items.forEach(child => { if (!seen.has(child.id)) { seen.add(child.id); children.push(child); } });
+        if (data.items.length < CHILDREN_PAGE || offset + CHILDREN_PAGE >= data.total) return children;
+      }
+    }
 
     async function loadLinks(itemId) {
       let data;
