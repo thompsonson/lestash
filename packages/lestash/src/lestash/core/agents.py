@@ -191,6 +191,18 @@ def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
     names them."""
     meta = row.metadata
     did, handle = meta.get("author_did"), meta.get("author_handle")
+    if isinstance(did, str) and did:
+        # The author first: a post of yours that mentions you must name your account
+        yield AgentRef(
+            "author",
+            "bluesky",
+            did,
+            str(meta.get("author_display_name") or handle or row.author or did),
+            "person",
+            url=f"https://bsky.app/profile/{handle}" if handle else None,
+            is_self=row.is_own,
+            evidence="DID",
+        )
     mentioned = _dict(meta.get("facets")).get("mentions")
     seen: set[str] = set()
     for mention in mentioned if isinstance(mentioned, list) else []:
@@ -207,18 +219,6 @@ def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
             is_self=row.is_own and mention == did,
             evidence="tagged",
         )
-    if not isinstance(did, str) or not did:
-        return
-    yield AgentRef(
-        "author",
-        "bluesky",
-        did,
-        str(meta.get("author_display_name") or handle or row.author or did),
-        "person",
-        url=f"https://bsky.app/profile/{handle}" if handle else None,
-        is_self=row.is_own,
-        evidence="DID",
-    )
 
 
 def _arxiv(row: _Row, _: _Context) -> Iterator[AgentRef]:

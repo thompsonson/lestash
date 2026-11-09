@@ -461,3 +461,26 @@ def test_a_bluesky_mention_names_its_account_once_a_post_of_theirs_does(test_db)
         link_agents(conn)
         assert _agents(conn, mine)[1] == ("mentioned", None, "Ann", "person", False)
         assert link_agents(conn) == 0
+
+
+def test_a_post_of_yours_that_mentions_you_names_you(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            "bluesky",
+            "b1",
+            "Me",
+            {
+                "author_did": "did:plc:me",
+                "author_display_name": "Matthew Thompson",
+                "facets": {"mentions": ["did:plc:me"]},
+            },
+            own=True,
+        )
+        link_agents(conn)
+        assert (
+            conn.execute(
+                "SELECT display_name FROM person_identities WHERE identifier = 'did:plc:me'"
+            ).fetchone()[0]
+            == "Matthew Thompson"
+        )
