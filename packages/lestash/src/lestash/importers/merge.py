@@ -17,29 +17,33 @@ Upserts replace an item's content and metadata. That is wrong for two kinds of i
   only the prompts that chat lacks, and never replaces a turn. A chat's prompt times are
   merged across exports.
 
+The times themselves are activities (``ItemCreate.activities``), stored apart from
+the item; the merge reads the stored ones and sums them all up in the metadata's count,
+first_at and last_at.
+
 Every writer that upserts sync or import items calls ``merge_with_stored`` first, and
-skips the item when it returns False.
+skips the item when it returns False. It then stores the item's activities with
+``record_activities``.
 """
 
 import json
 import sqlite3
 from collections import Counter
-from datetime import datetime
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
+from lestash.core.activities import activity_time, stored_times
 from lestash.importers.gemini_activity import SOURCE as GEMINI_ACTIVITY_SOURCE
 from lestash.importers.gemini_activity import chat_content, prompt_key
-from lestash.importers.youtube_history import MAX_TIMES
 from lestash.models.item import ItemCreate
 
-# Lists not capped: a chat has at most a few hundred prompts, and its count must stay exact
-UNCAPPED = frozenset({"prompted_times"})
-# times list -> count key
-TIME_KEYS = {
-    "watched_times": "watched_count",
-    "viewed_times": "viewed_count",
-    "searched_times": "searched_count",
-    "prompted_times": "prompted_count",
+# verb -> count key in metadata
+COUNT_KEYS = {
+    "watched": "watched_count",
+    "viewed": "viewed_count",
+    "searched": "searched_count",
+    "prompted": "prompted_count",
 }
 YOUTUBE_KINDS = ("history", "search", "post")
 NOTEBOOK_CHILD_TYPES = ("note", "report", "chat")
@@ -58,7 +62,7 @@ def merge_with_stored(conn: sqlite3.Connection, item: ItemCreate) -> bool:
     if item.source_type == "youtube" and item.source_id.split(":", 1)[0] in YOUTUBE_KINDS:
         stored = _stored(conn, item)
         if stored:
-            _merge_youtube(item, stored)
+            _merge_youtube(conn, item, stored)
     elif item.source_type == "notebooklm" and metadata.get("type") == "notebook":
         stored = _stored(conn, item)
         if stored:
@@ -82,37 +86,61 @@ def _stored(conn: sqlite3.Connection, item: ItemCreate) -> dict[str, Any] | None
     return {"id": row[0], "title": row[1], "content": row[2], "metadata": metadata}
 
 
-def _union_times(old: dict[str, Any], new: dict[str, Any], merged: dict[str, Any]) -> list[str]:
-    """Union every times list into ``merged``; returns the (last) merged list."""
-    result: list[str] = []
-    for key, count_key in TIME_KEYS.items():
-        if key not in old and key not in new:
+def _union_times(
+    conn: sqlite3.Connection, item: ItemCreate, stored: dict[str, Any], merged: dict[str, Any]
+) -> list[datetime]:
+    """Sum up the stored times and the item's new ones in ``merged``: count, first, last.
+
+    The times themselves are activities: the stored ones are read from the table, and
+    the item's are stored by its writer. Returns every time of the (last) verb, in order.
+    """
+    old, new = stored["metadata"], item.metadata or {}
+    result: list[datetime] = []
+    for verb, count_key in COUNT_KEYS.items():
+        incoming = [a.occurred_at for a in item.activities or [] if a.verb == verb]
+        if count_key not in old and count_key not in new and not incoming:
             continue
-        times = sorted({*old.get(key, []), *new.get(key, [])})
-        merged[key] = times if key in UNCAPPED else times[-MAX_TIMES:]
-        capped = key not in UNCAPPED and (
-            len(old.get(key, [])) >= MAX_TIMES or len(new.get(key, [])) >= MAX_TIMES
+        times = sorted(
+            {
+                activity_time(t): t for t in (*stored_times(conn, stored["id"], verb), *incoming)
+            }.items()
         )
-        merged[count_key] = (
-            max(len(times), old.get(count_key, 0), new.get(count_key, 0)) if capped else len(times)
-        )
+        # A count can exceed the times stored: lists were capped at 200 before the table
+        merged[count_key] = max(len(times), old.get(count_key, 0), new.get(count_key, 0))
         if times:
-            # A capped list can drop an earlier first_at, kept only in the stored copy
-            firsts = [t for t in (times[0], old.get("first_at"), new.get("first_at")) if t]
-            lasts = [t for t in (times[-1], old.get("last_at"), new.get("last_at")) if t]
-            merged["first_at"], merged["last_at"] = min(firsts), max(lasts)
-        result = times
+            # A capped list could drop an earlier first_at, kept only in the stored copy.
+            # On a tie the item's own string wins, so a re-import leaves it unchanged.
+            first, last = times[0][1].isoformat(), times[-1][1].isoformat()
+            merged["first_at"] = _pick(min, new.get("first_at"), old.get("first_at"), first)
+            merged["last_at"] = _pick(max, new.get("last_at"), old.get("last_at"), last)
+        result = [t for _, t in times]
     return result
 
 
-def _merge_youtube(item: ItemCreate, stored: dict[str, Any]) -> None:
+def _pick(choose: Callable[..., Any], *values: Any) -> str:
+    """The earliest (``min``) or latest (``max``) of the values that are ISO times.
+
+    A time with no zone is taken as UTC. Of equal times the first given is kept, as
+    written. The last value must be a time.
+    """
+    times = []
+    for value in values:
+        try:
+            when = datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            continue
+        times.append((when if when.tzinfo else when.replace(tzinfo=UTC), value))
+    return str(choose(times, key=lambda t: t[0])[1])
+
+
+def _merge_youtube(conn: sqlite3.Connection, item: ItemCreate, stored: dict[str, Any]) -> None:
     from lestash.importers.youtube_history import search_content, video_content
 
     old, new = stored["metadata"], dict(item.metadata or {})
     new_is_takeout = new.get("source") == "takeout"
     old_is_takeout = old.get("source") == "takeout"
     merged = {**old, **new}
-    times = [datetime.fromisoformat(t) for t in _union_times(old, new, merged)]
+    times = _union_times(conn, item, stored, merged)
 
     kind = (item.source_id or "").split(":", 1)[0]
     if kind == "history":
@@ -130,7 +158,7 @@ def _merge_youtube(item: ItemCreate, stored: dict[str, Any]) -> None:
             # A video removed since: keep the real title we already had
             item.title = stored["title"]
             merged.pop("unavailable", None)
-        if "watched_times" in merged:
+        if "watched_count" in merged:
             item.content = video_content(
                 item.title or "", merged.get("channel_title"), times, merged.get("description")
             )
@@ -410,7 +438,7 @@ def _merge_gemini_chat(conn: sqlite3.Connection, item: ItemCreate, stored: dict[
     """Keep the prompt times of every export: each holds only what Gemini still keeps."""
     old, new = stored["metadata"], dict(item.metadata or {})
     merged = {**old, **new}
-    _union_times(old, new, merged)
+    _union_times(conn, item, stored, merged)
     notebooks = _union(old.get("notebooklm_notebooks"), new.get("notebooklm_notebooks"))
     if notebooks:
         merged["notebooklm_notebooks"] = notebooks

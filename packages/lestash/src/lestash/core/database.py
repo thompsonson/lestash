@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from lestash.core.activities import record_activities
 from lestash.core.config import Config
 
 if TYPE_CHECKING:
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -137,8 +138,9 @@ CREATE INDEX IF NOT EXISTS idx_syndications_item ON syndications(item_id);
 """
 
 # Activities (docs/content-and-activity-ontology-design.md): one row per time someone
-# did something to an item. For now they come from the times lists that imports keep in
-# item metadata; the lists move out of metadata in a later step.
+# did something to an item. Migrations 14 and 15 filled them from the times lists that
+# imports kept in item metadata; migration 16 removed the lists. Imports now attach
+# activities to their items, stored by core.activities.record_activities().
 ACTIVITY_VERBS = {
     "watched_times": "watched",
     "viewed_times": "viewed",
@@ -185,6 +187,9 @@ def _activities_from_metadata(row: str, dates_only: bool = False) -> str:
       );
     """
 
+
+_TIMES_PATHS = ", ".join(f"'$.{key}'" for key in ACTIVITY_VERBS)
+_HAS_TIMES = " OR ".join(f"json_type(metadata, '$.{key}') IS NOT NULL" for key in ACTIVITY_VERBS)
 
 # Migrations: list of (version, description, sql) tuples
 # Each migration brings the database from version N-1 to version N
@@ -504,6 +509,28 @@ MIGRATIONS = [
         END;
         """,
     ),
+    (
+        16,
+        "Move the times lists out of item metadata: they are activities now",
+        # Imports store their times as activities themselves, so the triggers go. Any
+        # listed time not yet an activity is recorded first, then the lists are removed;
+        # the metadata keeps each count, first_at and last_at. item_history keeps the old
+        # metadata of every item changed, tagged with this migration.
+        "BEGIN;"
+        "DROP TRIGGER IF EXISTS items_activities_ai;"
+        "DROP TRIGGER IF EXISTS items_activities_au;"
+        + _activities_from_metadata("items", dates_only=True)
+        + f"""
+        CREATE TEMP TABLE migration_16_history AS
+            SELECT COALESCE(MAX(id), 0) AS id FROM item_history;
+        UPDATE items SET metadata = json_remove(metadata, {_TIMES_PATHS})
+        WHERE json_valid(metadata) AND ({_HAS_TIMES});
+        UPDATE item_history SET change_reason = 'migration 16: times lists moved to activities'
+        WHERE id > (SELECT id FROM migration_16_history);
+        DROP TABLE migration_16_history;
+        COMMIT;
+        """,
+    ),
 ]
 
 
@@ -778,6 +805,7 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
         (item.source_type, item.source_id),
     ).fetchone()
     item_id = row[0]
+    record_activities(conn, item_id, item.activities)
 
     mark_recent_history(conn, pre_max, "sync", item_ids=[item_id])
     conn.commit()

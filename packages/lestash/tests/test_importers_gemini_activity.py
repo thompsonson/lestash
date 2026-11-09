@@ -479,8 +479,11 @@ def test_one_time_written_two_ways_is_one_turn(test_db) -> None:
     _import(test_db, [_prompt("Q", "2026-01-01T10:00:00")])  # no offset: UTC
     assert len(_items(test_db, "parent_id IS NOT NULL")) == 2
     chat = _items(test_db, "source_id = ?", (f"c_{CHAT}",))[0]
-    assert chat["metadata"]["prompted_times"] == ["2026-01-01T10:00:00.000+00:00"]
+    assert "prompted_times" not in chat["metadata"]
     assert chat["metadata"]["prompted_count"] == 1
+    with get_connection(test_db) as conn:
+        times = conn.execute("SELECT occurred_at FROM activities WHERE verb = 'prompted'")
+        assert [r[0] for r in times] == ["2026-01-01T10:00:00.000Z"]
 
 
 def test_a_long_chats_prompt_count_stays_exact_across_exports(test_db) -> None:

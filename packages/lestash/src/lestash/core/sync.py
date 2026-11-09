@@ -14,6 +14,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import IO, Self
 
+from lestash.core.activities import record_activities
 from lestash.core.database import (
     add_item_media,
     resolve_parent_id,
@@ -167,6 +168,7 @@ class SyncStore:
                 ).fetchone()
             )
             item_id = stored[0]
+        record_activities(self.conn, item_id, item.activities)
         self.source_types.add(item.source_type)
         # item_media has no FTS index, so this count isn't moved by FTS5 flushing its
         # buffered writes, as total_changes around the upsert would be

@@ -33,9 +33,10 @@ def test_rewatches_become_one_item_with_all_times() -> None:
     assert a.url == "https://www.youtube.com/watch?v=AAAAAAAAAAA"
     assert a.created_at.isoformat().startswith("2025-06-01")  # first watch
     assert a.metadata["watched_count"] == 2
-    assert a.metadata["watched_times"] == [
-        "2025-06-01T10:00:00+00:00",
-        "2026-01-22T14:36:35.783000+00:00",
+    assert "watched_times" not in a.metadata  # the times are activities
+    assert [(x.verb, x.occurred_at.isoformat(), x.source) for x in a.activities] == [
+        ("watched", "2025-06-01T10:00:00+00:00", "takeout:youtube"),
+        ("watched", "2026-01-22T14:36:35.783000+00:00", "takeout:youtube"),
     ]
     assert a.metadata["last_at"].startswith("2026-01-22")
     assert a.metadata["source_subtype"] == "history"
