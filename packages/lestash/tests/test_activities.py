@@ -249,3 +249,54 @@ def test_a_later_like_keeps_the_watches_already_stored(test_db) -> None:
         metadata, content = conn.execute("SELECT metadata, content FROM items").fetchone()
     assert json.loads(metadata)["watched_count"] == 1
     assert "Watched once: 2026-01-01" in content
+
+
+def _like(actor_id: int | None) -> ActivityCreate:
+    return ActivityCreate(
+        verb="liked",
+        occurred_at=datetime(2026, 1, 19, 9, 45, tzinfo=UTC),
+        source="linkedin",
+        actor_id=actor_id,
+    )
+
+
+def test_migration_21_keys_activities_by_actor_and_keeps_every_row(test_db) -> None:
+    with get_connection(test_db) as conn:
+        item = conn.execute(
+            "INSERT INTO items (source_type, content) VALUES ('t', 'x') RETURNING id"
+        ).fetchone()[0]
+        ann = conn.execute(
+            "INSERT INTO people (name, kind) VALUES ('Ann', 'person') RETURNING id"
+        ).fetchone()[0]
+        record_activities(conn, item, [_like(None)])
+        before = conn.execute("SELECT * FROM activities").fetchall()
+        # Back to schema 20: the old table, keyed without its actor
+        conn.executescript(
+            """
+            DROP TABLE activities;
+            CREATE TABLE activities (
+                id INTEGER PRIMARY KEY, verb TEXT NOT NULL,
+                item_id INTEGER REFERENCES items(id) ON DELETE CASCADE,
+                occurred_at TEXT NOT NULL, source TEXT NOT NULL,
+                context_id INTEGER REFERENCES items(id) ON DELETE SET NULL,
+                details TEXT, actor_id INTEGER REFERENCES people(id),
+                UNIQUE (verb, item_id, occurred_at, source)
+            );
+            CREATE INDEX idx_activities_item ON activities(item_id);
+            PRAGMA user_version = 20;
+            """
+        )
+        conn.executemany(
+            "INSERT INTO activities VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [tuple(r) for r in before]
+        )
+        assert record_activities(conn, item, [_like(ann)]) == 0  # the old key drops it
+        assert apply_migrations(conn) == 1
+        assert [tuple(r) for r in conn.execute("SELECT * FROM activities")] == [
+            tuple(r) for r in before
+        ]
+        indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        assert {"idx_activities_item", "idx_activities_key"} <= indexes
+        # Ann's like at the same time is hers; yours again is still one
+        assert record_activities(conn, item, [_like(ann), _like(None)]) == 1
+        assert record_activities(conn, item, [_like(ann)]) == 0
+        assert SCHEMA_VERSION == 21

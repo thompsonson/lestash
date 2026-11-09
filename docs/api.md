@@ -131,11 +131,14 @@ The item's activities (watches, searches, prompts), newest first. `404` if the i
 {
   "activities": [
     {"id": 7, "verb": "searched", "occurred_at": "2026-01-17T23:20:58.043000Z",
-     "source": "takeout:youtube", "context_id": null, "details": {"query": "markov blanket"}}
+     "source": "takeout:youtube", "context_id": null, "details": {"query": "markov blanket"},
+     "actor_id": null, "actor": null}
   ],
   "total": 1
 }
 ```
+
+`actor_id` and `actor` name the person who did it, such as someone who liked your LinkedIn post; null is you.
 
 ---
 

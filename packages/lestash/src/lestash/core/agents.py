@@ -481,8 +481,12 @@ class _People:
             "UPDATE OR IGNORE item_agents SET person_id = ? WHERE person_id = ?",
             (you, person_id),
         )
-        # Null is you, as for every activity of yours
-        self.conn.execute("UPDATE activities SET actor_id = NULL WHERE actor_id = ?", (person_id,))
+        # Null is you, as for every activity of yours. One you also did at that time
+        # is already there, so theirs goes
+        self.conn.execute(
+            "UPDATE OR IGNORE activities SET actor_id = NULL WHERE actor_id = ?", (person_id,)
+        )
+        self.conn.execute("DELETE FROM activities WHERE actor_id = ?", (person_id,))
         self.conn.execute(
             "UPDATE OR IGNORE item_mentions SET person_id = ? WHERE person_id = ?",
             (you, person_id),

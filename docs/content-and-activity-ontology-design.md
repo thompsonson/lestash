@@ -394,6 +394,17 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
 - On a copy of the live database: 7 names kept as yours (you and 6 set in the app), no URL lost, and the agents pass adds nothing after.
 - Not yet: `actor_id` for others' LinkedIn reactions, Bluesky mentions, hashtags and the name linker.
 
+### As built (#216, step 4d)
+
+- Someone else's LinkedIn reaction is a `liked` activity with their person as `actor_id`; null is still you.
+  - Their account and person are made if not yet seen, named by URN until a source names them.
+  - An account not confirmed gives no activity, since one without an actor would read as yours.
+- Migration 21 rebuilds `activities` so its key includes the actor (`ifnull(actor_id, 0)`): two people liking one item at one time are two likes. Every row, id and index is kept.
+- A comment URN names a held comment by its comment id (the changelog's `resourceId`), so a reaction or reply on your comment lands on it, not on a stub. A comment stub is merged into the comment once it is held.
+- When the agents pass moves an account to you, an activity it and you both did at one time is kept once, as yours.
+- `/api/items/{id}/activities` gives `actor_id` and `actor`; the detail view reads "Ann Lee liked".
+- On a copy of the live database: 346 likes by 196 people; 77 comment stubs merged into your comments; your 1,586 likes unchanged; the pass adds nothing when run again.
+
 ## The activity ontology
 
 An activity is something someone did, at a time, usually to an item.

@@ -7,16 +7,16 @@ finds the post. This pass runs after it:
 
 - A post named by a URN made within 2 s of a held post's URN (a share and its activity)
   is that post, and becomes the parent. The resolver matches exact URNs only.
-- Otherwise the post gets a stub. A comment, the target of a reply or a reaction, gets a
-  stub of its own, since LeStash doesn't match comments to the comments it holds. The
-  comment's stub replies to its post.
+- Otherwise the post gets a stub. A comment, the target of a reply or a reaction, is
+  the held comment with its comment id, else gets a stub of its own, which replies to
+  its post.
 - A comment without a parent links to its target as ``in_reply_to``. A comment with a
   parent has no such link: its parent is its post.
-- Your own reaction is a ``liked`` activity on its target (a post, held or stub, or a
+- A reaction is a ``liked`` activity on its target (a post, held or stub, or a
   comment's stub) with the reaction type in its details. Only the event that made it
-  counts, not a change or a delete. Someone else's reaction waits for the people
-  tables, since an activity without an actor is yours.
-- Once a post is imported, its stub is merged into it.
+  counts, not a change or a delete. Someone else's has their person as its actor,
+  their LinkedIn account made if not yet seen; yours has none.
+- Once a post or comment is imported, its stub is merged into it.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from typing import Any, NamedTuple
 from urllib.parse import quote
 
 from lestash.core.activities import record_activities
-from lestash.core.database import mark_recent_history, max_history_id
+from lestash.core.database import linkedin_person, mark_recent_history, max_history_id
 from lestash.core.stubs import STUB_PREFIX, make_stub, merge_stub
 from lestash.models.item import ActivityCreate
 
@@ -38,7 +38,7 @@ ORIGIN = "import:linkedin"
 SOURCE = "linkedin"
 FEED_URL = "https://www.linkedin.com/feed/update/"
 # urn:li:comment:(activity:123,456) is comment 456 on post urn:li:activity:123
-COMMENT_URN = re.compile(r"^urn:li:comment:\((\w+):([^,]+),")
+COMMENT_URN = re.compile(r"^urn:li:comment:\((\w+):([^,]+),([^)]+)\)$")
 # A share and its activity are made within a second of each other; distinct posts
 # rarely are. Wider than that, a post is not taken for another.
 SAME_POST_MS = 2000
@@ -69,6 +69,26 @@ def snowflake_ms(urn: str) -> int | None:
     except ValueError:
         return None
     return snowflake_id >> 22
+
+
+def _held_comments(conn: sqlite3.Connection) -> dict[str, int]:
+    """The held LinkedIn comments, by comment id: the changelog's resourceId, the last
+    part of a comment URN. The oldest wins an id held twice."""
+    return {
+        str(comment_id): item_id
+        for item_id, comment_id in conn.execute(
+            "SELECT id, json_extract(metadata, '$.raw.resourceId') FROM items "
+            "WHERE source_type = 'linkedin' AND held = 1 "
+            "AND json_extract(metadata, '$.resource_name') = 'socialActions/comments' "
+            "AND json_extract(metadata, '$.raw.resourceId') IS NOT NULL ORDER BY id DESC"
+        )
+    }
+
+
+def held_comment(comments: dict[str, int], urn: str) -> int | None:
+    """The held comment a comment URN names, if LeStash holds it."""
+    match = COMMENT_URN.match(urn)
+    return comments.get(match.group(3)) if match else None
 
 
 class _HeldPosts:
@@ -162,26 +182,48 @@ def _is_own_action(metadata: dict[str, Any]) -> bool:
     return bool(actor) and actor == owner
 
 
+_NOT_KNOWN = -1  # an actor who can't be named: no activity, as one without an actor is yours
+
+
+def _actor(conn: sqlite3.Connection, metadata: dict[str, Any]) -> int | None:
+    """Who made a reaction: None for you, else their person; _NOT_KNOWN if neither."""
+    if _is_own_action(metadata):
+        return None
+    actor = _object(metadata.get("raw")).get("actor")
+    if not isinstance(actor, str) or not actor.startswith(("urn:li:person:", "urn:li:company:")):
+        return _NOT_KNOWN
+    person_id = linkedin_person(conn, actor)
+    if person_id is None:
+        return _NOT_KNOWN
+    row = conn.execute("SELECT is_self FROM people WHERE id = ?", (person_id,)).fetchone()
+    return None if row and row[0] else person_id
+
+
 def _is_created(metadata: dict[str, Any]) -> bool:
     """Whether the changelog event made the reaction, rather than changing or deleting it.
     Only the event that made it is a like; others would add likes that never happened."""
     return metadata.get("method", "CREATE") == "CREATE"
 
 
-def _merge_filled_stubs(conn: sqlite3.Connection, held: _HeldPosts) -> tuple[int, list[int]]:
-    """Merge each post stub whose post is now held. Returns how many, and the ids of the
-    children moved with them."""
+def _merge_filled_stubs(
+    conn: sqlite3.Connection, held: _HeldPosts, comments: dict[str, int]
+) -> tuple[int, list[int]]:
+    """Merge each stub whose post or comment is now held. Returns how many, and the ids
+    of the children moved with them."""
     merged, moved = 0, []
     stubs = conn.execute(
-        "SELECT id, json_extract(metadata, '$.post_urn') FROM items "
-        "WHERE source_type = 'linkedin' AND held = 0 AND source_id LIKE ? "
-        "AND json_extract(metadata, '$.comment_urn') IS NULL",
+        "SELECT id, json_extract(metadata, '$.post_urn'), "
+        "json_extract(metadata, '$.comment_urn') FROM items "
+        "WHERE source_type = 'linkedin' AND held = 0 AND source_id LIKE ?",
         (STUB_PREFIX + "%",),
     ).fetchall()
-    for stub_id, urn in stubs:
-        post_id = held.find(urn) if urn else None
-        if post_id is not None:
-            moved += merge_stub(conn, stub_id, post_id)
+    for stub_id, urn, comment_urn in stubs:
+        if comment_urn:
+            found = held_comment(comments, comment_urn)
+        else:
+            found = held.find(urn) if urn else None
+        if found is not None:
+            moved += merge_stub(conn, stub_id, found)
             merged += 1
     return merged, moved
 
@@ -192,6 +234,7 @@ class _Pass:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
         self.held = _HeldPosts(conn)
+        self.comments = _held_comments(conn)
         self.links = 0
 
     def link(self, from_id: int, to_id: int, evidence: str) -> None:
@@ -209,10 +252,13 @@ class _Pass:
         return found if found is not None else _post_stub(self.conn, urn)
 
     def target(self, urn: str) -> int:
-        """The item a comment or reaction is on: a post, held or stub, or a comment's
-        stub, which replies to its post."""
+        """The item a comment or reaction is on: a post, held or stub, or a comment,
+        held or stub; a comment's stub replies to its post."""
         if not COMMENT_URN.match(urn):
             return self.post(urn)
+        found = held_comment(self.comments, urn)
+        if found is not None:
+            return found
         stub = _comment_stub(self.conn, urn)
         post = post_urn(urn)
         self.link(stub, self.post(post), post)
@@ -224,7 +270,7 @@ def link_linkedin_targets(conn: sqlite3.Connection) -> StubCounts:
     target. Runs after resolve_linkedin_parents; safe to run again. The caller commits."""
     run = _Pass(conn)
     since = max_history_id(conn)
-    merged, touched = _merge_filled_stubs(conn, run.held)
+    merged, touched = _merge_filled_stubs(conn, run.held, run.comments)
     parented = activities = 0
     rows = conn.execute(
         "SELECT id, parent_id, metadata FROM items "
@@ -253,9 +299,12 @@ def link_linkedin_targets(conn: sqlite3.Connection) -> StubCounts:
         if commented_on:
             if parent_id is None:
                 run.link(item_id, run.target(target), commented_on)
-        elif _is_own_action(metadata) and _is_created(metadata):
+        elif _is_created(metadata):
             when = _reaction_time(metadata)
             if when is None:
+                continue
+            actor_id = _actor(conn, metadata)
+            if actor_id == _NOT_KNOWN:
                 continue
             target_id = parent_id if parent_id is not None and not on_comment else None
             if (
@@ -273,6 +322,7 @@ def link_linkedin_targets(conn: sqlite3.Connection) -> StubCounts:
                         occurred_at=when,
                         source=SOURCE,
                         details={"reaction": reaction} if reaction else None,
+                        actor_id=actor_id,
                     )
                 ],
             )

@@ -36,6 +36,7 @@ def record_activities(
             activity_time(a.occurred_at),
             a.source,
             json.dumps(a.details) if a.details is not None else None,
+            a.actor_id,
         )
         for a in activities or []
     ]
@@ -43,8 +44,8 @@ def record_activities(
         return 0
     before = conn.total_changes
     conn.executemany(
-        "INSERT OR IGNORE INTO activities (verb, item_id, occurred_at, source, details) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO activities (verb, item_id, occurred_at, source, details, "
+        "actor_id) VALUES (?, ?, ?, ?, ?, ?)",
         rows,
     )
     return conn.total_changes - before

@@ -29,6 +29,7 @@ class ActivityCreate(BaseModel):
     occurred_at: datetime
     source: str  # where the record came from, e.g. 'takeout:youtube'
     details: dict[str, Any] | None = None
+    actor_id: int | None = None  # the person who did it; None is you
 
 
 class MediaAttachment(BaseModel):
