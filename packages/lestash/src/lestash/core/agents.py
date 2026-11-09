@@ -466,6 +466,13 @@ class _People:
         if others[0] != 1 or not others[1]:
             return person_id
         you = self.you(None)
+        # A name you set on the account's person, before it showed yours, is your name
+        self.conn.execute(
+            "UPDATE people SET (name, name_origin) = (SELECT name, name_origin FROM people "
+            "WHERE id = :them) WHERE id = :you AND (SELECT name_origin FROM people "
+            "WHERE id = :them) IS NOT NULL",
+            {"them": person_id, "you": you},
+        )
         self.conn.execute(
             "UPDATE person_identities SET person_id = ? WHERE platform = ? AND identifier = ?",
             (you, *key),

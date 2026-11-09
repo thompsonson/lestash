@@ -896,6 +896,8 @@ def _set_linkedin_name(
         "WHERE i.platform = 'linkedin' AND i.identifier = ?",
         (urn,),
     ).fetchone()
+    if row is not None and row[3] is None:
+        return  # not confirmed, or its person deleted: it belongs to no one
     if row is None:
         conn.execute(
             "INSERT INTO person_identities (person_id, platform, identifier, display_name, "
@@ -928,8 +930,6 @@ def _set_linkedin_name(
         conn.execute(
             "UPDATE person_identities SET display_name = ? WHERE id = ?", (name, identity_id)
         )
-    if current is None:
-        return
     if origin:
         conn.execute(
             "UPDATE people SET name = ?, name_origin = ? WHERE id = ?", (name, origin, person_id)

@@ -67,7 +67,8 @@ def main() -> int:
         people = conn.execute(
             "SELECT i.identifier, p.name FROM person_identities i "
             "JOIN people p ON p.id = i.person_id "
-            "WHERE i.platform = 'linkedin' AND p.name != i.identifier"
+            "WHERE i.platform = 'linkedin' AND i.status = 'confirmed' "
+            "AND p.name != i.identifier"
         ).fetchall()
         by_name_ci = {name.lower(): (urn, name) for urn, name in people}
         by_normalised = {normalise(name): (urn, name) for urn, name in people}

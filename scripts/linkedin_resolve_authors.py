@@ -88,7 +88,8 @@ def load_person_profiles(conn: sqlite3.Connection) -> dict[str, str]:
     rows = conn.execute(
         "SELECT i.identifier, p.name FROM person_identities i "
         "JOIN people p ON p.id = i.person_id "
-        "WHERE i.platform = 'linkedin' AND p.name != i.identifier"
+        "WHERE i.platform = 'linkedin' AND i.status = 'confirmed' "
+        "AND p.name != i.identifier"
     ).fetchall()
     return {urn: name for urn, name in rows}
 

@@ -195,3 +195,4 @@ def test_naming_your_urn_before_its_changelog_still_makes_it_yours(test_db) -> N
             == 1
         )
         assert conn.execute("SELECT count(*) FROM people").fetchone()[0] == 1
+        assert _name(conn, ME) == ("Matthew Thompson", "manual")
