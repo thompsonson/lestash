@@ -59,9 +59,13 @@ def walk_attributes(meta_raw: str) -> list[tuple[str, str]]:
         urn = entity.get("member")
         if not urn or not isinstance(urn, str):
             continue
-        if start < 0 or length <= 0 or start + length > len(text):
+        # LinkedIn counts offsets in UTF-16 code units: an emoji before a name counts two
+        units = text.encode("utf-16-le")
+        if start < 0 or length <= 0 or (start + length) * 2 > len(units):
             continue
-        name = text[start : start + length].strip()
+        name = units[start * 2 : (start + length) * 2].decode("utf-16-le", "replace").strip()
+        if "\ufffd" in name:
+            continue
         if name:
             out.append((urn, name))
     return out
