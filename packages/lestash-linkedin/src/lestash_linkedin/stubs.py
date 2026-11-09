@@ -5,11 +5,13 @@ See docs/content-and-activity-ontology-design.md, "Stub items for things not hel
 ``resolve_linkedin_parents`` makes a comment or reaction a child of its post when it
 finds the post. This pass runs after it:
 
-- A post found by its URN, or by a URN made within 2 s of it (a share and its activity),
-  becomes the parent, as the resolver would make it.
+- A post named by a URN made within 2 s of a held post's URN (a share and its activity)
+  is that post, and becomes the parent. The resolver matches exact URNs only.
 - Otherwise the post gets a stub. A comment, the target of a reply or a reaction, gets a
-  stub of its own, since LeStash doesn't match comments to the comments it holds.
-- A comment without a parent links to its target as ``in_reply_to``.
+  stub of its own, since LeStash doesn't match comments to the comments it holds. The
+  comment's stub replies to its post.
+- A comment without a parent links to its target as ``in_reply_to``. A comment with a
+  parent has no such link: its parent is its post.
 - Your own reaction is a ``liked`` activity on its target (a post, held or stub, or a
   comment's stub) with the reaction type in its details. Only the event that made it
   counts, not a change or a delete. Someone else's reaction waits for the people
@@ -158,8 +160,10 @@ def _is_created(metadata: dict[str, Any]) -> bool:
     return metadata.get("method", "CREATE") == "CREATE"
 
 
-def _merge_filled_stubs(conn: sqlite3.Connection, held: _HeldPosts) -> int:
-    merged = 0
+def _merge_filled_stubs(conn: sqlite3.Connection, held: _HeldPosts) -> tuple[int, list[int]]:
+    """Merge each post stub whose post is now held. Returns how many, and the ids of the
+    children moved with them."""
+    merged, moved = 0, []
     stubs = conn.execute(
         "SELECT id, json_extract(metadata, '$.post_urn') FROM items "
         "WHERE source_type = 'linkedin' AND held = 0 AND source_id LIKE ? "
@@ -169,19 +173,51 @@ def _merge_filled_stubs(conn: sqlite3.Connection, held: _HeldPosts) -> int:
     for stub_id, urn in stubs:
         post_id = held.find(urn) if urn else None
         if post_id is not None:
-            merge_stub(conn, stub_id, post_id)
+            moved += merge_stub(conn, stub_id, post_id)
             merged += 1
-    return merged
+    return merged, moved
+
+
+class _Pass:
+    """One run of link_linkedin_targets: the held posts, and what it added."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn = conn
+        self.held = _HeldPosts(conn)
+        self.links = 0
+
+    def link(self, from_id: int, to_id: int, evidence: str) -> None:
+        before = self.conn.total_changes
+        self.conn.execute(
+            "INSERT OR IGNORE INTO item_links (from_id, to_id, kind, evidence, origin, status) "
+            "VALUES (?, ?, 'in_reply_to', ?, ?, 'confirmed')",
+            (from_id, to_id, evidence, ORIGIN),
+        )
+        self.links += self.conn.total_changes - before
+
+    def post(self, urn: str) -> int:
+        """The held post, or its stub."""
+        found = self.held.find(urn)
+        return found if found is not None else _post_stub(self.conn, urn)
+
+    def target(self, urn: str) -> int:
+        """The item a comment or reaction is on: a post, held or stub, or a comment's
+        stub, which replies to its post."""
+        if not COMMENT_URN.match(urn):
+            return self.post(urn)
+        stub = _comment_stub(self.conn, urn)
+        post = post_urn(urn)
+        self.link(stub, self.post(post), post)
+        return stub
 
 
 def link_linkedin_targets(conn: sqlite3.Connection) -> StubCounts:
     """Merge stubs whose post is now held, then link each comment and reaction to its
     target. Runs after resolve_linkedin_parents; safe to run again. The caller commits."""
-    held = _HeldPosts(conn)
-    merged = _merge_filled_stubs(conn, held)
+    run = _Pass(conn)
     since = max_history_id(conn)
-    parented: list[int] = []
-    links = activities = 0
+    merged, touched = _merge_filled_stubs(conn, run.held)
+    parented = activities = 0
     rows = conn.execute(
         "SELECT id, parent_id, created_at, metadata FROM items "
         "WHERE source_type = 'linkedin' AND held = 1 "
@@ -194,40 +230,27 @@ def link_linkedin_targets(conn: sqlite3.Connection) -> StubCounts:
         target = commented_on or reacted_to
         if not isinstance(target, str):
             continue
-        is_own_like = bool(reacted_to) and _is_own_action(metadata) and _is_created(metadata)
-        if not commented_on and not is_own_like:
-            continue
-        if commented_on and parent_id is not None:
-            continue  # its parent is its post
+        on_comment = bool(COMMENT_URN.match(target))
+        if parent_id is None and not on_comment:
+            found = run.held.find(target)
+            if found is not None:
+                conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (found, item_id))
+                touched.append(item_id)
+                parented += 1
+                parent_id = found
 
-        if COMMENT_URN.match(target):
-            target_id = _comment_stub(conn, target)
-        elif parent_id is not None:
-            target_id = parent_id
-        elif (found := held.find(target)) is not None:
-            # Found as the resolver would, within SAME_POST_MS: the post is its parent
-            conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (found, item_id))
-            parented.append(item_id)
-            target_id = parent_id = found
-        else:
-            target_id = _post_stub(conn, target)
-
-        if commented_on and parent_id is None:
-            before = conn.total_changes
-            conn.execute(
-                "INSERT OR IGNORE INTO item_links (from_id, to_id, kind, evidence, origin, "
-                "status) VALUES (?, ?, 'in_reply_to', ?, ?, 'confirmed')",
-                (item_id, target_id, commented_on, ORIGIN),
-            )
-            links += conn.total_changes - before
-        elif is_own_like:
+        if commented_on:
+            if parent_id is None:
+                run.link(item_id, run.target(target), commented_on)
+        elif _is_own_action(metadata) and _is_created(metadata):
             when = _reaction_time(metadata, created_at)
             if when is None:
                 continue
+            target_id = parent_id if parent_id is not None and not on_comment else None
             reaction = metadata.get("reaction_type")
             activities += record_activities(
                 conn,
-                target_id,
+                target_id if target_id is not None else run.target(target),
                 [
                     ActivityCreate(
                         verb="liked",
@@ -237,5 +260,12 @@ def link_linkedin_targets(conn: sqlite3.Connection) -> StubCounts:
                     )
                 ],
             )
-    mark_recent_history(conn, since, "sync", item_ids=parented)
-    return StubCounts(merged, len(parented), links, activities)
+    # A comment's parent is its post: a reply link to the parent says it twice. It is
+    # left by a stub merged into the post, whatever the order the two were imported in.
+    conn.execute(
+        "DELETE FROM item_links WHERE kind = 'in_reply_to' AND origin = ? "
+        "AND to_id = (SELECT parent_id FROM items WHERE items.id = item_links.from_id)",
+        (ORIGIN,),
+    )
+    mark_recent_history(conn, since, "sync", item_ids=touched)
+    return StubCounts(merged, parented, run.links, activities)

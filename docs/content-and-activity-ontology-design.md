@@ -187,13 +187,15 @@ CREATE INDEX idx_item_links_to ON item_links(to_id, kind);
   The detail view shows a stub's address, links and activity, without edit, tag, note or collection actions.
 - The first importer to make stubs is LinkedIn, after `resolve_linkedin_parents`:
   - A post named by a URN made within 2 s of a held post's URN (a share and its activity) is that post, and becomes the parent.
-    A wider match could take one post for another, and a merge deletes the stub.
-  - Otherwise the post gets a stub. A comment that is replied to or reacted to gets its own stub.
+    The resolver now matches exact URNs only: its 5 s time bucket also matched distinct posts, and a merge deletes the stub.
+  - Otherwise the post gets a stub. A comment that is replied to or reacted to gets its own stub, which replies to its post.
   - A comment without a parent links to its target as `in_reply_to`, and stays top-level, so listings still show it.
+    A comment with a parent has no such link, whichever was imported first.
   - Your own reaction is a `liked` activity on its target, with the reaction type in `details`.
   - Only the event that made a reaction counts; a change or a delete adds no like.
   - Someone else's reaction waits for the people tables, since an activity without an actor is yours.
-- On a copy of the live database: 1,158 stubs (881 posts, 277 comments), 708 `in_reply_to` links, 888 `liked` activities, and 12 comments on your posts given their parent.
+- On a copy of the live database: 1,218 stubs (941 posts, 277 comments), 985 `in_reply_to` links and 888 `liked` activities.
+  35 comments and reactions on your posts gain their parent; the 168 parents already set stay.
   The pass takes 0.1 s.
 
 ## The people ontology

@@ -49,9 +49,10 @@ logger = get_plugin_logger("linkedin")
 def _parent_match_sql(field: str) -> str:
     """Build SQL condition to match a child's target URN to a parent post.
 
-    Matches by:
-    1. Exact URN match (post_id or source_id = reacted_to/commented_on)
-    2. Snowflake timestamp match (share URN vs activity URN for the same post)
+    Matches by exact URN (post_id or source_id = reacted_to/commented_on). A share URN
+    and its activity URN for the same post are matched by link_linkedin_targets
+    (stubs.py), when they were made within 2 s: a 5 s time bucket also matched
+    distinct posts.
     """
     return f"""
         p.source_type = 'linkedin'
@@ -60,11 +61,6 @@ def _parent_match_sql(field: str) -> str:
             json_extract(p.metadata, '$.post_id')
                 = json_extract(items.metadata, '$.{field}')
             OR p.source_id = json_extract(items.metadata, '$.{field}')
-            OR (
-                json_extract(items.metadata, '$.target_snowflake_ts') IS NOT NULL
-                AND json_extract(p.metadata, '$.snowflake_ts')
-                    = json_extract(items.metadata, '$.target_snowflake_ts')
-            )
         )
     """
 
@@ -72,8 +68,8 @@ def _parent_match_sql(field: str) -> str:
 def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
     """Resolve parent_id for LinkedIn reactions and comments.
 
-    Matches by exact URN (post_id, source_id) or by Snowflake timestamp
-    (handles share URN vs activity URN mismatch for the same post). A post still not
+    Matches by exact URN (post_id, source_id), then by a URN made within 2 s
+    (a share URN and the activity URN of the same post). A post still not
     held gets a stub, linked from its comments and your reactions (stubs.py).
 
     Returns the number of items updated.
@@ -102,6 +98,7 @@ def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
     mark_recent_history(conn, pre_max, "sync")
     # Posts still not held get stubs, so their comments and reactions link to something
     counts = link_linkedin_targets(conn)
+    total += counts.parented
     if any(counts):
         logger.info(
             "Stubs: %d merged into imported posts; %d parents found; %d reply links, "

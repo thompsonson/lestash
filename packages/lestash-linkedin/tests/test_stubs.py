@@ -9,6 +9,7 @@ import pytest
 from lestash.core.config import Config, GeneralConfig
 from lestash.core.database import get_connection, init_database, upsert_item
 from lestash.models.item import ItemCreate
+from lestash_linkedin.extractors.changelog import _urn_to_snowflake_ts
 from lestash_linkedin.source import resolve_linkedin_parents
 from lestash_linkedin.stubs import link_linkedin_targets, post_urn, snowflake_ms
 
@@ -31,7 +32,11 @@ def _comment(n: int, on: str = POST, actor: str = ME) -> ItemCreate:
         source_id=f"changelog-socialActions/comments-{n}",
         content=f"Comment {n}",
         created_at="2026-01-19 10:45:54.022000",
-        metadata={"commented_on": on, "raw": {"actor": actor, "owner": ME}},
+        metadata={
+            "commented_on": on,
+            "target_snowflake_ts": _urn_to_snowflake_ts(on),
+            "raw": {"actor": actor, "owner": ME},
+        },
     )
 
 
@@ -70,7 +75,11 @@ def _post_with(post_id: str, n: int = 1) -> ItemCreate:
         source_type="linkedin",
         source_id=f"changelog-ugcPosts-{n}",
         content="A post",
-        metadata={"resource_name": "ugcPosts", "post_id": post_id},
+        metadata={
+            "resource_name": "ugcPosts",
+            "post_id": post_id,
+            "snowflake_ts": _urn_to_snowflake_ts(post_id),
+        },
     )
 
 
@@ -108,6 +117,8 @@ def test_comments_on_a_post_not_held_reply_to_its_stub(test_db) -> None:
             (post_stub, "in_reply_to", POST, "import:linkedin", "confirmed"),
             (post_stub, "in_reply_to", POST, "import:linkedin", "confirmed"),
             (comment_stub, "in_reply_to", ON_COMMENT, "import:linkedin", "confirmed"),
+            # The comment's stub replies to its post
+            (post_stub, "in_reply_to", POST, "import:linkedin", "confirmed"),
         ]
         # The comments stay top-level, so listings still show them
         assert _rows(conn, "SELECT COUNT(*) FROM items WHERE parent_id IS NOT NULL") == [(0,)]
@@ -155,11 +166,13 @@ def test_an_imported_post_takes_over_its_stub_and_what_was_attached(test_db) -> 
         post = upsert_item(conn, _post())
         resolve_linkedin_parents(conn)
         assert _stubs(conn) == {}
-        # The comment is now the post's child, and keeps its link to the post
-        assert _rows(conn, "SELECT to_id, kind FROM item_links") == [(post, "in_reply_to")]
+        # The comment is now the post's child; a reply link would say it twice
+        assert _rows(conn, "SELECT COUNT(*) FROM item_links") == [(0,)]
         assert _rows(conn, "SELECT item_id, verb FROM activities") == [(post, "liked")]
         children = _rows(conn, f"SELECT id FROM items WHERE parent_id = {post} ORDER BY id")
         assert note in [c[0] for c in children] and len(children) == 3
+        reasons = _rows(conn, f"SELECT change_reason FROM item_history WHERE item_id = {note}")
+        assert reasons == [("sync",)]
         assert _rows(conn, "SELECT item_id FROM item_tags") == [(post,)]
         # Again: no second like, no new stub
         assert tuple(link_linkedin_targets(conn)) == (0, 0, 0, 0)
@@ -180,7 +193,8 @@ def test_a_post_named_by_another_urn_made_with_it_is_the_parent(test_db) -> None
 
 
 def test_a_post_made_seconds_apart_is_another_post(test_db) -> None:
-    other = 7418912385886941184 - (3000 << 22)  # 3 s earlier
+    other = 7418912385886941184 - (3000 << 22)  # 3 s earlier, in the same 5 s bucket
+    assert _urn_to_snowflake_ts(f"urn:li:share:{other}") == _urn_to_snowflake_ts(POST)
     with get_connection(test_db) as conn:
         upsert_item(conn, _post_with(f"urn:li:share:{other}"))
         upsert_item(conn, _comment(1))
