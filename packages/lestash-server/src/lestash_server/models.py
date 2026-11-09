@@ -172,6 +172,34 @@ class ActivityListResponse(BaseModel):
     total: int
 
 
+class PersonAccount(BaseModel):
+    """One of a person's accounts: a channel, a member profile, an address."""
+
+    platform: str
+    identifier: str
+    url: str | None = None
+
+
+class AgentPerson(BaseModel):
+    id: int
+    name: str
+    kind: str  # person, organization, group, software
+    is_self: bool = False
+
+
+class ItemAgent(BaseModel):
+    """Who took part in an item, and how: author, creator, narrator, ..."""
+
+    role: str
+    position: int | None = None
+    person: AgentPerson
+    accounts: list[PersonAccount]
+
+
+class ItemAgentListResponse(BaseModel):
+    agents: list[ItemAgent]
+
+
 class LinkedItem(BaseModel):
     """The item at the other end of a link."""
 

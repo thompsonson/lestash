@@ -1627,6 +1627,14 @@
       } else {
         html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(item.content)}</div>`;
       }
+
+      // People: who made, voiced, published or received it. Under the content, as a
+      // reader asks who made a thing before what it links. Hidden until some load.
+      html += `<div class="item-view-children" id="people-section" data-item-id="${item.id}" style="margin-top:1rem;display:none">
+        <div class="item-view-children-title" id="people-title">People</div>
+        <div id="people-list" style="font-size:0.8rem"></div>
+      </div>`;
+
       html += `<div id="item-edit-form" style="display:none">
         <input type="text" id="item-edit-title" placeholder="Title" style="width:100%;font-size:1.05rem;font-weight:bold;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
         <textarea id="item-edit-content" rows="10" style="width:100%;resize:vertical;font-family:inherit;font-size:0.9rem;padding:0.5rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px"></textarea>
@@ -2249,6 +2257,7 @@
       }
 
       loadActivities(item.id);
+      loadPeople(item.id, item.source_type);
       loadLinks(item.id);
 
       // Load similar items (held parent items only)
@@ -2293,6 +2302,50 @@
         ? `<div style="color:var(--muted)">and ${data.total - data.activities.length} earlier</div>` : '';
       document.getElementById('activity-title').textContent = `Activity (${data.total})`;
       document.getElementById('activity-list').innerHTML = rows + more;
+      section.style.display = '';
+    }
+
+    const ROLE_LABELS = {
+      author: 'Author', creator: 'Creator', narrator: 'Narrator',
+      publisher: 'Publisher', recipient: 'To',
+    };
+
+    // A source's items name people by accounts on this platform
+    const ACCOUNT_PLATFORM = { gmail: 'email' };
+
+    async function loadPeople(itemId, sourceType) {
+      let data;
+      try {
+        data = await api(`/api/items/${itemId}/agents`);
+      } catch {
+        return;  // older server, or offline: the section stays hidden
+      }
+      const section = document.getElementById('people-section');
+      if (!section || section.dataset.itemId !== String(itemId)) return;
+      if (!data.agents.length) {
+        section.style.display = 'none';
+        return;
+      }
+      const rows = data.agents.map(a => {
+        const name = a.person.is_self ? 'You' : a.person.name;
+        // The account on a web page: the one on this item's platform first, so "You"
+        // on a LinkedIn post links your LinkedIn profile. Only web and mail addresses:
+        // a URL from imported data must not run script.
+        const safe = a.accounts.filter(x => x.url && /^(https?:|mailto:)/i.test(x.url));
+        const platform = ACCOUNT_PLATFORM[sourceType] || sourceType;
+        const account = safe.find(x => x.platform === platform) || safe[0];
+        const shown = account
+          ? `<a href="${escHtml(account.url)}" target="_blank" rel="noopener" style="color:var(--ok);text-decoration:none">${escHtml(name)}</a>`
+          : `<span>${escHtml(name)}</span>`;
+        const kind = a.person.kind === 'person' ? '' : a.person.kind;
+        return `<div style="display:flex;gap:0.4rem;align-items:baseline;padding:0.1rem 0">
+          <span style="color:var(--muted);white-space:nowrap">${escHtml(ROLE_LABELS[a.role] || a.role)}</span>
+          ${shown}
+          <span style="color:var(--muted)">${escHtml(kind)}</span>
+        </div>`;
+      }).join('');
+      document.getElementById('people-title').textContent = `People (${data.agents.length})`;
+      document.getElementById('people-list').innerHTML = rows;
       section.style.display = '';
     }
 

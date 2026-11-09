@@ -164,6 +164,25 @@ The item's confirmed links to and from other items, found by the linker after ea
 
 ---
 
+### `GET /api/items/{item_id}/agents`
+
+Who made, voiced, published or received the item, ordered by role and position. `404` if the item doesn't exist.
+
+Roles: `author`, `creator` (a channel's video), `narrator`, `publisher`, `recipient`. A person's `kind` is `person`, `organization`, `group` or `software`; `is_self` marks you.
+
+```json
+{
+  "agents": [
+    {"role": "creator", "position": null,
+     "person": {"id": 12, "name": "BBC News", "kind": "organization", "is_self": false},
+     "accounts": [{"platform": "youtube", "identifier": "UC16niRr50-MSBwiO3YDb3RA",
+                   "url": "https://www.youtube.com/channel/UC16niRr50-MSBwiO3YDb3RA"}]}
+  ]
+}
+```
+
+---
+
 ### `DELETE /api/items/{item_id}/links`
 
 Remove a link. It is marked `rejected`, so it stops showing and the linker never adds it again. `404` if there is no such link.

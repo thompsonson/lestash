@@ -33,10 +33,10 @@ def _link(conn: sqlite3.Connection, from_id: int, to_id: int, kind: str) -> None
 def test_migration_18_marks_every_stored_item_held(test_db) -> None:
     with get_connection(test_db) as conn:
         conn.execute("ALTER TABLE items DROP COLUMN held")
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+        conn.execute("PRAGMA user_version = 17")
         _item(conn, "a")
         conn.commit()
-        assert apply_migrations(conn) == 1
+        assert apply_migrations(conn) == SCHEMA_VERSION - 17
         assert conn.execute("SELECT held FROM items").fetchone()[0] == 1
 
 
