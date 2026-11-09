@@ -33,7 +33,7 @@ NOTEBOOKLM = "Takeout/NotebookLM/"
 ARTIFACTS = "/Artifacts/"
 # A description's name is "<title> metadata.json", or "<title> metadata(1).json" for a
 # second artifact of that title, cut to 51 bytes with ".json": "…Data met.json"
-METADATA = re.compile(r" m(?:e(?:t(?:a(?:d(?:a(?:t(?:a)?)?)?)?)?)?)?(?:\(\d+\))?$")
+METADATA = re.compile(r" m(?:e(?:t(?:a(?:d(?:a(?:t(?:a)?)?)?)?)?)?)?(?:\(\d*\)?)?$")
 CUT_AT = 46  # bytes before ".json" in a name cut short
 # Which artifact type a file can belong to: its folder (a deck) or its extension
 FILE_TYPES = {
@@ -139,12 +139,13 @@ def collect(zips: list[Path]) -> tuple[list[Artifact], list[str]]:
     for notebook, rest, path, member in files:
         head = _head(rest)
         kind = _file_type(rest)
-        candidates = [
-            a
-            for a in by_notebook[notebook]
-            if (head.startswith(a.stem) or a.stem.startswith(head))
-            and (not kind or a.description.get("type") in (kind, None))
+        named = [
+            a for a in by_notebook[notebook] if head.startswith(a.stem) or a.stem.startswith(head)
         ]
+        # Of the right type if any is: a type NotebookLM adds later still finds its files
+        candidates = [
+            a for a in named if not kind or a.description.get("type") in (kind, None)
+        ] or named
         exact = [a for a in candidates if a.stem == head]
         if exact or candidates:
             owner = (exact or sorted(candidates, key=lambda a: -len(a.stem)))[0]
