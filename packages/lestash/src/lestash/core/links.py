@@ -4,10 +4,10 @@ See docs/content-and-activity-ontology-design.md, "Typed links". For now the lin
 matches the web addresses in an item's content against the addresses of stored items:
 
 - ``references``: A's content holds B's address.
-- ``syndication``: B is a cross-posted copy of A. A top-level Bluesky or LinkedIn post,
-  made within an hour of a Micro.blog post that lists that service in its
-  ``syndication``, holding its address. A later reply, comment or message holding the
-  address only references it.
+- ``syndication``: B is a cross-posted copy of A. Your own top-level Bluesky or LinkedIn
+  post, made within an hour of a Micro.blog post that lists that service in its
+  ``syndication``, holding its address. A reply, comment, message or someone else's post
+  holding the address only references it.
 
 An address is an exact identifier, so these links are ``confirmed`` at once. Removing one
 sets it ``rejected``; the row stays, so the linker never adds it again.
@@ -32,6 +32,8 @@ YOUTUBE_VIDEO = re.compile(
 TRAILING = ".,;:!?*_`'\""
 # Services a Micro.blog post can be cross-posted to, as source_type -> syndication name
 SYNDICATED = {"bluesky": "bluesky", "linkedin": "linkedin"}
+# A LinkedIn item is a post (not a comment, message or reaction) by its source_id
+LINKEDIN_POSTS = ("changelog-ugcPosts-", "urn:li:share:", "urn:li:ugcPost:")
 # A cross-post is made with its original; Micro.blog posts it within minutes
 CROSS_POST_WINDOW = timedelta(hours=1)
 
@@ -108,15 +110,20 @@ def _targets(conn: sqlite3.Connection) -> dict[str, _Target]:
     return targets
 
 
-def _is_cross_post(source_type: str, parent_id: Any, created_at: Any, original: _Target) -> bool:
-    """Whether an item holding a Micro.blog post's address is that post's cross-post."""
+def _is_cross_post(copy: sqlite3.Row | tuple[Any, ...], original: _Target) -> bool:
+    """Whether an item holding a Micro.blog post's address is that post's cross-post: your
+    own top-level post on a service the original lists, made within the window."""
+    _, source_type, _, parent_id, created_at, source_id, is_own = copy
     service = SYNDICATED.get(source_type)
     if original.source_type != "microblog" or service not in _syndicated_to(original.metadata):
         return False
+    if parent_id is not None or not is_own:
+        return False
+    if source_type == "linkedin" and not str(source_id).startswith(LINKEDIN_POSTS):
+        return False
     when = _when(created_at, source_type)
     return (
-        parent_id is None
-        and when is not None
+        when is not None
         and original.created_at is not None
         and abs(when - original.created_at) <= CROSS_POST_WINDOW
     )
@@ -135,10 +142,11 @@ def find_links(conn: sqlite3.Connection) -> Iterator[Link]:
     """Every link the addresses in stored content make."""
     targets = _targets(conn)
     rows = conn.execute(
-        "SELECT id, source_type, content, parent_id, created_at FROM items "
-        "WHERE instr(content, 'http') > 0"
+        "SELECT id, source_type, content, parent_id, created_at, source_id, is_own_content "
+        "FROM items WHERE instr(content, 'http') > 0"
     )
-    for item_id, source_type, content, parent_id, created_at in rows:
+    for row in rows:
+        item_id, content = row[0], row[2]
         seen: set[int] = set()
         for url in URL.findall(content):
             key = address_key(url)
@@ -147,7 +155,7 @@ def find_links(conn: sqlite3.Connection) -> Iterator[Link]:
                 continue
             seen.add(target.id)
             evidence = url.rstrip(TRAILING)
-            if _is_cross_post(source_type, parent_id, created_at, target):
+            if _is_cross_post(row, target):
                 # The Micro.blog post is the original; this post is its copy
                 yield Link(target.id, item_id, "syndication", evidence)
             else:

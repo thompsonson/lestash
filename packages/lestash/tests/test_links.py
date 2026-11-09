@@ -87,7 +87,24 @@ def test_a_bluesky_cross_post_is_a_syndication_of_the_micro_blog_post(test_db) -
             metadata={"syndication": ["mastodon", "bluesky", "linkedin"]},
         )
         copy = _add(
-            conn, "bluesky", "b1", content=f"So wholesome {url}", created_at="2026-01-20T10:02:00Z"
+            conn,
+            "bluesky",
+            "b1",
+            content=f"So wholesome {url}",
+            created_at="2026-01-20T10:02:00Z",
+            is_own_content=1,
+        )
+        # Someone else's post at the same time, and your LinkedIn comment
+        theirs = _add(
+            conn, "bluesky", "b3", content=f"Look: {url}", created_at="2026-01-20T10:03:00Z"
+        )
+        comment = _add(
+            conn,
+            "linkedin",
+            "changelog-socialActions/comments-1",
+            content=f"See {url}",
+            created_at="2026-01-20 11:04:00",
+            is_own_content=1,
         )
         # A reply, a post a day later, and a service not in the post's syndication only
         # reference it
@@ -108,6 +125,8 @@ def test_a_bluesky_cross_post_is_a_syndication_of_the_micro_blog_post(test_db) -
         link_items(conn)
         assert [(r[0], r[1], r[2]) for r in _links(conn)] == [
             (original, copy, "syndication"),
+            (theirs, original, "references"),
+            (comment, original, "references"),
             (reply, original, "references"),
             (later, original, "references"),
             (other, original, "references"),
@@ -180,7 +199,12 @@ def test_a_linkedin_cross_post_in_local_time_is_a_syndication(test_db, monkeypat
                 metadata={"syndication": ["linkedin"]},
             )
             copy = _add(
-                conn, "linkedin", "l7", content=f"New post {url}", created_at="2026-01-20T11:30:00"
+                conn,
+                "linkedin",
+                "changelog-ugcPosts-urn:li:share:7",
+                content=f"New post {url}",
+                created_at="2026-01-20T11:30:00",
+                is_own_content=1,
             )
             link_items(conn)
             assert [(r[0], r[1], r[2]) for r in _links(conn)] == [(original, copy, "syndication")]
