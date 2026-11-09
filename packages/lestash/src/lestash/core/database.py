@@ -550,7 +550,7 @@ def _migrate_16(conn: sqlite3.Connection) -> None:
     """
     if conn.in_transaction:
         conn.commit()
-    conn.execute("BEGIN")
+    conn.execute("BEGIN IMMEDIATE")  # take the write lock now, not mid-migration
     try:
         conn.execute("DROP TRIGGER IF EXISTS items_activities_ai")
         conn.execute("DROP TRIGGER IF EXISTS items_activities_au")
