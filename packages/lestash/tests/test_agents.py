@@ -370,3 +370,64 @@ def test_the_longest_way_a_name_is_written_names_them(test_db) -> None:
         link_agents(conn)
         names = [r[0] for r in conn.execute("SELECT name FROM people WHERE is_self = 0")]
         assert names == ["Ray Myers"]
+
+
+def test_a_profile_cut_from_a_mention_loses_to_the_right_decode(test_db) -> None:
+    text = "🤣 Max Langley see"
+    with get_connection(test_db) as conn:
+        # Cut by code points, as an old script did: two too many after the emoji
+        conn.execute(
+            "INSERT INTO person_profiles (urn, display_name, source) "
+            "VALUES ('urn:li:person:max', 'Max Langley s', 'mention')"
+        )
+        _item(conn, "linkedin", "c1", ME, _tagged(text, [(3, 11, "member", "urn:li:person:max")]))
+        link_agents(conn)
+        names = [r[0] for r in conn.execute("SELECT name FROM people WHERE is_self = 0")]
+        assert names == ["Max Langley"]
+
+
+def test_a_better_name_found_later_replaces_the_one_given(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            "linkedin",
+            "c1",
+            ME,
+            _tagged("Ray thanks", [(0, 3, "member", "urn:li:person:ray")]),
+        )
+        link_agents(conn)
+        _item(
+            conn,
+            "linkedin",
+            "c2",
+            ME,
+            _tagged("Ray Myers yes", [(0, 9, "member", "urn:li:person:ray")]),
+        )
+        link_agents(conn)
+        assert [r[0] for r in conn.execute("SELECT name FROM people WHERE is_self = 0")] == [
+            "Ray Myers"
+        ]
+        # A name you set is kept
+        conn.execute("UPDATE people SET name = 'Raymond' WHERE is_self = 0")
+        _item(
+            conn,
+            "linkedin",
+            "c3",
+            ME,
+            _tagged("Ray Myers Jr yes", [(0, 12, "member", "urn:li:person:ray")]),
+        )
+        link_agents(conn)
+        assert [r[0] for r in conn.execute("SELECT name FROM people WHERE is_self = 0")] == [
+            "Raymond"
+        ]
+
+
+def test_offsets_that_split_an_emoji_or_overrun_are_skipped(test_db) -> None:
+    with get_connection(test_db) as conn:
+        bad = _tagged(
+            "🎉Ray",
+            [(1, 4, "member", "urn:li:person:a"), (2, 9, "member", "urn:li:person:b")],
+        )
+        item = _item(conn, "linkedin", "c1", ME, bad)
+        link_agents(conn)
+        assert [a for a in _agents(conn, item) if a[0] == "mentioned"] == []

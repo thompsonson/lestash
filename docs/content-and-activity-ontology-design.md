@@ -370,6 +370,8 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
 - Offsets count UTF-16 code units, so an emoji before a name counts two.
 - A tag writes the member's name, so it also names people known only by URN.
   The longest way a name is written wins ("Matthew Thompson" over "Matthew"); a `person_profiles` name wins over both.
+  A profile cut from a mention does not: an older script cut by code points, which garbled names after an emoji ("Max Langley 🤣⚖︎💩 s"). The script now cuts by UTF-16 units too.
+- A LinkedIn person still named as the pass named them takes a better name found later; a name you set is kept.
 - The detail view lists mentions after the item's agents, as "Mentions".
 - On a copy of the live database: 462 mentions of 125 people, 9 companies and you (115).
   People named by URN fall from 219 to 174.

@@ -33,6 +33,9 @@ NAME = "name"  # the evidence of an agent known by name only, with no account
 # Not a role: the item names them without their taking part, so it is an item_mentions
 # row, not an item_agents one
 MENTIONED = "mentioned"
+# Platforms whose refs give one name per account in a run (the best known), so a
+# better one found later can replace it
+CANONICAL_NAMES = frozenset({"linkedin"})
 LINKEDIN_ENTITIES = {
     "com.linkedin.common.MemberAttributedEntity": ("member", "person"),
     "com.linkedin.common.CompanyAttributedEntity": ("company", "organization"),
@@ -121,24 +124,26 @@ def linkedin_mentions(metadata: dict[str, Any]) -> Iterator[tuple[str, str, str]
             "shareCommentary"
         )
     )
-    text = message.get("text") or share.get("text")
-    attributes = message.get("attributes") or share.get("attributes")
+    # The offsets count in the text beside them, so both come from one object
+    holder = message if message.get("text") else share
+    text, attributes = holder.get("text"), holder.get("attributes")
     if not isinstance(text, str) or not isinstance(attributes, list):
         return
     units = text.encode("utf-16-le")
     for attribute in attributes:
         attribute = _dict(attribute)
         start, length = attribute.get("start"), attribute.get("length")
+        if not isinstance(start, int) or not isinstance(length, int):
+            continue
+        if start < 0 or length <= 0 or (start + length) * 2 > len(units):
+            continue
+        name = units[start * 2 : (start + length) * 2].decode("utf-16-le", "replace")
+        if "\ufffd" in name:
+            continue  # the span splits an emoji: the offsets don't fit this text
         for entity, (field, kind) in LINKEDIN_ENTITIES.items():
             urn = _dict(_dict(attribute.get("value")).get(entity)).get(field)
-            if (
-                not isinstance(urn, str)
-                or not isinstance(start, int)
-                or not isinstance(length, int)
-            ):
-                continue
-            name = units[start * 2 : (start + length) * 2].decode("utf-16-le", "replace")
-            yield urn, kind, " ".join(name.split())
+            if isinstance(urn, str):
+                yield urn, kind, " ".join(name.split())
 
 
 def _linkedin(row: _Row, ctx: _Context) -> Iterator[AgentRef]:
@@ -316,9 +321,11 @@ def _context(conn: sqlite3.Connection) -> _Context:
         for urn, _, name in linkedin_mentions(metadata):
             if name and len(name) > len(names.get(urn, (None, None))[0] or ""):
                 names[urn] = (name, None)
-    # A profile's name wins
+    # A profile's name wins, unless the profile was itself cut from a mention, by code
+    # points rather than UTF-16 units, which garbled names after an emoji
     for urn, name, url in conn.execute(
-        "SELECT urn, display_name, profile_url FROM person_profiles"
+        "SELECT urn, display_name, profile_url FROM person_profiles "
+        "WHERE coalesce(source, '') != 'mention'"
     ):
         names[urn] = (name or names.get(urn, (None, None))[0], url)
     stored = conn.execute(
@@ -356,13 +363,15 @@ class _People:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
         # An account not confirmed (suggested, rejected) is kept but gives no agent
-        self.accounts: dict[tuple[str, str], int | None] = {
-            (platform, identifier): person_id
-            for platform, identifier, person_id in conn.execute(
-                "SELECT platform, identifier, "
-                "CASE WHEN status = 'confirmed' THEN person_id END FROM person_identities"
-            )
-        }
+        self.accounts: dict[tuple[str, str], int | None] = {}
+        self.display: dict[tuple[str, str], str | None] = {}
+        for platform, identifier, person_id, display in conn.execute(
+            "SELECT platform, identifier, "
+            "CASE WHEN status = 'confirmed' THEN person_id END, display_name "
+            "FROM person_identities"
+        ):
+            self.accounts[(platform, identifier)] = person_id
+            self.display[(platform, identifier)] = display
         # People named by an account's identifier, waiting for a source to name them
         self.unnamed: set[int] = {
             person_id
@@ -397,6 +406,8 @@ class _People:
                 person_id = self.claim(key, person_id)
                 if person_id == self.you(None):
                     self.name_you(ref)
+            if ref.platform in CANONICAL_NAMES and person_id not in (None, self.you(None)):
+                self.rename(key, person_id, ref.name)
             if person_id in self.unnamed and ref.name != ref.identifier:
                 # Named by its identifier until a source gave a name, as a list's
                 # address is until a relayed message names the list
@@ -428,6 +439,22 @@ class _People:
         )
         self.accounts[key] = person_id
         return person_id
+
+    def rename(self, key: tuple[str, str], person_id: int | None, name: str) -> None:
+        """Give a person the account's better name, while they still have the name the
+        pass gave them: a name you set is kept."""
+        old = self.display.get(key)
+        if name in (old, key[1]):
+            return
+        self.conn.execute(
+            "UPDATE people SET name = ? WHERE id = ? AND name = ?", (name, person_id, old)
+        )
+        self.conn.execute(
+            "UPDATE person_identities SET display_name = ? WHERE platform = ? AND identifier = ?",
+            (name, *key),
+        )
+        self.display[key] = name
+        self.unnamed.discard(person_id)  # type: ignore[arg-type]
 
     def name_you(self, ref: AgentRef) -> None:
         """The first account of yours that gives a name, not an identifier, names you."""
