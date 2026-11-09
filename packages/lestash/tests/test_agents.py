@@ -283,3 +283,18 @@ def test_you_are_not_named_by_a_urn(test_db) -> None:
         _item(conn, "linkedin", "p1", ME, {"raw": {"owner": ME}})
         link_agents(conn)
         assert conn.execute("SELECT name FROM people WHERE is_self = 1").fetchone()[0] == "You"
+
+
+def test_an_email_marked_yours_by_default_but_sent_by_another_is_theirs(test_db) -> None:
+    with get_connection(test_db) as conn:
+        conn.execute(
+            "INSERT INTO person_profiles (urn, display_name) VALUES (?, 'Matthew Thompson')",
+            (ME,),
+        )
+        _item(conn, "linkedin", "p1", ME, {"raw": {"owner": ME}})
+        # A thread imported without is_own_content: every message defaults to yours
+        theirs = _item(conn, "email", "e1", "Andrew", {"from_email": "andrew@x.org"}, own=True)
+        mine = _item(conn, "email", "e2", "Matthew Thompson", {"from_email": "me@x.org"}, own=True)
+        link_agents(conn)
+        assert _agents(conn, theirs) == [("author", None, "Andrew", "person", False)]
+        assert _agents(conn, mine) == [("author", None, "Matthew Thompson", "person", True)]

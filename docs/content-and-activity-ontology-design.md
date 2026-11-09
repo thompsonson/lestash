@@ -342,9 +342,10 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
 
 - An agent known only by name is a person with no account, one per item, as a name can be several people.
   The name linker will suggest which are the same. Deleting one makes it again on the next pass.
-- An account the source marks as yours belongs to the one `is_self` person: your LinkedIn owner URN, your own Bluesky DID, the address on your own emails, and `user` turns.
+- An account the source marks as yours belongs to the one `is_self` person: your LinkedIn owner URN, your own Bluesky DID, the address on emails marked yours and sent under your name, and `user` turns.
+  Gmail marks no message yours, so its senders are never you.
   Your accounts are recorded first, so an address of yours first seen on an email you received is still yours.
-  You are named from your LinkedIn profile, then your Bluesky posts, then the first account of yours that gives a name; else "You".
+  When the pass first makes you, you are named from your LinkedIn profile, then your Bluesky posts; else by the first account of yours that gives a name; else "You".
   An account of yours an earlier pass gave someone else, such as your address on an email you received, moves to you when it was that person's only account.
 - Each account is `confirmed`, with its evidence (`channel id`, `member URN`) and origin (`import:<source>`).
   Nothing joins two other accounts into one person; suggestions arrive with the linker for names.

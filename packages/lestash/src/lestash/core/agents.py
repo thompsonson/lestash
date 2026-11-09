@@ -69,6 +69,7 @@ class _Context(NamedTuple):
 
     linkedin_self: frozenset[str]  # your LinkedIn member URNs (changelog owner)
     linkedin_names: dict[str, tuple[str | None, str | None]]  # URN -> (name, profile URL)
+    your_name: str | None  # as stored, or as your profile gives it; None if unknown
 
 
 def _names(value: Any) -> list[str]:
@@ -162,7 +163,14 @@ def _addresses(value: Any) -> list[str]:
     return [v.strip().lower() for v in values if isinstance(v, str) and "@" in v]
 
 
-def _email(row: _Row, _: _Context) -> Iterator[AgentRef]:
+def _your_email(row: _Row, ctx: _Context) -> bool:
+    """Whether you sent an email: it is marked yours and, once your name is known, sent
+    under it. An import that leaves the mark out marks every message yours, and a
+    sender's address put on you would take their messages with it."""
+    return row.is_own and (ctx.your_name is None or row.author == ctx.your_name)
+
+
+def _email(row: _Row, ctx: _Context) -> Iterator[AgentRef]:
     """The sender and recipients. A message a mailing list relays ("'Ann' via UAI
     Mailing List") comes from the list's address, not Ann's: the list is its
     publisher, a group, and the poster is not known by any account."""
@@ -184,7 +192,7 @@ def _email(row: _Row, _: _Context) -> Iterator[AgentRef]:
             row.author or address,
             "person",
             url=f"mailto:{address}",
-            is_self=row.is_own,
+            is_self=_your_email(row, ctx),
             evidence="address",
         )
     to_name = meta.get("to_name") if isinstance(meta.get("to_name"), str) else None
@@ -241,7 +249,10 @@ def _context(conn: sqlite3.Connection) -> _Context:
             "SELECT urn, display_name, profile_url FROM person_profiles"
         )
     }
-    return _Context(owners, names)
+    stored = conn.execute(
+        "SELECT name FROM people WHERE is_self = 1 AND name != ?", (YOU,)
+    ).fetchone()
+    return _Context(owners, names, stored[0] if stored else _your_name(conn, owners))
 
 
 def agents_of(
@@ -415,7 +426,7 @@ def link_agents(conn: sqlite3.Connection) -> int:
         conn.execute("BEGIN IMMEDIATE")
     ctx = _context(conn)
     people = _People(conn)
-    people.you(_your_name(conn, ctx.linkedin_self))
+    people.you(ctx.your_name)
     # An agent known by name only has no account to find it by: its item, role and
     # position say it is already recorded, even once the name linker gives it one
     named = {
