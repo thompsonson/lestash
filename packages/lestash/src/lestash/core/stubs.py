@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
@@ -52,34 +53,53 @@ def make_stub(
 
 def merge_stub(conn: sqlite3.Connection, stub_id: int, item_id: int) -> list[int]:
     """Move a stub's links, activities, children, tags, collections and media onto the
-    item it stood for, then delete it.
+    item it stood for, then delete it. See merge_item. The caller commits."""
+    return merge_item(conn, stub_id, item_id, stub_only=True)
+
+
+def merge_item(
+    conn: sqlite3.Connection, from_id: int, item_id: int, *, stub_only: bool = False
+) -> list[int]:
+    """Move an item's links, activities, children, tags, collections and media onto
+    another that stands for the same thing, then delete it and its embedding.
 
     A link, activity, tag or collection entry the item already has stays as it is; the
-    stub's copy goes with the stub. A link between the two becomes a link to itself, and
-    is dropped. Returns the ids of the children moved, whose history the caller tags.
-    The caller commits.
+    merged copy's goes with it. A link between the two becomes a link to itself, and
+    is dropped. Media move only to an item with none, so a copy's media are not added
+    twice. With stub_only, only a stub (held = 0) is deleted. Returns the ids of the
+    children moved, whose history the caller tags. The caller commits.
     """
     for column in ("from_id", "to_id"):
         conn.execute(
             f"UPDATE OR IGNORE item_links SET {column} = ? WHERE {column} = ?",
-            (item_id, stub_id),
+            (item_id, from_id),
         )
     conn.execute("DELETE FROM item_links WHERE from_id = to_id AND from_id = ?", (item_id,))
     conn.execute(
-        "UPDATE OR IGNORE activities SET item_id = ? WHERE item_id = ?", (item_id, stub_id)
+        "UPDATE OR IGNORE activities SET item_id = ? WHERE item_id = ?", (item_id, from_id)
     )
-    conn.execute("UPDATE activities SET context_id = ? WHERE context_id = ?", (item_id, stub_id))
-    # Whatever was attached to the stub: notes and other children, tags, collections, media
+    conn.execute("UPDATE activities SET context_id = ? WHERE context_id = ?", (item_id, from_id))
+    # Whatever was attached: notes and other children, tags, collections, media
     moved = [
         row[0]
         for row in conn.execute(
-            "UPDATE items SET parent_id = ? WHERE parent_id = ? RETURNING id", (item_id, stub_id)
+            "UPDATE items SET parent_id = ? WHERE parent_id = ? RETURNING id", (item_id, from_id)
         ).fetchall()
     ]
     for table in ("item_tags", "collection_items"):
         conn.execute(
-            f"UPDATE OR IGNORE {table} SET item_id = ? WHERE item_id = ?", (item_id, stub_id)
+            f"UPDATE OR IGNORE {table} SET item_id = ? WHERE item_id = ?", (item_id, from_id)
         )
-    conn.execute("UPDATE item_media SET item_id = ? WHERE item_id = ?", (item_id, stub_id))
-    conn.execute("DELETE FROM items WHERE id = ? AND held = 0", (stub_id,))
+    conn.execute(
+        "UPDATE item_media SET item_id = :to WHERE item_id = :from "
+        "AND NOT EXISTS (SELECT 1 FROM item_media WHERE item_id = :to)",
+        {"to": item_id, "from": from_id},
+    )
+    deleted = conn.execute(
+        "DELETE FROM items WHERE id = ?" + (" AND held = 0" if stub_only else ""), (from_id,)
+    ).rowcount
+    # No vector table, or sqlite-vec not loaded: no embedding to remove
+    with suppress(sqlite3.OperationalError):
+        if deleted:
+            conn.execute("DELETE FROM vec_items WHERE item_id = ?", (from_id,))
     return moved
