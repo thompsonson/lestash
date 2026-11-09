@@ -79,16 +79,63 @@ def test_a_bluesky_cross_post_is_a_syndication_of_the_micro_blog_post(test_db) -
     url = "https://matt.example/2026/01/20/wholesome.html"
     with get_connection(test_db) as conn:
         original = _add(
-            conn, "microblog", "p2", url=url, metadata={"syndication": ["mastodon", "bluesky"]}
+            conn,
+            "microblog",
+            "p2",
+            url=url,
+            created_at="2026-01-20 10:00:00+00:00",
+            metadata={"syndication": ["mastodon", "bluesky", "linkedin"]},
         )
-        copy = _add(conn, "bluesky", "b1", content=f"So wholesome {url}")
-        # LinkedIn isn't in this post's syndication: a plain reference
-        mention = _add(conn, "linkedin", "l1", content=f"I wrote {url}")
+        copy = _add(
+            conn, "bluesky", "b1", content=f"So wholesome {url}", created_at="2026-01-20T10:02:00Z"
+        )
+        # A reply, a post a day later, and a service not in the post's syndication only
+        # reference it
+        reply = _add(
+            conn,
+            "bluesky",
+            "b2",
+            content=f"Re {url}",
+            created_at="2026-01-20T10:05:00Z",
+            parent_id=copy,
+        )
+        later = _add(
+            conn, "linkedin", "l1", content=f"I wrote {url}", created_at="2026-01-21 10:00:00"
+        )
+        other = _add(
+            conn, "microblog", "p9", content=f"As I wrote {url}", created_at="2026-01-20 10:01:00"
+        )
         link_items(conn)
         assert [(r[0], r[1], r[2]) for r in _links(conn)] == [
             (original, copy, "syndication"),
-            (mention, original, "references"),
+            (reply, original, "references"),
+            (later, original, "references"),
+            (other, original, "references"),
         ]
+
+
+def test_a_linkedin_reaction_is_never_a_link_target(test_db) -> None:
+    url = "https://www.linkedin.com/feed/update/urn:li:activity:1"
+    with get_connection(test_db) as conn:
+        _add(conn, "linkedin", "changelog-socialActions/likes-1", url=url)
+        _add(conn, "claude", "c5", content=f"See {url}")
+        assert link_items(conn) == 0
+
+
+def test_a_failed_linker_leaves_the_sync_done(test_db, monkeypatch) -> None:
+    def fail(conn):
+        conn.execute(
+            "INSERT INTO item_links (from_id, to_id, kind, origin, status) "
+            "VALUES (1, 1, 'x', 'test', 'confirmed')"
+        )
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr("lestash.core.sync.link_items", fail)
+    with get_connection(test_db) as conn:
+        store = SyncStore(conn, "bluesky")
+        store.run(iter([ItemCreate(source_type="bluesky", source_id="b6", content="x")]))
+        assert store.counts.added == 1
+        assert _links(conn) == []  # the failed pass's writes are rolled back
 
 
 def test_a_removed_link_stays_removed(test_db) -> None:
