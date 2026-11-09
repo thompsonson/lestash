@@ -733,10 +733,11 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
             else:
                 conn.executescript(sql)
                 if version == 19 and not _column_exists(conn, "activities", "actor_id"):
-                    # After the script: the column refers to people, made there
+                    # After the script: the column refers to people, made there. No delete
+                    # action: null means you, so SET NULL would make a deleted person's
+                    # activities yours
                     conn.execute(
-                        "ALTER TABLE activities ADD COLUMN actor_id INTEGER "
-                        "REFERENCES people(id) ON DELETE SET NULL"
+                        "ALTER TABLE activities ADD COLUMN actor_id INTEGER REFERENCES people(id)"
                     )
                 set_schema_version(conn, version)
             conn.commit()

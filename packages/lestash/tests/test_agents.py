@@ -139,8 +139,15 @@ def test_papers_and_books_keep_their_order_and_roles(test_db) -> None:
         assert len(ann) == 2
 
 
+def _profile(conn: sqlite3.Connection, name: str) -> None:
+    """Your LinkedIn profile, which names you: until your name is known, no email is yours."""
+    conn.execute("INSERT INTO person_profiles (urn, display_name) VALUES (?, ?)", (ME, name))
+    _item(conn, "linkedin", f"profile:{name}", ME, {"raw": {"owner": ME}})
+
+
 def test_an_email_has_its_sender_and_recipient(test_db) -> None:
     with get_connection(test_db) as conn:
+        _profile(conn, "Matthew Thompson")
         sent = _item(
             conn,
             "email",
@@ -169,6 +176,7 @@ def test_a_deleted_person_is_not_made_again(test_db) -> None:
 
 def test_your_address_is_yours_though_first_seen_as_a_recipient(test_db) -> None:
     with get_connection(test_db) as conn:
+        _profile(conn, "Matthew Thompson")
         received = _item(
             conn,
             "email",
@@ -237,6 +245,7 @@ def test_someone_elses_post_and_odd_metadata(test_db) -> None:
 
 def test_a_later_pass_claims_your_address_from_an_earlier_one(test_db) -> None:
     with get_connection(test_db) as conn:
+        _profile(conn, "Me")
         received = _item(
             conn, "email", "e1", "Ann", {"from_email": "ann@x.org", "to_email": "me@x.org"}
         )
@@ -298,3 +307,10 @@ def test_an_email_marked_yours_by_default_but_sent_by_another_is_theirs(test_db)
         link_agents(conn)
         assert _agents(conn, theirs) == [("author", None, "Andrew", "person", False)]
         assert _agents(conn, mine) == [("author", None, "Matthew Thompson", "person", True)]
+
+
+def test_no_email_is_yours_until_your_name_is_known(test_db) -> None:
+    with get_connection(test_db) as conn:
+        mail = _item(conn, "email", "e1", "Ann", {"from_email": "ann@x.org"}, own=True)
+        link_agents(conn)
+        assert _agents(conn, mail) == [("author", None, "Ann", "person", False)]

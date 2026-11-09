@@ -164,10 +164,10 @@ def _addresses(value: Any) -> list[str]:
 
 
 def _your_email(row: _Row, ctx: _Context) -> bool:
-    """Whether you sent an email: it is marked yours and, once your name is known, sent
-    under it. An import that leaves the mark out marks every message yours, and a
+    """Whether you sent an email: it is marked yours and sent under your name. Until
+    your name is known, none is. An import that leaves the mark out marks every message yours, and a
     sender's address put on you would take their messages with it."""
-    return row.is_own and (ctx.your_name is None or row.author == ctx.your_name)
+    return row.is_own and ctx.your_name is not None and row.author == ctx.your_name
 
 
 def _email(row: _Row, ctx: _Context) -> Iterator[AgentRef]:
@@ -176,11 +176,11 @@ def _email(row: _Row, ctx: _Context) -> Iterator[AgentRef]:
     publisher, a group, and the poster is not known by any account."""
     meta = row.metadata
     list_id = meta.get("list_id")
-    relayed = " via " in (row.author or "")
     # 'List-Id: "Python-Dev" <python-dev.python.org>': the id is between < and >; the
     # description before it can change
     match = LIST_ID.search(list_id) if isinstance(list_id, str) else None
     list_key = (match.group(1) if match else str(list_id or "")).strip().lower()
+    relayed = bool(list_key) and " via " in (row.author or "")
     if list_key:
         name = row.author.rsplit(" via ", 1)[1].strip() if relayed and row.author else list_key
         yield AgentRef("publisher", "mailing-list", list_key, name, "group", evidence="List-Id")
@@ -385,6 +385,7 @@ class _People:
             "UPDATE OR IGNORE item_agents SET person_id = ? WHERE person_id = ?",
             (you, person_id),
         )
+        self.conn.execute("UPDATE activities SET actor_id = ? WHERE actor_id = ?", (you, person_id))
         self.conn.execute("DELETE FROM people WHERE id = ? AND is_self = 0", (person_id,))
         self.accounts[key] = you
         self.unnamed.discard(person_id)

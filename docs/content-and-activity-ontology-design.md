@@ -342,11 +342,14 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
 
 - An agent known only by name is a person with no account, one per item, as a name can be several people.
   The name linker will suggest which are the same. Deleting one makes it again on the next pass.
+- Deleting a person with an account keeps the account, belonging to no one, so the pass doesn't make them again.
+- The pass only adds: an agent whose item later names someone else stays, until a later step re-derives them.
+- `activities.actor_id` has no delete action: null means you, so a deleted person's activities must not become yours.
 - An account the source marks as yours belongs to the one `is_self` person: your LinkedIn owner URN, your own Bluesky DID, the address on emails marked yours and sent under your name, and `user` turns.
-  Gmail marks no message yours, so its senders are never you.
+  Gmail marks no message yours: a Gmail sender is you only when the address is already yours.
   Your accounts are recorded first, so an address of yours first seen on an email you received is still yours.
   When the pass first makes you, you are named from your LinkedIn profile, then your Bluesky posts; else by the first account of yours that gives a name; else "You".
-  An account of yours an earlier pass gave someone else, such as your address on an email you received, moves to you when it was that person's only account.
+  An account of yours an earlier pass gave someone else, such as your address on an email you received, moves to you when an import made it and it was that person's only account.
 - Each account is `confirmed`, with its evidence (`channel id`, `member URN`) and origin (`import:<source>`).
   Nothing joins two other accounts into one person; suggestions arrive with the linker for names.
 - A YouTube video with a channel name but no channel id gets no creator: the name alone could be several channels.
