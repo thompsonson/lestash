@@ -183,7 +183,7 @@ class PersonAccount(BaseModel):
 class AgentPerson(BaseModel):
     id: int
     name: str
-    kind: Literal["person", "organization", "group", "software"]
+    kind: str  # person, organization, group, software
     is_self: bool = False
 
 

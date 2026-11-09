@@ -23,11 +23,14 @@ that hold only free text, such as a Kobo book's author line, wait: splitting
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Callable, Iterator
 from typing import Any, NamedTuple
 
 YOU = "You"  # your name until a source gives it
+NAME = "name"  # the evidence of an agent known by name only, with no account
+LIST_ID = re.compile(r"<([^<>]+)>")
 
 # Chat sources: the author word (or Claude's metadata.sender) -> the software agent that
 # wrote the turn, or None for your own turns
@@ -139,17 +142,19 @@ def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
 
 def _arxiv(row: _Row, _: _Context) -> Iterator[AgentRef]:
     for position, name in enumerate(_names(row.metadata.get("authors")), start=1):
-        yield AgentRef("author", "arxiv", None, name, "person", position=position)
+        yield AgentRef("author", "arxiv", None, name, "person", position=position, evidence=NAME)
 
 
 def _audible(row: _Row, _: _Context) -> Iterator[AgentRef]:
     meta = row.metadata
     for role, key in (("author", "authors"), ("narrator", "narrators")):
         for position, name in enumerate(_names(meta.get(key)), start=1):
-            yield AgentRef(role, "audible", None, name, "person", position=position)
+            yield AgentRef(role, "audible", None, name, "person", position=position, evidence=NAME)
     publisher = meta.get("publisher")
     if isinstance(publisher, str) and publisher.strip():
-        yield AgentRef("publisher", "audible", None, publisher.strip(), "organization")
+        yield AgentRef(
+            "publisher", "audible", None, publisher.strip(), "organization", evidence=NAME
+        )
 
 
 def _addresses(value: Any) -> list[str]:
@@ -164,8 +169,11 @@ def _email(row: _Row, _: _Context) -> Iterator[AgentRef]:
     meta = row.metadata
     list_id = meta.get("list_id")
     relayed = " via " in (row.author or "")
-    if isinstance(list_id, str) and list_id.strip("<> "):
-        list_key = list_id.strip("<> ").lower()
+    # 'List-Id: "Python-Dev" <python-dev.python.org>': the id is between < and >; the
+    # description before it can change
+    match = LIST_ID.search(list_id) if isinstance(list_id, str) else None
+    list_key = (match.group(1) if match else str(list_id or "")).strip().lower()
+    if list_key:
         name = row.author.rsplit(" via ", 1)[1].strip() if relayed and row.author else list_key
         yield AgentRef("publisher", "mailing-list", list_key, name, "group", evidence="List-Id")
     for address in [] if relayed else _addresses(meta.get("from_email"))[:1]:
@@ -302,6 +310,10 @@ class _People:
         key = (ref.platform, ref.identifier)
         if key in self.accounts:
             person_id = self.accounts[key]
+            if ref.is_self and person_id is not None and person_id != self.you(None):
+                person_id = self.claim(key, person_id)
+                if person_id == self.you(None):
+                    self.name_you(ref)
             if person_id in self.unnamed and ref.name != ref.identifier:
                 # Named by its identifier until a source gave a name, as a list's
                 # address is until a relayed message names the list
@@ -309,16 +321,16 @@ class _People:
                     "UPDATE people SET name = ? WHERE id = ? AND name = ?",
                     (ref.name, person_id, ref.identifier),
                 )
+                self.conn.execute(
+                    "UPDATE person_identities SET display_name = ? "
+                    "WHERE platform = ? AND identifier = ? AND display_name = identifier",
+                    (ref.name, *key),
+                )
                 self.unnamed.discard(person_id)
             return person_id
         if ref.is_self:
             person_id = self.you(None)
-            if ref.name != YOU:
-                # The first account of yours that gives your name names you
-                self.conn.execute(
-                    "UPDATE people SET name = ? WHERE id = ? AND name = ?",
-                    (ref.name, person_id, YOU),
-                )
+            self.name_you(ref)
         else:
             person_id = self.conn.execute(
                 "INSERT INTO people (name, kind) VALUES (?, ?) RETURNING id",
@@ -333,6 +345,39 @@ class _People:
         )
         self.accounts[key] = person_id
         return person_id
+
+    def name_you(self, ref: AgentRef) -> None:
+        """The first account of yours that gives a name, not an identifier, names you."""
+        if ref.name not in (YOU, ref.identifier):
+            self.conn.execute(
+                "UPDATE people SET name = ? WHERE id = ? AND name = ?",
+                (ref.name, self.you(None), YOU),
+            )
+
+    def claim(self, key: tuple[str, str], person_id: int) -> int:
+        """An account of yours that an earlier pass gave someone else, as an address of
+        yours first seen on an email you received. It moves to you when it was made by
+        an import and is that person's only account; else it stays, as someone chose."""
+        others = self.conn.execute(
+            "SELECT COUNT(*), MIN(origin LIKE 'import:%') FROM person_identities "
+            "WHERE person_id = ?",
+            (person_id,),
+        ).fetchone()
+        if others[0] != 1 or not others[1]:
+            return person_id
+        you = self.you(None)
+        self.conn.execute(
+            "UPDATE person_identities SET person_id = ? WHERE platform = ? AND identifier = ?",
+            (you, *key),
+        )
+        self.conn.execute(
+            "UPDATE OR IGNORE item_agents SET person_id = ? WHERE person_id = ?",
+            (you, person_id),
+        )
+        self.conn.execute("DELETE FROM people WHERE id = ? AND is_self = 0", (person_id,))
+        self.accounts[key] = you
+        self.unnamed.discard(person_id)
+        return you
 
     def named(self, ref: AgentRef) -> int:
         """A new person known only by name, with no account."""
@@ -364,16 +409,19 @@ def _your_name(conn: sqlite3.Connection, ctx_self: frozenset[str]) -> str | None
 def link_agents(conn: sqlite3.Connection) -> int:
     """Record the agents of every item whose source names them. Returns how many item
     agents were added; safe to run again. The caller commits."""
+    if not conn.in_transaction:
+        # Write-lock first: two passes at once (a sync, an upload) would each make the
+        # people known by name that the other is making
+        conn.execute("BEGIN IMMEDIATE")
     ctx = _context(conn)
     people = _People(conn)
     people.you(_your_name(conn, ctx.linkedin_self))
     # An agent known by name only has no account to find it by: its item, role and
-    # position say it is already recorded
+    # position say it is already recorded, even once the name linker gives it one
     named = {
         (item_id, role, position)
         for item_id, role, position in conn.execute(
-            "SELECT a.item_id, a.role, a.position FROM item_agents a "
-            "WHERE NOT EXISTS (SELECT 1 FROM person_identities i WHERE i.person_id = a.person_id)"
+            "SELECT item_id, role, position FROM item_agents WHERE evidence = ?", (NAME,)
         )
     }
     # Yours first: an account of yours must not be made someone else's because an item

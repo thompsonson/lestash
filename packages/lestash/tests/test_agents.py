@@ -233,3 +233,53 @@ def test_someone_elses_post_and_odd_metadata(test_db) -> None:
         conn.execute("UPDATE items SET held = 1 WHERE id = ?", (stub,))
         link_agents(conn)
         assert _agents(conn, stub) == [("creator", None, "BBC", "organization", False)]
+
+
+def test_a_later_pass_claims_your_address_from_an_earlier_one(test_db) -> None:
+    with get_connection(test_db) as conn:
+        received = _item(
+            conn, "email", "e1", "Ann", {"from_email": "ann@x.org", "to_email": "me@x.org"}
+        )
+        link_agents(conn)
+        assert ("recipient", None, "me@x.org", "person", False) in _agents(conn, received)
+        sent = _item(conn, "email", "e2", "Me", {"from_email": "me@x.org"}, own=True)
+        link_agents(conn)
+        assert _agents(conn, sent) == [("author", None, "Me", "person", True)]
+        assert ("recipient", None, "Me", "person", True) in _agents(conn, received)
+        assert (
+            conn.execute("SELECT COUNT(*) FROM people WHERE name = 'me@x.org'").fetchone()[0] == 0
+        )
+
+
+def test_a_named_person_given_an_account_is_not_made_again(test_db) -> None:
+    with get_connection(test_db) as conn:
+        paper = _item(conn, "arxiv", "2401.1", None, {"authors": ["Ann Lee"]})
+        link_agents(conn)
+        [ann] = agents_for(conn, paper)
+        conn.execute(
+            "INSERT INTO person_identities (person_id, platform, identifier, status, origin) "
+            "VALUES (?, 'orcid', '0000-1', 'suggested', 'linker:name')",
+            (ann["person"]["id"],),
+        )
+        assert link_agents(conn) == 0
+        assert len(agents_for(conn, paper)) == 1
+
+
+def test_a_list_is_known_by_its_id_whatever_its_description(test_db) -> None:
+    with get_connection(test_db) as conn:
+        for n, list_id in enumerate(
+            ('"Python-Dev" <python-dev.python.org>', "<Python-Dev.python.org>")
+        ):
+            _item(conn, "gmail", f"g{n}", "Ann", {"from_email": "a@x.org", "list_id": list_id})
+        link_agents(conn)
+        rows = conn.execute(
+            "SELECT identifier FROM person_identities WHERE platform = 'mailing-list'"
+        ).fetchall()
+        assert [r[0] for r in rows] == ["python-dev.python.org"]
+
+
+def test_you_are_not_named_by_a_urn(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _item(conn, "linkedin", "p1", ME, {"raw": {"owner": ME}})
+        link_agents(conn)
+        assert conn.execute("SELECT name FROM people WHERE is_self = 1").fetchone()[0] == "You"
