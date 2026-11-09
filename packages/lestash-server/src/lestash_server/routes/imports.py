@@ -204,9 +204,15 @@ def _insert_items_with_parents(conn, items):
             errors.append(f"Failed to import child: {e}")
 
     # Also handle items without parent markers (flat items)
-    if items_added:
-        link_items(conn)
     conn.commit()
+    if items_added:
+        # Links are derived: a failure leaves the items stored; the next sync catches up
+        try:
+            link_items(conn)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            logger.exception("Linking items failed after an import")
     return items_added, errors
 
 

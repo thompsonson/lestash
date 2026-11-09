@@ -160,3 +160,30 @@ def test_a_sync_that_writes_items_links_them(test_db) -> None:
         item = ItemCreate(source_type="bluesky", source_id="b4", content="https://matt.example/p4")
         SyncStore(conn, "bluesky").run(iter([item]))
         assert [r[1] for r in _links(conn)] == [post]
+
+
+def test_a_linkedin_cross_post_in_local_time_is_a_syndication(test_db, monkeypatch) -> None:
+    """LinkedIn's created_at is local time without a zone; Paris is UTC+1 in January."""
+    import time
+
+    monkeypatch.setenv("TZ", "Europe/Paris")
+    time.tzset()
+    url = "https://matt.example/2026/01/20/post.html"
+    try:
+        with get_connection(test_db) as conn:
+            original = _add(
+                conn,
+                "microblog",
+                "p7",
+                url=url,
+                created_at="2026-01-20 10:00:00+00:00",
+                metadata={"syndication": ["linkedin"]},
+            )
+            copy = _add(
+                conn, "linkedin", "l7", content=f"New post {url}", created_at="2026-01-20T11:30:00"
+            )
+            link_items(conn)
+            assert [(r[0], r[1], r[2]) for r in _links(conn)] == [(original, copy, "syndication")]
+    finally:
+        monkeypatch.undo()
+        time.tzset()

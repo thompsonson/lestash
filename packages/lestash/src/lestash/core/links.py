@@ -69,13 +69,22 @@ class _Target(NamedTuple):
     created_at: datetime | None
 
 
-def _when(value: Any) -> datetime | None:
-    """A stored created_at as a UTC datetime; one with no zone is taken as UTC."""
+# Sources that store created_at in this machine's local time, without a zone
+LOCAL_TIME_SOURCES = frozenset({"linkedin"})
+
+
+def _when(value: Any, source_type: str) -> datetime | None:
+    """A stored created_at as an aware datetime.
+
+    One with no zone is UTC, except from LinkedIn, whose extractor writes local time.
+    """
     try:
         when = datetime.fromisoformat(str(value))
     except ValueError:
         return None
-    return when if when.tzinfo else when.replace(tzinfo=UTC)
+    if when.tzinfo:
+        return when
+    return when.astimezone() if source_type in LOCAL_TIME_SOURCES else when.replace(tzinfo=UTC)
 
 
 def _targets(conn: sqlite3.Connection) -> dict[str, _Target]:
@@ -95,7 +104,7 @@ def _targets(conn: sqlite3.Connection) -> dict[str, _Target]:
     for item_id, source_type, url, metadata, created_at in rows:
         key = address_key(url)
         if key and key not in targets:
-            targets[key] = _Target(item_id, source_type, metadata, _when(created_at))
+            targets[key] = _Target(item_id, source_type, metadata, _when(created_at, source_type))
     return targets
 
 
@@ -104,7 +113,7 @@ def _is_cross_post(source_type: str, parent_id: Any, created_at: Any, original: 
     service = SYNDICATED.get(source_type)
     if original.source_type != "microblog" or service not in _syndicated_to(original.metadata):
         return False
-    when = _when(created_at)
+    when = _when(created_at, source_type)
     return (
         parent_id is None
         and when is not None
