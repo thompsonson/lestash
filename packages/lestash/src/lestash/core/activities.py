@@ -52,10 +52,10 @@ def record_activities(
 
 
 def stored_times(conn: sqlite3.Connection, item_id: int, verb: str) -> list[datetime]:
-    """The times of item ``item_id``'s stored ``verb`` activities, oldest first."""
+    """The times of your stored ``verb`` activities on item ``item_id``, oldest first."""
     rows = conn.execute(
         "SELECT DISTINCT occurred_at FROM activities WHERE item_id = ? AND verb = ? "
-        "ORDER BY occurred_at",
+        "AND actor_id IS NULL ORDER BY occurred_at",
         (item_id, verb),
     ).fetchall()
     return [datetime.fromisoformat(row[0]) for row in rows]

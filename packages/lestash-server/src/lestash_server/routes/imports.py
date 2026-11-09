@@ -158,7 +158,10 @@ def _upsert_item(conn, item, parent_id=None):
     # RETURNING gives the row's id on insert and on update. lastrowid doesn't: after
     # ON CONFLICT DO UPDATE it still holds the previous insert's id.
     item_id = cursor.fetchone()[0]
-    record_activities(conn, item_id, item.activities)
+    # An upload's activities are yours: an actor_id from outside names no known person
+    record_activities(
+        conn, item_id, [a.model_copy(update={"actor_id": None}) for a in item.activities or []]
+    )
     return item_id
 
 
