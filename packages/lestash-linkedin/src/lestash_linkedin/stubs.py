@@ -138,12 +138,18 @@ def _comment_stub(conn: sqlite3.Connection, urn: str) -> int:
     )
 
 
+def _object(value: Any) -> dict[str, Any]:
+    """value if it is a JSON object, else an empty one: one malformed row must not stop
+    every sync."""
+    return value if isinstance(value, dict) else {}
+
+
 def _reaction_time(metadata: dict[str, Any]) -> datetime | None:
     """When a reaction was made, from LinkedIn's UTC ms: its own time if stored, else when
     the changelog captured it, within a second or so. Not created_at, which is local time:
     a run in another time zone would record the same like again."""
-    raw = metadata.get("raw") or {}
-    created = (raw.get("activity") or {}).get("created") or {}
+    raw = _object(metadata.get("raw"))
+    created = _object(_object(raw.get("activity")).get("created"))
     for ms in (created.get("time"), raw.get("capturedAt"), raw.get("processedAt")):
         if isinstance(ms, int | float) and not isinstance(ms, bool):
             return datetime.fromtimestamp(ms / 1000, tz=UTC)
@@ -151,7 +157,7 @@ def _reaction_time(metadata: dict[str, Any]) -> datetime | None:
 
 
 def _is_own_action(metadata: dict[str, Any]) -> bool:
-    raw = metadata.get("raw") or {}
+    raw = _object(metadata.get("raw"))
     actor, owner = raw.get("actor"), raw.get("owner")
     return bool(actor) and actor == owner
 
@@ -227,7 +233,10 @@ def link_linkedin_targets(conn: sqlite3.Connection) -> StubCounts:
         "OR json_extract(metadata, '$.reacted_to') IS NOT NULL)"
     ).fetchall()
     for item_id, parent_id, metadata_json in rows:
-        metadata = json.loads(metadata_json)
+        try:
+            metadata = _object(json.loads(metadata_json))
+        except (TypeError, ValueError):
+            continue
         commented_on, reacted_to = metadata.get("commented_on"), metadata.get("reacted_to")
         target = commented_on or reacted_to
         if not isinstance(target, str):

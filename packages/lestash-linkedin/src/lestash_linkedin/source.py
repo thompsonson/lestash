@@ -70,8 +70,7 @@ def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
 
     Matches by exact URN (post_id, source_id). Then link_linkedin_targets (stubs.py)
     matches a URN made within 2 s (a share URN and the activity URN of the same post),
-    and gives posts still not held a stub. A post still not
-    held gets a stub, linked from its comments and your reactions (stubs.py).
+    and gives posts still not held a stub, linked from their comments and your reactions.
 
     Returns the number of items updated.
     """
@@ -848,7 +847,7 @@ class LinkedInSource(SourcePlugin):
                 # Try matching on source_id
                 cursor = conn.execute(
                     """SELECT content FROM items
-                       WHERE source_type = 'linkedin'
+                       WHERE source_type = 'linkedin' AND held = 1
                        AND source_id LIKE ?""",
                     (f"%{target_urn}%",),
                 )
@@ -1130,7 +1129,7 @@ class LinkedInSource(SourcePlugin):
                     post_cursor = conn.execute(
                         """
                         SELECT content, author, metadata FROM items
-                        WHERE source_type = 'linkedin'
+                        WHERE source_type = 'linkedin' AND held = 1
                         AND (
                             metadata LIKE ?
                             OR source_id LIKE ?
