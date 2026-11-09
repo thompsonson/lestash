@@ -1,4 +1,5 @@
-"""CLI commands for managing person profiles."""
+"""CLI commands for naming LinkedIn members: the name and profile URL of a member's
+account and person, in the people tables."""
 
 from typing import Annotated
 
@@ -13,18 +14,18 @@ from lestash.core.database import (
 )
 from lestash.core.logging import get_console
 
-app = typer.Typer(help="Manage person profile mappings (URN to profile URL).")
+app = typer.Typer(help="Name LinkedIn members, and set their profile URLs.")
 console = get_console()
 
 
 @app.command("list")
 def list_profiles() -> None:
-    """List all person profile mappings."""
+    """List the LinkedIn members with a known name or profile URL."""
     with get_connection() as conn:
         profiles = list_person_profiles(conn)
 
     if not profiles:
-        console.print("[dim]No profiles configured.[/dim]")
+        console.print("[dim]No LinkedIn member is named yet.[/dim]")
         console.print("\nAdd a profile with: lestash profiles add <urn> --url <profile-url>")
         return
 
@@ -51,7 +52,7 @@ def add_profile(
     url: Annotated[str | None, typer.Option("--url", "-u", help="LinkedIn profile URL")] = None,
     name: Annotated[str | None, typer.Option("--name", "-n", help="Display name")] = None,
 ) -> None:
-    """Add or update a person profile mapping."""
+    """Name a LinkedIn member, or set their profile URL. The name you set is kept."""
     if not url and not name:
         console.print("[red]Error: Must provide at least --url or --name[/red]")
         raise typer.Exit(1)
@@ -66,14 +67,14 @@ def add_profile(
 def remove_profile(
     urn: Annotated[str, typer.Argument(help="Person URN to remove")],
 ) -> None:
-    """Remove a person profile mapping."""
+    """Stop keeping the name you set: the member takes their LinkedIn name again."""
     with get_connection() as conn:
         deleted = delete_person_profile(conn, urn)
 
     if deleted:
-        console.print(f"[green]Profile removed for {urn}[/green]")
+        console.print(f"[green]{urn} takes their LinkedIn name again[/green]")
     else:
-        console.print(f"[yellow]No profile found for {urn}[/yellow]")
+        console.print(f"[yellow]You have not named {urn}[/yellow]")
 
 
 @app.command("show")

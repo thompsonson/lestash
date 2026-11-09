@@ -346,6 +346,25 @@ Returns 404 if source not found.
 
 ---
 
+## Profiles
+
+LinkedIn gives no names for members. A profile is the name and profile URL of a member's account and person, in the people tables.
+
+### `GET /api/profiles`
+
+The LinkedIn members with a known name or profile URL.
+
+```json
+[{"urn": "urn:li:person:abc", "profile_url": "https://linkedin.com/in/ann", "display_name": "Ann Lee", "source": "web"}]
+```
+
+`source` says who named them: `web` or `manual` when you did, else the account's origin, such as `import:linkedin`.
+
+### `PUT /api/profiles/{urn}`
+
+Name a member, and optionally set their profile URL. Body: `{"display_name": "Ann Lee", "profile_url": "https://..."}`.
+The person takes the name, and the agents pass keeps it. A member not yet seen gets an account.
+
 ## Stats
 
 ### `GET /api/stats`

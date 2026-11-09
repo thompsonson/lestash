@@ -151,7 +151,8 @@ SQLite database with:
 - **items_fts** - Full-text search virtual table (FTS5)
 - **vec_items** - Vector embeddings for semantic search (sqlite-vec)
 - **item_history** - Audit trail of content changes
-- **person_profiles** - URN to name/URL mapping for display
+- **people** / **person_identities** - People and organisations, and their accounts (a LinkedIn URN, a channel, an email address)
+- **item_agents** / **item_mentions** - Who made or received an item, and who it mentions
 - **post_cache** - Cached metadata for posts referenced by reactions/comments
 - **tags** / **item_tags** - Tagging system
 - **collections** / **collection_items** - Cross-source item grouping
