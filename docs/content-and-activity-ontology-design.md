@@ -185,6 +185,7 @@ CREATE INDEX idx_item_links_to ON item_links(to_id, kind);
   Links, activities, notes, tags, collections and media move to the imported item, and the stub is deleted.
 - Listings, keyword search, embeddings and `/api/stats` skip stubs.
   The detail view shows a stub's address, links and activity, without edit, tag, note or collection actions.
+  `PATCH /api/items/{id}` refuses a stub with 409, since a merge would lose the edit.
 - The first importer to make stubs is LinkedIn, after `resolve_linkedin_parents`:
   - A post named by a URN made within 2 s of a held post's URN (a share and its activity) is that post, and becomes the parent.
     The resolver now matches exact URNs only: its 5 s time bucket also matched distinct posts, and a merge deletes the stub.
@@ -192,9 +193,10 @@ CREATE INDEX idx_item_links_to ON item_links(to_id, kind);
   - A comment without a parent links to its target as `in_reply_to`, and stays top-level, so listings still show it.
     A comment with a parent has no such link, whichever was imported first.
   - Your own reaction is a `liked` activity on its target, with the reaction type in `details`.
+    Its time is LinkedIn's UTC time, never the local `created_at`, so a run in another time zone adds no second like.
   - Only the event that made a reaction counts; a change or a delete adds no like.
   - Someone else's reaction waits for the people tables, since an activity without an actor is yours.
-- On a copy of the live database: 1,218 stubs (941 posts, 277 comments), 985 `in_reply_to` links and 888 `liked` activities.
+- On a copy of the live database: 1,218 stubs (941 posts, 277 comments), 985 `in_reply_to` links and 887 `liked` activities.
   35 comments and reactions on your posts gain their parent; the 168 parents already set stay.
   The pass takes 0.1 s.
 

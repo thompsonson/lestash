@@ -384,6 +384,9 @@ def update_item(item_id: int, body: ItemPatchRequest):
         row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        if not row["held"]:
+            # The stub is merged into the thing itself once imported; an edit would be lost
+            raise HTTPException(status_code=409, detail=f"Item {item_id} is a stub")
 
         updates: list[str] = []
         params: list = []

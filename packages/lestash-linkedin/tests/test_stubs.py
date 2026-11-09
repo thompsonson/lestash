@@ -41,7 +41,7 @@ def _comment(n: int, on: str = POST, actor: str = ME) -> ItemCreate:
 
 
 def _reaction(n: int, on: str, actor: str = ME, time_ms: int | None = 1768815923678) -> ItemCreate:
-    raw: dict = {"actor": actor, "owner": ME}
+    raw: dict = {"actor": actor, "owner": ME, "capturedAt": 1768815924000}
     if time_ms:
         raw["activity"] = {"created": {"time": time_ms}}
     return ItemCreate(
@@ -144,8 +144,8 @@ def test_your_reactions_are_liked_activities_and_others_wait(test_db) -> None:
     assert activities == [
         # A like on a comment is on the comment, not its post
         ("liked", stubs[f"stub:{ON_COMMENT}"], "2026-01-19T09:45:23.678Z", "linkedin", praise),
-        # Without LinkedIn's own time, created_at is read as this machine's local time
-        ("liked", stubs[f"stub:{POST}"], activities[1][2], "linkedin", praise),
+        # Without LinkedIn's own time, when the changelog captured it, not local created_at
+        ("liked", stubs[f"stub:{POST}"], "2026-01-19T09:45:24.000Z", "linkedin", praise),
     ]
 
 
@@ -210,3 +210,39 @@ def test_a_reaction_on_a_held_post_is_an_activity_on_it(test_db) -> None:
         resolve_linkedin_parents(conn)
         assert _rows(conn, "SELECT item_id FROM activities") == [(post,)]
         assert _stubs(conn) == {}
+
+
+def test_a_like_is_recorded_once_in_any_time_zone(test_db, monkeypatch) -> None:
+    import time
+
+    with get_connection(test_db) as conn:
+        upsert_item(conn, _reaction(1, POST, time_ms=None))
+        for zone in ("Europe/Paris", "UTC", "America/New_York"):
+            monkeypatch.setenv("TZ", zone)
+            time.tzset()
+            resolve_linkedin_parents(conn)
+        assert _rows(conn, "SELECT COUNT(*) FROM activities") == [(1,)]
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_a_stub_stays_when_two_held_posts_could_be_its_post(test_db) -> None:
+    one = 7418912385886941184 - (500 << 22)
+    two = 7418912385886941184 + (500 << 22)
+    with get_connection(test_db) as conn:
+        upsert_item(conn, _post_with(f"urn:li:share:{one}", n=1))
+        upsert_item(conn, _post_with(f"urn:li:share:{two}", n=2))
+        upsert_item(conn, _comment(1))
+        resolve_linkedin_parents(conn)
+        assert set(_stubs(conn)) == {f"stub:{POST}"}
+        assert _rows(conn, "SELECT COUNT(*) FROM items WHERE parent_id IS NOT NULL") == [(0,)]
+
+
+def test_a_comment_stub_on_a_held_post_replies_to_it(test_db) -> None:
+    with get_connection(test_db) as conn:
+        post = upsert_item(conn, _post())
+        upsert_item(conn, _reaction(1, ON_COMMENT))
+        resolve_linkedin_parents(conn)
+        assert set(_stubs(conn)) == {f"stub:{ON_COMMENT}"}
+        stub = _stubs(conn)[f"stub:{ON_COMMENT}"]
+        assert _rows(conn, "SELECT from_id, to_id FROM item_links") == [(stub, post)]

@@ -68,8 +68,9 @@ def _parent_match_sql(field: str) -> str:
 def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
     """Resolve parent_id for LinkedIn reactions and comments.
 
-    Matches by exact URN (post_id, source_id), then by a URN made within 2 s
-    (a share URN and the activity URN of the same post). A post still not
+    Matches by exact URN (post_id, source_id). Then link_linkedin_targets (stubs.py)
+    matches a URN made within 2 s (a share URN and the activity URN of the same post),
+    and gives posts still not held a stub. A post still not
     held gets a stub, linked from its comments and your reactions (stubs.py).
 
     Returns the number of items updated.
@@ -83,6 +84,7 @@ def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
             UPDATE items SET parent_id = (
                 SELECT p.id FROM items p
                 WHERE {match_sql}
+                ORDER BY p.id
                 LIMIT 1
             )
             WHERE source_type = 'linkedin'

@@ -31,7 +31,6 @@ from urllib.parse import quote
 
 from lestash.core.activities import record_activities
 from lestash.core.database import mark_recent_history, max_history_id
-from lestash.core.links import aware_time
 from lestash.core.stubs import STUB_PREFIX, make_stub, merge_stub
 from lestash.models.item import ActivityCreate
 
@@ -63,6 +62,8 @@ def post_urn(target: str) -> str:
 def snowflake_ms(urn: str) -> int | None:
     """When a post's URN was made, in Unix ms: a Snowflake id's top bits. A group post's
     id is the part after its group number (urn:li:groupPost:<group>-<id>)."""
+    if not urn.startswith("urn:li:"):
+        return None  # such as changelog-ugcPosts-<ms>, which is not a Snowflake id
     try:
         snowflake_id = int(urn.rsplit(":", 1)[-1].rsplit("-", 1)[-1])
     except ValueError:
@@ -137,15 +138,16 @@ def _comment_stub(conn: sqlite3.Connection, urn: str) -> int:
     )
 
 
-def _reaction_time(metadata: dict[str, Any], created_at: Any) -> datetime | None:
-    """When a reaction was made: LinkedIn's own time (UTC ms) if stored, else created_at,
-    which the changelog extractor writes in local time."""
+def _reaction_time(metadata: dict[str, Any]) -> datetime | None:
+    """When a reaction was made, from LinkedIn's UTC ms: its own time if stored, else when
+    the changelog captured it, within a second or so. Not created_at, which is local time:
+    a run in another time zone would record the same like again."""
     raw = metadata.get("raw") or {}
     created = (raw.get("activity") or {}).get("created") or {}
-    ms = created.get("time")
-    if isinstance(ms, int | float):
-        return datetime.fromtimestamp(ms / 1000, tz=UTC)
-    return aware_time(created_at, SOURCE) if created_at else None
+    for ms in (created.get("time"), raw.get("capturedAt"), raw.get("processedAt")):
+        if isinstance(ms, int | float) and not isinstance(ms, bool):
+            return datetime.fromtimestamp(ms / 1000, tz=UTC)
+    return None
 
 
 def _is_own_action(metadata: dict[str, Any]) -> bool:
@@ -219,12 +221,12 @@ def link_linkedin_targets(conn: sqlite3.Connection) -> StubCounts:
     merged, touched = _merge_filled_stubs(conn, run.held)
     parented = activities = 0
     rows = conn.execute(
-        "SELECT id, parent_id, created_at, metadata FROM items "
+        "SELECT id, parent_id, metadata FROM items "
         "WHERE source_type = 'linkedin' AND held = 1 "
         "AND (json_extract(metadata, '$.commented_on') IS NOT NULL "
         "OR json_extract(metadata, '$.reacted_to') IS NOT NULL)"
     ).fetchall()
-    for item_id, parent_id, created_at, metadata_json in rows:
+    for item_id, parent_id, metadata_json in rows:
         metadata = json.loads(metadata_json)
         commented_on, reacted_to = metadata.get("commented_on"), metadata.get("reacted_to")
         target = commented_on or reacted_to
@@ -243,10 +245,15 @@ def link_linkedin_targets(conn: sqlite3.Connection) -> StubCounts:
             if parent_id is None:
                 run.link(item_id, run.target(target), commented_on)
         elif _is_own_action(metadata) and _is_created(metadata):
-            when = _reaction_time(metadata, created_at)
+            when = _reaction_time(metadata)
             if when is None:
                 continue
             target_id = parent_id if parent_id is not None and not on_comment else None
+            if (
+                target_id is not None
+                and not conn.execute("SELECT 1 FROM items WHERE id = ?", (target_id,)).fetchone()
+            ):
+                target_id = None  # parent_id has no foreign key: it can name a deleted item
             reaction = metadata.get("reaction_type")
             activities += record_activities(
                 conn,

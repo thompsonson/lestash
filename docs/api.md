@@ -187,6 +187,8 @@ Partially update an item. Only provided fields are changed.
 | `content` | string | Update content |
 | `parent_id` | int \| null | Reparent the item or detach from parent |
 
+Returns 409 for a stub (`held: false`): a stub is merged into the thing itself once imported, so an edit would be lost.
+
 Validates that `parent_id` does not create a circular reference.
 
 A synced item that names its parent in `metadata._parent_source_id` is linked to that parent

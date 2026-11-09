@@ -36,3 +36,9 @@ def test_a_stubs_detail_says_it_is_not_held(client, test_config) -> None:
     stub, item = _stub_and_item(test_config)
     assert client.get(f"/api/items/{stub}").json()["held"] is False
     assert client.get(f"/api/items/{item}").json()["held"] is True
+
+
+def test_a_stub_cannot_be_edited(client, test_config) -> None:
+    stub, item = _stub_and_item(test_config)
+    assert client.patch(f"/api/items/{stub}", json={"content": "x"}).status_code == 409
+    assert client.patch(f"/api/items/{item}", json={"content": "x"}).status_code == 200
