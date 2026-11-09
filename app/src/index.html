@@ -2257,7 +2257,7 @@
       }
 
       loadActivities(item.id);
-      loadPeople(item.id);
+      loadPeople(item.id, item.source_type);
       loadLinks(item.id);
 
       // Load similar items (held parent items only)
@@ -2310,7 +2310,10 @@
       publisher: 'Publisher', recipient: 'To',
     };
 
-    async function loadPeople(itemId) {
+    // A source's items name people by accounts on this platform
+    const ACCOUNT_PLATFORM = { gmail: 'email' };
+
+    async function loadPeople(itemId, sourceType) {
       let data;
       try {
         data = await api(`/api/items/${itemId}/agents`);
@@ -2325,8 +2328,12 @@
       }
       const rows = data.agents.map(a => {
         const name = a.person.is_self ? 'You' : a.person.name;
-        // The account on a web page, if it has one: a channel, a profile, an address
-        const account = a.accounts.find(x => x.url);
+        // The account on a web page: the one on this item's platform first, so "You"
+        // on a LinkedIn post links your LinkedIn profile. Only web and mail addresses:
+        // a URL from imported data must not run script.
+        const safe = a.accounts.filter(x => x.url && /^(https?:|mailto:)/i.test(x.url));
+        const platform = ACCOUNT_PLATFORM[sourceType] || sourceType;
+        const account = safe.find(x => x.platform === platform) || safe[0];
         const shown = account
           ? `<a href="${escHtml(account.url)}" target="_blank" rel="noopener" style="color:var(--ok);text-decoration:none">${escHtml(name)}</a>`
           : `<span>${escHtml(name)}</span>`;

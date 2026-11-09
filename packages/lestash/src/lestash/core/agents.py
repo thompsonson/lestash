@@ -4,11 +4,14 @@ See docs/content-and-activity-ontology-design.md, "The people ontology". After e
 sync, this pass reads the identifiers importers already store and records:
 
 - an account (``person_identities``) per platform identifier: a YouTube channel id, a
-  LinkedIn member URN, a Bluesky DID, an email address, an arXiv or Audible name, a
-  chat role;
+  LinkedIn member URN, a Bluesky DID, an email address, a mailing list, a chat role;
 - a person (``people``) per new account. Nothing joins two accounts into one person
   automatically, except yours: an account the source marks as yours belongs to the
-  one ``is_self`` person;
+  one ``is_self`` person. Your accounts are recorded first, so an address of yours
+  first seen on an email you received is still yours;
+- a person with no account for an agent known only by name, such as an arXiv or
+  Audible author: one per item, as one name can be several people. The name linker
+  will suggest which are the same;
 - an ``item_agents`` row per item and role: ``author``, ``creator`` (a channel's
   video), ``narrator``, ``publisher`` or ``recipient``.
 
@@ -41,7 +44,7 @@ class AgentRef(NamedTuple):
 
     role: str  # author, creator, narrator, publisher, recipient
     platform: str
-    identifier: str
+    identifier: str | None  # None: known by name only, so no account
     name: str
     kind: str  # person, organization, group, software
     url: str | None = None
@@ -136,18 +139,17 @@ def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
 
 def _arxiv(row: _Row, _: _Context) -> Iterator[AgentRef]:
     for position, name in enumerate(_names(row.metadata.get("authors")), start=1):
-        yield AgentRef("author", "arxiv", name, name, "person", position=position)
+        yield AgentRef("author", "arxiv", None, name, "person", position=position)
 
 
 def _audible(row: _Row, _: _Context) -> Iterator[AgentRef]:
     meta = row.metadata
     for role, key in (("author", "authors"), ("narrator", "narrators")):
         for position, name in enumerate(_names(meta.get(key)), start=1):
-            yield AgentRef(role, "audible", name, name, "person", position=position)
+            yield AgentRef(role, "audible", None, name, "person", position=position)
     publisher = meta.get("publisher")
     if isinstance(publisher, str) and publisher.strip():
-        name = publisher.strip()
-        yield AgentRef("publisher", "audible", f"publisher:{name}", name, "organization")
+        yield AgentRef("publisher", "audible", None, publisher.strip(), "organization")
 
 
 def _addresses(value: Any) -> list[str]:
@@ -156,8 +158,17 @@ def _addresses(value: Any) -> list[str]:
 
 
 def _email(row: _Row, _: _Context) -> Iterator[AgentRef]:
+    """The sender and recipients. A message a mailing list relays ("'Ann' via UAI
+    Mailing List") comes from the list's address, not Ann's: the list is its
+    publisher, a group, and the poster is not known by any account."""
     meta = row.metadata
-    for address in _addresses(meta.get("from_email"))[:1]:
+    list_id = meta.get("list_id")
+    relayed = " via " in (row.author or "")
+    if isinstance(list_id, str) and list_id.strip("<> "):
+        list_key = list_id.strip("<> ").lower()
+        name = row.author.rsplit(" via ", 1)[1].strip() if relayed and row.author else list_key
+        yield AgentRef("publisher", "mailing-list", list_key, name, "group", evidence="List-Id")
+    for address in [] if relayed else _addresses(meta.get("from_email"))[:1]:
         yield AgentRef(
             "author",
             "email",
@@ -253,10 +264,20 @@ class _People:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
+        # An account not confirmed (suggested, rejected) is kept but gives no agent
         self.accounts: dict[tuple[str, str], int | None] = {
             (platform, identifier): person_id
             for platform, identifier, person_id in conn.execute(
-                "SELECT platform, identifier, person_id FROM person_identities"
+                "SELECT platform, identifier, "
+                "CASE WHEN status = 'confirmed' THEN person_id END FROM person_identities"
+            )
+        }
+        # People named by an account's identifier, waiting for a source to name them
+        self.unnamed: set[int] = {
+            person_id
+            for (person_id,) in conn.execute(
+                "SELECT p.id FROM people p JOIN person_identities i ON i.person_id = p.id "
+                "WHERE p.name = i.identifier AND p.is_self = 0"
             )
         }
         self._self_id: int | None = None
@@ -276,9 +297,20 @@ class _People:
     def person(self, ref: AgentRef, origin: str) -> int | None:
         """The person an account belongs to, made with the account on first sight; None
         when the account is kept but belongs to no one (its person was deleted)."""
+        if ref.identifier is None:
+            return self.named(ref)
         key = (ref.platform, ref.identifier)
         if key in self.accounts:
-            return self.accounts[key]
+            person_id = self.accounts[key]
+            if person_id in self.unnamed and ref.name != ref.identifier:
+                # Named by its identifier until a source gave a name, as a list's
+                # address is until a relayed message names the list
+                self.conn.execute(
+                    "UPDATE people SET name = ? WHERE id = ? AND name = ?",
+                    (ref.name, person_id, ref.identifier),
+                )
+                self.unnamed.discard(person_id)
+            return person_id
         if ref.is_self:
             person_id = self.you(None)
             if ref.name != YOU:
@@ -292,6 +324,8 @@ class _People:
                 "INSERT INTO people (name, kind) VALUES (?, ?) RETURNING id",
                 (ref.name, ref.kind),
             ).fetchone()[0]
+            if ref.name == ref.identifier:
+                self.unnamed.add(person_id)
         self.conn.execute(
             "INSERT INTO person_identities (person_id, platform, identifier, display_name, "
             "url, status, evidence, origin) VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?)",
@@ -299,6 +333,15 @@ class _People:
         )
         self.accounts[key] = person_id
         return person_id
+
+    def named(self, ref: AgentRef) -> int:
+        """A new person known only by name, with no account."""
+        return int(
+            self.conn.execute(
+                "INSERT INTO people (name, kind) VALUES (?, ?) RETURNING id",
+                (ref.name, ref.kind),
+            ).fetchone()[0]
+        )
 
 
 def _your_name(conn: sqlite3.Connection, ctx_self: frozenset[str]) -> str | None:
@@ -324,8 +367,22 @@ def link_agents(conn: sqlite3.Connection) -> int:
     ctx = _context(conn)
     people = _People(conn)
     people.you(_your_name(conn, ctx.linkedin_self))
+    # An agent known by name only has no account to find it by: its item, role and
+    # position say it is already recorded
+    named = {
+        (item_id, role, position)
+        for item_id, role, position in conn.execute(
+            "SELECT a.item_id, a.role, a.position FROM item_agents a "
+            "WHERE NOT EXISTS (SELECT 1 FROM person_identities i WHERE i.person_id = a.person_id)"
+        )
+    }
+    # Yours first: an account of yours must not be made someone else's because an item
+    # naming it as a recipient came first
+    found = sorted(agents_of(conn, ctx), key=lambda found: not found[2].is_self)
     rows = []
-    for item_id, source_type, ref in agents_of(conn, ctx):
+    for item_id, source_type, ref in found:
+        if ref.identifier is None and (item_id, ref.role, ref.position) in named:
+            continue
         origin = f"import:{source_type}"
         person_id = people.person(ref, origin)
         if person_id is not None:

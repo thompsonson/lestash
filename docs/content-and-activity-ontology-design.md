@@ -327,27 +327,34 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
 
 - Migration 19 creates the four tables as proposed, and adds `activities.actor_id` (null is you).
 - The agents pass (`core/agents.py`) runs after each sync that writes items, after an upload, and as `lestash db agents`.
-  It reads identifiers importers already store, and gives each account one person:
+  It reads identifiers importers already store, and gives each new account one person:
 
   | Source | Account | Kind | Role |
   |---|---|---|---|
   | YouTube | channel id | `organization` | `creator` |
   | LinkedIn | member or company URN | `person`, `organization` | `author` |
   | Bluesky | DID | `person` | `author` |
-  | arXiv | author name, in order | `person` | `author` |
-  | Audible | author and narrator names; publisher | `person`, `organization` | `author`, `narrator`, `publisher` |
+  | arXiv | none: a name, in order | `person` | `author` |
+  | Audible | none: author, narrator and publisher names | `person`, `organization` | `author`, `narrator`, `publisher` |
   | Email | address | `person` | `author`, `recipient` |
+  | Email | mailing list (`List-Id`) | `group` | `publisher` |
   | Gemini, Mistral, Claude, Claude Code | the turn's role word | `software`, or you | `author` |
 
+- An agent known only by name is a person with no account, one per item, as a name can be several people.
+  The name linker will suggest which are the same. Deleting one makes it again on the next pass.
 - An account the source marks as yours belongs to the one `is_self` person: your LinkedIn owner URN, your own Bluesky DID, the address on your own emails, and `user` turns.
+  Your accounts are recorded first, so an address of yours first seen on an email you received is still yours.
   You are named from your LinkedIn profile, then your Bluesky posts, then your emails; else "You".
 - Each account is `confirmed`, with its evidence (`channel id`, `member URN`) and origin (`import:<source>`).
   Nothing joins two other accounts into one person; suggestions arrive with the linker for names.
 - A YouTube video with a channel name but no channel id gets no creator: the name alone could be several channels.
+- A message a mailing list relays ("'Ann' via UAI Mailing List") comes from the list's address, so the list is its publisher and the poster is unnamed.
+- A person named by an account's identifier, such as a URN, takes the first real name a later sighting gives.
 - Free-text authors (Kobo, web pages, notes) wait, since splitting a line of names would be a guess.
 - LinkedIn gives no names for members: a member not in `person_profiles` is named by their URN, 219 of 257 today.
 - The detail view lists an item's people by role, each linked to their channel, profile or address.
-- On a copy of the live database: 18,166 organizations, 501 people, 3 software agents and you; 90,042 item agents, in 1.4 s.
+- On a copy of the live database: 18,179 organizations, 535 people, 1 group, 3 software agents and you; 90,044 item agents.
+  The pass takes 1.5 s, and 1.0 s when nothing is new.
 - Not yet: `item_mentions` (filled by a name linker), retiring `person_profiles`, and `actor_id` for others' LinkedIn reactions.
 
 ## The activity ontology
