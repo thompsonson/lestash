@@ -47,6 +47,8 @@ List items with filters and pagination.
 
 Items with a `parent_id` are excluded by default. Set `include_children=true` or filter by `parent_id` to see them.
 
+Stubs (`held: false`) are always excluded, unless filtering by `parent_id`. A stub is a thing LeStash knows by its address but does not hold, such as a LinkedIn post you commented on. Search and `/api/stats` exclude stubs too.
+
 **Response:** `{ items: ItemResponse[], total: int, limit: int, offset: int }`
 
 ---
@@ -143,6 +145,7 @@ The item's confirmed links to and from other items, found by the linker after ea
 
 - `references`: the `from` item's content holds the `to` item's web address.
 - `syndication`: the `to` item is a cross-posted copy of the `from` item, a Micro.blog post.
+- `in_reply_to`: the `from` item is a comment on the `to` item, often a stub for a post LeStash doesn't hold.
 - `direction` is `outgoing` when this item is the link's `from` end.
 
 ```json
@@ -151,10 +154,13 @@ The item's confirmed links to and from other items, found by the linker after ea
     {"direction": "incoming", "kind": "references",
      "evidence": "https://matt.thompson.gr/2026/01/18/definitions-reference.html",
      "origin": "linker:url",
-     "item": {"id": 2081, "source_type": "claude", "title": "Agents", "url": null}}
+     "item": {"id": 2081, "source_type": "claude", "title": "Agents", "url": null,
+              "preview": "Agents and the definitions they rely on..."}}
   ]
 }
 ```
+
+`item.preview` is the start of the item's text (120 characters, whitespace folded), so an item without a title, such as a comment, can be told apart.
 
 ---
 
@@ -183,6 +189,8 @@ Partially update an item. Only provided fields are changed.
 | `title` | string \| null | Set or clear the title |
 | `content` | string | Update content |
 | `parent_id` | int \| null | Reparent the item or detach from parent |
+
+Returns 409 for a stub (`held: false`): a stub is merged into the thing itself once imported, so an edit would be lost.
 
 Validates that `parent_id` does not create a circular reference.
 
@@ -646,6 +654,7 @@ plugin and YouTube auth to fetch metadata for a new video.
   "is_own_content": true,
   "metadata": {},
   "parent_id": null,
+  "held": true,
   "subtype": "article",
   "author_display": "John Doe",
   "actor_display": "John Doe",

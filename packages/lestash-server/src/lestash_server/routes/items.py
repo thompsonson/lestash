@@ -81,6 +81,7 @@ def _enrich_item(conn, item: Item) -> ItemResponse:
         is_own_content=item.is_own_content,
         metadata=item.metadata,
         parent_id=item.parent_id,
+        held=item.held,
         subtype=get_item_subtype(item),
         author_display=author_display,
         actor_display=actor_display,
@@ -138,6 +139,11 @@ def list_items(
                 "WHERE tags.name = ?"
             )
             params.append(tag.strip().lower())
+
+        if parent_id is None:
+            # Stubs are known by their address only; their detail view shows them
+            query += " AND items.held = 1"
+            count_query += " AND items.held = 1"
 
         if source:
             query += " AND source_type = ?"
@@ -378,6 +384,9 @@ def update_item(item_id: int, body: ItemPatchRequest):
         row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        if not row["held"]:
+            # The stub is merged into the thing itself once imported; an edit would be lost
+            raise HTTPException(status_code=409, detail=f"Item {item_id} is a stub")
 
         updates: list[str] = []
         params: list = []

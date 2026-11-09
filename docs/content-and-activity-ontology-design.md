@@ -174,8 +174,31 @@ CREATE INDEX idx_item_links_to ON item_links(to_id, kind);
 - A Bluesky or LinkedIn post holding the address of a Micro.blog post that lists that service in its `syndication` is a `syndication` link; any other match is `references`.
 - All are `confirmed`. The detail view lists them both ways, and its remove action sets `rejected`.
 - On a copy of the live database: 959 links, 878 `references` and 81 `syndication`, in 0.7 s.
-- Not yet: `items.held` and stubs, which wait for an importer that makes them; NotebookLM source links, which wait for sources to become items.
+- Not yet: NotebookLM source links, which wait for sources to become items.
 - A link stays when its address is later edited out of the content.
+
+### As built (#216, step 3b)
+
+- Migration 18 adds `items.held`, default `1`; a stub has `0` and empty `content`.
+- `core/stubs.py` makes a stub once per identifier, with `source_id` `stub:<identifier>`, so no import writes over it.
+- When the thing itself is imported, its stub is merged into it.
+  Links, activities, notes, tags, collections and media move to the imported item, and the stub is deleted.
+- Listings, keyword search, embeddings and `/api/stats` skip stubs.
+  The detail view shows a stub's address, links and activity, without edit, tag, note or collection actions.
+  `PATCH /api/items/{id}` refuses a stub with 409, since a merge would lose the edit.
+- The first importer to make stubs is LinkedIn, after `resolve_linkedin_parents`:
+  - A post named by a URN made within 2 s of a held post's URN (a share and its activity) is that post, and becomes the parent.
+    The resolver now matches exact URNs only: its 5 s time bucket also matched distinct posts, and a merge deletes the stub.
+  - Otherwise the post gets a stub. A comment that is replied to or reacted to gets its own stub, which replies to its post.
+  - A comment without a parent links to its target as `in_reply_to`, and stays top-level, so listings still show it.
+    A comment with a parent has no such link, whichever was imported first.
+  - Your own reaction is a `liked` activity on its target, with the reaction type in `details`.
+    Its time is LinkedIn's UTC time, never the local `created_at`, so a run in another time zone adds no second like.
+  - Only the event that made a reaction counts; a change or a delete adds no like.
+  - Someone else's reaction waits for the people tables, since an activity without an actor is yours.
+- On a copy of the live database: 1,218 stubs (941 posts, 277 comments), 985 `in_reply_to` links and 887 `liked` activities.
+  35 comments and reactions on your posts gain their parent; the 168 parents already set stay.
+  The pass takes 0.1 s.
 
 ## The people ontology
 

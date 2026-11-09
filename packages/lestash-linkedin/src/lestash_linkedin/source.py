@@ -40,6 +40,7 @@ from lestash_linkedin.api import (
     save_write_credentials,
 )
 from lestash_linkedin.importer import import_from_zip
+from lestash_linkedin.stubs import link_linkedin_targets
 
 console = Console()
 logger = get_plugin_logger("linkedin")
@@ -48,9 +49,10 @@ logger = get_plugin_logger("linkedin")
 def _parent_match_sql(field: str) -> str:
     """Build SQL condition to match a child's target URN to a parent post.
 
-    Matches by:
-    1. Exact URN match (post_id or source_id = reacted_to/commented_on)
-    2. Snowflake timestamp match (share URN vs activity URN for the same post)
+    Matches by exact URN (post_id or source_id = reacted_to/commented_on). A share URN
+    and its activity URN for the same post are matched by link_linkedin_targets
+    (stubs.py), when they were made within 2 s: a 5 s time bucket also matched
+    distinct posts.
     """
     return f"""
         p.source_type = 'linkedin'
@@ -59,11 +61,6 @@ def _parent_match_sql(field: str) -> str:
             json_extract(p.metadata, '$.post_id')
                 = json_extract(items.metadata, '$.{field}')
             OR p.source_id = json_extract(items.metadata, '$.{field}')
-            OR (
-                json_extract(items.metadata, '$.target_snowflake_ts') IS NOT NULL
-                AND json_extract(p.metadata, '$.snowflake_ts')
-                    = json_extract(items.metadata, '$.target_snowflake_ts')
-            )
         )
     """
 
@@ -71,8 +68,9 @@ def _parent_match_sql(field: str) -> str:
 def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
     """Resolve parent_id for LinkedIn reactions and comments.
 
-    Matches by exact URN (post_id, source_id) or by Snowflake timestamp
-    (handles share URN vs activity URN mismatch for the same post).
+    Matches by exact URN (post_id, source_id). Then link_linkedin_targets (stubs.py)
+    matches a URN made within 2 s (a share URN and the activity URN of the same post),
+    and gives posts still not held a stub, linked from their comments and your reactions.
 
     Returns the number of items updated.
     """
@@ -85,6 +83,7 @@ def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
             UPDATE items SET parent_id = (
                 SELECT p.id FROM items p
                 WHERE {match_sql}
+                ORDER BY p.id
                 LIMIT 1
             )
             WHERE source_type = 'linkedin'
@@ -98,6 +97,15 @@ def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
         )
         total += cursor.rowcount
     mark_recent_history(conn, pre_max, "sync")
+    # Posts still not held get stubs, so their comments and reactions link to something
+    counts = link_linkedin_targets(conn)
+    total += counts.parented
+    if any(counts):
+        logger.info(
+            "Stubs: %d merged into imported posts; %d parents found; %d reply links, "
+            "%d reactions added",
+            *counts,
+        )
     conn.commit()
     return total
 
@@ -839,7 +847,7 @@ class LinkedInSource(SourcePlugin):
                 # Try matching on source_id
                 cursor = conn.execute(
                     """SELECT content FROM items
-                       WHERE source_type = 'linkedin'
+                       WHERE source_type = 'linkedin' AND held = 1
                        AND source_id LIKE ?""",
                     (f"%{target_urn}%",),
                 )
@@ -1121,7 +1129,7 @@ class LinkedInSource(SourcePlugin):
                     post_cursor = conn.execute(
                         """
                         SELECT content, author, metadata FROM items
-                        WHERE source_type = 'linkedin'
+                        WHERE source_type = 'linkedin' AND held = 1
                         AND (
                             metadata LIKE ?
                             OR source_id LIKE ?

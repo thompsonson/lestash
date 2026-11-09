@@ -36,6 +36,8 @@ SYNDICATED = {"bluesky": "bluesky", "linkedin": "linkedin"}
 LINKEDIN_POSTS = ("changelog-ugcPosts-", "urn:li:share:", "urn:li:ugcPost:")
 # A cross-post is made with its original; Micro.blog posts it within minutes
 CROSS_POST_WINDOW = timedelta(hours=1)
+# The start of the linked item's text that links_of returns, for one line in a list
+PREVIEW_CHARS = 120
 
 
 class Link(NamedTuple):
@@ -75,8 +77,8 @@ class _Target(NamedTuple):
 LOCAL_TIME_SOURCES = frozenset({"linkedin"})
 
 
-def _when(value: Any, source_type: str) -> datetime | None:
-    """A stored created_at as an aware datetime.
+def aware_time(value: Any, source_type: str) -> datetime | None:
+    """A stored created_at as an aware datetime, or None if it isn't a time.
 
     One with no zone is UTC, except from LinkedIn, whose extractor writes local time.
     """
@@ -93,20 +95,22 @@ def _targets(conn: sqlite3.Connection) -> dict[str, _Target]:
     """Each address key -> the item at that address.
 
     Of several items at one address, the canonical video item (``history:``) wins, then a
-    top-level item, then the oldest. A LinkedIn reaction or comment is never a target: it
-    has the address of the post it is on.
+    held item over a stub, then a top-level item, then the oldest. A LinkedIn reaction or
+    comment is never a target: it has the address of the post it is on.
     """
     rows = conn.execute(
         "SELECT id, source_type, url, metadata, created_at FROM items "
         "WHERE url IS NOT NULL AND url != '' "
         "AND NOT (source_type = 'linkedin' AND source_id LIKE 'changelog-socialActions/%') "
-        "ORDER BY (source_id LIKE 'history:%') DESC, (parent_id IS NULL) DESC, id"
+        "ORDER BY (source_id LIKE 'history:%') DESC, held DESC, (parent_id IS NULL) DESC, id"
     )
     targets: dict[str, _Target] = {}
     for item_id, source_type, url, metadata, created_at in rows:
         key = address_key(url)
         if key and key not in targets:
-            targets[key] = _Target(item_id, source_type, metadata, _when(created_at, source_type))
+            targets[key] = _Target(
+                item_id, source_type, metadata, aware_time(created_at, source_type)
+            )
     return targets
 
 
@@ -130,7 +134,7 @@ def _is_cross_post(copy: sqlite3.Row | tuple[Any, ...], original: _Target) -> bo
         return False
     if source_type == "linkedin" and not str(source_id).startswith(LINKEDIN_POSTS):
         return False
-    when = _when(created_at, source_type)
+    when = aware_time(created_at, source_type)
     return (
         when is not None
         and original.created_at is not None
@@ -188,13 +192,13 @@ def links_of(conn: sqlite3.Connection, item_id: int) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
         SELECT l.from_id = :id AS outgoing, l.kind, l.evidence, l.origin,
-               i.id, i.source_type, i.title, i.url
+               i.id, i.source_type, i.title, i.url, substr(i.content, 1, :chars) AS preview
         FROM item_links l
         JOIN items i ON i.id = CASE WHEN l.from_id = :id THEN l.to_id ELSE l.from_id END
         WHERE (l.from_id = :id OR l.to_id = :id) AND l.status = 'confirmed'
         ORDER BY l.kind, outgoing DESC, i.id
         """,
-        {"id": item_id},
+        {"id": item_id, "chars": PREVIEW_CHARS},
     ).fetchall()
     return [
         {
@@ -202,7 +206,13 @@ def links_of(conn: sqlite3.Connection, item_id: int) -> list[dict[str, Any]]:
             "kind": row[1],
             "evidence": row[2],
             "origin": row[3],
-            "item": {"id": row[4], "source_type": row[5], "title": row[6], "url": row[7]},
+            "item": {
+                "id": row[4],
+                "source_type": row[5],
+                "title": row[6],
+                "url": row[7],
+                "preview": " ".join(row[8].split()) or None,
+            },
         }
         for row in rows
     ]

@@ -1619,9 +1619,14 @@
         ? new Date(item.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
         : '';
 
-      let html = `<div class="item-view-title" id="item-title-display">${emoji}${escHtml(item.title || item.preview || '(untitled)')}</div>`;
+      let html = `<div class="item-view-title" id="item-title-display">${emoji}${escHtml(item.title || item.preview || (item.held === false && item.url) || '(untitled)')}</div>`;
       html += `<div class="item-view-meta">${sourceName(item.subtype)}${dateFmt ? ' &middot; ' + dateFmt : ''}${item.url ? ' &middot; <a href="' + escHtml(item.url) + '" target="_blank" rel="noopener" style="color:var(--accent)">link</a>' : ''}</div>`;
-      html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(item.content)}</div>`;
+      if (item.held === false) {
+        // A stub: known by its address only, so it has no content to show
+        html += `<div class="item-view-content" id="item-content-display" style="color:var(--muted)">LeStash doesn't hold this; it knows it only by its address. Its links and activity are below.</div>`;
+      } else {
+        html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(item.content)}</div>`;
+      }
       html += `<div id="item-edit-form" style="display:none">
         <input type="text" id="item-edit-title" placeholder="Title" style="width:100%;font-size:1.05rem;font-weight:bold;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
         <textarea id="item-edit-content" rows="10" style="width:100%;resize:vertical;font-family:inherit;font-size:0.9rem;padding:0.5rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px"></textarea>
@@ -1704,6 +1709,9 @@
         }
       }
 
+      // A stub can't be edited, tagged, noted or collected: when its post is imported,
+      // the stub is merged into it. Its links and activity still show.
+      html += `<div${item.held === false ? ' style="display:none"' : ''}>`;
       // Tags
       html += '<hr style="border-color:var(--border);margin:0.75rem 0">';
       const currentTags = (item.tags || []).map(t =>
@@ -1743,6 +1751,7 @@
         <button class="sync-btn" onclick="openMicroblogCompose(${item.id})">Share to micro.blog</button>
         <select id="add-to-coll-select" style="display:none;font-size:0.75rem;padding:0.25rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px" onchange="confirmAddToCollection(this)"></select>
       </div>`;
+      html += `</div>`;
       html += `<div id="item-history-panel" style="display:none;margin-top:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:4px">
         <div style="font-size:0.85rem;font-weight:bold;margin-bottom:0.4rem">Version history</div>
         <div id="item-history-list" style="font-size:0.8rem"></div>
@@ -1757,8 +1766,8 @@
         }</div>
       </div>`;
 
-      // Similar items (parent items only)
-      if (!item.parent_id) {
+      // Similar items (held parent items only: a stub has no text to compare)
+      if (!item.parent_id && item.held !== false) {
         html += `<div class="item-view-children" style="margin-top:1rem">
           <div class="item-view-children-title">Similar items</div>
           <div class="item-list" id="similar-list"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
@@ -2242,8 +2251,8 @@
       loadActivities(item.id);
       loadLinks(item.id);
 
-      // Load similar items (parent items only)
-      if (!item.parent_id) {
+      // Load similar items (held parent items only)
+      if (!item.parent_id && item.held !== false) {
         api(`/api/embeddings/similar/${item.id}?limit=5`).then(data => {
           const list = document.getElementById('similar-list');
           if (!list) return;
@@ -2291,6 +2300,7 @@
     const LINK_LABELS = {
       references: ['Links to', 'Linked from'],
       syndication: ['Cross-posted as', 'Cross-post of'],
+      in_reply_to: ['Reply to', 'Replies'],
     };
 
     async function loadLinks(itemId) {
@@ -2310,7 +2320,8 @@
       const rows = data.links.map(l => {
         const labels = LINK_LABELS[l.kind] || [l.kind, `${l.kind} (from)`];
         const label = labels[l.direction === 'outgoing' ? 0 : 1];
-        const title = l.item.title || l.item.url || `Item ${l.item.id}`;
+        // A comment has no title, and its address is its post's: its text tells it apart
+        const title = l.item.title || l.item.preview || l.item.url || `Item ${l.item.id}`;
         return `<div style="display:flex;gap:0.4rem;align-items:baseline;padding:0.1rem 0">
           <span style="color:var(--muted);white-space:nowrap">${escHtml(label)}</span>
           <a href="#" data-action="open-linked" data-id="${l.item.id}"

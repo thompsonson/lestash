@@ -105,7 +105,7 @@ def list_items(
     config = Config.load()
 
     with get_connection(config) as conn:
-        query = "SELECT * FROM items WHERE 1=1"
+        query = "SELECT * FROM items WHERE held = 1"
         params: list = []
 
         if source:
@@ -307,11 +307,11 @@ def export_items(
     config = Config.load()
 
     with get_connection(config) as conn:
-        query = "SELECT * FROM items"
+        query = "SELECT * FROM items WHERE held = 1"
         params: list = []
 
         if source:
-            query += " WHERE source_type = ?"
+            query += " AND source_type = ?"
             params.append(source)
 
         query += " ORDER BY created_at DESC"

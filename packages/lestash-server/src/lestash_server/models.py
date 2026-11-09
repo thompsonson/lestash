@@ -33,6 +33,7 @@ class ItemResponse(BaseModel):
     is_own_content: bool = False
     metadata: dict[str, Any] | None = None
     parent_id: int | None = None
+    held: bool = True  # False for a stub, known by its address only
     # Enriched fields
     subtype: str
     author_display: str
@@ -178,6 +179,7 @@ class LinkedItem(BaseModel):
     source_type: str
     title: str | None = None
     url: str | None = None
+    preview: str | None = None  # the start of its text, whitespace folded
 
 
 class ItemLink(BaseModel):
