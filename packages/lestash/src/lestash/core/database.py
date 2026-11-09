@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -611,6 +611,20 @@ MIGRATIONS = [
         # rebuilt. Null is you, so the key reads it as 0 (nulls are never equal).
         "",
     ),
+    (
+        22,
+        "Add blobs, the file store's index, and versioned media pointing at it",
+        # #217 (W2). item_media's columns are added in apply_migrations. A media row
+        # whose superseded_at is set is an older version, kept.
+        """
+        CREATE TABLE IF NOT EXISTS blobs (
+            sha256 TEXT PRIMARY KEY,
+            size INTEGER NOT NULL,
+            mime_type TEXT,
+            first_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+    ),
 ]
 
 
@@ -837,6 +851,17 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                 _migrate_21(conn)  # likewise
             else:
                 conn.executescript(sql)
+                if version == 22:
+                    for column, ddl in (
+                        ("sha256", "sha256 TEXT REFERENCES blobs(sha256)"),
+                        ("version", "version INTEGER NOT NULL DEFAULT 1"),
+                        ("superseded_at", "superseded_at DATETIME"),
+                    ):
+                        if not _column_exists(conn, "item_media", column):
+                            conn.execute(f"ALTER TABLE item_media ADD COLUMN {ddl}")
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_item_media_sha256 ON item_media(sha256)"
+                    )
                 if version == 19 and not _column_exists(conn, "activities", "actor_id"):
                     # After the script: the column refers to people, made there. No delete
                     # action: null means you, so SET NULL would make a deleted person's

@@ -37,6 +37,8 @@ class GeneralConfig(BaseModel):
     """General configuration."""
 
     database_path: str = ""
+    # The file store's folder; empty: see lestash.core.blobs.store_root
+    store_path: str = ""
 
     def model_post_init(self, __context: Any) -> None:
         if not self.database_path:

@@ -5,10 +5,10 @@ import mimetypes
 
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
+from lestash.core.blobs import adopt_media, media_file
 from lestash.core.database import (
     add_item_media,
     delete_item_media,
-    get_media_dir,
     save_media_file,
 )
 
@@ -33,17 +33,15 @@ def serve_media(media_id: int):
 
         media = dict(row)
 
-    # Prefer local file
-    if media["local_path"]:
-        media_dir = get_media_dir(get_config())
-        file_path = media_dir / media["local_path"]
-        if file_path.is_file():
-            content_type = (
-                media["mime_type"]
-                or mimetypes.guess_type(str(file_path))[0]
-                or "application/octet-stream"
-            )
-            return FileResponse(file_path, media_type=content_type)
+    # Prefer the file: from the store, else the media folder
+    file_path = media_file(media, get_config())
+    if file_path is not None:
+        content_type = (
+            media["mime_type"]
+            or mimetypes.guess_type(str(media["local_path"] or file_path))[0]
+            or "application/octet-stream"
+        )
+        return FileResponse(file_path, media_type=content_type)
 
     # Fall back to remote URL (only if it's an actual HTTP URL)
     if media["url"] and media["url"].startswith("http"):
@@ -80,6 +78,8 @@ def upload_media(item_id: int, file: UploadFile):
             mime_type=mime,
             source_origin="upload",
         )
+        adopt_media(conn, get_config())  # into the file store
+        conn.commit()
 
     return MediaResponse(
         id=media_id,
