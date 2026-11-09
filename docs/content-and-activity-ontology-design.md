@@ -538,11 +538,13 @@ The roadmap is tracked in #222, one issue per waypoint.
 **Done:** the Gemini activity importer (#214): chats with prompt and reply turns, matched to the 19 existing chats by id.
 
 0. **Fix-ups (#215):** #208, #209 and #210, plus about 20 search queries recorded as a baseline.
-1. **Ontology (#216):**
+1. **Ontology (#216), done 9 Nov 2026:**
    1. `activities` table, then moving timestamp lists into it.
    2. YouTube activity importer: the 76,328 watches, merged into history items by video id, plus comments.
    3. `items.held`, the `item_links` table and the linker pass.
    4. `people`, `person_identities`, `item_agents` and `item_mentions`, filled from `items.author`, then `person_profiles` retired.
+   W1 closed with hashtags, the name linker and YouTube comments moved to #248.
+   See "W1 as built" below.
 2. **Blob store (#217):** one SHA-256 file store in `~/.local/share/lestash/`, versioned `item_media`,
    and NotebookLM generated artifacts as child items with their files, slide images included.
 3. **Text extraction (#218):** Docling, OCR and faster-whisper write a file's text into its item's `content`,
@@ -555,6 +557,28 @@ The roadmap is tracked in #222, one issue per waypoint.
 
 The `activities` table comes first in waypoint 1, so the YouTube import writes its watches there from the start.
 Each waypoint ends when its result shows in the item detail view, not only in the database.
+
+## W1 as built
+
+Deployed in 1.71.0 to 1.81.0, 8–9 Nov 2026. Each step's "As built" section above has the detail.
+
+| Step | What | Release |
+|---|---|---|
+| 1, 1b | `activities`; times lists moved out of metadata | 1.71.0, 1.72.0 |
+| 2 | YouTube watches, likes, dislikes, shares | 1.73.0 |
+| 3 | `item_links` and the linker | 1.74.0 |
+| 3b | `items.held` stubs; LinkedIn replies and likes | 1.75.0 |
+| 4a | People, accounts, item agents | 1.76.0 |
+| 4b | LinkedIn mentions | 1.77.0 |
+| 4c | `person_profiles` retired; every child shown | 1.78.0 |
+| 4d | Others' LinkedIn likes, with their actor | 1.79.0 |
+| 4e | Bluesky mentions | 1.80.0 |
+| — | LinkedIn items held twice merged (#244) | 1.81.0 |
+
+The item detail view shows each: People, Links and Activity sections, and every child.
+
+Moved to #248: hashtags as topic mentions, the name linker, YouTube comments.
+Open from the data: #245, rows that point at deleted items.
 
 ## Decided
 
