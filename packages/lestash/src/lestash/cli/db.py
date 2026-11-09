@@ -480,6 +480,22 @@ def backup_prune(
 
 
 @app.command()
+def link() -> None:
+    """Find links between items now: the addresses in content that name another item.
+
+    Each sync that writes items does this too.
+    """
+    from lestash.core.database import get_connection
+    from lestash.core.links import link_items
+
+    with get_connection() as conn:
+        added = link_items(conn)
+        conn.commit()
+        total = conn.execute("SELECT COUNT(*) FROM item_links").fetchone()[0]
+    console.print(f"Added {added} links; {total} stored.")
+
+
+@app.command()
 def history(
     purge: bool = typer.Option(False, "--purge", help="Purge old history records."),
     before: str = typer.Option(None, "--before", help="Delete records before date (YYYY-MM-DD)."),

@@ -21,6 +21,7 @@ from lestash.core.database import (
     resolve_parent_source_ids,
     save_checkpoint,
 )
+from lestash.core.links import link_items
 from lestash.importers import merge_with_stored
 from lestash.models.item import ItemCreate
 from lestash.models.sync import SyncCheckpoint
@@ -124,6 +125,17 @@ class SyncStore:
 
     def _sweep(self) -> None:
         self.linked = resolve_parent_source_ids(self.conn, self.source_types)
+        counts = self.counts
+        if counts.added or counts.updated:
+            # A written item can link another, or be the item another links to. Links
+            # are derived: a failure leaves the items stored, and the next sync catches up.
+            self.conn.commit()  # keep the parents just linked if linking fails
+            try:
+                link_items(self.conn)
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                logger.exception("Linking items failed after the %s sync", self.source)
 
     def _store(self, item: ItemCreate) -> bool:
         """Store one item; False when merge_with_stored() says a stored item holds it.

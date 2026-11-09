@@ -1765,6 +1765,12 @@
         </div>`;
       }
 
+      // Links to and from other items (hidden until some load)
+      html += `<div class="item-view-children" id="links-section" data-item-id="${item.id}" style="margin-top:1rem;display:none">
+        <div class="item-view-children-title" id="links-title">Links</div>
+        <div id="links-list" style="font-size:0.8rem"></div>
+      </div>`;
+
       // Activity history: watches, searches, prompts (hidden until some load)
       html += `<div class="item-view-children" id="activity-section" data-item-id="${item.id}" style="margin-top:1rem;display:none">
         <div class="item-view-children-title" id="activity-title">Activity</div>
@@ -1951,6 +1957,26 @@
             btn.disabled = false;
             btn.textContent = 'Restore';
           }
+        }
+        if (btn.dataset.action === 'open-linked') {
+          e.preventDefault();
+          try {
+            openItemView(await api(`/api/items/${btn.dataset.id}`));
+          } catch {
+            showToast('Could not open the item', 'error');
+          }
+          return;
+        }
+        if (btn.dataset.action === 'remove-link') {
+          const q = new URLSearchParams({ other_id: btn.dataset.other, kind: btn.dataset.kind, direction: btn.dataset.direction });
+          try {
+            await api(`/api/items/${btn.dataset.id}/links?${q}`, { method: 'DELETE' });
+          } catch {
+            showToast('Failed to remove the link', 'error');
+            return;
+          }
+          loadLinks(Number(btn.dataset.id));
+          return;
         }
         if (btn.dataset.action === 'remove-tag') {
           await api(`/api/items/${btn.dataset.id}/tags/${encodeURIComponent(btn.dataset.tag)}`, { method: 'DELETE' });
@@ -2214,6 +2240,7 @@
       }
 
       loadActivities(item.id);
+      loadLinks(item.id);
 
       // Load similar items (parent items only)
       if (!item.parent_id) {
@@ -2257,6 +2284,44 @@
         ? `<div style="color:var(--muted)">and ${data.total - data.activities.length} earlier</div>` : '';
       document.getElementById('activity-title').textContent = `Activity (${data.total})`;
       document.getElementById('activity-list').innerHTML = rows + more;
+      section.style.display = '';
+    }
+
+    // kind -> [label when this item is the link's from end, label when it is the to end]
+    const LINK_LABELS = {
+      references: ['Links to', 'Linked from'],
+      syndication: ['Cross-posted as', 'Cross-post of'],
+    };
+
+    async function loadLinks(itemId) {
+      let data;
+      try {
+        data = await api(`/api/items/${itemId}/links`);
+      } catch {
+        return;  // older server, or offline: the section stays hidden
+      }
+      const section = document.getElementById('links-section');
+      // The view may have moved on to another item while this loaded
+      if (!section || section.dataset.itemId !== String(itemId)) return;
+      if (!data.links.length) {
+        section.style.display = 'none';
+        return;
+      }
+      const rows = data.links.map(l => {
+        const labels = LINK_LABELS[l.kind] || [l.kind, `${l.kind} (from)`];
+        const label = labels[l.direction === 'outgoing' ? 0 : 1];
+        const title = l.item.title || l.item.url || `Item ${l.item.id}`;
+        return `<div style="display:flex;gap:0.4rem;align-items:baseline;padding:0.1rem 0">
+          <span style="color:var(--muted);white-space:nowrap">${escHtml(label)}</span>
+          <a href="#" data-action="open-linked" data-id="${l.item.id}"
+            style="color:var(--ok);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${escHtml(title)}</a>
+          <span style="color:var(--muted)">${escHtml(l.item.source_type)}</span>
+          <span class="tag-remove" title="Remove this link" data-action="remove-link" data-id="${itemId}"
+            data-other="${l.item.id}" data-kind="${escHtml(l.kind)}" data-direction="${l.direction}">&times;</span>
+        </div>`;
+      }).join('');
+      document.getElementById('links-title').textContent = `Links (${data.links.length})`;
+      document.getElementById('links-list').innerHTML = rows;
       section.style.display = '';
     }
 

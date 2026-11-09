@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -515,6 +515,25 @@ MIGRATIONS = [
         # json.dumps' format. SQLite's json_remove() would minify it, and the next
         # import would then rewrite every item, though nothing changed.
         "",
+    ),
+    (
+        17,
+        "Add item_links: typed links between items, such as a post that links another",
+        # docs/content-and-activity-ontology-design.md, "Typed links". A rejected link
+        # keeps its row, so the linker never adds it again.
+        """
+        CREATE TABLE IF NOT EXISTS item_links (
+            from_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            to_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            evidence TEXT,
+            origin TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (from_id, to_id, kind)
+        );
+        CREATE INDEX IF NOT EXISTS idx_item_links_to ON item_links(to_id, kind);
+        """,
     ),
 ]
 

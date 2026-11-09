@@ -7,7 +7,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
 
 from lestash.core.activities import activity_time, record_activities
-from lestash.core.database import apply_migrations, get_connection
+from lestash.core.database import SCHEMA_VERSION, apply_migrations, get_connection
 from lestash.core.sync import SyncStore
 from lestash.importers.youtube_history import parse_search_history, parse_watch_history
 from lestash.models.item import ActivityCreate
@@ -159,7 +159,7 @@ def test_the_migrations_move_the_lists_already_stored_into_the_table(test_db) ->
                 ("bad", "{not json"),
             ],
         )
-        assert apply_migrations(conn) == 3  # 14, 15 and 16
+        assert apply_migrations(conn) == SCHEMA_VERSION - 13  # 14 on
         assert [(r[0], r[1], r[2]) for r in _activities(conn)] == [
             ("watched", "history:A", "2025-06-01T10:00:00.000Z"),
             ("viewed", "post:P", "2026-01-20T18:48:57.000Z"),
@@ -190,7 +190,7 @@ def test_migration_16_records_listed_times_not_yet_recorded_but_no_non_dates(tes
         conn.execute("PRAGMA user_version = 15")
         times = ["now", "10:00", "100", "2026-11-05T15:11:06.941+00:00"]
         _store_raw(conn, [("history:C", json.dumps({"watched_times": times}))])
-        assert apply_migrations(conn) == 1
+        assert apply_migrations(conn) == SCHEMA_VERSION - 15  # 16 on
         assert [r[2] for r in _activities(conn)] == ["2026-11-05T15:11:06.941Z"]
         assert conn.execute("SELECT metadata FROM items").fetchone()[0] is None
 
@@ -224,7 +224,7 @@ def test_after_migration_16_the_same_export_again_writes_nothing(test_db) -> Non
             ),
         )
         conn.commit()
-        assert apply_migrations(conn) == 1
+        assert apply_migrations(conn) == SCHEMA_VERSION - 15  # 16 on
         assert len(_activities(conn)) == 2
         history = _history_rows(conn)
         store = SyncStore(conn, "youtube")
