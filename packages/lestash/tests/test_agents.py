@@ -7,7 +7,12 @@ import sqlite3
 from typing import Any
 
 from lestash.core.agents import agents_for, link_agents
-from lestash.core.database import SCHEMA_VERSION, apply_migrations, get_connection
+from lestash.core.database import (
+    SCHEMA_VERSION,
+    apply_migrations,
+    get_connection,
+    upsert_person_profile,
+)
 
 ME = "urn:li:person:me"
 
@@ -40,8 +45,8 @@ def test_migration_19_adds_the_people_tables_and_activity_actors(test_db) -> Non
             "DROP TABLE item_mentions; DROP TABLE item_agents; DROP TABLE person_identities; "
             "ALTER TABLE activities DROP COLUMN actor_id; DROP TABLE people;"
         )
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
-        assert apply_migrations(conn) == 1
+        conn.execute("PRAGMA user_version = 18")
+        assert apply_migrations(conn) == SCHEMA_VERSION - 18
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"people", "person_identities", "item_agents", "item_mentions"} <= tables
         columns = {r[1] for r in conn.execute("PRAGMA table_info(activities)")}
@@ -71,11 +76,8 @@ def test_a_channel_is_one_organization_for_all_its_videos(test_db) -> None:
 
 def test_your_accounts_are_one_person_named_from_your_profile(test_db) -> None:
     with get_connection(test_db) as conn:
-        conn.execute(
-            "INSERT INTO person_profiles (urn, display_name) VALUES (?, 'Matthew Thompson')",
-            (ME,),
-        )
         mine = _item(conn, "linkedin", "p1", ME, {"raw": {"owner": ME}})
+        upsert_person_profile(conn, ME, display_name="Matthew Thompson")
         theirs = _item(conn, "linkedin", "m1", "urn:li:person:x", {"raw": {"owner": ME}})
         company = _item(conn, "linkedin", "l1", "urn:li:company:9", {"raw": {"owner": ME}})
         prompt = _item(conn, "gemini", "g1", "user")
@@ -141,8 +143,8 @@ def test_papers_and_books_keep_their_order_and_roles(test_db) -> None:
 
 def _profile(conn: sqlite3.Connection, name: str) -> None:
     """Your LinkedIn profile, which names you: until your name is known, no email is yours."""
-    conn.execute("INSERT INTO person_profiles (urn, display_name) VALUES (?, ?)", (ME, name))
     _item(conn, "linkedin", f"profile:{name}", ME, {"raw": {"owner": ME}})
+    upsert_person_profile(conn, ME, display_name=name)
 
 
 def test_an_email_has_its_sender_and_recipient(test_db) -> None:
@@ -296,11 +298,8 @@ def test_you_are_not_named_by_a_urn(test_db) -> None:
 
 def test_an_email_marked_yours_by_default_but_sent_by_another_is_theirs(test_db) -> None:
     with get_connection(test_db) as conn:
-        conn.execute(
-            "INSERT INTO person_profiles (urn, display_name) VALUES (?, 'Matthew Thompson')",
-            (ME,),
-        )
         _item(conn, "linkedin", "p1", ME, {"raw": {"owner": ME}})
+        upsert_person_profile(conn, ME, display_name="Matthew Thompson")
         # A thread imported without is_own_content: every message defaults to yours
         theirs = _item(conn, "email", "e1", "Andrew", {"from_email": "andrew@x.org"}, own=True)
         mine = _item(conn, "email", "e2", "Matthew Thompson", {"from_email": "me@x.org"}, own=True)
@@ -376,9 +375,8 @@ def test_a_profile_cut_from_a_mention_loses_to_the_right_decode(test_db) -> None
     text = "🤣 Max Langley see"
     with get_connection(test_db) as conn:
         # Cut by code points, as an old script did: two too many after the emoji
-        conn.execute(
-            "INSERT INTO person_profiles (urn, display_name, source) "
-            "VALUES ('urn:li:person:max', 'Max Langley s', 'mention')"
+        upsert_person_profile(
+            conn, "urn:li:person:max", display_name="Max Langley s", source="mention"
         )
         _item(conn, "linkedin", "c1", ME, _tagged(text, [(3, 11, "member", "urn:li:person:max")]))
         link_agents(conn)

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Cross-link post_cache.author rows with person_profiles, and apply a curated
+"""Cross-link post_cache.author rows with named LinkedIn accounts, and apply a curated
 handle → human-name map.
 
 Three passes over each post_cache row where author_urn IS NULL:
 
   1. If author_name looks like a known LinkedIn handle from CURATED_HANDLES,
      upgrade it to the human name.
-  2. Exact case-insensitive match: author_name == person_profiles.display_name
+  2. Exact case-insensitive match: author_name == the name of a LinkedIn account's person
      → set author_urn from that row.
   3. Normalised handle match: when author_name is still a handle shape
      ("mike-schoonover"), compare against normalise(display_name) for every
@@ -65,7 +65,10 @@ def main() -> int:
     conn = sqlite3.connect(DB_PATH)
     try:
         people = conn.execute(
-            "SELECT urn, display_name FROM person_profiles WHERE display_name IS NOT NULL"
+            "SELECT i.identifier, p.name FROM person_identities i "
+            "JOIN people p ON p.id = i.person_id "
+            "WHERE i.platform = 'linkedin' AND i.status = 'confirmed' "
+            "AND p.name != i.identifier"
         ).fetchall()
         by_name_ci = {name.lower(): (urn, name) for urn, name in people}
         by_normalised = {normalise(name): (urn, name) for urn, name in people}

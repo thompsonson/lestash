@@ -2,16 +2,16 @@
 """Resolve LinkedIn person URNs → human names from data already in the DB.
 
 Two name sources are merged:
-  1. `person_profiles` table — existing URN → display_name rows (sources:
+  1. the people tables — the names of LinkedIn accounts already known (sources:
      'manual', 'web', 'api', ...). Authoritative when present.
   2. `MemberAttributedEntity` annotations on comments — when someone
      @-mentions a person, the rendered name and URN are both in the
      metadata. Harvest gives URN → name pairs for free, no fetch.
 
 Without --write: prints a report. The on-disk DB is not modified.
-With    --write: upserts any newly-discovered pairs into `person_profiles`
-                 with source='mention'. Existing rows are preserved
-                 (COALESCE in upsert_person_profile).
+With    --write: names newly-discovered members (upsert_person_profile)
+                 with source='mention'. A known name is kept: a mention
+                 only names a member still named by their URN.
 """
 
 from __future__ import annotations
@@ -84,9 +84,12 @@ def harvest_names_from_mentions(conn: sqlite3.Connection) -> dict[str, str]:
 
 
 def load_person_profiles(conn: sqlite3.Connection) -> dict[str, str]:
-    """Read the existing URN → display_name map from person_profiles."""
+    """Read the existing URN → name map: the people LinkedIn accounts belong to."""
     rows = conn.execute(
-        "SELECT urn, display_name FROM person_profiles WHERE display_name IS NOT NULL"
+        "SELECT i.identifier, p.name FROM person_identities i "
+        "JOIN people p ON p.id = i.person_id "
+        "WHERE i.platform = 'linkedin' AND i.status = 'confirmed' "
+        "AND p.name != i.identifier"
     ).fetchall()
     return {urn: name for urn, name in rows}
 
@@ -97,7 +100,7 @@ def harvest_impersonator_bridges(conn: sqlite3.Connection) -> dict[str, set[str]
     LinkedIn likes/reactions done "as the company" carry the human URN in
     `raw.activity.created.impersonator`. This lets us label a company-URN
     actor with the human(s) who admin it without inventing a person/company
-    relationship in person_profiles.
+    relationship between people.
     """
     rows = conn.execute(
         """
@@ -150,7 +153,7 @@ def main() -> int:
     ap.add_argument(
         "--write",
         action="store_true",
-        help="Upsert newly-discovered (URN, name) pairs into person_profiles "
+        help="Upsert newly-discovered (URN, name) pairs into the people tables "
         "with source='mention'. Existing rows are preserved.",
     )
     ap.add_argument("--top", type=int, default=30, help="Top-N person URNs to display")
@@ -167,13 +170,13 @@ def main() -> int:
         from_profiles = load_person_profiles(conn)
         from_mentions = harvest_names_from_mentions(conn)
         impersonator_bridges = harvest_impersonator_bridges(conn)
-        # person_profiles wins over @-mention disagreements (manual review > heuristic)
+        # A known name wins over @-mention disagreements (manual review > heuristic)
         urn_to_name: dict[str, str] = {**from_mentions, **from_profiles}
 
         new_from_mentions = {
             urn: name for urn, name in from_mentions.items() if urn not in from_profiles
         }
-        print(f"# person_profiles rows loaded     : {len(from_profiles)}")
+        print(f"# named LinkedIn accounts loaded : {len(from_profiles)}")
         print(f"# @-mention pairs harvested       : {len(from_mentions)}")
         print(f"# new pairs from mentions (no row): {len(new_from_mentions)}")
         print(f"# merged URN→name map size        : {len(urn_to_name)}")
@@ -230,10 +233,10 @@ def main() -> int:
             for urn, name in new_from_mentions.items():
                 upsert_person_profile(conn, urn, display_name=name, source="mention")
                 written += 1
-            print(f"\n## Wrote {written} new rows to person_profiles (source='mention')")
+            print(f"\n## Wrote {written} names (source=mention)")
         else:
             print(f"\n## Dry run. Re-run with --write to upsert "
-                  f"{len(new_from_mentions)} new pair(s) into person_profiles.")
+                  f"{len(new_from_mentions)} new pair(s) into the people tables.")
         return 0
     finally:
         conn.close()

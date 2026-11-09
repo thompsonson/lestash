@@ -78,7 +78,7 @@ class _Context(NamedTuple):
     """What the extractors need beyond the row."""
 
     linkedin_self: frozenset[str]  # your LinkedIn member URNs (changelog owner)
-    linkedin_names: dict[str, tuple[str | None, str | None]]  # URN -> (name, profile URL)
+    linkedin_names: dict[str, str]  # URN -> name, as mentions write it
     your_name: str | None  # as stored, or as your profile gives it; None if unknown
 
 
@@ -148,21 +148,19 @@ def linkedin_mentions(metadata: dict[str, Any]) -> Iterator[tuple[str, str, str]
 
 def _linkedin(row: _Row, ctx: _Context) -> Iterator[AgentRef]:
     """The author, a member (urn:li:person) or a company page (urn:li:company), and the
-    members and companies the text tags. The API gives no names: one comes from
-    person_profiles, else from how a mention writes it, else the URN stands in."""
+    members and companies the text tags. The API gives no names: one comes from how a
+    mention writes it, else the URN stands in. A name you set is kept on the person."""
     seen: set[str] = set()
     for urn, kind, _ in linkedin_mentions(row.metadata):
         if urn in seen:
             continue
         seen.add(urn)
-        name, url = ctx.linkedin_names.get(urn, (None, None))
         yield AgentRef(
             MENTIONED,
             "linkedin",
             urn,
-            name or urn,
+            ctx.linkedin_names.get(urn, urn),
             kind,
-            url=url,
             is_self=urn in ctx.linkedin_self,
             evidence="tagged",
         )
@@ -176,14 +174,12 @@ def _linkedin(row: _Row, ctx: _Context) -> Iterator[AgentRef]:
         kind, evidence = "organization", "company URN"
     else:
         return
-    name, url = ctx.linkedin_names.get(urn, (None, None))
     yield AgentRef(
         "author",
         "linkedin",
         urn,
-        name or urn,
+        ctx.linkedin_names.get(urn, urn),
         kind,
-        url=url,
         is_self=urn in ctx.linkedin_self,
         evidence=evidence,
     )
@@ -309,7 +305,7 @@ def _context(conn: sqlite3.Connection) -> _Context:
         )
     )
     # A name as mentions write it: the longest, as "Matthew Thompson" over "Matthew"
-    names: dict[str, tuple[str | None, str | None]] = {}
+    names: dict[str, str] = {}
     for (metadata_json,) in conn.execute(
         "SELECT metadata FROM items WHERE source_type = 'linkedin' AND held = 1 "
         "AND metadata LIKE '%AttributedEntity%'"
@@ -319,16 +315,8 @@ def _context(conn: sqlite3.Connection) -> _Context:
         except (TypeError, ValueError):
             continue
         for urn, _, name in linkedin_mentions(metadata):
-            if name and len(name) > len(names.get(urn, (None, None))[0] or ""):
-                names[urn] = (name, None)
-    # A profile's name wins, unless the profile was itself cut from a mention, by code
-    # points rather than UTF-16 units, which garbled names after an emoji. Its profile
-    # address still counts.
-    for urn, name, url, source in conn.execute(
-        "SELECT urn, display_name, profile_url, coalesce(source, '') FROM person_profiles"
-    ):
-        written = names.get(urn, (None, None))[0]
-        names[urn] = ((written or name) if source == "mention" else (name or written), url)
+            if name and len(name) > len(names.get(urn, "")):
+                names[urn] = name
     stored = conn.execute(
         "SELECT name FROM people WHERE is_self = 1 AND name != ?", (YOU,)
     ).fetchone()
@@ -443,12 +431,13 @@ class _People:
 
     def rename(self, key: tuple[str, str], person_id: int | None, name: str) -> None:
         """Give a person the account's better name, while they still have the name the
-        pass gave them: a name you set is kept."""
+        pass gave them: a name you set (people.name_origin) is kept."""
         old = self.display.get(key)
         if name in (old, key[1]):
             return
         self.conn.execute(
-            "UPDATE people SET name = ? WHERE id = ? AND name = ?", (name, person_id, old)
+            "UPDATE people SET name = ? WHERE id = ? AND name = ? AND name_origin IS NULL",
+            (name, person_id, old),
         )
         self.conn.execute(
             "UPDATE person_identities SET display_name = ? WHERE platform = ? AND identifier = ?",
@@ -477,6 +466,13 @@ class _People:
         if others[0] != 1 or not others[1]:
             return person_id
         you = self.you(None)
+        # A name you set on the account's person, before it showed yours, is your name
+        self.conn.execute(
+            "UPDATE people SET (name, name_origin) = (SELECT name, name_origin FROM people "
+            "WHERE id = :them) WHERE id = :you AND (SELECT name_origin FROM people "
+            "WHERE id = :them) IS NOT NULL",
+            {"them": person_id, "you": you},
+        )
         self.conn.execute(
             "UPDATE person_identities SET person_id = ? WHERE platform = ? AND identifier = ?",
             (you, *key),
@@ -507,10 +503,11 @@ class _People:
 
 
 def _your_name(conn: sqlite3.Connection, ctx_self: frozenset[str]) -> str | None:
-    """Your name as your own LinkedIn profile or Bluesky posts give it, if they do."""
+    """Your name as your own LinkedIn account or Bluesky posts give it, if they do."""
     for urn in sorted(ctx_self):
         row = conn.execute(
-            "SELECT display_name FROM person_profiles WHERE urn = ? AND display_name != ''",
+            "SELECT display_name FROM person_identities WHERE platform = 'linkedin' "
+            "AND identifier = ? AND display_name NOT IN ('', identifier)",
             (urn,),
         ).fetchone()
         if row:

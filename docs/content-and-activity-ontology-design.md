@@ -380,6 +380,20 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
   - Bluesky mentions, as the importer keeps only link facets.
   - The name linker, which suggests that two people are the same.
 
+### As built (#216, step 4c)
+
+- Migration 20 moves each `person_profiles` row onto its LinkedIn account and person, then drops the table.
+  - A name you set (source `manual` or `web`) becomes the person's name.
+  - A name a script cut from a mention only names a person still named by their URN.
+  - A profile URL moves to the account.
+- `people.name_origin` says who set a person's name: null when the agents pass did, else `manual` or `web`.
+  The pass never renames a person whose name you set.
+- `lestash profiles` and `/api/profiles` keep their shape, over the people tables.
+  `lestash profiles remove` stops keeping the name you set.
+- List views name a LinkedIn member from their person, so 45 more members show a name than before.
+- On a copy of the live database: 7 names kept as yours (you and 6 set in the app), no URL lost, and the agents pass adds nothing after.
+- Not yet: `actor_id` for others' LinkedIn reactions, Bluesky mentions, hashtags and the name linker.
+
 ## The activity ontology
 
 An activity is something someone did, at a time, usually to an item.

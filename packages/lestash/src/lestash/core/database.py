@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -597,6 +597,13 @@ MIGRATIONS = [
             ON item_mentions(item_id, tag_id) WHERE tag_id IS NOT NULL;
         """,
     ),
+    (
+        20,
+        "Move person_profiles into people and their LinkedIn accounts, and drop it",
+        # Run by _migrate_20(). Adds people.name_origin: who set a person's name, null
+        # when the agents pass did, so the pass never renames a person you named.
+        "",
+    ),
 ]
 
 
@@ -652,6 +659,34 @@ def _migrate_16(conn: sqlite3.Connection) -> None:
             (MIGRATION_16_REASON, history_before),
         )
         set_schema_version(conn, 16)
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _migrate_20(conn: sqlite3.Connection) -> None:
+    """Move each person_profiles row onto its LinkedIn account and person, then drop the
+    table. A name you set (source manual or web) becomes the person's name, marked as
+    yours; a name a script cut from a mention only names a person still named by their
+    URN. A profile with no account yet gets one. One transaction, with the version."""
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if not _column_exists(conn, "people", "name_origin"):
+            conn.execute("ALTER TABLE people ADD COLUMN name_origin TEXT")
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'person_profiles'"
+        ).fetchone()
+        if exists:
+            rows = conn.execute(
+                "SELECT urn, display_name, profile_url, coalesce(source, 'manual') "
+                "FROM person_profiles ORDER BY id"
+            ).fetchall()
+            for urn, name, url, source in rows:
+                _set_linkedin_name(conn, urn, name, url, None if source == "mention" else source)
+            conn.execute("DROP TABLE person_profiles")
+        set_schema_version(conn, 20)
     except BaseException:
         conn.rollback()
         raise
@@ -730,6 +765,8 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                 conn.execute("ALTER TABLE items ADD COLUMN held INTEGER NOT NULL DEFAULT 1")
             if version == 16:
                 _migrate_16(conn)  # sets the version in its own transaction
+            elif version == 20:
+                _migrate_20(conn)  # likewise
             else:
                 conn.executescript(sql)
                 if version == 19 and not _column_exists(conn, "activities", "actor_id"):
@@ -793,24 +830,136 @@ def get_connection(config: Config | None = None) -> Iterator[sqlite3.Connection]
         conn.close()
 
 
-def get_person_profile(conn: sqlite3.Connection, urn: str) -> dict | None:
-    """Look up a person profile by URN.
-
-    Args:
-        conn: Database connection
-        urn: LinkedIn person URN (e.g., "urn:li:person:xu59iSkkD6")
-
-    Returns:
-        Dict with profile_url, display_name, etc. or None if not found
-    """
-    cursor = conn.execute(
-        "SELECT urn, profile_url, display_name, source FROM person_profiles WHERE urn = ?",
-        (urn,),
+def _is_your_linkedin(conn: sqlite3.Connection, urn: str) -> bool:
+    """Whether the URN is yours: the owner of a LinkedIn changelog item."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM items WHERE source_type = 'linkedin' AND json_valid(metadata) "
+            "AND json_extract(metadata, '$.raw.owner') = ? LIMIT 1",
+            (urn,),
+        ).fetchone()
+        is not None
     )
+
+
+def _linkedin_person(
+    conn: sqlite3.Connection, urn: str, name: str | None, origin: str | None
+) -> int:
+    """The person a new LinkedIn account of this URN belongs to: you if the URN is
+    yours, else a new person, named by the URN until a name is known."""
+    named_by = origin if name else None
+    if _is_your_linkedin(conn, urn):
+        row = conn.execute("SELECT id FROM people WHERE is_self = 1").fetchone()
+        if row is not None:
+            if named_by:
+                conn.execute(
+                    "UPDATE people SET name = ?, name_origin = ? WHERE id = ?",
+                    (name, named_by, row[0]),
+                )
+            return int(row[0])
+        return int(
+            conn.execute(
+                "INSERT INTO people (name, kind, is_self, name_origin) "
+                "VALUES (?, 'person', 1, ?) RETURNING id",
+                (name or "You", named_by),
+            ).fetchone()[0]
+        )
+    kind = "organization" if urn.startswith("urn:li:company:") else "person"
+    return int(
+        conn.execute(
+            "INSERT INTO people (name, kind, name_origin) VALUES (?, ?, ?) RETURNING id",
+            (name or urn, kind, named_by),
+        ).fetchone()[0]
+    )
+
+
+def _set_linkedin_name(
+    conn: sqlite3.Connection,
+    urn: str,
+    name: str | None,
+    url: str | None,
+    origin: str | None,
+) -> None:
+    """Name the person a LinkedIn member's account belongs to, and set its profile URL.
+
+    origin says who set the name, such as manual (the CLI) or web (the app): the
+    person takes it, and the agents pass keeps it. None is a name a script found, such
+    as one cut from a mention: it only names a person still named by their URN, and
+    its URL only fills a blank. An account not yet seen is made, as an import would.
+    """
+    name = " ".join(name.split()) if name else None
+    url = url or None
+    row = conn.execute(
+        "SELECT i.id, i.person_id, i.display_name, p.name FROM person_identities i "
+        # An account not confirmed belongs to no one, as in the agents pass
+        "LEFT JOIN people p ON p.id = i.person_id AND i.status = 'confirmed' "
+        "WHERE i.platform = 'linkedin' AND i.identifier = ?",
+        (urn,),
+    ).fetchone()
+    if row is not None and row[3] is None:
+        return  # not confirmed, or its person deleted: it belongs to no one
+    if row is None:
+        conn.execute(
+            "INSERT INTO person_identities (person_id, platform, identifier, display_name, "
+            "url, status, evidence, origin) VALUES (?, 'linkedin', ?, ?, ?, 'confirmed', "
+            "'profile', ?)",
+            # A name you set is the person's; the account keeps the URN, as an import
+            # names it. An import's origin, so claim() moves it to you once it shows yours
+            (
+                _linkedin_person(conn, urn, name, origin),
+                urn,
+                urn if origin else (name or urn),
+                url,
+                "import:linkedin",
+            ),
+        )
+        return
+    identity_id, person_id, display, current = row
+    if url:
+        conn.execute(
+            "UPDATE person_identities SET url = ? WHERE id = ?"
+            if origin
+            else "UPDATE person_identities SET url = coalesce(url, ?) WHERE id = ?",
+            (url, identity_id),
+        )
+    if not name:
+        return
+    if not origin and display in (None, urn):
+        # A script's name is the account's, as LinkedIn writes it; a name you set is
+        # only the person's, so forgetting it returns to the account's
+        conn.execute(
+            "UPDATE person_identities SET display_name = ? WHERE id = ?", (name, identity_id)
+        )
+    if origin:
+        conn.execute(
+            "UPDATE people SET name = ?, name_origin = ? WHERE id = ?", (name, origin, person_id)
+        )
+    elif current == urn:
+        conn.execute(
+            "UPDATE people SET name = ? WHERE id = ? AND name_origin IS NULL", (name, person_id)
+        )
+
+
+_PROFILE = """
+    SELECT i.identifier AS urn, i.url AS profile_url,
+        CASE WHEN p.name != i.identifier THEN p.name END AS display_name,
+        coalesce(p.name_origin, 'mention') AS source
+    FROM person_identities i
+    LEFT JOIN people p ON p.id = i.person_id AND i.status = 'confirmed'
+    WHERE i.platform = 'linkedin' AND (p.name != i.identifier OR i.url IS NOT NULL)
+"""
+
+
+def get_person_profile(conn: sqlite3.Connection, urn: str) -> dict | None:
+    """A LinkedIn member's name and profile URL, from their account and person.
+
+    Returns a dict of urn, profile_url, display_name and source (who named them), or
+    None if neither name nor URL is known.
+    """
+    cursor = conn.execute(_PROFILE + " AND i.identifier = ?", (urn,))
+    cursor.row_factory = sqlite3.Row
     row = cursor.fetchone()
-    if row:
-        return dict(row)
-    return None
+    return dict(row) if row else None
 
 
 def upsert_person_profile(
@@ -820,50 +969,48 @@ def upsert_person_profile(
     display_name: str | None = None,
     source: str = "manual",
 ) -> None:
-    """Add or update a person profile mapping.
+    """Name a LinkedIn member and set their profile URL; see _set_linkedin_name.
 
     Args:
         conn: Database connection
-        urn: LinkedIn person URN
+        urn: LinkedIn member URN
         profile_url: LinkedIn profile URL (e.g., "https://linkedin.com/in/john-doe")
         display_name: Human-readable name
-        source: How the mapping was obtained (manual, api, etc.)
+        source: Who set it (manual, web); "mention" for a name a script found, which
+            never replaces a name already known
     """
-    conn.execute(
-        """
-        INSERT INTO person_profiles (urn, profile_url, display_name, source, updated_at)
-        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(urn) DO UPDATE SET
-            profile_url = COALESCE(excluded.profile_url, profile_url),
-            display_name = COALESCE(excluded.display_name, display_name),
-            source = excluded.source,
-            updated_at = CURRENT_TIMESTAMP
-        """,
-        (urn, profile_url, display_name, source),
+    _set_linkedin_name(
+        conn, urn, display_name, profile_url, None if source == "mention" else source
     )
     conn.commit()
 
 
 def list_person_profiles(conn: sqlite3.Connection) -> list[dict]:
-    """List all person profile mappings.
+    """The LinkedIn members with a known name or profile URL.
 
     Returns:
         List of profile dicts with urn, profile_url, display_name, source
     """
-    cursor = conn.execute(
-        """SELECT urn, profile_url, display_name, source
-        FROM person_profiles ORDER BY display_name, urn"""
-    )
+    cursor = conn.execute(_PROFILE + " ORDER BY display_name, urn")
+    cursor.row_factory = sqlite3.Row
     return [dict(row) for row in cursor.fetchall()]
 
 
 def delete_person_profile(conn: sqlite3.Connection, urn: str) -> bool:
-    """Delete a person profile mapping.
+    """Stop keeping the name you set for a LinkedIn member: they take their account's
+    name again, and the agents pass may rename them. Your own name stays.
 
     Returns:
-        True if a profile was deleted, False if not found
+        True if you had set their name, False if not
     """
-    cursor = conn.execute("DELETE FROM person_profiles WHERE urn = ?", (urn,))
+    cursor = conn.execute(
+        "UPDATE people SET name_origin = NULL, name = CASE WHEN is_self = 1 THEN name ELSE "
+        "(SELECT coalesce(display_name, identifier) FROM person_identities "
+        "WHERE platform = 'linkedin' AND identifier = :urn) END "
+        "WHERE name_origin IS NOT NULL AND id = (SELECT person_id FROM person_identities "
+        "WHERE platform = 'linkedin' AND identifier = :urn AND status = 'confirmed')",
+        {"urn": urn},
+    )
     conn.commit()
     return cursor.rowcount > 0
 

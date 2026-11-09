@@ -466,6 +466,21 @@ class TestProfiles:
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
+    def test_a_name_set_in_the_app_names_the_member(self, client):
+        urn = "urn:li:person:abc"
+        resp = client.put(
+            f"/api/profiles/{urn}",
+            json={"display_name": "Ann Lee", "profile_url": "https://linkedin.com/in/ann"},
+        )
+        assert resp.status_code == 200
+        profiles = {p["urn"]: p for p in client.get("/api/profiles").json()}
+        assert profiles[urn] == {
+            "urn": urn,
+            "profile_url": "https://linkedin.com/in/ann",
+            "display_name": "Ann Lee",
+            "source": "web",
+        }
+
 
 class TestStats:
     """Test /api/stats endpoint."""
