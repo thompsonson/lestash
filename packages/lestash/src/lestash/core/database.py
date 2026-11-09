@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -604,6 +604,13 @@ MIGRATIONS = [
         # when the agents pass did, so the pass never renames a person you named.
         "",
     ),
+    (
+        21,
+        "Key activities by their actor too: two people can like an item at one time",
+        # Run by _migrate_21(): SQLite can't change a table's UNIQUE, so the table is
+        # rebuilt. Null is you, so the key reads it as 0 (nulls are never equal).
+        "",
+    ),
 ]
 
 
@@ -692,6 +699,65 @@ def _migrate_20(conn: sqlite3.Connection) -> None:
         raise
 
 
+def _migrate_21(conn: sqlite3.Connection) -> None:
+    """Rebuild activities with a key that includes its actor, keeping every row, id and
+    index. One transaction, with the version."""
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        indexes = [
+            row[0]
+            for row in conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' "
+                "AND tbl_name = 'activities' AND sql IS NOT NULL"
+            )
+        ]
+        conn.execute(
+            """
+            CREATE TABLE activities_new (
+                id INTEGER PRIMARY KEY,
+                verb TEXT NOT NULL,
+                item_id INTEGER REFERENCES items(id) ON DELETE CASCADE,
+                occurred_at TEXT NOT NULL,
+                source TEXT NOT NULL,
+                context_id INTEGER REFERENCES items(id) ON DELETE SET NULL,
+                details TEXT,
+                actor_id INTEGER REFERENCES people(id)
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO activities_new (id, verb, item_id, occurred_at, source, context_id, "
+            "details, actor_id) SELECT id, verb, item_id, occurred_at, source, context_id, "
+            "details, actor_id FROM activities"
+        )
+        conn.execute("DROP TABLE activities")
+        conn.execute("ALTER TABLE activities_new RENAME TO activities")
+        for sql in indexes:
+            conn.execute(sql)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_activities_key "
+            "ON activities(verb, item_id, occurred_at, source, ifnull(actor_id, 0))"
+        )
+        set_schema_version(conn, 21)
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def linkedin_person(conn: sqlite3.Connection, urn: str) -> int | None:
+    """The person a LinkedIn member's or company's URN belongs to, its account made as
+    an import would if not yet seen; None if the account is not confirmed."""
+    _set_linkedin_name(conn, urn, None, None, None)
+    row = conn.execute(
+        "SELECT person_id FROM person_identities WHERE platform = 'linkedin' "
+        "AND identifier = ? AND status = 'confirmed'",
+        (urn,),
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     """Check if a column exists in a table."""
     cursor = conn.execute(f"PRAGMA table_info({table})")
@@ -767,6 +833,8 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                 _migrate_16(conn)  # sets the version in its own transaction
             elif version == 20:
                 _migrate_20(conn)  # likewise
+            elif version == 21:
+                _migrate_21(conn)  # likewise
             else:
                 conn.executescript(sql)
                 if version == 19 and not _column_exists(conn, "activities", "actor_id"):

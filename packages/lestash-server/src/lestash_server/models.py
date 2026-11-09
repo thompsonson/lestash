@@ -163,6 +163,8 @@ class Activity(BaseModel):
     source: str
     context_id: int | None = None
     details: dict[str, Any] | None = None
+    actor_id: int | None = None  # the person who did it; None is you
+    actor: str | None = None  # their name
 
 
 class ActivityListResponse(BaseModel):

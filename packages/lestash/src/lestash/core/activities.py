@@ -36,6 +36,7 @@ def record_activities(
             activity_time(a.occurred_at),
             a.source,
             json.dumps(a.details) if a.details is not None else None,
+            a.actor_id,
         )
         for a in activities or []
     ]
@@ -43,18 +44,18 @@ def record_activities(
         return 0
     before = conn.total_changes
     conn.executemany(
-        "INSERT OR IGNORE INTO activities (verb, item_id, occurred_at, source, details) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO activities (verb, item_id, occurred_at, source, details, "
+        "actor_id) VALUES (?, ?, ?, ?, ?, ?)",
         rows,
     )
     return conn.total_changes - before
 
 
 def stored_times(conn: sqlite3.Connection, item_id: int, verb: str) -> list[datetime]:
-    """The times of item ``item_id``'s stored ``verb`` activities, oldest first."""
+    """The times of your stored ``verb`` activities on item ``item_id``, oldest first."""
     rows = conn.execute(
         "SELECT DISTINCT occurred_at FROM activities WHERE item_id = ? AND verb = ? "
-        "ORDER BY occurred_at",
+        "AND actor_id IS NULL ORDER BY occurred_at",
         (item_id, verb),
     ).fetchall()
     return [datetime.fromisoformat(row[0]) for row in rows]

@@ -517,8 +517,10 @@ def list_item_activities(
             "SELECT COUNT(*) FROM activities WHERE item_id = ?", (item_id,)
         ).fetchone()[0]
         rows = conn.execute(
-            """SELECT id, verb, occurred_at, source, context_id, details
-               FROM activities WHERE item_id = ? ORDER BY occurred_at DESC, id DESC LIMIT ?""",
+            """SELECT a.id, a.verb, a.occurred_at, a.source, a.context_id, a.details,
+                   a.actor_id, p.name AS actor
+               FROM activities a LEFT JOIN people p ON p.id = a.actor_id
+               WHERE a.item_id = ? ORDER BY a.occurred_at DESC, a.id DESC LIMIT ?""",
             (item_id, limit),
         ).fetchall()
         return ActivityListResponse(
@@ -530,6 +532,8 @@ def list_item_activities(
                     source=r["source"],
                     context_id=r["context_id"],
                     details=_json_object(r["details"]),
+                    actor_id=r["actor_id"],
+                    actor=r["actor"],
                 )
                 for r in rows
             ],

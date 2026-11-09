@@ -126,7 +126,7 @@ def test_comments_on_a_post_not_held_reply_to_its_stub(test_db) -> None:
         assert tuple(link_linkedin_targets(conn)) == (0, 0, 0, 0)
 
 
-def test_your_reactions_are_liked_activities_and_others_wait(test_db) -> None:
+def test_reactions_are_liked_activities_with_their_actor(test_db) -> None:
     with get_connection(test_db) as conn:
         upsert_item(conn, _reaction(1, ON_COMMENT))
         upsert_item(conn, _reaction(2, POST, time_ms=None))
@@ -138,15 +138,43 @@ def test_your_reactions_are_liked_activities_and_others_wait(test_db) -> None:
         resolve_linkedin_parents(conn)
         stubs = _stubs(conn)
         activities = _rows(
-            conn, "SELECT verb, item_id, occurred_at, source, details FROM activities ORDER BY id"
+            conn,
+            "SELECT verb, item_id, occurred_at, source, details, p.name FROM activities a "
+            "LEFT JOIN people p ON p.id = a.actor_id ORDER BY a.id",
         )
     praise = json.dumps({"reaction": "PRAISE"})
     assert activities == [
         # A like on a comment is on the comment, not its post
-        ("liked", stubs[f"stub:{ON_COMMENT}"], "2026-01-19T09:45:23.678Z", "linkedin", praise),
+        (
+            "liked",
+            stubs[f"stub:{ON_COMMENT}"],
+            "2026-01-19T09:45:23.678Z",
+            "linkedin",
+            praise,
+            None,
+        ),
         # Without LinkedIn's own time, when the changelog captured it, not local created_at
-        ("liked", stubs[f"stub:{POST}"], "2026-01-19T09:45:24.000Z", "linkedin", praise),
+        ("liked", stubs[f"stub:{POST}"], "2026-01-19T09:45:24.000Z", "linkedin", praise, None),
+        # Someone else's: their person, named by their URN until a source names them
+        (
+            "liked",
+            stubs[f"stub:{POST}"],
+            "2026-01-19T09:45:23.678Z",
+            "linkedin",
+            praise,
+            "urn:li:person:other",
+        ),
     ]
+
+
+def test_two_people_liking_at_one_time_are_two_likes(test_db) -> None:
+    with get_connection(test_db) as conn:
+        upsert_item(conn, _reaction(1, POST))
+        upsert_item(conn, _reaction(2, POST, actor="urn:li:person:ann"))
+        upsert_item(conn, _reaction(3, POST, actor="urn:li:person:bo"))
+        resolve_linkedin_parents(conn)
+        resolve_linkedin_parents(conn)  # again: nothing new
+        assert conn.execute("SELECT count(*) FROM activities").fetchone()[0] == 3
 
 
 def test_an_imported_post_takes_over_its_stub_and_what_was_attached(test_db) -> None:
@@ -246,3 +274,43 @@ def test_a_comment_stub_on_a_held_post_replies_to_it(test_db) -> None:
         assert set(_stubs(conn)) == {f"stub:{ON_COMMENT}"}
         stub = _stubs(conn)[f"stub:{ON_COMMENT}"]
         assert _rows(conn, "SELECT from_id, to_id FROM item_links") == [(stub, post)]
+
+
+def _your_comment(comment_id: str = "7418939597658832896") -> ItemCreate:
+    """Your comment on POST, held, with the comment id ON_COMMENT names."""
+    return ItemCreate(
+        source_type="linkedin",
+        source_id=f"changelog-socialActions/comments-{comment_id}",
+        content="Your comment",
+        created_at="2026-01-19 10:40:00",
+        metadata={
+            "resource_name": "socialActions/comments",
+            "commented_on": POST,
+            "raw": {"actor": ME, "owner": ME, "resourceId": comment_id},
+        },
+    )
+
+
+def test_a_reaction_on_a_held_comment_is_on_that_comment(test_db) -> None:
+    with get_connection(test_db) as conn:
+        comment = upsert_item(conn, _your_comment())
+        upsert_item(conn, _reaction(1, ON_COMMENT, actor="urn:li:person:ann"))
+        resolve_linkedin_parents(conn)
+        assert f"stub:{ON_COMMENT}" not in _stubs(conn)
+        assert _rows(conn, "SELECT item_id FROM activities") == [(comment,)]
+
+
+def test_an_imported_comment_takes_over_its_stub(test_db) -> None:
+    with get_connection(test_db) as conn:
+        upsert_item(conn, _reaction(1, ON_COMMENT, actor="urn:li:person:ann"))
+        resolve_linkedin_parents(conn)
+        stub = _stubs(conn)[f"stub:{ON_COMMENT}"]
+        assert _rows(conn, "SELECT item_id FROM activities") == [(stub,)]
+        comment = upsert_item(conn, _your_comment())
+        resolve_linkedin_parents(conn)
+        assert f"stub:{ON_COMMENT}" not in _stubs(conn)
+        assert _rows(conn, "SELECT item_id FROM activities") == [(comment,)]
+        # The stub's reply link to the post went with it: one link, to the post's stub
+        assert _rows(conn, f"SELECT to_id FROM item_links WHERE from_id = {comment}") == [
+            (_stubs(conn)[f"stub:{POST}"],)
+        ]

@@ -196,3 +196,27 @@ def test_naming_your_urn_before_its_changelog_still_makes_it_yours(test_db) -> N
         )
         assert conn.execute("SELECT count(*) FROM people").fetchone()[0] == 1
         assert _name(conn, ME) == ("Matthew Thompson", "manual")
+
+
+def test_claiming_your_urn_keeps_one_like_where_you_and_it_both_liked(test_db) -> None:
+    with get_connection(test_db) as conn:
+        from datetime import UTC, datetime
+
+        from lestash.core.activities import record_activities
+        from lestash.models.item import ActivityCreate
+
+        upsert_person_profile(conn, ME, profile_url="https://linkedin.com/in/me")
+        stray = conn.execute(
+            "SELECT person_id FROM person_identities WHERE identifier = ?", (ME,)
+        ).fetchone()[0]
+        item = _comment(conn, "c1", "hello", [])
+        like = {
+            "verb": "liked",
+            "occurred_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "source": "linkedin",
+        }
+        record_activities(
+            conn, item, [ActivityCreate(**like), ActivityCreate(**like, actor_id=stray)]
+        )
+        link_agents(conn)
+        assert [tuple(r) for r in conn.execute("SELECT actor_id FROM activities")] == [(None,)]

@@ -43,7 +43,8 @@ def test_migration_19_adds_the_people_tables_and_activity_actors(test_db) -> Non
     with get_connection(test_db) as conn:
         conn.executescript(
             "DROP TABLE item_mentions; DROP TABLE item_agents; DROP TABLE person_identities; "
-            "ALTER TABLE activities DROP COLUMN actor_id; DROP TABLE people;"
+            "DROP INDEX idx_activities_key; ALTER TABLE activities DROP COLUMN actor_id; "
+            "DROP TABLE people;"
         )
         conn.execute("PRAGMA user_version = 18")
         assert apply_migrations(conn) == SCHEMA_VERSION - 18
