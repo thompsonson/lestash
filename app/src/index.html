@@ -1709,6 +1709,9 @@
         }
       }
 
+      // A stub can't be edited, tagged, noted or collected: when its post is imported,
+      // the stub is merged into it. Its links and activity still show.
+      html += `<div${item.held === false ? ' style="display:none"' : ''}>`;
       // Tags
       html += '<hr style="border-color:var(--border);margin:0.75rem 0">';
       const currentTags = (item.tags || []).map(t =>
@@ -1748,6 +1751,7 @@
         <button class="sync-btn" onclick="openMicroblogCompose(${item.id})">Share to micro.blog</button>
         <select id="add-to-coll-select" style="display:none;font-size:0.75rem;padding:0.25rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px" onchange="confirmAddToCollection(this)"></select>
       </div>`;
+      html += `</div>`;
       html += `<div id="item-history-panel" style="display:none;margin-top:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:4px">
         <div style="font-size:0.85rem;font-weight:bold;margin-bottom:0.4rem">Version history</div>
         <div id="item-history-list" style="font-size:0.8rem"></div>

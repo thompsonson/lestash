@@ -181,16 +181,19 @@ CREATE INDEX idx_item_links_to ON item_links(to_id, kind);
 
 - Migration 18 adds `items.held`, default `1`; a stub has `0` and empty `content`.
 - `core/stubs.py` makes a stub once per identifier, with `source_id` `stub:<identifier>`, so no import writes over it.
-- When the thing itself is imported, its stub is merged into it: links and activities move to the imported item, and the stub is deleted.
-- Listings, keyword search, embeddings and `/api/stats` skip stubs. The detail view shows a stub's address, links and activity.
+- When the thing itself is imported, its stub is merged into it.
+  Links, activities, notes, tags, collections and media move to the imported item, and the stub is deleted.
+- Listings, keyword search, embeddings and `/api/stats` skip stubs.
+  The detail view shows a stub's address, links and activity, without edit, tag, note or collection actions.
 - The first importer to make stubs is LinkedIn, after `resolve_linkedin_parents`:
-  - A comment on a post not held links to the post's stub as `in_reply_to`, and stays top-level, so listings still show it.
-  - Your own reaction is a `liked` activity on its post, held or stub, with the reaction type in `details`.
+  - A post named by a URN made within 2 s of a held post's URN (a share and its activity) is that post, and becomes the parent.
+    A wider match could take one post for another, and a merge deletes the stub.
+  - Otherwise the post gets a stub. A comment that is replied to or reacted to gets its own stub.
+  - A comment without a parent links to its target as `in_reply_to`, and stays top-level, so listings still show it.
+  - Your own reaction is a `liked` activity on its target, with the reaction type in `details`.
   - Only the event that made a reaction counts; a change or a delete adds no like.
   - Someone else's reaction waits for the people tables, since an activity without an actor is yours.
-  - A comment or reaction on a comment points at the post the comment is on; the comment's URN is the evidence, or `details.on`.
-  - A post the changelog names by two URN forms (activity and ugcPost) can get two stubs; both merge into the post once it is imported.
-- On a copy of the live database: 941 stubs, 720 `in_reply_to` links and 888 `liked` activities, 35 of them on held posts.
+- On a copy of the live database: 1,158 stubs (881 posts, 277 comments), 708 `in_reply_to` links, 888 `liked` activities, and 12 comments on your posts given their parent.
   The pass takes 0.1 s.
 
 ## The people ontology

@@ -104,7 +104,8 @@ def resolve_linkedin_parents(conn: sqlite3.Connection) -> int:
     counts = link_linkedin_targets(conn)
     if any(counts):
         logger.info(
-            "Stubs: %d merged into imported posts; %d reply links, %d reactions added",
+            "Stubs: %d merged into imported posts; %d parents found; %d reply links, "
+            "%d reactions added",
             *counts,
         )
     conn.commit()

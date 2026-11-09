@@ -51,11 +51,12 @@ def make_stub(
 
 
 def merge_stub(conn: sqlite3.Connection, stub_id: int, item_id: int) -> None:
-    """Move a stub's links and activities onto the item it stood for, then delete it.
+    """Move a stub's links, activities, children, tags, collections and media onto the
+    item it stood for, then delete it.
 
-    A link or activity the item already has stays as it is; the stub's copy goes with
-    the stub. A link between the two becomes a link to itself, and is dropped. The caller
-    commits.
+    A link, activity, tag or collection entry the item already has stays as it is; the
+    stub's copy goes with the stub. A link between the two becomes a link to itself, and
+    is dropped. The caller commits.
     """
     for column in ("from_id", "to_id"):
         conn.execute(
@@ -67,4 +68,11 @@ def merge_stub(conn: sqlite3.Connection, stub_id: int, item_id: int) -> None:
         "UPDATE OR IGNORE activities SET item_id = ? WHERE item_id = ?", (item_id, stub_id)
     )
     conn.execute("UPDATE activities SET context_id = ? WHERE context_id = ?", (item_id, stub_id))
+    # Whatever was attached to the stub: notes and other children, tags, collections, media
+    conn.execute("UPDATE items SET parent_id = ? WHERE parent_id = ?", (item_id, stub_id))
+    for table in ("item_tags", "collection_items"):
+        conn.execute(
+            f"UPDATE OR IGNORE {table} SET item_id = ? WHERE item_id = ?", (item_id, stub_id)
+        )
+    conn.execute("UPDATE item_media SET item_id = ? WHERE item_id = ?", (item_id, stub_id))
     conn.execute("DELETE FROM items WHERE id = ? AND held = 0", (stub_id,))

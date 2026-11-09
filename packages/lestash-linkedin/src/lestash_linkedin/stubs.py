@@ -1,102 +1,137 @@
-"""Stubs for the LinkedIn posts your comments and reactions are on, when LeStash
-doesn't hold the post.
+"""Stubs for the LinkedIn posts and comments your comments and reactions are on, when
+LeStash doesn't hold them.
 
 See docs/content-and-activity-ontology-design.md, "Stub items for things not held".
-``resolve_linkedin_parents`` makes a comment or reaction a child of its post when the
-post is held. Otherwise, this pass gives the post a stub item:
+``resolve_linkedin_parents`` makes a comment or reaction a child of its post when it
+finds the post. This pass runs after it:
 
-- A comment links to its post as ``in_reply_to``.
-- Your own reaction is a ``liked`` activity on its post, held or stub, with the reaction
-  type in its details. Only the event that made it counts, not a change or a delete.
-  Someone else's reaction waits for the people tables, since an activity without an
-  actor is yours.
-- A comment or reaction on a comment points at the post the comment is on; the
-  comment's address is kept as the evidence or in the details.
-- Once the post itself is imported, its stub is merged into it, links and activities
-  included.
+- A post found by its URN, or by a URN made within 2 s of it (a share and its activity),
+  becomes the parent, as the resolver would make it.
+- Otherwise the post gets a stub. A comment, the target of a reply or a reaction, gets a
+  stub of its own, since LeStash doesn't match comments to the comments it holds.
+- A comment without a parent links to its target as ``in_reply_to``.
+- Your own reaction is a ``liked`` activity on its target (a post, held or stub, or a
+  comment's stub) with the reaction type in its details. Only the event that made it
+  counts, not a change or a delete. Someone else's reaction waits for the people
+  tables, since an activity without an actor is yours.
+- Once a post is imported, its stub is merged into it.
 """
 
 from __future__ import annotations
 
+import bisect
 import json
 import re
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
+from urllib.parse import quote
 
 from lestash.core.activities import record_activities
+from lestash.core.database import mark_recent_history, max_history_id
 from lestash.core.links import aware_time
 from lestash.core.stubs import STUB_PREFIX, make_stub, merge_stub
 from lestash.models.item import ActivityCreate
-
-from lestash_linkedin.extractors.changelog import _urn_to_snowflake_ts
 
 ORIGIN = "import:linkedin"
 SOURCE = "linkedin"
 FEED_URL = "https://www.linkedin.com/feed/update/"
 # urn:li:comment:(activity:123,456) is comment 456 on post urn:li:activity:123
 COMMENT_URN = re.compile(r"^urn:li:comment:\((\w+):([^,]+),")
+# A share and its activity are made within a second of each other; distinct posts
+# rarely are. Wider than that, a post is not taken for another.
+SAME_POST_MS = 2000
 
 
 class StubCounts(NamedTuple):
     merged: int  # stubs whose post is now held
+    parented: int  # comments and reactions given their held post as parent
     links: int  # in_reply_to links added
     activities: int  # liked activities added
 
 
 def post_urn(target: str) -> str:
-    """The post a comment or reaction is on: the post itself, or the post a comment
+    """The post a comment or reaction is on: the target itself, or the post a comment
     target is on."""
     if match := COMMENT_URN.match(target):
         return f"urn:li:{match.group(1)}:{match.group(2)}"
     return target
 
 
+def snowflake_ms(urn: str) -> int | None:
+    """When a post's URN was made, in Unix ms: a Snowflake id's top bits. A group post's
+    id is the part after its group number (urn:li:groupPost:<group>-<id>)."""
+    try:
+        snowflake_id = int(urn.rsplit(":", 1)[-1].rsplit("-", 1)[-1])
+    except ValueError:
+        return None
+    return snowflake_id >> 22
+
+
 class _HeldPosts:
-    """The held LinkedIn posts, found as resolve_linkedin_parents finds a parent: by
-    post_id, by source_id, or by the Snowflake time bucket of the URN."""
+    """The held LinkedIn posts, by their URNs and by when their URNs were made."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.by_urn: dict[str, int] = {}
-        self.by_time: dict[int, int] = {}
+        times: dict[int, set[int]] = {}
         rows = conn.execute(
-            "SELECT id, source_id, json_extract(metadata, '$.post_id'), "
-            "json_extract(metadata, '$.snowflake_ts') FROM items "
+            "SELECT id, source_id, json_extract(metadata, '$.post_id') FROM items "
             "WHERE source_type = 'linkedin' AND held = 1 "
             "AND json_extract(metadata, '$.resource_name') = 'ugcPosts' ORDER BY id DESC"
         )
-        # Newest first, so the oldest post is written last and wins a shared key
-        for item_id, source_id, post_id, snowflake_ts in rows:
+        # Newest first, so the oldest post is written last and wins a shared URN
+        for item_id, source_id, post_id in rows:
             for urn in (source_id, post_id):
-                if urn:
-                    self.by_urn[urn] = item_id
-            if snowflake_ts is not None:
-                self.by_time[int(snowflake_ts)] = item_id
+                if not urn:
+                    continue
+                self.by_urn[urn] = item_id
+                if (ms := snowflake_ms(urn)) is not None:
+                    times.setdefault(ms, set()).add(item_id)
+        self.times = sorted(times.items())
+        self.keys = [ms for ms, _ in self.times]
 
     def find(self, urn: str) -> int | None:
+        """The held post with this URN, or the one whose URN was made within SAME_POST_MS
+        of it; None if none is, or several URNs are."""
         if urn in self.by_urn:
             return self.by_urn[urn]
-        bucket = _urn_to_snowflake_ts(urn)
-        return self.by_time.get(bucket) if bucket is not None else None
+        ms = snowflake_ms(urn)
+        if ms is None:
+            return None
+        start = bisect.bisect_left(self.keys, ms - SAME_POST_MS)
+        end = bisect.bisect_right(self.keys, ms + SAME_POST_MS)
+        near = self.times[start:end]
+        found: set[int] = set().union(*(ids for _, ids in near))
+        if len(found) == 1 or len(near) == 1:
+            # One post, or one URN held twice: the oldest, as an exact match would be
+            return min(found) if found else None
+        return None
 
 
 def _posted_at(urn: str) -> datetime | None:
-    """When a post was made, from its URN: a Snowflake id's top bits are Unix ms."""
-    try:
-        snowflake_id = int(urn.rsplit(":", 1)[-1])
-    except ValueError:
-        return None
-    return datetime.fromtimestamp((snowflake_id >> 22) / 1000, tz=UTC)
+    ms = snowflake_ms(urn)
+    return datetime.fromtimestamp(ms / 1000, tz=UTC) if ms is not None else None
 
 
-def _stub_for(conn: sqlite3.Connection, urn: str) -> int:
+def _post_stub(conn: sqlite3.Connection, urn: str) -> int:
     return make_stub(
         conn,
         SOURCE,
         urn,
         url=FEED_URL + urn,
         created_at=_posted_at(urn),
-        metadata={"post_urn": urn, "target_snowflake_ts": _urn_to_snowflake_ts(urn)},
+        metadata={"post_urn": urn},
+    )
+
+
+def _comment_stub(conn: sqlite3.Connection, urn: str) -> int:
+    post = post_urn(urn)
+    return make_stub(
+        conn,
+        SOURCE,
+        urn,
+        url=f"{FEED_URL}{post}?commentUrn={quote(urn)}",
+        metadata={"post_urn": post, "comment_urn": urn},
     )
 
 
@@ -126,12 +161,13 @@ def _is_created(metadata: dict[str, Any]) -> bool:
 def _merge_filled_stubs(conn: sqlite3.Connection, held: _HeldPosts) -> int:
     merged = 0
     stubs = conn.execute(
-        "SELECT id, source_id FROM items WHERE source_type = 'linkedin' AND held = 0 "
-        "AND source_id LIKE ?",
+        "SELECT id, json_extract(metadata, '$.post_urn') FROM items "
+        "WHERE source_type = 'linkedin' AND held = 0 AND source_id LIKE ? "
+        "AND json_extract(metadata, '$.comment_urn') IS NULL",
         (STUB_PREFIX + "%",),
     ).fetchall()
-    for stub_id, source_id in stubs:
-        post_id = held.find(source_id.removeprefix(STUB_PREFIX))
+    for stub_id, urn in stubs:
+        post_id = held.find(urn) if urn else None
         if post_id is not None:
             merge_stub(conn, stub_id, post_id)
             merged += 1
@@ -140,9 +176,11 @@ def _merge_filled_stubs(conn: sqlite3.Connection, held: _HeldPosts) -> int:
 
 def link_linkedin_targets(conn: sqlite3.Connection) -> StubCounts:
     """Merge stubs whose post is now held, then link each comment and reaction to its
-    post. Runs after resolve_linkedin_parents; safe to run again. The caller commits."""
+    target. Runs after resolve_linkedin_parents; safe to run again. The caller commits."""
     held = _HeldPosts(conn)
     merged = _merge_filled_stubs(conn, held)
+    since = max_history_id(conn)
+    parented: list[int] = []
     links = activities = 0
     rows = conn.execute(
         "SELECT id, parent_id, created_at, metadata FROM items "
@@ -156,39 +194,48 @@ def link_linkedin_targets(conn: sqlite3.Connection) -> StubCounts:
         target = commented_on or reacted_to
         if not isinstance(target, str):
             continue
-        urn = post_urn(target)
+        is_own_like = bool(reacted_to) and _is_own_action(metadata) and _is_created(metadata)
+        if not commented_on and not is_own_like:
+            continue
+        if commented_on and parent_id is not None:
+            continue  # its parent is its post
 
-        def post_id(urn: str = urn, parent_id: int | None = parent_id) -> int:
-            if parent_id is not None:
-                return parent_id
-            found = held.find(urn)
-            return found if found is not None else _stub_for(conn, urn)
+        if COMMENT_URN.match(target):
+            target_id = _comment_stub(conn, target)
+        elif parent_id is not None:
+            target_id = parent_id
+        elif (found := held.find(target)) is not None:
+            # Found as the resolver would, within SAME_POST_MS: the post is its parent
+            conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (found, item_id))
+            parented.append(item_id)
+            target_id = parent_id = found
+        else:
+            target_id = _post_stub(conn, target)
 
         if commented_on and parent_id is None:
-            to_id = post_id()  # first, as making a stub is a change too
             before = conn.total_changes
             conn.execute(
                 "INSERT OR IGNORE INTO item_links (from_id, to_id, kind, evidence, origin, "
                 "status) VALUES (?, ?, 'in_reply_to', ?, ?, 'confirmed')",
-                (item_id, to_id, commented_on, ORIGIN),
+                (item_id, target_id, commented_on, ORIGIN),
             )
             links += conn.total_changes - before
-        elif reacted_to and _is_own_action(metadata) and _is_created(metadata):
+        elif is_own_like:
             when = _reaction_time(metadata, created_at)
             if when is None:
                 continue
-            details: dict[str, Any] = {}
-            if metadata.get("reaction_type"):
-                details["reaction"] = metadata["reaction_type"]
-            if urn != reacted_to:
-                details["on"] = reacted_to
+            reaction = metadata.get("reaction_type")
             activities += record_activities(
                 conn,
-                post_id(),
+                target_id,
                 [
                     ActivityCreate(
-                        verb="liked", occurred_at=when, source=SOURCE, details=details or None
+                        verb="liked",
+                        occurred_at=when,
+                        source=SOURCE,
+                        details={"reaction": reaction} if reaction else None,
                     )
                 ],
             )
-    return StubCounts(merged, links, activities)
+    mark_recent_history(conn, since, "sync", item_ids=parented)
+    return StubCounts(merged, len(parented), links, activities)
