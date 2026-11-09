@@ -405,6 +405,13 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
 - `/api/items/{id}/activities` gives `actor_id` and `actor`; the detail view reads "Ann Lee liked".
 - On a copy of the live database: 346 likes by 196 people; 77 comment stubs merged into your comments; your 1,586 likes unchanged; the pass adds nothing when run again.
 
+### As built (#216, step 4e)
+
+- The agents pass also records Bluesky mentions: the importer keeps each mention facet's DID in `metadata.facets.mentions`.
+- Each is `confirmed`, with evidence `tagged` and origin `import:bluesky`, as a DID names one account for certain.
+- An account not yet seen is named by its DID until a post of theirs names it.
+- On a copy of the live database: 4 mentions of 2 accounts.
+
 ## The activity ontology
 
 An activity is something someone did, at a time, usually to an item.
