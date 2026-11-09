@@ -94,7 +94,7 @@ class _Group:
 
     def time_metadata(self, verb: str) -> dict[str, Any]:
         """The metadata summing up the times: their count, the first and the last."""
-        ordered = sorted(self.times)
+        ordered = sorted(set(self.times))  # an entry listed twice is one time
         return {
             f"{verb}_count": len(ordered),
             "first_at": ordered[0].isoformat() if ordered else None,

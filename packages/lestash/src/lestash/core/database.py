@@ -188,7 +188,6 @@ def _activities_from_metadata(row: str, dates_only: bool = False) -> str:
     """
 
 
-_TIMES_PATHS = ", ".join(f"'$.{key}'" for key in ACTIVITY_VERBS)
 _HAS_TIMES = " OR ".join(f"json_type(metadata, '$.{key}') IS NOT NULL" for key in ACTIVITY_VERBS)
 
 # Migrations: list of (version, description, sql) tuples
@@ -512,24 +511,10 @@ MIGRATIONS = [
     (
         16,
         "Move the times lists out of item metadata: they are activities now",
-        # Imports store their times as activities themselves, so the triggers go. Any
-        # listed time not yet an activity is recorded first, then the lists are removed;
-        # the metadata keeps each count, first_at and last_at. item_history keeps the old
-        # metadata of every item changed, tagged with this migration.
-        "BEGIN;"
-        "DROP TRIGGER IF EXISTS items_activities_ai;"
-        "DROP TRIGGER IF EXISTS items_activities_au;"
-        + _activities_from_metadata("items", dates_only=True)
-        + f"""
-        CREATE TEMP TABLE migration_16_history AS
-            SELECT COALESCE(MAX(id), 0) AS id FROM item_history;
-        UPDATE items SET metadata = json_remove(metadata, {_TIMES_PATHS})
-        WHERE json_valid(metadata) AND ({_HAS_TIMES});
-        UPDATE item_history SET change_reason = 'migration 16: times lists moved to activities'
-        WHERE id > (SELECT id FROM migration_16_history);
-        DROP TABLE migration_16_history;
-        COMMIT;
-        """,
+        # Run by _migrate_16(): the lists are removed in Python, so the metadata keeps
+        # json.dumps' format. SQLite's json_remove() would minify it, and the next
+        # import would then rewrite every item, though nothing changed.
+        "",
     ),
 ]
 
@@ -550,6 +535,45 @@ def get_schema_version(conn: sqlite3.Connection) -> int:
 def set_schema_version(conn: sqlite3.Connection, version: int) -> None:
     """Set the schema version in the database."""
     conn.execute(f"PRAGMA user_version = {version}")
+
+
+MIGRATION_16_REASON = "migration 16: times lists moved to activities"
+
+
+def _migrate_16(conn: sqlite3.Connection) -> None:
+    """Drop the activity triggers and move the times lists out of item metadata.
+
+    Imports store their times as activities themselves now. Any listed time not yet an
+    activity is recorded first, then the lists are removed; the metadata keeps each
+    count, first_at and last_at. item_history keeps the old metadata of every item
+    changed, tagged MIGRATION_16_REASON. One transaction, with the schema version.
+    """
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN")
+    try:
+        conn.execute("DROP TRIGGER IF EXISTS items_activities_ai")
+        conn.execute("DROP TRIGGER IF EXISTS items_activities_au")
+        conn.execute(_activities_from_metadata("items", dates_only=True))
+        history_before = max_history_id(conn)
+        rows = conn.execute(
+            f"SELECT id, metadata FROM items WHERE json_valid(metadata) AND ({_HAS_TIMES})"
+        ).fetchall()
+        updates = []
+        for item_id, text in rows:
+            metadata = json.loads(text)
+            for key in ACTIVITY_VERBS:
+                metadata.pop(key, None)
+            updates.append((json.dumps(metadata) if metadata else None, item_id))
+        conn.executemany("UPDATE items SET metadata = ? WHERE id = ?", updates)
+        conn.execute(
+            "UPDATE item_history SET change_reason = ? WHERE id > ?",
+            (MIGRATION_16_REASON, history_before),
+        )
+        set_schema_version(conn, 16)
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
@@ -621,8 +645,11 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                 conn.execute("ALTER TABLE item_history ADD COLUMN parent_id_old INTEGER")
             if version == 10 and not _column_exists(conn, "tags", "kind"):
                 conn.execute("ALTER TABLE tags ADD COLUMN kind TEXT NOT NULL DEFAULT 'ad-hoc'")
-            conn.executescript(sql)
-            set_schema_version(conn, version)
+            if version == 16:
+                _migrate_16(conn)  # sets the version in its own transaction
+            else:
+                conn.executescript(sql)
+                set_schema_version(conn, version)
             conn.commit()
             applied += 1
             logger.info(f"Migration {version} complete")

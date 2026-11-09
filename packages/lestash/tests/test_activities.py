@@ -167,7 +167,7 @@ def test_the_migrations_move_the_lists_already_stored_into_the_table(test_db) ->
         ]
         rows = dict(conn.execute("SELECT source_id, metadata FROM items"))
         assert json.loads(rows["history:A"]) == {"watched_count": 2}
-        assert json.loads(rows["post:P"]) == {}
+        assert rows["post:P"] is None  # as writers store empty metadata
         assert rows["bad"] == "{not json"
         history = conn.execute(
             "SELECT i.source_id, h.change_reason, h.metadata_old "
@@ -192,4 +192,42 @@ def test_migration_16_records_listed_times_not_yet_recorded_but_no_non_dates(tes
         _store_raw(conn, [("history:C", json.dumps({"watched_times": times}))])
         assert apply_migrations(conn) == 1
         assert [r[2] for r in _activities(conn)] == ["2026-11-05T15:11:06.941Z"]
-        assert conn.execute("SELECT metadata FROM items").fetchone()[0] == "{}"
+        assert conn.execute("SELECT metadata FROM items").fetchone()[0] is None
+
+
+def test_after_migration_16_the_same_export_again_writes_nothing(test_db) -> None:
+    """The migration keeps the metadata's format, so the upsert finds it unchanged."""
+    export = [
+        _watch("AAAAAAAAAAA", "2025-06-01T10:00:00Z"),
+        _watch("AAAAAAAAAAA", "2026-01-22T14:36:35.783Z"),
+    ]
+    [item] = parse_watch_history(export)
+    old_metadata = {
+        **(item.metadata or {}),
+        "watched_times": [a.occurred_at.isoformat() for a in item.activities or []],
+    }
+    with get_connection(test_db) as conn:
+        conn.execute("PRAGMA user_version = 15")
+        conn.execute(
+            "INSERT INTO items (source_type, source_id, url, title, content, author, "
+            "created_at, is_own_content, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                item.source_type,
+                item.source_id,
+                item.url,
+                item.title,
+                item.content,
+                item.author,
+                item.created_at,
+                item.is_own_content,
+                json.dumps(old_metadata),
+            ),
+        )
+        conn.commit()
+        assert apply_migrations(conn) == 1
+        assert len(_activities(conn)) == 2
+        history = _history_rows(conn)
+        store = SyncStore(conn, "youtube")
+        store.run(iter(parse_watch_history(export)))
+        assert _history_rows(conn) == history
+        assert (store.counts.updated, store.counts.unchanged) == (0, 1)
