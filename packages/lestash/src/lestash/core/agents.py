@@ -322,12 +322,13 @@ def _context(conn: sqlite3.Connection) -> _Context:
             if name and len(name) > len(names.get(urn, (None, None))[0] or ""):
                 names[urn] = (name, None)
     # A profile's name wins, unless the profile was itself cut from a mention, by code
-    # points rather than UTF-16 units, which garbled names after an emoji
-    for urn, name, url in conn.execute(
-        "SELECT urn, display_name, profile_url FROM person_profiles "
-        "WHERE coalesce(source, '') != 'mention'"
+    # points rather than UTF-16 units, which garbled names after an emoji. Its profile
+    # address still counts.
+    for urn, name, url, source in conn.execute(
+        "SELECT urn, display_name, profile_url, coalesce(source, '') FROM person_profiles"
     ):
-        names[urn] = (name or names.get(urn, (None, None))[0], url)
+        written = names.get(urn, (None, None))[0]
+        names[urn] = ((written or name) if source == "mention" else (name or written), url)
     stored = conn.execute(
         "SELECT name FROM people WHERE is_self = 1 AND name != ?", (YOU,)
     ).fetchone()
