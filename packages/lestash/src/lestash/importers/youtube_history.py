@@ -9,8 +9,9 @@ nested under its `liked:{video_id}` item instead of appearing twice. Ads and sup
 (children's) accounts are skipped.
 
 My Activity also records likes, dislikes and shares. Those of a video are activities of its
-`history:` item, which is made for a video you never watched. Its other entries
-(subscriptions, saved playlists, poll votes, dismissed suggestions) are skipped.
+`history:` item, which is made for a video you never watched. Its other entries are skipped:
+subscriptions, saved playlists, poll votes, dismissed suggestions, likes of community posts,
+and shares of Shorts (a /shorts/ link, which has no ``v=`` video id).
 
 YouTube Music entries (songs, but also podcast episodes) are skipped for now: they will get
 their own item type rather than being treated as videos.
@@ -152,6 +153,13 @@ def parse_watch_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
         # The title of the latest watch; else of the latest like, dislike or share
         named = watches if watches.entries else _latest_group(groups)
         title, channel, channel_url = _video_title(named.latest)
+        if not channel:
+            # A share names no channel: take it from the latest entry that does
+            entries = [e for group in groups.values() for e in group.entries]
+            with_channel = [e for e in entries if _video_title(e)[1]]
+            if with_channel:
+                latest = max(with_channel, key=lambda e: e.get("time", ""))
+                _, channel, channel_url = _video_title(latest)
         unavailable = title.startswith("https://") or not title
         if unavailable:
             title = "(video no longer available)"

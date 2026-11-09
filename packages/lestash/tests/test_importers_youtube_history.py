@@ -177,7 +177,27 @@ def test_a_video_only_liked_or_shared_still_gets_its_item() -> None:
     assert song.content == "Song of the day\nChannel: Band"
     assert sorted(a.verb for a in song.activities) == ["disliked", "liked"]
     talk = by_id["history:SSSSSSSSSSS"]
-    assert (talk.title, talk.author) == ("A shared talk", None)
+    assert (talk.title, talk.author) == ("A shared talk", None)  # a share names no channel
+
+
+def test_a_shared_video_takes_its_channel_from_a_like() -> None:
+    url = "https://www.youtube.com/watch?v=SSSSSSSSSSS"
+    [video] = parse_watch_history(
+        [
+            _entry("Liked A shared talk", url, "2026-03-01T10:00:00Z", [{"name": "Chan"}]),
+            _entry(
+                "Shared video",
+                f"{url}&is=abc",
+                "2026-03-02T10:00:00Z",
+                [{"name": f"Shared URL: {url}"}, {"name": "A shared talk", "url": url}],
+            ),
+        ]
+    )
+    assert (video.title, video.author, video.metadata["channel_title"]) == (
+        "A shared talk",
+        "Chan",
+        "Chan",
+    )
 
 
 def test_other_my_activity_entries_are_skipped() -> None:
