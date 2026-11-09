@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
+from lestash.core.agents import agents_for
 from lestash.core.database import (
     add_tag,
     get_item_media,
@@ -30,6 +31,8 @@ from lestash_server.models import (
     HistoryListResponse,
     HistoryVersion,
     HistoryVersionDetail,
+    ItemAgent,
+    ItemAgentListResponse,
     ItemCreateRequest,
     ItemLink,
     ItemLinkListResponse,
@@ -541,6 +544,15 @@ def list_item_links(item_id: int):
         if not conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
         return ItemLinkListResponse(links=[ItemLink(**link) for link in links_of(conn, item_id)])
+
+
+@router.get("/{item_id}/agents", response_model=ItemAgentListResponse)
+def list_item_agents(item_id: int):
+    """Who made, voiced, published or received an item, with each one's accounts."""
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        return ItemAgentListResponse(agents=[ItemAgent(**a) for a in agents_for(conn, item_id)])
 
 
 @router.delete("/{item_id}/links")

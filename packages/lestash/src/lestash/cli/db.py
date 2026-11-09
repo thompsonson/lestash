@@ -496,6 +496,24 @@ def link() -> None:
 
 
 @app.command()
+def agents() -> None:
+    """Record who made, voiced, published or received each item, from the identifiers
+    its source gives: YouTube channels, LinkedIn members, arXiv authors, chat roles.
+
+    Each sync that writes items does this too.
+    """
+    from lestash.core.agents import link_agents
+    from lestash.core.database import get_connection
+
+    with get_connection() as conn:
+        added = link_agents(conn)
+        conn.commit()
+        people = conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM item_agents").fetchone()[0]
+    console.print(f"Added {added} item agents; {total} stored, for {people} people.")
+
+
+@app.command()
 def history(
     purge: bool = typer.Option(False, "--purge", help="Purge old history records."),
     before: str = typer.Option(None, "--before", help="Delete records before date (YYYY-MM-DD)."),

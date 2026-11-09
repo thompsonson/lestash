@@ -1774,6 +1774,12 @@
         </div>`;
       }
 
+      // People: who made, voiced, published or received it (hidden until some load)
+      html += `<div class="item-view-children" id="people-section" data-item-id="${item.id}" style="margin-top:1rem;display:none">
+        <div class="item-view-children-title" id="people-title">People</div>
+        <div id="people-list" style="font-size:0.8rem"></div>
+      </div>`;
+
       // Links to and from other items (hidden until some load)
       html += `<div class="item-view-children" id="links-section" data-item-id="${item.id}" style="margin-top:1rem;display:none">
         <div class="item-view-children-title" id="links-title">Links</div>
@@ -2249,6 +2255,7 @@
       }
 
       loadActivities(item.id);
+      loadPeople(item.id);
       loadLinks(item.id);
 
       // Load similar items (held parent items only)
@@ -2293,6 +2300,43 @@
         ? `<div style="color:var(--muted)">and ${data.total - data.activities.length} earlier</div>` : '';
       document.getElementById('activity-title').textContent = `Activity (${data.total})`;
       document.getElementById('activity-list').innerHTML = rows + more;
+      section.style.display = '';
+    }
+
+    const ROLE_LABELS = {
+      author: 'Author', creator: 'Creator', narrator: 'Narrator',
+      publisher: 'Publisher', recipient: 'To',
+    };
+
+    async function loadPeople(itemId) {
+      let data;
+      try {
+        data = await api(`/api/items/${itemId}/agents`);
+      } catch {
+        return;  // older server, or offline: the section stays hidden
+      }
+      const section = document.getElementById('people-section');
+      if (!section || section.dataset.itemId !== String(itemId)) return;
+      if (!data.agents.length) {
+        section.style.display = 'none';
+        return;
+      }
+      const rows = data.agents.map(a => {
+        const name = a.person.is_self ? 'You' : a.person.name;
+        // The account on a web page, if it has one: a channel, a profile, an address
+        const account = a.accounts.find(x => x.url);
+        const shown = account
+          ? `<a href="${escHtml(account.url)}" target="_blank" rel="noopener" style="color:var(--ok);text-decoration:none">${escHtml(name)}</a>`
+          : `<span>${escHtml(name)}</span>`;
+        const kind = a.person.kind === 'person' ? '' : a.person.kind;
+        return `<div style="display:flex;gap:0.4rem;align-items:baseline;padding:0.1rem 0">
+          <span style="color:var(--muted);white-space:nowrap">${escHtml(ROLE_LABELS[a.role] || a.role)}</span>
+          ${shown}
+          <span style="color:var(--muted)">${escHtml(kind)}</span>
+        </div>`;
+      }).join('');
+      document.getElementById('people-title').textContent = `People (${data.agents.length})`;
+      document.getElementById('people-list').innerHTML = rows;
       section.style.display = '';
     }
 

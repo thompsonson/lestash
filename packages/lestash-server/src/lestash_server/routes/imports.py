@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile
 from lestash.core.activities import record_activities
+from lestash.core.agents import link_agents
 from lestash.core.database import resolve_parent_id
 from lestash.core.links import link_items
 from lestash.importers import merge_with_stored, parse_json_items, parse_zip
@@ -213,6 +214,12 @@ def _insert_items_with_parents(conn, items):
         except Exception:
             conn.rollback()
             logger.exception("Linking items failed after an import")
+        try:
+            link_agents(conn)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            logger.exception("Recording agents failed after an import")
     return items_added, errors
 
 

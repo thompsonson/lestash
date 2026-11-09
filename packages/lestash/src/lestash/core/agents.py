@@ -1,0 +1,371 @@
+"""Agents: who made, voiced, published or received an item.
+
+See docs/content-and-activity-ontology-design.md, "The people ontology". After each
+sync, this pass reads the identifiers importers already store and records:
+
+- an account (``person_identities``) per platform identifier: a YouTube channel id, a
+  LinkedIn member URN, a Bluesky DID, an email address, an arXiv or Audible name, a
+  chat role;
+- a person (``people``) per new account. Nothing joins two accounts into one person
+  automatically, except yours: an account the source marks as yours belongs to the
+  one ``is_self`` person;
+- an ``item_agents`` row per item and role: ``author``, ``creator`` (a channel's
+  video), ``narrator``, ``publisher`` or ``recipient``.
+
+An importer's identifier is exact, so each account it gives is ``confirmed``. Sources
+that hold only free text, such as a Kobo book's author line, wait: splitting
+"RR Haywood, Joe Jameson" into people would be a guess.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections.abc import Callable, Iterator
+from typing import Any, NamedTuple
+
+YOU = "You"  # your name until a source gives it
+
+# Chat sources: the author word (or Claude's metadata.sender) -> the software agent that
+# wrote the turn, or None for your own turns
+CHAT_AUTHORS: dict[str, dict[str, str | None]] = {
+    "gemini": {"user": None, "model": "Gemini"},
+    "mistral": {"user": None, "assistant": "Mistral"},
+    "claude": {"human": None, "assistant": "Claude"},
+    "claude-code": {"user": None},
+}
+
+
+class AgentRef(NamedTuple):
+    """One agent of an item, as its source names it."""
+
+    role: str  # author, creator, narrator, publisher, recipient
+    platform: str
+    identifier: str
+    name: str
+    kind: str  # person, organization, group, software
+    url: str | None = None
+    position: int | None = None
+    is_self: bool = False
+    evidence: str | None = None
+
+
+class _Row(NamedTuple):
+    id: int
+    source_type: str
+    author: str | None
+    is_own: bool
+    metadata: dict[str, Any]
+
+
+class _Context(NamedTuple):
+    """What the extractors need beyond the row."""
+
+    linkedin_self: frozenset[str]  # your LinkedIn member URNs (changelog owner)
+    linkedin_names: dict[str, tuple[str | None, str | None]]  # URN -> (name, profile URL)
+
+
+def _names(value: Any) -> list[str]:
+    """A metadata list of names, without blanks; [] if it isn't a list."""
+    if not isinstance(value, list):
+        return []
+    return [n.strip() for n in value if isinstance(n, str) and n.strip()]
+
+
+def _youtube(row: _Row, _: _Context) -> Iterator[AgentRef]:
+    meta = row.metadata
+    url = meta.get("channel_url")
+    channel_id = meta.get("channel_id")
+    if not channel_id and isinstance(url, str) and "/channel/" in url:
+        channel_id = url.rsplit("/channel/", 1)[1].strip("/") or None
+    name = meta.get("channel_title") or row.author
+    if not isinstance(channel_id, str) or not channel_id or not name:
+        return  # a name alone could be any of several channels
+    yield AgentRef(
+        "creator",
+        "youtube",
+        channel_id,
+        str(name),
+        "organization",
+        url=url if isinstance(url, str) else f"https://www.youtube.com/channel/{channel_id}",
+        evidence="channel id",
+    )
+
+
+def _linkedin(row: _Row, ctx: _Context) -> Iterator[AgentRef]:
+    """A member (urn:li:person) or a company page (urn:li:company). The API gives no
+    names: one comes from person_profiles, else the URN stands in for it."""
+    urn = row.author
+    if not urn:
+        return
+    if urn.startswith("urn:li:person:"):
+        kind, evidence = "person", "member URN"
+    elif urn.startswith("urn:li:company:"):
+        kind, evidence = "organization", "company URN"
+    else:
+        return
+    name, url = ctx.linkedin_names.get(urn, (None, None))
+    yield AgentRef(
+        "author",
+        "linkedin",
+        urn,
+        name or urn,
+        kind,
+        url=url,
+        is_self=urn in ctx.linkedin_self,
+        evidence=evidence,
+    )
+
+
+def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
+    meta = row.metadata
+    did, handle = meta.get("author_did"), meta.get("author_handle")
+    if not isinstance(did, str) or not did:
+        return
+    yield AgentRef(
+        "author",
+        "bluesky",
+        did,
+        str(meta.get("author_display_name") or handle or row.author or did),
+        "person",
+        url=f"https://bsky.app/profile/{handle}" if handle else None,
+        is_self=row.is_own,
+        evidence="DID",
+    )
+
+
+def _arxiv(row: _Row, _: _Context) -> Iterator[AgentRef]:
+    for position, name in enumerate(_names(row.metadata.get("authors")), start=1):
+        yield AgentRef("author", "arxiv", name, name, "person", position=position)
+
+
+def _audible(row: _Row, _: _Context) -> Iterator[AgentRef]:
+    meta = row.metadata
+    for role, key in (("author", "authors"), ("narrator", "narrators")):
+        for position, name in enumerate(_names(meta.get(key)), start=1):
+            yield AgentRef(role, "audible", name, name, "person", position=position)
+    publisher = meta.get("publisher")
+    if isinstance(publisher, str) and publisher.strip():
+        name = publisher.strip()
+        yield AgentRef("publisher", "audible", f"publisher:{name}", name, "organization")
+
+
+def _addresses(value: Any) -> list[str]:
+    values = value if isinstance(value, list) else [value]
+    return [v.strip().lower() for v in values if isinstance(v, str) and "@" in v]
+
+
+def _email(row: _Row, _: _Context) -> Iterator[AgentRef]:
+    meta = row.metadata
+    for address in _addresses(meta.get("from_email"))[:1]:
+        yield AgentRef(
+            "author",
+            "email",
+            address,
+            row.author or address,
+            "person",
+            url=f"mailto:{address}",
+            is_self=row.is_own,
+            evidence="address",
+        )
+    to_name = meta.get("to_name") if isinstance(meta.get("to_name"), str) else None
+    recipients = _addresses(meta.get("to_email"))
+    for address in recipients:
+        name = to_name if to_name and len(recipients) == 1 else address
+        yield AgentRef(
+            "recipient",
+            "email",
+            address,
+            name,
+            "person",
+            url=f"mailto:{address}",
+            evidence="address",
+        )
+
+
+def _chat(row: _Row, _: _Context) -> Iterator[AgentRef]:
+    roles = CHAT_AUTHORS[row.source_type]
+    word = row.metadata.get("sender") if row.source_type == "claude" else row.author
+    if not isinstance(word, str) or word not in roles:
+        return
+    software = roles[word]
+    if software is None:
+        yield AgentRef("author", row.source_type, word, YOU, "person", is_self=True)
+    else:
+        yield AgentRef("author", row.source_type, word, software, "software")
+
+
+EXTRACTORS: dict[str, Callable[[_Row, _Context], Iterator[AgentRef]]] = {
+    "youtube": _youtube,
+    "linkedin": _linkedin,
+    "bluesky": _bluesky,
+    "arxiv": _arxiv,
+    "audible": _audible,
+    "email": _email,
+    "gmail": _email,
+    **dict.fromkeys(CHAT_AUTHORS, _chat),
+}
+
+
+def _context(conn: sqlite3.Connection) -> _Context:
+    owners = frozenset(
+        r[0]
+        for r in conn.execute(
+            "SELECT DISTINCT json_extract(metadata, '$.raw.owner') FROM items "
+            "WHERE source_type = 'linkedin' AND json_valid(metadata) "
+            "AND json_extract(metadata, '$.raw.owner') LIKE 'urn:li:person:%'"
+        )
+    )
+    names = {
+        urn: (name, url)
+        for urn, name, url in conn.execute(
+            "SELECT urn, display_name, profile_url FROM person_profiles"
+        )
+    }
+    return _Context(owners, names)
+
+
+def agents_of(
+    conn: sqlite3.Connection, ctx: _Context | None = None
+) -> Iterator[tuple[int, str, AgentRef]]:
+    """(item id, source type, agent) for every held item whose source names its agents."""
+    ctx = ctx or _context(conn)
+    marks = ",".join("?" * len(EXTRACTORS))
+    rows = conn.execute(
+        f"SELECT id, source_type, author, is_own_content, metadata FROM items "
+        f"WHERE held = 1 AND source_type IN ({marks})",
+        list(EXTRACTORS),
+    )
+    for item_id, source_type, author, is_own, metadata_json in rows:
+        try:
+            metadata = json.loads(metadata_json) if metadata_json else {}
+        except (TypeError, ValueError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        row = _Row(item_id, source_type, author, bool(is_own), metadata)
+        for ref in EXTRACTORS[source_type](row, ctx):
+            yield item_id, source_type, ref
+
+
+class _People:
+    """Accounts and people, made on first sight and remembered for the run."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn = conn
+        self.accounts: dict[tuple[str, str], int | None] = {
+            (platform, identifier): person_id
+            for platform, identifier, person_id in conn.execute(
+                "SELECT platform, identifier, person_id FROM person_identities"
+            )
+        }
+        self._self_id: int | None = None
+
+    def you(self, name: str | None) -> int:
+        """The is_self person, made with this name if there is none yet."""
+        if self._self_id is None:
+            row = self.conn.execute("SELECT id FROM people WHERE is_self = 1").fetchone()
+            if row is None:
+                row = self.conn.execute(
+                    "INSERT INTO people (name, kind, is_self) VALUES (?, 'person', 1) RETURNING id",
+                    (name or YOU,),
+                ).fetchone()
+            self._self_id = int(row[0])
+        return self._self_id
+
+    def person(self, ref: AgentRef, origin: str) -> int | None:
+        """The person an account belongs to, made with the account on first sight; None
+        when the account is kept but belongs to no one (its person was deleted)."""
+        key = (ref.platform, ref.identifier)
+        if key in self.accounts:
+            return self.accounts[key]
+        if ref.is_self:
+            person_id = self.you(None)
+            if ref.name != YOU:
+                # The first account of yours that gives your name names you
+                self.conn.execute(
+                    "UPDATE people SET name = ? WHERE id = ? AND name = ?",
+                    (ref.name, person_id, YOU),
+                )
+        else:
+            person_id = self.conn.execute(
+                "INSERT INTO people (name, kind) VALUES (?, ?) RETURNING id",
+                (ref.name, ref.kind),
+            ).fetchone()[0]
+        self.conn.execute(
+            "INSERT INTO person_identities (person_id, platform, identifier, display_name, "
+            "url, status, evidence, origin) VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?)",
+            (person_id, ref.platform, ref.identifier, ref.name, ref.url, ref.evidence, origin),
+        )
+        self.accounts[key] = person_id
+        return person_id
+
+
+def _your_name(conn: sqlite3.Connection, ctx_self: frozenset[str]) -> str | None:
+    """Your name as your own LinkedIn profile or Bluesky posts give it, if they do."""
+    for urn in sorted(ctx_self):
+        row = conn.execute(
+            "SELECT display_name FROM person_profiles WHERE urn = ? AND display_name != ''",
+            (urn,),
+        ).fetchone()
+        if row:
+            return str(row[0])
+    row = conn.execute(
+        "SELECT json_extract(metadata, '$.author_display_name') FROM items "
+        "WHERE source_type = 'bluesky' AND is_own_content = 1 AND json_valid(metadata) "
+        "AND json_extract(metadata, '$.author_display_name') != '' LIMIT 1"
+    ).fetchone()
+    return str(row[0]) if row else None
+
+
+def link_agents(conn: sqlite3.Connection) -> int:
+    """Record the agents of every item whose source names them. Returns how many item
+    agents were added; safe to run again. The caller commits."""
+    ctx = _context(conn)
+    people = _People(conn)
+    people.you(_your_name(conn, ctx.linkedin_self))
+    rows = []
+    for item_id, source_type, ref in agents_of(conn, ctx):
+        origin = f"import:{source_type}"
+        person_id = people.person(ref, origin)
+        if person_id is not None:
+            rows.append((item_id, person_id, ref.role, ref.position, ref.evidence, origin))
+    before = conn.total_changes
+    conn.executemany(
+        "INSERT OR IGNORE INTO item_agents (item_id, person_id, role, position, evidence, "
+        "origin) VALUES (?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    return conn.total_changes - before
+
+
+def agents_for(conn: sqlite3.Connection, item_id: int) -> list[dict[str, Any]]:
+    """An item's agents, by role and position, each with the person's accounts."""
+    rows = conn.execute(
+        """
+        SELECT a.role, a.position, p.id, p.name, p.kind, p.is_self
+        FROM item_agents a JOIN people p ON p.id = a.person_id
+        WHERE a.item_id = ?
+        ORDER BY a.role, a.position IS NULL, a.position, p.name
+        """,
+        (item_id,),
+    ).fetchall()
+    agents = []
+    for role, position, person_id, name, kind, is_self in rows:
+        accounts = [
+            {"platform": r[0], "identifier": r[1], "url": r[2]}
+            for r in conn.execute(
+                "SELECT platform, identifier, url FROM person_identities "
+                "WHERE person_id = ? AND status = 'confirmed' ORDER BY platform, id",
+                (person_id,),
+            )
+        ]
+        agents.append(
+            {
+                "role": role,
+                "position": position,
+                "person": {"id": person_id, "name": name, "kind": kind, "is_self": bool(is_self)},
+                "accounts": accounts,
+            }
+        )
+    return agents

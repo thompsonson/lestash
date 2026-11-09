@@ -323,6 +323,33 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
 - An importer that knows an account for certain links it as `confirmed`.
 - A rejected identity keeps its row with `status = 'rejected'`, which blocks the suggestion.
 
+### As built (#216, step 4a)
+
+- Migration 19 creates the four tables as proposed, and adds `activities.actor_id` (null is you).
+- The agents pass (`core/agents.py`) runs after each sync that writes items, after an upload, and as `lestash db agents`.
+  It reads identifiers importers already store, and gives each account one person:
+
+  | Source | Account | Kind | Role |
+  |---|---|---|---|
+  | YouTube | channel id | `organization` | `creator` |
+  | LinkedIn | member or company URN | `person`, `organization` | `author` |
+  | Bluesky | DID | `person` | `author` |
+  | arXiv | author name, in order | `person` | `author` |
+  | Audible | author and narrator names; publisher | `person`, `organization` | `author`, `narrator`, `publisher` |
+  | Email | address | `person` | `author`, `recipient` |
+  | Gemini, Mistral, Claude, Claude Code | the turn's role word | `software`, or you | `author` |
+
+- An account the source marks as yours belongs to the one `is_self` person: your LinkedIn owner URN, your own Bluesky DID, the address on your own emails, and `user` turns.
+  You are named from your LinkedIn profile, then your Bluesky posts, then your emails; else "You".
+- Each account is `confirmed`, with its evidence (`channel id`, `member URN`) and origin (`import:<source>`).
+  Nothing joins two other accounts into one person; suggestions arrive with the linker for names.
+- A YouTube video with a channel name but no channel id gets no creator: the name alone could be several channels.
+- Free-text authors (Kobo, web pages, notes) wait, since splitting a line of names would be a guess.
+- LinkedIn gives no names for members: a member not in `person_profiles` is named by their URN, 219 of 257 today.
+- The detail view lists an item's people by role, each linked to their channel, profile or address.
+- On a copy of the live database: 18,166 organizations, 501 people, 3 software agents and you; 90,042 item agents, in 1.4 s.
+- Not yet: `item_mentions` (filled by a name linker), retiring `person_profiles`, and `actor_id` for others' LinkedIn reactions.
+
 ## The activity ontology
 
 An activity is something someone did, at a time, usually to an item.

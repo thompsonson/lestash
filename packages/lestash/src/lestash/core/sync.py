@@ -15,6 +15,7 @@ from types import TracebackType
 from typing import IO, Self
 
 from lestash.core.activities import record_activities
+from lestash.core.agents import link_agents
 from lestash.core.database import (
     add_item_media,
     resolve_parent_id,
@@ -136,6 +137,12 @@ class SyncStore:
             except Exception:
                 self.conn.rollback()
                 logger.exception("Linking items failed after the %s sync", self.source)
+            try:
+                link_agents(self.conn)
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                logger.exception("Recording agents failed after the %s sync", self.source)
 
     def _store(self, item: ItemCreate) -> bool:
         """Store one item; False when merge_with_stored() says a stored item holds it.

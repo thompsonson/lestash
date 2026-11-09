@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -542,6 +542,61 @@ MIGRATIONS = [
         # The column is added in apply_migrations: SQLite has no ADD COLUMN IF NOT EXISTS.
         "",
     ),
+    (
+        19,
+        "Add people, their accounts, item agents and mentions",
+        # docs/content-and-activity-ontology-design.md, "The people ontology". Also adds
+        # activities.actor_id (in apply_migrations), now that people exists: null is you.
+        """
+        CREATE TABLE IF NOT EXISTS people (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            is_self INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_people_self ON people(is_self) WHERE is_self = 1;
+
+        CREATE TABLE IF NOT EXISTS person_identities (
+            id INTEGER PRIMARY KEY,
+            person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+            platform TEXT NOT NULL,
+            identifier TEXT NOT NULL,
+            display_name TEXT,
+            url TEXT,
+            status TEXT NOT NULL DEFAULT 'suggested',
+            evidence TEXT,
+            origin TEXT NOT NULL,
+            UNIQUE (platform, identifier)
+        );
+        CREATE INDEX IF NOT EXISTS idx_person_identities_person ON person_identities(person_id);
+
+        CREATE TABLE IF NOT EXISTS item_agents (
+            item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+            role TEXT NOT NULL,
+            position INTEGER,
+            evidence TEXT,
+            origin TEXT NOT NULL,
+            PRIMARY KEY (item_id, person_id, role)
+        );
+        CREATE INDEX IF NOT EXISTS idx_item_agents_person ON item_agents(person_id, role);
+
+        CREATE TABLE IF NOT EXISTS item_mentions (
+            item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            person_id INTEGER REFERENCES people(id) ON DELETE CASCADE,
+            tag_id INTEGER REFERENCES tags(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'suggested',
+            evidence TEXT,
+            origin TEXT NOT NULL,
+            CHECK ((person_id IS NULL) <> (tag_id IS NULL))
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_item_mentions_person
+            ON item_mentions(item_id, person_id) WHERE person_id IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_item_mentions_tag
+            ON item_mentions(item_id, tag_id) WHERE tag_id IS NOT NULL;
+        """,
+    ),
 ]
 
 
@@ -677,6 +732,12 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                 _migrate_16(conn)  # sets the version in its own transaction
             else:
                 conn.executescript(sql)
+                if version == 19 and not _column_exists(conn, "activities", "actor_id"):
+                    # After the script: the column refers to people, made there
+                    conn.execute(
+                        "ALTER TABLE activities ADD COLUMN actor_id INTEGER "
+                        "REFERENCES people(id) ON DELETE SET NULL"
+                    )
                 set_schema_version(conn, version)
             conn.commit()
             applied += 1
