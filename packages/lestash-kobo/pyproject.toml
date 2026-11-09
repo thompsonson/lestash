@@ -1,6 +1,6 @@
 [project]
 name = "lestash-kobo"
-version = "1.80.0"
+version = "1.81.0"
 description = "Kobo eReader source plugin for Le Stash"
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}
