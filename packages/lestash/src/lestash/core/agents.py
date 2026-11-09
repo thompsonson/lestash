@@ -186,8 +186,27 @@ def _linkedin(row: _Row, ctx: _Context) -> Iterator[AgentRef]:
 
 
 def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
+    """The author, by DID, and the accounts the post mentions: the importer keeps each
+    mention facet's DID. One not yet seen is named by its DID until a post of theirs
+    names them."""
     meta = row.metadata
     did, handle = meta.get("author_did"), meta.get("author_handle")
+    mentioned = _dict(meta.get("facets")).get("mentions")
+    seen: set[str] = set()
+    for mention in mentioned if isinstance(mentioned, list) else []:
+        if not isinstance(mention, str) or not mention.startswith("did:") or mention in seen:
+            continue
+        seen.add(mention)
+        yield AgentRef(
+            MENTIONED,
+            "bluesky",
+            mention,
+            mention,
+            "person",
+            url=f"https://bsky.app/profile/{mention}",
+            is_self=row.is_own and mention == did,
+            evidence="tagged",
+        )
     if not isinstance(did, str) or not did:
         return
     yield AgentRef(
