@@ -891,7 +891,8 @@ def _set_linkedin_name(
     url = url or None
     row = conn.execute(
         "SELECT i.id, i.person_id, i.display_name, p.name FROM person_identities i "
-        "LEFT JOIN people p ON p.id = i.person_id "
+        # An account not confirmed belongs to no one, as in the agents pass
+        "LEFT JOIN people p ON p.id = i.person_id AND i.status = 'confirmed' "
         "WHERE i.platform = 'linkedin' AND i.identifier = ?",
         (urn,),
     ).fetchone()
@@ -900,12 +901,14 @@ def _set_linkedin_name(
             "INSERT INTO person_identities (person_id, platform, identifier, display_name, "
             "url, status, evidence, origin) VALUES (?, 'linkedin', ?, ?, ?, 'confirmed', "
             "'profile', ?)",
+            # A name you set is the person's; the account keeps the URN, as an import
+            # names it. An import's origin, so claim() moves it to you once it shows yours
             (
                 _linkedin_person(conn, urn, name, origin),
                 urn,
-                name or urn,
+                urn if origin else (name or urn),
                 url,
-                origin or "import:linkedin",
+                "import:linkedin",
             ),
         )
         return
@@ -919,11 +922,13 @@ def _set_linkedin_name(
         )
     if not name:
         return
-    if display in (None, urn):
+    if not origin and display in (None, urn):
+        # A script's name is the account's, as LinkedIn writes it; a name you set is
+        # only the person's, so forgetting it returns to the account's
         conn.execute(
             "UPDATE person_identities SET display_name = ? WHERE id = ?", (name, identity_id)
         )
-    if person_id is None:
+    if current is None:
         return
     if origin:
         conn.execute(
@@ -938,8 +943,9 @@ def _set_linkedin_name(
 _PROFILE = """
     SELECT i.identifier AS urn, i.url AS profile_url,
         CASE WHEN p.name != i.identifier THEN p.name END AS display_name,
-        coalesce(p.name_origin, i.origin) AS source
-    FROM person_identities i LEFT JOIN people p ON p.id = i.person_id
+        coalesce(p.name_origin, 'mention') AS source
+    FROM person_identities i
+    LEFT JOIN people p ON p.id = i.person_id AND i.status = 'confirmed'
     WHERE i.platform = 'linkedin' AND (p.name != i.identifier OR i.url IS NOT NULL)
 """
 
@@ -1002,7 +1008,7 @@ def delete_person_profile(conn: sqlite3.Connection, urn: str) -> bool:
         "(SELECT coalesce(display_name, identifier) FROM person_identities "
         "WHERE platform = 'linkedin' AND identifier = :urn) END "
         "WHERE name_origin IS NOT NULL AND id = (SELECT person_id FROM person_identities "
-        "WHERE platform = 'linkedin' AND identifier = :urn)",
+        "WHERE platform = 'linkedin' AND identifier = :urn AND status = 'confirmed')",
         {"urn": urn},
     )
     conn.commit()

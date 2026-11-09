@@ -10,8 +10,8 @@ Two name sources are merged:
 
 Without --write: prints a report. The on-disk DB is not modified.
 With    --write: names newly-discovered members (upsert_person_profile)
-                 with source='mention'. Existing rows are preserved
-                 (COALESCE in upsert_person_profile).
+                 with source='mention'. A known name is kept: a mention
+                 only names a member still named by their URN.
 """
 
 from __future__ import annotations

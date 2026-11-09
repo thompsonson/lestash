@@ -358,7 +358,7 @@ The LinkedIn members with a known name or profile URL.
 [{"urn": "urn:li:person:abc", "profile_url": "https://linkedin.com/in/ann", "display_name": "Ann Lee", "source": "web"}]
 ```
 
-`source` says who named them: `web` or `manual` when you did, else the account's origin, such as `import:linkedin`.
+`source` says who named them: `web` or `manual` when you did, else `mention`, a name LinkedIn tags write.
 
 ### `PUT /api/profiles/{urn}`
 

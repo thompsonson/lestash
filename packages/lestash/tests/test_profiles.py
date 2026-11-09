@@ -161,3 +161,37 @@ def test_your_own_urn_names_you(test_db) -> None:
         # Your name stays when you stop keeping it
         assert delete_person_profile(conn, ME)
         assert _name(conn, ME) == ("Matthew Thompson", None)
+
+
+def test_forgetting_a_name_set_for_an_unseen_member_returns_to_the_urn(test_db) -> None:
+    with get_connection(test_db) as conn:
+        upsert_person_profile(conn, RAY, display_name="Ray Myers", source="web")
+        assert delete_person_profile(conn, RAY)
+        assert _name(conn, RAY) == (RAY, None)
+        assert get_person_profile(conn, RAY) is None
+
+
+def test_an_account_not_confirmed_is_named_by_no_one(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _account(conn, RAY, "Alice")
+        conn.execute("UPDATE person_identities SET status = 'suggested'")
+        upsert_person_profile(conn, RAY, display_name="Bob", source="web")
+        assert conn.execute("SELECT name FROM people").fetchone()[0] == "Alice"
+        assert get_person_profile(conn, RAY) is None
+        assert not delete_person_profile(conn, RAY)
+
+
+def test_naming_your_urn_before_its_changelog_still_makes_it_yours(test_db) -> None:
+    with get_connection(test_db) as conn:
+        upsert_person_profile(conn, ME, display_name="Matthew Thompson")
+        _comment(conn, "c1", "hello", [])
+        link_agents(conn)
+        assert (
+            conn.execute(
+                "SELECT p.is_self FROM people p JOIN person_identities i ON i.person_id = p.id "
+                "WHERE i.identifier = ?",
+                (ME,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert conn.execute("SELECT count(*) FROM people").fetchone()[0] == 1
