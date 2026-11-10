@@ -647,3 +647,22 @@ def test_enrichment_and_ocr_read_a_pruned_source_pdf_from_the_store(config, pare
         item_row = (parent_pdf_item, None, None, None)  # no drive_id: no download
         assert _resolve_source_pdf(conn, config, item_row).read_bytes() == b"%PDF doc"
         assert _resolve_parent_pdf(conn, config, parent_pdf_item).read_bytes() == b"%PDF doc"
+
+
+def test_reattaching_the_same_stored_source_pdf_keeps_its_file(config, parent_pdf_item):
+    from lestash.core.blobs import adopt_media
+    from lestash.core.database import get_media_dir
+
+    media = get_media_dir(config)
+    (media / "1").mkdir(parents=True, exist_ok=True)
+    (media / "1/doc.pdf").write_bytes(b"%PDF doc")
+    with get_connection(config) as conn:
+        set_source_pdf(conn, config, parent_pdf_item, local_path="1/doc.pdf")
+        conn.commit()
+        adopt_media(conn, config)
+        set_source_pdf(conn, config, parent_pdf_item, local_path="1/doc.pdf")
+        (sha,) = conn.execute(
+            "SELECT sha256 FROM item_media WHERE item_id = ? AND media_type = 'source_pdf'",
+            (parent_pdf_item,),
+        ).fetchone()
+    assert sha

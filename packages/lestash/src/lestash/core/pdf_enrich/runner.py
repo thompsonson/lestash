@@ -22,7 +22,6 @@ from lestash.core.blobs import media_file
 from lestash.core.config import Config
 from lestash.core.database import (
     get_connection,
-    get_media_dir,
     save_media_file,
 )
 
@@ -271,4 +270,4 @@ def _create_source_pdf_row_from_drive(
     rel_path = save_media_file(item_id, data, name, config=config)
     set_source_pdf(conn, config, item_id, local_path=rel_path, url=metadata.get("drive_web_link"))
     conn.commit()
-    return get_media_dir(config) / rel_path
+    return cached_path  # the same bytes; the media-folder copy may be pruned at any time

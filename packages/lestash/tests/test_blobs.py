@@ -312,3 +312,48 @@ def test_pruning_removes_emptied_item_folders(test_db) -> None:
         conn.commit()
         prune_media(conn, test_db)
     assert not (media / str(item)).exists() and media.is_dir()
+
+
+def test_a_file_named_by_an_adopted_and_an_unadopted_row_is_kept(test_db) -> None:
+    media = get_media_dir(test_db)
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        adopt_media(conn, test_db)
+        # A writer's new row for the same file, recorded before the next adopt
+        add_item_media(conn, item, media_type="pdf", local_path=f"{item}/a.png")
+        conn.commit()
+        assert prune_media(conn, test_db).kept == 1
+    assert (media / f"{item}/a.png").is_file()
+
+
+def test_a_row_recorded_while_its_file_was_pruned_is_repaired(test_db) -> None:
+    """The race prune's re-check narrows: a writer finds the file, prune removes it,
+    then the writer records a row. The next adopt points that row at the stored file."""
+    from lestash.core.database import save_media_file
+
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        rel = save_media_file(item, b"pdf bytes", "doc.pdf", test_db)
+        add_item_media(conn, item, media_type="image", local_path=rel)
+        conn.commit()
+        adopt_media(conn, test_db)
+        prune_media(conn, test_db)
+        late = add_item_media(conn, item, media_type="pdf", local_path=rel)
+        conn.commit()
+        counts = adopt_media(conn, test_db)
+        row = dict(conn.execute("SELECT * FROM item_media WHERE id = ?", (late,)).fetchone())
+    assert (counts.adopted, counts.missing) == (1, 0)
+    assert media_file(row, test_db).read_bytes() == b"pdf bytes"
+
+
+def test_a_media_folder_shared_with_another_database_is_not_pruned(test_db) -> None:
+    db = Path(test_db.general.database_path)
+    (db.parent / "other.db").write_bytes(b"")
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        adopt_media(conn, test_db)
+        conn.commit()
+        counts = prune_media(conn, test_db)
+    assert counts.removed == 0 and (get_media_dir(test_db) / f"{item}/a.png").is_file()

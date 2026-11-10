@@ -247,10 +247,16 @@ def sync_source(
                                 console.print(
                                     f"  [dim]Stored {adopted.adopted} media file(s)[/dim]"
                                 )
-                            # Then their media-folder copies go, once each is checked
-                            prune_media(conn, config)
                         except Exception as e:  # never fails the sync
                             console.print(f"  [yellow]Media not stored: {escape(str(e))}[/yellow]")
+                        else:
+                            # Then their media-folder copies go, once each is checked
+                            try:
+                                prune_media(conn, config)
+                            except Exception as e:  # never fails the sync
+                                console.print(
+                                    f"  [yellow]Media copies not pruned: {escape(str(e))}[/yellow]"
+                                )
 
                         status = "completed"
                     except Exception as e:

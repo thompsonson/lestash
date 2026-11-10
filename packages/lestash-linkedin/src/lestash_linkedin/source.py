@@ -182,7 +182,7 @@ def download_linkedin_media(
             rel_path = save_media_file(item_id, img_resp.content, f"linkedin{ext}", config)
 
             conn.execute(
-                "UPDATE item_media SET local_path = ?, mime_type = ? WHERE id = ?",
+                "UPDATE item_media SET local_path = ?, mime_type = ?, sha256 = NULL WHERE id = ?",
                 (rel_path, content_type, media_id),
             )
             downloaded += 1

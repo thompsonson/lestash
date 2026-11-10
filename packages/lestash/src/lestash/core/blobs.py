@@ -160,10 +160,17 @@ def adopt_media(
         params = list(ids)
     rows = conn.execute(query + " ORDER BY id", params).fetchall()
     stored: list[tuple[int, Blob, str | None]] = []
+    repaired: list[tuple[int, str]] = []
     for media_id, local_path, mime_type in rows:
         src = media_dir / local_path
         if not src.is_file():
-            counts.missing += 1
+            # Pruned while a writer recorded another row for the same file: another
+            # row naming the path points at its blob
+            sha256 = _stored_sha_for(conn, store, local_path)
+            if sha256:
+                repaired.append((media_id, sha256))
+            else:
+                counts.missing += 1
             continue
         try:
             blob = store.put_file(src)
@@ -175,7 +182,7 @@ def adopt_media(
         if blob.new:
             counts.new_blobs += 1
             counts.new_bytes += blob.size
-    if stored:
+    if stored or repaired:
         with conn:
             for media_id, blob, mime_type in stored:
                 record_blob(conn, blob, mime_type)
@@ -183,8 +190,30 @@ def adopt_media(
                     "UPDATE item_media SET sha256 = ? WHERE id = ? AND sha256 IS NULL",
                     (blob.sha256, media_id),
                 )
-        counts.adopted = len(stored)
+            for media_id, sha256 in repaired:
+                conn.execute(
+                    "UPDATE item_media SET sha256 = ? WHERE id = ? AND sha256 IS NULL",
+                    (sha256, media_id),
+                )
+        counts.adopted = len(stored) + len(repaired)
     return counts
+
+
+def _stored_sha_for(conn: sqlite3.Connection, store: BlobStore, local_path: str) -> str | None:
+    """The blob another row naming ``local_path`` points at, if the store has it and
+    the file's name (``<sha256[:12]><ext>``, see save_media_file) agrees."""
+    stem = Path(local_path).stem
+    found = {
+        sha256
+        for (sha256,) in conn.execute(
+            "SELECT DISTINCT sha256 FROM item_media WHERE local_path = ? AND sha256 IS NOT NULL",
+            (local_path,),
+        )
+    }
+    if len(found) != 1:
+        return None
+    sha256 = found.pop()
+    return sha256 if sha256.startswith(stem) and store.has(sha256) else None
 
 
 def media_file(conn_row: dict, config: Config | None = None) -> Path | None:
@@ -220,21 +249,31 @@ def prune_media(
     in the store, and the file's own hash is that blob's. Anything else stays: a file
     no row names yet (a writer between saving and recording it), a row not yet
     adopted, or a file that differs from its row's blob. With ``delete=False`` it
-    only counts. Empty item folders are removed. Safe to run again.
+    only counts. Empty item folders are removed. Safe to run again. Call it with no
+    transaction open: each removal takes the write lock briefly. It does nothing when
+    another database shares the media folder.
     """
     from lestash.core.database import get_media_dir
 
     config = config or Config.load()
     store = BlobStore(store_root(config))
     media_dir = get_media_dir(config)
+    counts = PruneCounts()
+    db_path = Path(config.general.database_path).expanduser()
+    others = [p for p in db_path.parent.glob("*.db") if p.name != db_path.name]
+    if others:
+        # The media folder is <db dir>/media: another database there shares it, and
+        # its rows are not ours to read
+        logger.warning("Not pruning %s: shared with %s", media_dir, others[0])
+        return counts
     shas: dict[str, set[str | None]] = {}
     for local_path, sha256 in conn.execute(
         "SELECT local_path, sha256 FROM item_media WHERE local_path IS NOT NULL"
     ):
         shas.setdefault(local_path, set()).add(sha256)
-    counts = PruneCounts()
     for path in sorted(p for p in media_dir.rglob("*") if p.is_file()):
-        named = shas.get(path.relative_to(media_dir).as_posix(), set())
+        rel = path.relative_to(media_dir).as_posix()
+        named = shas.get(rel, set())
         sha256 = next(iter(named)) if len(named) == 1 else None
         try:
             ok = (
@@ -243,10 +282,27 @@ def prune_media(
                 and sha_file(path) == sha256
                 and sha_file(store.path(sha256)) == sha256  # the stored copy is whole
             )
-            if ok:
+            if ok and delete:
+                # Checked again under the write lock: a writer may have recorded a
+                # new row for this file since the rows were read
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    now = {
+                        s
+                        for (s,) in conn.execute(
+                            "SELECT DISTINCT sha256 FROM item_media WHERE local_path = ?",
+                            (rel,),
+                        )
+                    }
+                    ok = now == {sha256}
+                    if ok:
+                        size = path.stat().st_size
+                        path.unlink()
+                finally:
+                    conn.commit()
+            elif ok:
                 size = path.stat().st_size
-                if delete:
-                    path.unlink()
+            if ok:
                 counts.removed += 1
                 counts.removed_bytes += size
             else:
