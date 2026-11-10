@@ -323,3 +323,74 @@ def test_a_zip_too_big_for_the_disk_is_skipped_and_the_others_import(
     status, error = _last_sync(test_db)
     assert status == "failed"
     assert "takeout-1-001.zip" in error and "GB free" in error
+
+
+ART = f"{NB}/Artifacts"
+
+
+def test_artifacts_spread_over_parts_are_completed_by_the_last_part(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    """A notebook's artifact files span the export's parts, and the sync has one part on
+    disk at a time: the kept index carries what the first part held (#217)."""
+    deck = {"title": "Deck", "type": "ARTIFACT_TYPE_SLIDES"}
+    audio = {"title": "Talk", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
+    service = FakeDrive(
+        [_file("p1", "takeout-9-001.zip"), _file("p2", "takeout-9-002.zip")],
+        {
+            "p1": _zip(
+                tmp_path / "one.zip",
+                {
+                    **NOTEBOOK,
+                    f"{ART}/Deck metadata.json": json.dumps(deck),
+                    f"{ART}/Deck/Deck_-_Slide_1": "slide one",
+                    f"{ART}/Talk.wav": "RIFF talk",  # its description is in part two
+                },
+            ),
+            "p2": _zip(
+                tmp_path / "two.zip",
+                {
+                    f"{ART}/Deck/Deck_-_Slide_2": "slide two",
+                    f"{ART}/Talk metadata.json": json.dumps(audio),
+                },
+            ),
+        },
+    )
+    service.downloaded = []
+
+    def fake_download(svc, file_id, dest):
+        dest.write_bytes(svc.blobs[file_id].read_bytes())
+        svc.downloaded.append(dest)
+        return dest
+
+    monkeypatch.setattr(source, "download", fake_download)
+    monkeypatch.setattr(source, "_drive_service", lambda: service)
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"takeout": source.TakeoutSource()})
+    _sync()
+
+    def artifacts() -> dict[str, tuple]:
+        with get_connection(test_db) as conn:
+            rows = conn.execute(
+                "SELECT i.title, p.source_id, count(m.id) FROM items i "
+                "LEFT JOIN items p ON p.id = i.parent_id "
+                "LEFT JOIN item_media m ON m.item_id = i.id "
+                "WHERE json_extract(i.metadata, '$.type') = 'artifact' GROUP BY i.id"
+            ).fetchall()
+        return {r[0]: (r[1], r[2]) for r in rows}
+
+    assert artifacts() == {"Deck": (NB, 2), "Talk": (NB, 1)}
+    state = _state(test_db)
+    assert set(state["notebooklm:takeout-9"]["files"]) == {
+        f"{ART}/Deck/Deck_-_Slide_1",
+        f"{ART}/Deck/Deck_-_Slide_2",
+        f"{ART}/Talk.wav",
+    }
+    assert state["p1"]["status"] == state["p2"]["status"] == "imported"
+    # The next sync downloads nothing and changes nothing
+    service.downloaded.clear()
+    _sync()
+    assert service.downloaded == [] and artifacts() == {"Deck": (NB, 2), "Talk": (NB, 1)}
+    # A later sync of a part alone (forgotten) still has the other part's files
+    source.forget("p2")
+    _sync()
+    assert artifacts() == {"Deck": (NB, 2), "Talk": (NB, 1)}

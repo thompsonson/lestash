@@ -38,7 +38,6 @@ W2 (#217): one store for every file LeStash keeps.
 - Each file goes into the store once, as a media row with `sha256`; the same export again adds no blobs and no rows.
 - The detail view shows slides in order, plays audio and video, and links the PDF and PPTX. An app's HTML page is served only as a download, so its scripts never run in LeStash's origin.
 - On a copy of the live database, from the March export: 73 artifacts (30 decks with 447 slides, 15 audio, 9 video, 15 infographics, 4 apps), 548 files, 540 new blobs (2.6 GB).
-- Not yet: the Takeout source importing artifacts as it syncs; it downloads one part at a time.
 
 ## As built (#217, step 3): Kobo files and media versions
 
@@ -67,3 +66,12 @@ W2 (#217): one store for every file LeStash keeps.
 - A download is still named after the file it was saved as, not its hash.
 - PDF enrichment and OCR read a source PDF from the store, else the media folder.
 - A source PDF replaced by another file keeps its stored file on the `source_pdf_version` row; the current row waits for the next adopt.
+
+## As built (#217, step 5): the Takeout sync imports artifacts
+
+- The Takeout sync downloads one part at a time. Each part's artifact files go into the store as it is read.
+- What the export's parts held so far (descriptions, and each file's hash and size) is kept as the checkpoint `notebooklm:<export>`, the zip name without `-001.zip`.
+- Each part yields its export's artifacts again with every file seen so far, so the last part completes them, whichever part a file or description is in.
+- An artifact's text and metadata come from its description alone, and media are only added, so a part read alone never undoes what another wrote. The slide count is no longer in the text; the slides are its media.
+- `lestash media notebooklm <zips>` reads the parts through the same index.
+- On a fresh database, from the March export's two parts: 73 artifacts with 548 files, the same media as the live import; a second run changes nothing.

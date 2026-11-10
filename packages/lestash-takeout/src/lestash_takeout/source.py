@@ -9,6 +9,12 @@ Which zips are done is kept in the ``sync_checkpoints`` table (source ``takeout`
 file id). The plugin yields a checkpoint after a zip's items, and the sync loop commits both
 together, so a zip is never marked done while its items are missing.
 
+NotebookLM's generated artifacts (slides, audio, video…) spread their files over an export's
+parts. Each part's artifact files go into the file store as it is read, and what the export's
+parts held so far is kept as a checkpoint (key ``notebooklm:<export>``, the zip name without
+its ``-001.zip``). Each part then yields the export's artifacts again, with every file seen so
+far, so the last part completes them.
+
 A zip that can't be read, or that Drive says is gone (404, 403), is recorded as ``failed``
 with its attempt count, and the sync then ends ``failed``. It is retried up to
 ``MAX_ATTEMPTS`` times, then left alone until ``lestash takeout forget`` or a new importer
@@ -16,6 +22,7 @@ version. Any other download error (sign-in, network, a Drive 5xx or rate limit, 
 would fail every zip the same way: the sync stops there and records nothing for that zip.
 """
 
+import re
 import shutil
 import tempfile
 from collections.abc import Iterator
@@ -142,13 +149,42 @@ def _file_is_unavailable(error: Exception) -> bool:
     return status in (403, 404)
 
 
+def export_key(file: dict[str, Any]) -> str:
+    """The checkpoint key of the export a part belongs to: ``takeout-…Z-001.zip`` and
+    ``takeout-…Z-002.zip`` are parts of ``notebooklm:takeout-…Z``."""
+    return "notebooklm:" + re.sub(r"-\d+\.zip$", "", file["name"])
+
+
+def _artifacts(path: Path, kept: dict[str, Any] | None) -> tuple[list[ItemCreate], Any]:
+    """The export's NotebookLM artifacts with this part read, and its index to keep; no
+    items and None if the part holds no artifact files."""
+    from lestash.core.blobs import BlobStore, store_root
+    from lestash.core.config import Config
+    from lestash.importers.notebooklm_artifacts import Index, collect, index_zip, to_items
+
+    fresh = index_zip(path, BlobStore(store_root(Config.load())))
+    if not fresh.descriptions and not fresh.files:
+        return [], None
+    index = Index.from_json(kept)
+    index.descriptions.update(fresh.descriptions)
+    index.files.update(fresh.files)
+    artifacts, unmatched = collect(index)
+    if unmatched:
+        logger.info(f"{len(unmatched)} NotebookLM file(s) wait for their description")
+    return to_items(artifacts), index.to_json()
+
+
 def import_zip(
     service: Any,
     file: dict[str, Any],
     workdir: Path | None = None,
     previous: dict[str, Any] | None = None,
+    kept_index: dict[str, Any] | None = None,
 ) -> Iterator[ItemCreate | SyncCheckpoint]:
     """Download one Takeout zip and yield its items, then its checkpoint.
+
+    Its export's NotebookLM artifacts come after its items, with every file the export's
+    parts held so far, then the export's index (``kept_index`` is the stored one).
 
     The download is deleted before the items are yielded. A corrupt (e.g. truncated) zip, a
     parse error, or a file Drive says is gone yields a ``failed`` checkpoint counting the
@@ -168,6 +204,7 @@ def import_zip(
         else:
             try:
                 items, source_type = parse_zip(path)
+                artifact_items, index = _artifacts(path, kept_index)
             except CorruptZip as e:
                 error = e  # a bad download, not a format we don't know
             except ValueError as e:
@@ -184,8 +221,12 @@ def import_zip(
         yield SyncCheckpoint(key=file["id"], value=record)
         return
     yield from items
-    yield SyncCheckpoint(key=file["id"], value=_record(file, "imported", len(items), source_type))
-    logger.info(f"{file['name']}: {len(items)} items ({source_type})")
+    yield from artifact_items
+    if index is not None:
+        yield SyncCheckpoint(key=export_key(file), value=index)
+    count = len(items) + len(artifact_items)
+    yield SyncCheckpoint(key=file["id"], value=_record(file, "imported", count, source_type))
+    logger.info(f"{file['name']}: {count} items ({source_type})")
 
 
 # Free space to leave on the download disk besides the zip itself.
@@ -274,7 +315,13 @@ class TakeoutSource(SourcePlugin):
                     logger.warning(f"{file['name']} ({file['id']}): {reason}")
                     problems.append(f"{file['name']} ({reason})")
                     continue
-                for obj in import_zip(service, file, previous=state.get(file["id"])):
+                export = export_key(file)
+                parts = import_zip(
+                    service, file, previous=state.get(file["id"]), kept_index=state.get(export)
+                )
+                for obj in parts:
+                    if isinstance(obj, SyncCheckpoint) and obj.key == export:
+                        state[export] = obj.value or {}  # the export's next part reads it
                     if (
                         isinstance(obj, SyncCheckpoint)
                         and (obj.value or {}).get("status") == "failed"
