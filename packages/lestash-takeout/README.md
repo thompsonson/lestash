@@ -70,4 +70,7 @@ Re-importing is safe: items are updated in place, not duplicated.
   flagged `takeout_gaps`.
 - **NotebookLM:** Takeout can split a notebook over several zips. Each part adds what it holds
   (sources, notes, chats, generated reports); only the part with the notebook's metadata sets its
-  title, emoji and date.
+  title, emoji and date. Generated artifacts (slides, audio and video overviews, infographics,
+  apps) become children of their notebook, with their files in the file store. Their files can
+  sit in another part than their description, so what the export's parts held so far is kept
+  (checkpoint `notebooklm:<export>`), and each part completes the artifacts it can.
