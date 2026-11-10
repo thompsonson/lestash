@@ -1611,7 +1611,9 @@ def _put_media_version(
     Its type and label are written when they differ, so an unchanged import writes
     nothing. A replaced version stays replaced: superseded_at is only ever set on a
     current row, so a source that forgets a snapshot (and with it, that a version was
-    replaced) never makes two rows current. A new row is numbered after the slot's
+    replaced) never makes two rows current; and the current one closes any other
+    current row of the slot, a version the source no longer knows. A new row is
+    numbered after the slot's
     others; numbers never change. Rows of another origin (an upload at the same
     position) are never matched.
 
@@ -1638,6 +1640,20 @@ def _put_media_version(
         ).fetchone()
         if row is not None:
             conn.execute("UPDATE item_media SET created_at = ? WHERE id = ?", (seen_at, row[0]))
+    # The source's current file. A replaced row of it means the file came back after a
+    # version the source no longer knows: its current row, else a new one.
+    if (
+        superseded_at is None
+        and row is not None
+        and conn.execute(
+            "SELECT superseded_at IS NOT NULL FROM item_media WHERE id = ?", (row[0],)
+        ).fetchone()[0]
+    ):
+        row = conn.execute(
+            f"SELECT id FROM item_media WHERE {slot} AND sha256 = ? "
+            "AND superseded_at IS NULL ORDER BY version DESC, id DESC LIMIT 1",
+            (*key, sha256),
+        ).fetchone()
     if row:
         conn.execute(
             """UPDATE item_media
@@ -1670,6 +1686,14 @@ def _put_media_version(
             ),
         )
         media_id = cursor.lastrowid or 0
+    if superseded_at is None:
+        # One current row: any other is a version the source no longer knows (its
+        # snapshot or blob lost), replaced now
+        conn.execute(
+            f"UPDATE item_media SET superseded_at = CURRENT_TIMESTAMP "
+            f"WHERE {slot} AND superseded_at IS NULL AND id != ? AND sha256 IS NOT NULL",
+            (*key, media_id),
+        )
     if commit:
         conn.commit()
     return media_id

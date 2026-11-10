@@ -210,3 +210,39 @@ def test_a_versioned_import_never_takes_an_upload_at_the_same_place(test_db) -> 
         ).fetchall()
     assert tuple(rows[0]) == (upload, "upload", "1/mine.pdf", None)
     assert len(rows) == 2 and rows[1][1] == "sync"
+
+
+def test_a_lost_newest_version_does_not_stay_current(test_db) -> None:
+    t1, t2, t3 = "2026-11-07 09:56:00", "2026-11-07 09:57:00", "2026-11-07 09:58:00"
+    a, b, c = "a" * 64, "b" * 64, "c" * 64
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+
+        def put(sha: str, seen: str, superseded: str | None) -> int:
+            return add_item_media(
+                conn,
+                item,
+                media_type="pdf",
+                sha256=sha,
+                size=1,
+                seen_at=seen,
+                superseded_at=superseded,
+            )
+
+        def current() -> list[str]:
+            return [
+                r[0]
+                for r in conn.execute("SELECT sha256 FROM item_media WHERE superseded_at IS NULL")
+            ]
+
+        put(a, t1, t2)
+        put(b, t2, None)  # B imported as current; then its snapshot is lost
+        put(a, t1, t3)
+        put(c, t3, None)
+        assert current() == [c]
+        # A-B-A, B's snapshot lost: the source says A is current since t1
+        put(a, t1, None)
+        assert current() == [a]
+        before = conn.total_changes
+        put(a, t1, None)
+        assert conn.total_changes == before  # and stays so, writing nothing
