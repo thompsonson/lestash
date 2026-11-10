@@ -313,7 +313,7 @@ def test_own_blobs_move_into_the_shared_folder(device: Path, tmp_path: Path) -> 
         counts.duplicates == 1 and counts.moved == len({e.sha256 for e in snap.files.values()}) - 1
     )
     assert not (tmp_path / "kobo" / "blobs").exists()
-    assert all(store.blob_path(e.sha256).parent.parent == shared for e in snap.files.values())
+    assert all((shared / e.sha256[:2] / e.sha256).is_file() for e in snap.files.values())
     assert store.move_own_blobs() == type(counts)()  # nothing left to move
     # The next snapshot finds every unchanged file in the shared folder
     result = store.take(device, datetime(2026, 11, 7, 9, 57, tzinfo=UTC))

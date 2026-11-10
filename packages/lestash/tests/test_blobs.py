@@ -118,47 +118,67 @@ def test_media_added_again_by_path_after_adopting_is_not_doubled(test_db) -> Non
         assert conn.execute("SELECT count(*) FROM item_media").fetchone()[0] == 1
 
 
-def test_a_versioned_media_row_is_written_to_match(test_db) -> None:
+def test_media_versions_are_matched_on_the_file_and_when_it_was_first_seen(test_db) -> None:
     with get_connection(test_db) as conn:
         item = _item(conn)
-        # An adopted markup: a media-folder file, now also in the store
+        # An adopted markup from before versions: a media-folder file, also in the store
         first = _media(conn, test_db, item, "kobo/markup-a.jpg", b"one")
         adopt_media(conn, test_db)
         sha_one = conn.execute("SELECT sha256 FROM item_media").fetchone()[0]
 
-        def put(sha: str, version: int, superseded: str | None) -> int:
+        def put(sha: str, seen: str, superseded: str | None, origin: str = "sync") -> int:
             return add_item_media(
                 conn,
                 item,
                 media_type="image",
                 mime_type="image/png",
+                source_origin=origin,
                 sha256=sha,
                 size=3,
-                version=version,
+                seen_at=seen,
                 superseded_at=superseded,
             )
 
-        assert put(sha_one, 1, None) == first  # the same file: the same row, kept
-        assert conn.execute("SELECT local_path FROM item_media").fetchone()[0]
+        t1, t2, t3 = "2026-11-07 09:56:00", "2026-11-07 09:57:00", "2026-11-07 09:58:00"
+        assert put(sha_one, t1, None) == first  # the same file, current: the same row
         before = conn.total_changes
-        put(sha_one, 1, None)
+        put(sha_one, t1, None)
         assert conn.total_changes == before  # nothing differs, nothing is written
-        # Redrawn: version 1 is superseded, version 2 is the new file
-        put(sha_one, 1, "2026-11-07 09:57:00")
-        second = put("b" * 64, 2, None)
+        # Redrawn, then back to the first drawing: three versions, numbered as they came
+        put(sha_one, t1, t2)
+        second = put("b" * 64, t2, t3)
+        third = put(sha_one, t3, None)
         rows = conn.execute(
-            "SELECT id, version, superseded_at, sha256, local_path FROM item_media ORDER BY version"
+            "SELECT id, version, superseded_at, local_path FROM item_media ORDER BY version"
         ).fetchall()
         assert [tuple(r) for r in rows] == [
-            (first, 1, "2026-11-07 09:57:00", sha_one, "kobo/markup-a.jpg"),
-            (second, 2, None, "b" * 64, None),
+            (first, 1, t2, "kobo/markup-a.jpg"),
+            (second, 2, t3, None),
+            (third, 3, None, None),
         ]
-        # A row whose file changes loses its media-folder path: it named the old file
-        put("c" * 64, 1, "2026-11-07 09:57:00")
-        assert (
-            conn.execute("SELECT local_path FROM item_media WHERE id = ?", (first,)).fetchone()[0]
-            is None
+        # The source forgets the first sighting (a lost snapshot): nothing renumbers,
+        # and no second current row appears
+        put("b" * 64, t2, t3)
+        put(sha_one, t3, None)
+        assert conn.execute("SELECT count(*) FROM item_media").fetchone()[0] == 3
+
+
+def test_a_versioned_import_never_takes_an_upload_at_the_same_place(test_db) -> None:
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        upload = add_item_media(
+            conn, item, media_type="pdf", local_path="1/mine.pdf", source_origin="upload"
         )
-        assert conn.execute("SELECT count(*) FROM blobs WHERE sha256 = ?", ("c" * 64,)).fetchone()[
-            0
-        ]
+        add_item_media(
+            conn,
+            item,
+            media_type="pdf",
+            sha256="a" * 64,
+            size=1,
+            seen_at="2026-11-07 09:56:00",
+        )
+        rows = conn.execute(
+            "SELECT id, source_origin, local_path, sha256 FROM item_media ORDER BY id"
+        ).fetchall()
+    assert tuple(rows[0]) == (upload, "upload", "1/mine.pdf", None)
+    assert len(rows) == 2 and rows[1][1] == "sync"

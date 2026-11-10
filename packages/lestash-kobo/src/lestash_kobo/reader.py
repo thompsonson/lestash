@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from lestash.core.blobs import BlobStore
 from lestash.models.item import ItemCreate, MediaCreate
 
 from lestash_kobo.store import DB_PATH, FileEntry, KoboStore, Snapshot
@@ -125,9 +126,13 @@ class KoboReader:
         store: KoboStore,
         snapshot: Snapshot,
         include_store_titles: bool = False,
+        files: BlobStore | None = None,
     ) -> None:
+        """``files`` is the file store media are served from; a Kobo store keeping its own
+        blobs (a ``store_dir`` of its own) has each attached file copied there."""
         self.store, self.snapshot = store, snapshot
         self.include_store_titles = include_store_titles
+        self.files = files
         self._history: list[Snapshot] | None = None
 
     def _read_db(self) -> tuple[list[dict], list[dict], dict[str, dict]]:
@@ -270,9 +275,10 @@ class KoboReader:
             media=self._markup_media(mark["BookmarkID"]) if kind == "markup" else None,
         )
 
-    def _versions(self, device_path: str) -> list[tuple[FileEntry, str | None]]:
+    def _versions(self, device_path: str) -> list[tuple[FileEntry, str, str | None]]:
         """Each version of a device file the snapshots up to this one have seen, oldest
-        first, with when the next one replaced it (None for the newest).
+        first: when it was first seen, and when the next one replaced it (None for the
+        newest).
 
         Only while the file is in this snapshot: a file gone from the Kobo keeps the
         media rows an earlier import wrote.
@@ -291,8 +297,8 @@ class KoboReader:
             if entry and (not seen or seen[-1][0].sha256 != entry.sha256):
                 seen.append((entry, snap.taken_at))
         return [
-            (entry, _db_time(seen[i + 1][1]) if i + 1 < len(seen) else None)
-            for i, (entry, _) in enumerate(seen)
+            (entry, _db_time(when), _db_time(seen[i + 1][1]) if i + 1 < len(seen) else None)
+            for i, (entry, when) in enumerate(seen)
         ]
 
     def _stored_media(
@@ -306,10 +312,17 @@ class KoboReader:
         """A media row per version of the file, pointing at its blob; versions whose
         blob is lost are left out, so one lost file never blocks an import."""
         media = []
-        for number, (entry, superseded_at) in enumerate(self._versions(device_path), 1):
-            if not self.store.blob_path(entry.sha256).is_file():
+        for entry, seen_at, superseded_at in self._versions(device_path):
+            blob = self.store.blob_path(entry.sha256)
+            if not blob.is_file():
                 logger.warning("Kobo file %s is missing from the store", device_path)
                 continue
+            if self.files is not None and self.files.path(entry.sha256) != blob:
+                try:
+                    self.files.put_file(blob)  # stored once; already there costs a lookup
+                except OSError as e:
+                    logger.warning("Could not store Kobo file %s: %s", device_path, e)
+                    continue
             media.append(
                 MediaCreate(
                     media_type=media_type,
@@ -318,7 +331,7 @@ class KoboReader:
                     position=position,
                     sha256=entry.sha256,
                     size=entry.size,
-                    version=number,
+                    seen_at=seen_at,
                     superseded_at=superseded_at,
                 )
             )

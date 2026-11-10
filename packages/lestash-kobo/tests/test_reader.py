@@ -71,7 +71,8 @@ def test_markup_carries_its_images(device: Path, tmp_path: Path) -> None:
     assert markup.content == "[Handwritten markup]"
     assert [m.mime_type for m in markup.media or []] == ["image/jpeg", "image/svg+xml"]
     jpg = markup.media[0]
-    assert jpg.local_path is None and jpg.version == 1 and jpg.superseded_at is None
+    assert jpg.local_path is None and jpg.superseded_at is None
+    assert jpg.seen_at == "2026-11-07 09:56:00"  # T1, the snapshot it was first in
     store = KoboStore(tmp_path / "store")
     assert store.blob_path(jpg.sha256 or "").read_bytes() == b"\xff\xd8jpeg"
 
@@ -471,3 +472,43 @@ def test_a_pdf_keeps_every_version_the_snapshots_saw(device: Path, tmp_path: Pat
         (3, None),
     ]
     assert rows[0][2] == rows[2][2] != rows[1][2]
+
+
+def test_by_default_the_files_move_into_the_file_store(
+    device: Path, tmp_path: Path, test_db
+) -> None:
+    shared = store_root(test_db)
+    KoboStore(shared / "kobo").take(device, T1)  # as an older version kept them
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "kobo").run(KoboSource().sync({}))
+        shas = [r[0] for r in conn.execute("SELECT sha256 FROM item_media")]
+    assert len(shas) == 3 and all(BlobStore(shared).has(s) for s in shas)
+    assert not (shared / "kobo" / "blobs").exists()
+
+
+def test_a_lost_snapshot_renumbers_nothing(device: Path, tmp_path: Path, test_db) -> None:
+    store = KoboStore(tmp_path / "store")
+    config = {"store_dir": str(store.root)}
+    pdf = device / ".kobo" / "google_drive" / "Papers" / "Judge.pdf"
+    snaps = []
+    for minute, body in ((56, b"%PDF a"), (57, b"%PDF b"), (58, b"%PDF c")):
+        pdf.write_bytes(body)
+        snaps.append(store.take(device, datetime(2026, 11, 7, 9, minute, tzinfo=UTC)).snapshot)
+
+    def rows():
+        with get_connection(test_db) as conn:
+            conn.execute("DELETE FROM sync_checkpoints WHERE source = 'kobo'")
+            conn.commit()
+            SyncStore(conn, "kobo").run(KoboSource().sync(config))
+            return [
+                tuple(r)
+                for r in conn.execute(
+                    "SELECT m.version, m.superseded_at, m.sha256 FROM item_media m"
+                    " JOIN items i ON i.id = m.item_id WHERE i.source_id = ? ORDER BY m.version",
+                    (DRIVE_PDF,),
+                )
+            ]
+
+    before = rows()
+    (snaps[0].path / "manifest.json").write_text("{")
+    assert rows() == before and [r[1] is None for r in before] == [False, False, True]

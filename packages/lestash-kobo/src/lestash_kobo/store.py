@@ -191,6 +191,8 @@ class KoboStore:
             return counts
         with open(self.root / ".snapshot.lock", "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
+            if not self.own_blobs.is_dir():  # another process moved them meanwhile
+                return counts
             for leftover in self.own_blobs.glob(".tmp-*"):  # from a killed copy
                 leftover.unlink(missing_ok=True)
             for shard in sorted(p for p in self.own_blobs.iterdir() if p.is_dir()):
@@ -216,8 +218,7 @@ class KoboStore:
             return
         dest = self.blobs / sha[:2] / sha
         if not dest.exists():
-            if not dest.parent.is_dir():
-                dest.parent.mkdir(parents=True)
+            dest.parent.mkdir(parents=True, exist_ok=True)  # core may make it meanwhile
             try:
                 src.rename(dest)
             except OSError:

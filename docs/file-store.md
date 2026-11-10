@@ -43,11 +43,12 @@ W2 (#217): one store for every file LeStash keeps.
 ## As built (#217, step 3): Kobo files and media versions
 
 - The Kobo store keeps its snapshots in `<root>/kobo/snapshots`; their files are blobs in this store, not in a folder of their own.
+- A Kobo `store_dir` of its own keeps its files there, as before; the import copies each file it attaches into this store.
 - Files an older version kept in `kobo/blobs` move here on the next snapshot or Kobo sync: a rename, under the snapshot lock. A file this store already holds is checked by hash before the Kobo copy goes; a damaged copy here is replaced by a good one.
 - The Kobo's temp files here are named `.tmp-kobo-…`, so its clean-up never removes a file another writer is storing.
 - A sideloaded or Drive book's file (PDF or EPUB) is a media row on its item, pointing at its blob. Kobo store books are encrypted, and get none.
 - A markup's JPG and SVG point at their blobs; the media folder gets no new copies.
-- Media versions are in use: the import gives one media row per version of a file the snapshots have seen, matched on (item, type, position, version). An older version has `superseded_at`, the time of the snapshot that replaced it, and is kept.
+- Media versions are in use: the import gives one media row per version of a file the snapshots have seen. A row is matched on its file and when it was first seen (`created_at`), within one item, type, position and origin, so an upload at the same place is never taken. Versions are numbered as they arrive and never renumbered, also if a snapshot is lost. An older version has `superseded_at`, the time of the snapshot that replaced it, and is kept.
 - The detail view shows current media, and lists older versions under "Earlier versions"; listings use current media only.
 - `blobs` lists the Kobo files media point at; snapshot-only files (the Kobo's database, logs) are in the store but not in the table.
 - On a copy of the live database: 581 Kobo files moved (18 already here), 38 book files attached (37 PDFs, 1 EPUB); a second import adds nothing. The snapshots so far hold one version of each book file.

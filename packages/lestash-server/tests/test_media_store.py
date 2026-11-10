@@ -72,7 +72,10 @@ def test_older_versions_are_listed_and_served(client, test_config) -> None:
             "INSERT INTO items (source_type, content) VALUES ('kobo', 'x') RETURNING id"
         ).fetchone()[0]
         old, new = (store.put_stream(io.BytesIO(b)) for b in (b"%PDF annotated", b"%PDF clean"))
-        for number, blob, superseded in ((1, old, "2026-11-07 09:57:00"), (2, new, None)):
+        for seen, blob, superseded in (
+            ("2026-11-07 09:56:00", old, "2026-11-07 09:57:00"),
+            ("2026-11-07 09:57:00", new, None),
+        ):
             add_item_media(
                 conn,
                 item,
@@ -81,7 +84,7 @@ def test_older_versions_are_listed_and_served(client, test_config) -> None:
                 alt_text="Judge.pdf",
                 sha256=blob.sha256,
                 size=blob.size,
-                version=number,
+                seen_at=seen,
                 superseded_at=superseded,
             )
     media = client.get(f"/api/items/{item}").json()["media"]

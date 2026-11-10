@@ -1512,7 +1512,7 @@ def add_item_media(
     source_origin: str = "sync",
     sha256: str | None = None,
     size: int | None = None,
-    version: int | None = None,
+    seen_at: str | None = None,
     superseded_at: str | None = None,
     _commit: bool = True,
 ) -> int:
@@ -1521,14 +1521,14 @@ def add_item_media(
     Skips insert if an identical (item_id, media_type, url, local_path, sha256) row
     exists. ``sha256`` names a file already in the file store, of ``size`` bytes.
 
-    With ``sha256`` and ``version``, the row is the one at that position and version:
-    it is written to match, so a source that knows each file's versions (the Kobo's
-    snapshots) can give them all every time. ``superseded_at`` set marks an older one.
+    With ``sha256`` and ``seen_at``, the file is one version of the media at this
+    position, from this ``source_origin``: see _put_media_version. A source that knows
+    each file's versions (the Kobo's snapshots) gives them all, every time.
 
     Returns:
         The media row ID.
     """
-    if sha256 and version is not None:
+    if sha256 and seen_at is not None:
         return _put_media_version(
             conn,
             item_id,
@@ -1539,7 +1539,7 @@ def add_item_media(
             source_origin=source_origin,
             sha256=sha256,
             size=size,
-            version=version,
+            seen_at=seen_at,
             superseded_at=superseded_at,
             commit=_commit,
         )
@@ -1601,50 +1601,58 @@ def _put_media_version(
     source_origin: str,
     sha256: str,
     size: int | None,
-    version: int,
+    seen_at: str,
     superseded_at: str | None,
     commit: bool,
 ) -> int:
-    """The media row at (item, type, position, version), written to match; see
-    add_item_media. A changed file drops the row's media-folder path: that is the
-    old file's."""
+    """One version of the media at (item, type, position), from one origin.
+
+    The row is the one of this file first seen at ``seen_at`` (kept in created_at);
+    only its superseded_at, type and label are written, and only when they differ, so
+    an unchanged import writes nothing. A new one is numbered after the slot's others:
+    numbers never change, also when a source forgets an old version. Rows of another
+    origin (an upload at the same position) are never matched.
+
+    Else a row of this file in the same state (current, or replaced at the same time)
+    is the one, and takes ``seen_at``: a row from before versions (an adopted file,
+    created when it was synced), or one whose first sighting the source has forgotten.
+    """
     conn.execute(
         "INSERT OR IGNORE INTO blobs (sha256, size, mime_type) VALUES (?, ?, ?)",
         (sha256, size or 0, mime_type),
     )
+    slot = "item_id = ? AND media_type = ? AND position = ? AND source_origin = ?"
+    key = (item_id, media_type, position, source_origin)
     row = conn.execute(
-        "SELECT id FROM item_media WHERE item_id = ? AND media_type = ? AND position = ? "
-        "AND version = ? ORDER BY id LIMIT 1",
-        (item_id, media_type, position, version),
+        f"SELECT id FROM item_media WHERE {slot} AND sha256 = ? AND created_at = ? "
+        "ORDER BY id LIMIT 1",
+        (*key, sha256, seen_at),
     ).fetchone()
+    if row is None:
+        row = conn.execute(
+            f"SELECT id FROM item_media WHERE {slot} AND sha256 = ? AND superseded_at IS ? "
+            "ORDER BY id LIMIT 1",
+            (*key, sha256, superseded_at),
+        ).fetchone()
+        if row is not None:
+            conn.execute("UPDATE item_media SET created_at = ? WHERE id = ?", (seen_at, row[0]))
     if row:
-        # Only when something differs, so an unchanged import writes nothing
         conn.execute(
-            """UPDATE item_media
-               SET local_path = CASE WHEN sha256 IS ? THEN local_path END,
-                   sha256 = ?, mime_type = ?, alt_text = ?, superseded_at = ?
-               WHERE id = ? AND (sha256 IS NOT ? OR mime_type IS NOT ?
-                     OR alt_text IS NOT ? OR superseded_at IS NOT ?)""",
-            (
-                sha256,
-                sha256,
-                mime_type,
-                alt_text,
-                superseded_at,
-                row[0],
-                sha256,
-                mime_type,
-                alt_text,
-                superseded_at,
-            ),
+            """UPDATE item_media SET mime_type = ?, alt_text = ?, superseded_at = ?
+               WHERE id = ? AND (mime_type IS NOT ? OR alt_text IS NOT ?
+                     OR superseded_at IS NOT ?)""",
+            (mime_type, alt_text, superseded_at, row[0], mime_type, alt_text, superseded_at),
         )
         media_id = row[0]
     else:
+        (last,) = conn.execute(
+            f"SELECT coalesce(max(version), 0) FROM item_media WHERE {slot}", key
+        ).fetchone()
         cursor = conn.execute(
             """INSERT INTO item_media
                (item_id, media_type, mime_type, alt_text, position, source_origin,
-                sha256, version, superseded_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                sha256, version, superseded_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item_id,
                 media_type,
@@ -1653,8 +1661,9 @@ def _put_media_version(
                 position,
                 source_origin,
                 sha256,
-                version,
+                last + 1,
                 superseded_at,
+                seen_at,
             ),
         )
         media_id = cursor.lastrowid or 0
