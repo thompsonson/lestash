@@ -267,6 +267,8 @@ def prune(
         f"{verb} {counts.removed} file(s) ({counts.removed_bytes / 1e6:.1f} MB) "
         f"from {get_media_dir(config)}; {counts.kept} kept."
     )
+    if counts.stopped:
+        console.print("[yellow]Stopped early: the database was busy. Run it again.[/yellow]")
 
 
 @app.command("notebooklm")

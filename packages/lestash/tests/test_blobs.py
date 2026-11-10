@@ -411,3 +411,30 @@ def test_a_row_moved_to_another_file_with_the_old_hash_is_stored_again(test_db) 
         adopt_media(conn, test_db)
         row = dict(conn.execute("SELECT * FROM item_media WHERE id = ?", (media_id,)).fetchone())
     assert media_file(row, test_db).read_bytes() == b"new pdf"
+
+
+def test_a_busy_write_lock_stops_the_prune_and_keeps_the_file(test_db, monkeypatch) -> None:
+    import sqlite3
+
+    from lestash.core import database
+
+    media = get_media_dir(test_db)
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        _media(conn, test_db, item, f"{item}/b.png", b"png b")
+        adopt_media(conn, test_db)
+        conn.commit()
+    monkeypatch.setattr(database, "BUSY_TIMEOUT_S", 0.1)
+    holder = sqlite3.connect(test_db.general.database_path)
+    holder.execute("BEGIN IMMEDIATE")  # another writer holds the lock
+    try:
+        with get_connection(test_db) as conn:
+            counts = prune_media(conn, test_db)
+    finally:
+        holder.rollback()
+        holder.close()
+    assert counts.stopped and counts.removed == 0
+    assert (media / f"{item}/a.png").is_file() and (media / f"{item}/b.png").is_file()
+    with get_connection(test_db) as conn:
+        assert prune_media(conn, test_db).removed == 2  # the next run goes on

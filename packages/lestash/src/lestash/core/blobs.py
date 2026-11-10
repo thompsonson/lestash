@@ -283,6 +283,7 @@ class PruneCounts:
     removed_bytes: int = 0
     kept: int = 0  # copies kept: not yet stored, named by no row, or not matching
     shared_with: Path | None = None  # another database sharing the folder: none pruned
+    stopped: bool = False  # the write lock was busy; the rest wait for the next run
 
 
 def prune_media(
@@ -362,6 +363,7 @@ def prune_media(
         except sqlite3.OperationalError as e:  # the lock is busy: the rest next time
             logger.warning("Stopped pruning media at %s: %s", path, e)
             counts.kept += 1
+            counts.stopped = True
             break
     if delete:
         for folder in sorted((p for p in media_dir.rglob("*") if p.is_dir()), reverse=True):
