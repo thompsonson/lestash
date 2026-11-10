@@ -22,6 +22,7 @@ version. Any other download error (sign-in, network, a Drive 5xx or rate limit, 
 would fail every zip the same way: the sync stops there and records nothing for that zip.
 """
 
+import lzma
 import re
 import shutil
 import tempfile
@@ -205,7 +206,15 @@ def _artifacts(
 
     try:
         fresh = index_zip(path, BlobStore(store_root(Config.load())))
-    except (zipfile.BadZipFile, KeyError, zlib.error, EOFError, NotImplementedError) as e:
+    except (
+        zipfile.BadZipFile,
+        KeyError,
+        zlib.error,
+        lzma.LZMAError,
+        EOFError,
+        NotImplementedError,
+        RuntimeError,  # an encrypted member
+    ) as e:
         raise CorruptZip(f"{type(e).__name__}: {e}") from e  # the part: counts an attempt
     except OSError as e:
         # The store's disk, not this zip: every zip would fail the same way
