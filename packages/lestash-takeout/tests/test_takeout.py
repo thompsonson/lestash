@@ -323,3 +323,347 @@ def test_a_zip_too_big_for_the_disk_is_skipped_and_the_others_import(
     status, error = _last_sync(test_db)
     assert status == "failed"
     assert "takeout-1-001.zip" in error and "GB free" in error
+
+
+ART = f"{NB}/Artifacts"
+
+
+def datetime_now_iso() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat()
+
+
+def _drive_of(monkeypatch, parts: dict[str, tuple[str, Path]]) -> FakeDrive:
+    """A fake Drive holding ``parts``: {file id: (zip name, local zip)}."""
+    service = FakeDrive(
+        [_file(fid, name) for fid, (name, _) in parts.items()],
+        {fid: path for fid, (_, path) in parts.items()},
+    )
+    service.downloaded = []
+
+    def fake_download(svc, file_id, dest):
+        dest.write_bytes(svc.blobs[file_id].read_bytes())
+        svc.downloaded.append(dest)
+        return dest
+
+    monkeypatch.setattr(source, "download", fake_download)
+    monkeypatch.setattr(source, "_drive_service", lambda: service)
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"takeout": source.TakeoutSource()})
+    return service
+
+
+def _artifact_media(test_db) -> dict[str, list[str]]:
+    with get_connection(test_db) as conn:
+        rows = conn.execute(
+            "SELECT i.title, m.alt_text FROM items i JOIN item_media m ON m.item_id = i.id "
+            "WHERE json_extract(i.metadata, '$.type') = 'artifact' ORDER BY i.title, m.alt_text"
+        ).fetchall()
+    out: dict[str, list[str]] = {}
+    for title, alt in rows:
+        out.setdefault(title, []).append(alt)
+    return out
+
+
+def test_one_requests_parts_are_one_export() -> None:
+    names = ["takeout-20260323T221713Z-001.zip", "takeout-20260323T221713Z-3-002.zip"]
+    assert {source.export_key({"name": n}) for n in names} == {
+        "notebooklm:takeout-20260323T221713Z"
+    }
+    assert source.export_key({"name": "takeout-9-001.zip"}) == "notebooklm:takeout-9"
+
+
+def test_a_file_waits_for_its_own_description_in_a_later_part(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    """ "Talk 2.wav" fits "Talk" by its name's start; its own description is in part two.
+    A media row once written stays, so the file waits for the last part."""
+    talk = {"title": "Talk", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
+    talk2 = {"title": "Talk 2", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
+    _drive_of(
+        monkeypatch,
+        {
+            "a": (
+                "takeout-20260101T000000Z-001.zip",
+                _zip(
+                    tmp_path / "a.zip",
+                    {
+                        **NOTEBOOK,
+                        f"{ART}/Talk metadata.json": json.dumps(talk),
+                        f"{ART}/Talk.wav": "one",
+                        f"{ART}/Talk 2.wav": "two",
+                    },
+                ),
+            ),
+            "b": (
+                "takeout-20260101T000000Z-002.zip",
+                _zip(tmp_path / "b.zip", {f"{ART}/Talk 2 metadata.json": json.dumps(talk2)}),
+            ),
+        },
+    )
+    _sync()
+    assert _artifact_media(test_db) == {"Talk": ["Talk.wav"], "Talk 2": ["Talk 2.wav"]}
+
+
+def test_a_last_part_with_nothing_else_completes_the_waiting_files(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    deck = {"title": "Deck", "type": "ARTIFACT_TYPE_SLIDES"}
+    service = _drive_of(
+        monkeypatch,
+        {
+            "a": (
+                "takeout-20260101T000000Z-001.zip",
+                _zip(
+                    tmp_path / "a.zip",
+                    {
+                        **NOTEBOOK,
+                        f"{ART}/Deck metadata.json": json.dumps(deck),
+                        f"{ART}/Deck shortened.pdf": "%PDF",  # matches only by its start
+                    },
+                ),
+            ),
+        },
+    )
+    later = ("takeout-20260101T000000Z-002.zip", _zip(tmp_path / "b.zip", {"Takeout/x.jpg": "x"}))
+    service._files.append(_file("b", later[0]))
+    service.blobs["b"] = later[1]
+    _sync()
+    assert _artifact_media(test_db) == {"Deck": ["Deck shortened.pdf"]}
+    assert _state(test_db)["b"]["status"] == "unrecognized"
+
+
+def test_a_file_store_that_cannot_be_written_stops_the_sync_and_records_nothing(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    from lestash.core.blobs import BlobStore
+
+    deck = {"title": "Deck", "type": "ARTIFACT_TYPE_SLIDES"}
+    _drive_of(
+        monkeypatch,
+        {
+            "a": (
+                "takeout-20260101T000000Z-001.zip",
+                _zip(
+                    tmp_path / "a.zip",
+                    {
+                        **NOTEBOOK,
+                        f"{ART}/Deck metadata.json": json.dumps(deck),
+                        f"{ART}/D.png": "x",
+                    },
+                ),
+            )
+        },
+    )
+
+    def full(self, stream):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(BlobStore, "put_stream", full)
+    _sync(fails=True)
+    assert "a" not in _state(test_db)  # no attempt counted
+    assert "file store" in (_last_sync(test_db)[1] or "")
+
+
+def test_artifacts_spread_over_parts_are_completed_by_the_last_part(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    """A notebook's artifact files span the export's parts, and the sync has one part on
+    disk at a time: the kept index carries what the first part held (#217)."""
+    deck = {"title": "Deck", "type": "ARTIFACT_TYPE_SLIDES"}
+    audio = {"title": "Talk", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
+    service = FakeDrive(
+        [_file("p1", "takeout-9-001.zip"), _file("p2", "takeout-9-002.zip")],
+        {
+            "p1": _zip(
+                tmp_path / "one.zip",
+                {
+                    **NOTEBOOK,
+                    f"{ART}/Deck metadata.json": json.dumps(deck),
+                    f"{ART}/Deck/Deck_-_Slide_1": "slide one",
+                    f"{ART}/Talk.wav": "RIFF talk",  # its description is in part two
+                },
+            ),
+            "p2": _zip(
+                tmp_path / "two.zip",
+                {
+                    f"{ART}/Deck/Deck_-_Slide_2": "slide two",
+                    f"{ART}/Talk metadata.json": json.dumps(audio),
+                },
+            ),
+        },
+    )
+    service.downloaded = []
+
+    def fake_download(svc, file_id, dest):
+        dest.write_bytes(svc.blobs[file_id].read_bytes())
+        svc.downloaded.append(dest)
+        return dest
+
+    monkeypatch.setattr(source, "download", fake_download)
+    monkeypatch.setattr(source, "_drive_service", lambda: service)
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"takeout": source.TakeoutSource()})
+    _sync()
+
+    def artifacts() -> dict[str, tuple]:
+        with get_connection(test_db) as conn:
+            rows = conn.execute(
+                "SELECT i.title, p.source_id, count(m.id) FROM items i "
+                "LEFT JOIN items p ON p.id = i.parent_id "
+                "LEFT JOIN item_media m ON m.item_id = i.id "
+                "WHERE json_extract(i.metadata, '$.type') = 'artifact' GROUP BY i.id"
+            ).fetchall()
+        return {r[0]: (r[1], r[2]) for r in rows}
+
+    assert artifacts() == {"Deck": (NB, 2), "Talk": (NB, 1)}
+    state = _state(test_db)
+    assert set(state["notebooklm:takeout-9"]["files"]) == {
+        f"{ART}/Deck/Deck_-_Slide_1",
+        f"{ART}/Deck/Deck_-_Slide_2",
+        f"{ART}/Talk.wav",
+    }
+    assert state["p1"]["status"] == state["p2"]["status"] == "imported"
+    # The next sync downloads nothing and changes nothing
+    service.downloaded.clear()
+    _sync()
+    assert service.downloaded == [] and artifacts() == {"Deck": (NB, 2), "Talk": (NB, 1)}
+    # A later sync of a part alone (forgotten) still has the other part's files
+    source.forget("p2")
+    _sync()
+    assert artifacts() == {"Deck": (NB, 2), "Talk": (NB, 1)}
+
+
+def _long_titled_parts(tmp_path) -> tuple[dict, Path, str]:
+    """A description cut a byte shorter than its file: they never match exactly."""
+    title = "Continual Learning Without Forgetting Old Tasks Ever"
+    desc = {"title": title, "type": "ARTIFACT_TYPE_INFOGRAPHIC"}
+    one = _zip(
+        tmp_path / "a.zip",
+        {
+            **NOTEBOOK,
+            f"{ART}/Continual Learning Without Forgetting Old Ta.json": json.dumps(desc),
+            f"{ART}/Continual Learning Without Forgetting Old Tas.png": "png",
+        },
+    )
+    return desc, one, title
+
+
+def test_an_export_whose_last_part_is_given_up_is_completed_from_its_index(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    _, one, title = _long_titled_parts(tmp_path)
+    bad = tmp_path / "bad.zip"
+    bad.write_bytes(b"not a zip")
+    _drive_of(
+        monkeypatch,
+        {
+            "a": ("takeout-20260101T000000Z-001.zip", one),
+            "b": ("takeout-20260101T000000Z-002.zip", bad),
+        },
+    )
+    for _ in range(source.MAX_ATTEMPTS - 1):
+        _sync(fails=True)
+        assert _artifact_media(test_db) == {}  # the png waits for part two
+    _sync(fails=True)  # part two is given up: the export is completed without it
+    assert _artifact_media(test_db) == {
+        title: ["Continual Learning Without Forgetting Old Tas.png"]
+    }
+    assert _state(test_db)["notebooklm:takeout-20260101T000000Z"]["final"] is True
+
+
+def test_a_part_imported_before_artifacts_were_indexed_keeps_files_waiting(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    """Its descriptions are in no index, so a file must not take a near name."""
+    from lestash.core.database import save_checkpoint
+
+    _, one, _ = _long_titled_parts(tmp_path)
+    _drive_of(
+        monkeypatch,
+        {
+            "old": ("takeout-20260101T000000Z-001.zip", _zip(tmp_path / "o.zip", NOTEBOOK)),
+            "a": ("takeout-20260101T000000Z-002.zip", one),
+        },
+    )
+    with get_connection(test_db) as conn:
+        record = {
+            "name": "x",
+            "status": "imported",
+            "items": 2,
+            "source_type": "notebooklm",
+            "importer_version": IMPORTER_VERSION,
+            "imported_at": "2026-03-30T00:00:00",
+        }
+        save_checkpoint(conn, "takeout", "old", record)
+        conn.commit()
+    _sync()
+    assert _artifact_media(test_db) == {}
+    assert _state(test_db)["notebooklm:takeout-20260101T000000Z"]["final"] is False
+
+
+def test_a_damaged_artifact_file_counts_an_attempt(test_db, tmp_path, monkeypatch) -> None:
+    import zlib
+
+    from lestash.core.blobs import BlobStore
+
+    _, one, _ = _long_titled_parts(tmp_path)
+    _drive_of(monkeypatch, {"a": ("takeout-20260101T000000Z-001.zip", one)})
+
+    def damaged(self, stream):
+        raise zlib.error("Error -3 while decompressing data")
+
+    monkeypatch.setattr(BlobStore, "put_stream", damaged)
+    _sync(fails=True)
+    record = _state(test_db)["a"]
+    assert record["status"] == "failed" and record["attempts"] == 1
+
+
+def test_an_export_still_uploading_is_not_complete(test_db, tmp_path, monkeypatch) -> None:
+    """Part one alone, just uploaded: its near-named file waits, as part two may hold its
+    own description. Part two arrives later and the file goes to it."""
+    from datetime import UTC, datetime, timedelta
+
+    talk = {"title": "Talk", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
+    talk2 = {"title": "Talk 2", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
+    one = _zip(
+        tmp_path / "a.zip",
+        {**NOTEBOOK, f"{ART}/Talk metadata.json": json.dumps(talk), f"{ART}/Talk 2.wav": "two"},
+    )
+    service = _drive_of(monkeypatch, {"a": ("takeout-20260101T000000Z-001.zip", one)})
+    just_now = datetime.now(UTC).isoformat()
+    service._files[0]["createdTime"] = just_now
+    _sync()
+    assert _artifact_media(test_db) == {}
+    two = _zip(tmp_path / "b.zip", {f"{ART}/Talk 2 metadata.json": json.dumps(talk2)})
+    service._files.append(
+        {**_file("b", "takeout-20260101T000000Z-002.zip"), "createdTime": just_now}
+    )
+    service.blobs["b"] = two
+    _sync()
+    assert _artifact_media(test_db) == {"Talk 2": ["Talk 2.wav"]}  # an exact match
+    assert _state(test_db)["notebooklm:takeout-20260101T000000Z"]["final"] is False
+    # Once the upload is long done, the export is completed with no zip read
+    later = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    for f in service._files:
+        f["createdTime"] = later
+    service.downloaded.clear()
+    _sync()
+    assert service.downloaded == []
+    assert _state(test_db)["notebooklm:takeout-20260101T000000Z"]["final"] is True
+
+
+def test_an_export_whose_parts_left_drive_is_completed_once(test_db, tmp_path, monkeypatch) -> None:
+    _, one, title = _long_titled_parts(tmp_path)
+    service = _drive_of(
+        monkeypatch,
+        {
+            "a": ("takeout-20260101T000000Z-001.zip", one),
+            "b": ("takeout-20260101T000000Z-002.zip", _zip(tmp_path / "b.zip", NOTEBOOK)),
+        },
+    )
+    service._files[1]["createdTime"] = datetime_now_iso()  # part two still uploading
+    _sync()
+    assert _artifact_media(test_db) == {}
+    service._files.clear()  # both parts deleted from Drive
+    _sync()
+    assert list(_artifact_media(test_db)) == [title]

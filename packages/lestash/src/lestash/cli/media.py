@@ -281,12 +281,13 @@ def notebooklm(
     from lestash.core.blobs import BlobStore, store_root
     from lestash.core.config import Config
     from lestash.core.sync import SyncStore
-    from lestash.importers.notebooklm_artifacts import collect, to_items
+    from lestash.importers.notebooklm_artifacts import collect, index_zips, to_items
 
     config = Config.load()
     store = BlobStore(store_root(config))
-    artifacts, unmatched = collect(zips)
-    items, new_blobs = to_items(artifacts, store)
+    index = index_zips(zips, store)
+    artifacts, unmatched = collect(index)
+    items, new_blobs = to_items(artifacts), index.new_blobs
     with get_connection(config) as conn:
         sync = SyncStore(conn, "notebooklm")
         sync.run(items)

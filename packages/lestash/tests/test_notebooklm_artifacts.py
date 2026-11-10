@@ -9,7 +9,14 @@ from pathlib import Path
 from lestash.core.blobs import BlobStore, store_root
 from lestash.core.database import get_connection
 from lestash.core.sync import SyncStore
-from lestash.importers.notebooklm_artifacts import collect, slide_number, to_items
+from lestash.importers.notebooklm_artifacts import (
+    Index,
+    collect,
+    index_zip,
+    index_zips,
+    slide_number,
+    to_items,
+)
 
 NB = "Takeout/NotebookLM/Hebbian"
 ART = f"{NB}/Artifacts"
@@ -70,10 +77,11 @@ def test_artifacts_from_both_parts_become_children_with_stored_files(test_db, tm
             (NB,),
         ).fetchone()[0]
         conn.commit()
-        artifacts, unmatched = collect(_parts(tmp_path))
+        index = index_zips(_parts(tmp_path), store)
+        artifacts, unmatched = collect(index)
         assert unmatched == []
-        items, new_blobs = to_items(artifacts, store)
-        assert new_blobs == 5  # pdf, three slides, audio; the report is a note already
+        items = to_items(artifacts)
+        assert index.new_blobs == 5  # pdf, three slides, audio; the report is a note already
         SyncStore(conn, "notebooklm").run(items)
         rows = conn.execute(
             "SELECT title, parent_id, json_extract(metadata, '$.artifact_type') FROM items "
@@ -91,10 +99,10 @@ def test_artifacts_from_both_parts_become_children_with_stored_files(test_db, tm
         assert [tuple(r) for r in slides] == [(1, 9), (2, 9), (3, 11)]
         media_before = conn.execute("SELECT count(*) FROM item_media").fetchone()[0]
         # The same export again: nothing new
-        items, new_blobs = to_items(collect(_parts(tmp_path))[0], store)
+        again = index_zips(_parts(tmp_path), store)
         store_run = SyncStore(conn, "notebooklm")
-        store_run.run(items)
-        assert new_blobs == 0 and store_run.counts.added == 0
+        store_run.run(to_items(collect(again)[0]))
+        assert again.new_blobs == 0 and store_run.counts.added == 0
         assert conn.execute("SELECT count(*) FROM item_media").fetchone()[0] == media_before
 
 
@@ -122,15 +130,17 @@ def test_two_artifacts_of_one_title_each_get_their_own_files(test_db, tmp_path) 
             f"{ART}/Federated Learning Brings Code To The Data.wav": b"audio",
         },
     )
-    artifacts, unmatched = collect([part])
+    artifacts, unmatched = collect(index_zips([part], store))
     assert unmatched == []
-    files = {a.description["type"]: [m.rsplit("/", 1)[-1] for _, m in a.files] for a in artifacts}
+    files = {
+        a.description["type"]: [f.member.rsplit("/", 1)[-1] for f in a.files] for a in artifacts
+    }
     assert files == {
         "ARTIFACT_TYPE_SLIDES": ["Federated_Learning_-_Slide_1", "Federated_Learning_-_Slide_2"],
         "ARTIFACT_TYPE_EXPLAINER_VIDEO": ["Federated Learning.mp4"],
         "ARTIFACT_TYPE_AUDIO_OVERVIEW": ["Federated Learning Brings Code To The Data.wav"],
     }
-    items, _ = to_items(artifacts, store)
+    items = to_items(artifacts)
     with get_connection(test_db) as conn:
         SyncStore(conn, "notebooklm").run(items)
         # Two identical slides are still two slides
@@ -138,3 +148,25 @@ def test_two_artifacts_of_one_title_each_get_their_own_files(test_db, tmp_path) 
             "SELECT position FROM item_media WHERE media_type = 'image' ORDER BY position"
         ).fetchall()
         assert [r[0] for r in positions] == [1, 2]
+
+
+def test_parts_read_one_at_a_time_through_a_kept_index(test_db, tmp_path) -> None:
+    """The Takeout sync has one part on disk at a time: the index, kept as JSON
+    between parts, holds what earlier parts had."""
+    store = BlobStore(store_root(test_db))
+    one, two = _parts(tmp_path)
+    first = index_zip(one, store)
+    one.unlink()
+    kept = json.loads(json.dumps(first.to_json()))
+    index = index_zip(two, store, Index.from_json(kept))
+    artifacts, unmatched = collect(index)
+    assert unmatched == []
+    together = collect(index_zips(_parts(tmp_path), store))[0]
+    assert to_items(artifacts) == to_items(together)
+    # After the first part alone: the deck has its first two slides, the audio no file,
+    # and each says no more than its description, so the later part changes only media
+    early = {i.title: i for i in to_items(collect(first)[0])}
+    assert {t: len(i.media or []) for t, i in early.items()} == {"Deck": 3, "Solving Forgetting": 0}
+    full = {i.title: i for i in to_items(artifacts)}
+    for title, item in early.items():
+        assert (item.content, item.metadata) == (full[title].content, full[title].metadata)
