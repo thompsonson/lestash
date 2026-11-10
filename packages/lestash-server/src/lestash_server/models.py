@@ -17,6 +17,8 @@ class MediaResponse(BaseModel):
     position: int = 0
     available: bool = False
     mime_type: str | None = None
+    version: int = 1
+    superseded_at: str | None = None  # set on an older version, kept (#217)
 
 
 class ItemResponse(BaseModel):

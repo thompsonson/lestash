@@ -116,3 +116,49 @@ def test_media_added_again_by_path_after_adopting_is_not_doubled(test_db) -> Non
         # A sync names the same file again by its path, as the Kobo reader does
         add_item_media(conn, item, media_type="image", local_path=f"{item}/a.png")
         assert conn.execute("SELECT count(*) FROM item_media").fetchone()[0] == 1
+
+
+def test_a_versioned_media_row_is_written_to_match(test_db) -> None:
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        # An adopted markup: a media-folder file, now also in the store
+        first = _media(conn, test_db, item, "kobo/markup-a.jpg", b"one")
+        adopt_media(conn, test_db)
+        sha_one = conn.execute("SELECT sha256 FROM item_media").fetchone()[0]
+
+        def put(sha: str, version: int, superseded: str | None) -> int:
+            return add_item_media(
+                conn,
+                item,
+                media_type="image",
+                mime_type="image/png",
+                sha256=sha,
+                size=3,
+                version=version,
+                superseded_at=superseded,
+            )
+
+        assert put(sha_one, 1, None) == first  # the same file: the same row, kept
+        assert conn.execute("SELECT local_path FROM item_media").fetchone()[0]
+        before = conn.total_changes
+        put(sha_one, 1, None)
+        assert conn.total_changes == before  # nothing differs, nothing is written
+        # Redrawn: version 1 is superseded, version 2 is the new file
+        put(sha_one, 1, "2026-11-07 09:57:00")
+        second = put("b" * 64, 2, None)
+        rows = conn.execute(
+            "SELECT id, version, superseded_at, sha256, local_path FROM item_media ORDER BY version"
+        ).fetchall()
+        assert [tuple(r) for r in rows] == [
+            (first, 1, "2026-11-07 09:57:00", sha_one, "kobo/markup-a.jpg"),
+            (second, 2, None, "b" * 64, None),
+        ]
+        # A row whose file changes loses its media-folder path: it named the old file
+        put("c" * 64, 1, "2026-11-07 09:57:00")
+        assert (
+            conn.execute("SELECT local_path FROM item_media WHERE id = ?", (first,)).fetchone()[0]
+            is None
+        )
+        assert conn.execute("SELECT count(*) FROM blobs WHERE sha256 = ?", ("c" * 64,)).fetchone()[
+            0
+        ]

@@ -63,6 +63,8 @@ def _media_responses(conn, item_id: int) -> list[MediaResponse]:
                 m["sha256"] or m["local_path"] or (m["url"] and m["url"].startswith("http"))
             ),
             mime_type=m["mime_type"],
+            version=m["version"],
+            superseded_at=m["superseded_at"],
         )
         for m in get_item_media(conn, item_id)
     ]

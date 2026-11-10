@@ -296,3 +296,48 @@ def test_digest_ignores_the_kobos_own_logs(device: Path, tmp_path: Path) -> None
     (device / ".kobo" / "affiliate.conf").write_text("changed")
     b = store.take(device, T2).snapshot
     assert a.digest() == b.digest()
+
+
+def test_own_blobs_move_into_the_shared_folder(device: Path, tmp_path: Path) -> None:
+    old = KoboStore(tmp_path / "kobo")  # as an older version kept them
+    snap = old.take(device, T1).snapshot
+    sha = snap.files[".kobo/markups/mk-1.jpg"].sha256
+    shared = tmp_path / "shared" / "blobs"
+    # The shared folder already holds one of them (an adopted markup copy)
+    (shared / sha[:2]).mkdir(parents=True)
+    (shared / sha[:2] / sha).write_bytes((old.blobs / sha[:2] / sha).read_bytes())
+    (old.blobs / ".tmp-left").write_bytes(b"half")
+    store = KoboStore(tmp_path / "kobo", blobs=shared)
+    counts = store.move_own_blobs()
+    assert (
+        counts.duplicates == 1 and counts.moved == len({e.sha256 for e in snap.files.values()}) - 1
+    )
+    assert not (tmp_path / "kobo" / "blobs").exists()
+    assert all(store.blob_path(e.sha256).parent.parent == shared for e in snap.files.values())
+    assert store.move_own_blobs() == type(counts)()  # nothing left to move
+    # The next snapshot finds every unchanged file in the shared folder
+    result = store.take(device, datetime(2026, 11, 7, 9, 57, tzinfo=UTC))
+    assert result.new_blobs == 0
+
+
+def test_a_damaged_shared_copy_is_replaced_by_the_good_one(device: Path, tmp_path: Path) -> None:
+    old = KoboStore(tmp_path / "kobo")
+    snap = old.take(device, T1).snapshot
+    sha = snap.files[".kobo/markups/mk-1.jpg"].sha256
+    good = (old.blobs / sha[:2] / sha).read_bytes()
+    shared = tmp_path / "shared" / "blobs"
+    (shared / sha[:2]).mkdir(parents=True)
+    (shared / sha[:2] / sha).write_bytes(b"rot")
+    KoboStore(tmp_path / "kobo", blobs=shared).move_own_blobs()
+    assert (shared / sha[:2] / sha).read_bytes() == good
+
+
+def test_a_snapshot_leaves_other_writers_temp_files_alone(device: Path, tmp_path: Path) -> None:
+    shared = tmp_path / "shared" / "blobs"
+    shared.mkdir(parents=True)
+    other = shared / ".tmp-abc123"  # core.blobs storing a file meanwhile
+    other.write_bytes(b"in progress")
+    mine = shared / ".tmp-kobo-xyz"  # from a killed Kobo copy
+    mine.write_bytes(b"half")
+    KoboStore(tmp_path / "kobo", blobs=shared).take(device, T1)
+    assert other.exists() and not mine.exists()

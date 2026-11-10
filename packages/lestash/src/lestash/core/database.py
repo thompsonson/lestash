@@ -1512,6 +1512,8 @@ def add_item_media(
     source_origin: str = "sync",
     sha256: str | None = None,
     size: int | None = None,
+    version: int | None = None,
+    superseded_at: str | None = None,
     _commit: bool = True,
 ) -> int:
     """Add a media attachment to an item.
@@ -1519,9 +1521,28 @@ def add_item_media(
     Skips insert if an identical (item_id, media_type, url, local_path, sha256) row
     exists. ``sha256`` names a file already in the file store, of ``size`` bytes.
 
+    With ``sha256`` and ``version``, the row is the one at that position and version:
+    it is written to match, so a source that knows each file's versions (the Kobo's
+    snapshots) can give them all every time. ``superseded_at`` set marks an older one.
+
     Returns:
         The media row ID.
     """
+    if sha256 and version is not None:
+        return _put_media_version(
+            conn,
+            item_id,
+            media_type=media_type,
+            mime_type=mime_type,
+            alt_text=alt_text,
+            position=position,
+            source_origin=source_origin,
+            sha256=sha256,
+            size=size,
+            version=version,
+            superseded_at=superseded_at,
+            commit=_commit,
+        )
     if sha256:
         # A stored file is the same media at the same place: two identical slides in
         # one deck are two rows
@@ -1569,26 +1590,102 @@ def add_item_media(
     return cursor.lastrowid or 0
 
 
+def _put_media_version(
+    conn: sqlite3.Connection,
+    item_id: int,
+    *,
+    media_type: str,
+    mime_type: str | None,
+    alt_text: str | None,
+    position: int,
+    source_origin: str,
+    sha256: str,
+    size: int | None,
+    version: int,
+    superseded_at: str | None,
+    commit: bool,
+) -> int:
+    """The media row at (item, type, position, version), written to match; see
+    add_item_media. A changed file drops the row's media-folder path: that is the
+    old file's."""
+    conn.execute(
+        "INSERT OR IGNORE INTO blobs (sha256, size, mime_type) VALUES (?, ?, ?)",
+        (sha256, size or 0, mime_type),
+    )
+    row = conn.execute(
+        "SELECT id FROM item_media WHERE item_id = ? AND media_type = ? AND position = ? "
+        "AND version = ? ORDER BY id LIMIT 1",
+        (item_id, media_type, position, version),
+    ).fetchone()
+    if row:
+        # Only when something differs, so an unchanged import writes nothing
+        conn.execute(
+            """UPDATE item_media
+               SET local_path = CASE WHEN sha256 IS ? THEN local_path END,
+                   sha256 = ?, mime_type = ?, alt_text = ?, superseded_at = ?
+               WHERE id = ? AND (sha256 IS NOT ? OR mime_type IS NOT ?
+                     OR alt_text IS NOT ? OR superseded_at IS NOT ?)""",
+            (
+                sha256,
+                sha256,
+                mime_type,
+                alt_text,
+                superseded_at,
+                row[0],
+                sha256,
+                mime_type,
+                alt_text,
+                superseded_at,
+            ),
+        )
+        media_id = row[0]
+    else:
+        cursor = conn.execute(
+            """INSERT INTO item_media
+               (item_id, media_type, mime_type, alt_text, position, source_origin,
+                sha256, version, superseded_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                item_id,
+                media_type,
+                mime_type,
+                alt_text,
+                position,
+                source_origin,
+                sha256,
+                version,
+                superseded_at,
+            ),
+        )
+        media_id = cursor.lastrowid or 0
+    if commit:
+        conn.commit()
+    return media_id
+
+
 def get_item_media(conn: sqlite3.Connection, item_id: int) -> list[dict]:
-    """Get all media attachments for an item, ordered by position."""
+    """Get all media attachments for an item, older versions too, ordered by
+    position, then version."""
     rows = conn.execute(
         """SELECT id, item_id, media_type, url, local_path, mime_type,
-                  alt_text, position, source_origin, created_at, sha256
-           FROM item_media WHERE item_id = ? ORDER BY position""",
+                  alt_text, position, source_origin, created_at, sha256,
+                  version, superseded_at
+           FROM item_media WHERE item_id = ? ORDER BY position, version, id""",
         (item_id,),
     ).fetchall()
     return [dict(row) for row in rows]
 
 
 def get_item_media_batch(conn: sqlite3.Connection, item_ids: list[int]) -> dict[int, list[dict]]:
-    """Batch-fetch media for multiple items. Returns {item_id: [media_dicts]}."""
+    """Batch-fetch the current media of several items (no older versions), for
+    listings. Returns {item_id: [media_dicts]}."""
     if not item_ids:
         return {}
     placeholders = ",".join("?" for _ in item_ids)
     rows = conn.execute(
         f"""SELECT id, item_id, media_type, url, local_path, mime_type,
                    alt_text, position, source_origin, created_at, sha256
-            FROM item_media WHERE item_id IN ({placeholders})
+            FROM item_media WHERE item_id IN ({placeholders}) AND superseded_at IS NULL
             ORDER BY item_id, position""",
         item_ids,
     ).fetchall()

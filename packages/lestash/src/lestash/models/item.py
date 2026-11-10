@@ -18,6 +18,10 @@ class MediaCreate(BaseModel):
     source_origin: str = "sync"
     sha256: str | None = None  # the file in the file store, already stored (#217)
     size: int | None = None  # its size in bytes, with sha256
+    # With sha256: which version of the media at this position this file is, and when
+    # a later one replaced it (None: the current one). Rows are matched on version.
+    version: int | None = None
+    superseded_at: str | None = None
 
 
 class ActivityCreate(BaseModel):
