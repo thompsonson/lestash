@@ -253,6 +253,10 @@ class Unfinished(str):
     __slots__ = ()
 
 
+# ffmpeg errors that say this machine is at fault, not the recording
+_NOT_THE_FILE = ("No space left", "error while loading shared libraries", "Cannot allocate")
+
+
 class _Transcriber:
     """Runs the worker on a batch of recordings: here, or on ``[transcribe] host``."""
 
@@ -290,14 +294,21 @@ class _Transcriber:
                     capture_output=True, text=True, check=False,
                 )  # fmt: skip
                 if done.returncode:
-                    results[job.sha256] = f"ffmpeg: {done.stderr.strip()[-250:]}"
+                    why = f"ffmpeg: {_tail(done.stderr, 250)}"
+                    # Killed, or this machine's fault (a full disk, a broken install):
+                    # the recording waits rather than fail for good
+                    local = done.returncode < 0 or any(m in done.stderr for m in _NOT_THE_FILE)
+                    results[job.sha256] = Unfinished(why) if local else why
                 else:
                     ready.append({"sha256": job.sha256, "speakers": job.speakers})
             if not ready:
+                if len(jobs) > 1 and not any(isinstance(r, Unfinished) for r in results.values()):
+                    # Every recording failing at once is ffmpeg, not the recordings
+                    return {sha: Unfinished(why) for sha, why in results.items()}
                 return results
             (folder / "job.json").write_text(json.dumps(ready))
             host = cls.settings.get("host")
-            missing = "no result"
+            missing = Unfinished("no result from the worker")
             try:
                 if host:
                     cls._run_on(str(host), folder)

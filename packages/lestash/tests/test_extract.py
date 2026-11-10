@@ -592,7 +592,7 @@ def test_a_batch_runs_on_the_host_at_low_priority_and_is_deleted_there(
     jobs = [extract.Job(s, tmp_path / s, 2) for s in ("a", "b", "c")]
     results = extract._Transcriber.run(jobs)
     assert results["a"]["version"] == "fake-worker 1" and results["b"] == "ValueError: bad"
-    assert results["c"] == "no result"
+    assert isinstance(results["c"], extract.Unfinished)  # the worker wrote nothing for it
     remote = [c[-1] for c in commands if c[0] == "ssh"]
     assert all(c[c.index("computer") - 1] == "--" for c in commands if c[0] == "ssh")
     job = [c for c in remote if c.startswith("mkdir -p ")][0].split()[-1]
@@ -602,6 +602,7 @@ def test_a_batch_runs_on_the_host_at_low_priority_and_is_deleted_there(
     assert "--nice=10" in started and "CPUQuota=2400%" in started and "--workers 4" in started
     assert "OOMPolicy=continue" in started
     assert "ServerAliveInterval=30" in " ".join(next(c for c in commands if c[0] == "ssh"))
+    assert "ServerAliveInterval=30" in next(c for c in commands if c[0] == "rsync")[3]
     # Nothing kept there, and no unit left running
     assert remote[-1].startswith("systemctl --user stop lestash-transcribe-")
     assert remote[-1].endswith(f"; rm -rf {job}")
@@ -653,6 +654,25 @@ def test_a_host_that_goes_away_makes_transcripts_wait(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(extract._Transcriber, "settings", {"host": "-oProxyCommand=x"})
     with pytest.raises(extract.EngineUnavailable, match="not a host name"):
         extract._Transcriber.run([extract.Job("a", tmp_path / "a", 2)])
+
+
+def test_ffmpeg_failing_for_its_own_reasons_makes_recordings_wait(monkeypatch, tmp_path) -> None:
+    def ffmpeg(stderr: str, code: int = 1):
+        def run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, code, "", stderr)
+
+        monkeypatch.setattr(extract.subprocess, "run", run)
+
+    monkeypatch.setattr(extract.shutil, "which", lambda name: f"/usr/bin/{name}")
+    one = [extract.Job("a", tmp_path / "a", 2)]
+    two = [*one, extract.Job("b", tmp_path / "b", 2)]
+    ffmpeg("Invalid data found when processing input")
+    assert not isinstance(extract._Transcriber.run(one)["a"], extract.Unfinished)  # the file
+    assert all(isinstance(r, extract.Unfinished) for r in extract._Transcriber.run(two).values())
+    ffmpeg("No space left on device")
+    assert isinstance(extract._Transcriber.run(one)["a"], extract.Unfinished)
+    ffmpeg("", code=-9)  # killed
+    assert isinstance(extract._Transcriber.run(one)["a"], extract.Unfinished)
 
 
 def test_a_segment_without_word_times_keeps_its_text() -> None:
