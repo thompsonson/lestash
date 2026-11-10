@@ -1,6 +1,7 @@
 """Media management CLI commands."""
 
 import json
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -241,3 +242,32 @@ def adopt() -> None:
         )
     if counts.missing:
         console.print(f"[yellow]{counts.missing} media row(s) name a file that is gone.[/yellow]")
+
+
+@app.command("notebooklm")
+def notebooklm(
+    zips: list[Path] = typer.Argument(..., help="Every part of one Google Takeout export"),  # noqa: B008
+) -> None:
+    """Import NotebookLM generated artifacts (slides, audio, video, infographics, apps)
+    with their files from a Takeout's zips (#217). Give all parts: a notebook's files
+    are spread over them. Safe to run again."""
+    from lestash.core.blobs import BlobStore, store_root
+    from lestash.core.config import Config
+    from lestash.core.sync import SyncStore
+    from lestash.importers.notebooklm_artifacts import collect, to_items
+
+    config = Config.load()
+    store = BlobStore(store_root(config))
+    artifacts, unmatched = collect(zips)
+    items, new_blobs = to_items(artifacts, store)
+    with get_connection(config) as conn:
+        sync = SyncStore(conn, "notebooklm")
+        sync.run(items)
+        c = sync.counts
+    files = sum(len(i.media or []) for i in items)
+    console.print(
+        f"{len(items)} artifacts ({c.added} new, {c.updated} updated, {c.unchanged} unchanged), "
+        f"{files} files, {new_blobs} new in the store."
+    )
+    for member in unmatched:
+        console.print(f"[yellow]No description for {member}[/yellow]")

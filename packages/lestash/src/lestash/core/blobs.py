@@ -21,6 +21,7 @@ import sqlite3
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import IO
 
 from lestash.core.config import Config, get_database_path
 
@@ -82,6 +83,31 @@ class BlobStore:
                 raise OSError(f"{src} changed while it was copied")
             size = Path(tmp_name).stat().st_size  # of what was stored, not of src now
             os.chmod(tmp_name, 0o644)  # mkstemp makes it 0600
+            os.replace(tmp_name, dest)
+        except BaseException:
+            Path(tmp_name).unlink(missing_ok=True)
+            raise
+        return Blob(sha256, size, new=True)
+
+    def put_stream(self, stream: IO[bytes]) -> Blob:
+        """Store what ``stream`` reads, such as a zip member; one already stored is kept."""
+        self.blobs.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=".tmp-", dir=self.blobs)
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            with os.fdopen(fd, "wb") as out:
+                while chunk := stream.read(CHUNK):
+                    digest.update(chunk)
+                    size += len(chunk)
+                    out.write(chunk)
+            sha256 = digest.hexdigest()
+            dest = self.path(sha256)
+            if dest.is_file():
+                Path(tmp_name).unlink()
+                return Blob(sha256, dest.stat().st_size, new=False)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.chmod(tmp_name, 0o644)
             os.replace(tmp_name, dest)
         except BaseException:
             Path(tmp_name).unlink(missing_ok=True)

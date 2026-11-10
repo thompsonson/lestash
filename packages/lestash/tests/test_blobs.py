@@ -106,3 +106,13 @@ def test_a_file_that_cannot_be_read_is_skipped_and_tried_again(test_db, monkeypa
         assert rows[bad] is None and rows[good] is not None
         monkeypatch.setattr(BlobStore, "put_file", real_put)
         assert adopt_media(conn, test_db, ids=[bad]).adopted == 1
+
+
+def test_media_added_again_by_path_after_adopting_is_not_doubled(test_db) -> None:
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        adopt_media(conn, test_db)
+        # A sync names the same file again by its path, as the Kobo reader does
+        add_item_media(conn, item, media_type="image", local_path=f"{item}/a.png")
+        assert conn.execute("SELECT count(*) FROM item_media").fetchone()[0] == 1

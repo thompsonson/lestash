@@ -16,6 +16,8 @@ class MediaCreate(BaseModel):
     alt_text: str | None = None
     position: int = 0
     source_origin: str = "sync"
+    sha256: str | None = None  # the file in the file store, already stored (#217)
+    size: int | None = None  # its size in bytes, with sha256
 
 
 class ActivityCreate(BaseModel):

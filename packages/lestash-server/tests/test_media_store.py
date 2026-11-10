@@ -1,5 +1,7 @@
 """Uploaded media go into the file store and are served from it (#217)."""
 
+import io
+
 from lestash.core.blobs import store_root
 from lestash.core.database import get_connection, get_media_dir
 
@@ -25,3 +27,36 @@ def test_an_upload_is_stored_and_served_from_the_store(client, test_config) -> N
     served = client.get(f"/api/media/{media_id}")
     assert served.status_code == 200 and served.content == b"\x89PNG data"
     assert served.headers["content-type"] == "image/png"
+
+
+def test_a_stored_app_page_is_a_download_and_audio_plays_inline(client, test_config) -> None:
+    from lestash.core.blobs import BlobStore
+    from lestash.core.database import add_item_media
+
+    store = BlobStore(store_root(test_config))
+    with get_connection(test_config) as conn:
+        item = conn.execute(
+            "INSERT INTO items (source_type, content) VALUES ('notebooklm', 'x') RETURNING id"
+        ).fetchone()[0]
+        ids = {}
+        for name, media_type, mime, data in (
+            ("Flashcards", "file", "text/html", b"<script>alert(1)</script>"),
+            ("Talk.wav", "audio", "audio/x-wav", b"RIFF"),
+        ):
+            blob = store.put_stream(io.BytesIO(data))
+            ids[name] = add_item_media(
+                conn,
+                item,
+                media_type=media_type,
+                mime_type=mime,
+                alt_text=name,
+                sha256=blob.sha256,
+                size=blob.size,
+            )
+    media = {m["alt_text"]: m for m in client.get(f"/api/items/{item}").json()["media"]}
+    assert media["Flashcards"]["available"] and media["Talk.wav"]["available"]
+    page_resp = client.get(f"/api/media/{ids['Flashcards']}")
+    assert page_resp.headers["content-disposition"].startswith("attachment")
+    audio = client.get(f"/api/media/{ids['Talk.wav']}")
+    assert "attachment" not in audio.headers.get("content-disposition", "")
+    assert audio.content == b"RIFF"
