@@ -118,7 +118,7 @@ class _PageText(HTMLParser):
             # A NotebookLM app draws its page with scripts from data in this attribute:
             # flashcards, mind maps, quizzes
             if name == "data-app-data" and value:
-                with contextlib.suppress(ValueError):
+                with contextlib.suppress(ValueError, RecursionError):  # nested too deep
                     self.parts.extend(_strings(json.loads(value)))
 
     def handle_endtag(self, tag: str) -> None:
@@ -324,6 +324,24 @@ def _items_wanting_text(conn: sqlite3.Connection) -> list[int]:
     ]
 
 
+def _still_reads(conn: sqlite3.Connection, store: BlobStore, tool: str) -> bool:
+    """Whether the tool reads a file it read before: if so, files that fail are bad,
+    not the tool. With no such file, it can't be told, and is taken as broken."""
+    for (sha,) in conn.execute(
+        "SELECT sha256 FROM blob_text WHERE tool = ? AND text != '' "
+        "AND tool_version NOT LIKE 'failed [%' ORDER BY extracted_at DESC LIMIT 3",
+        (tool,),
+    ):
+        path = store.path(sha)
+        if path.is_file():
+            try:
+                read_file(tool, path)
+            except Exception:  # noqa: BLE001 - any failure: the tool is broken
+                return False
+            return True
+    return False
+
+
 def extract_pending(
     conn: sqlite3.Connection,
     config: Config | None = None,
@@ -415,10 +433,16 @@ def extract_pending(
         good.add(tool)
         if not write(rows):
             break
-    if any(len(rows) >= 3 for rows in held.values()) and not counts.stopped:
-        broken = sorted(tool for tool, rows in held.items() if len(rows) >= 3)
-        counts.stopped = f"{', '.join(broken)} read no file and failed on every one"
-        counts.engine_failed = True
+    if not counts.stopped and not counts.pending:  # judged only on a whole run
+        broken = []
+        for tool, rows in sorted(held.items()):
+            if len(rows) >= 3 and not _still_reads(conn, store, tool):
+                broken.append(tool)
+            elif not write(rows):  # the files, not the tool: record them
+                break
+        if broken and not counts.stopped:
+            counts.stopped = f"{', '.join(broken)} read no file and failed on every one"
+            counts.engine_failed = True
     try:
         conn.execute("BEGIN IMMEDIATE")  # read and write each item under one lock
         try:

@@ -302,3 +302,25 @@ def test_an_apps_own_data_gives_its_cards(tmp_path) -> None:
         f'<title>Cards</title><app-root data-app-data="{data.replace(chr(34), "&quot;")}">'
     )
     assert page_text(page) == "Cards\nWhat is Hebb's rule?\nFire together"
+
+
+def test_new_bad_files_after_good_ones_are_recorded(test_db, fake_ocr, monkeypatch) -> None:
+    """Every good file read in earlier runs: the tool still reads one of them, so the
+    new failures are the files', and are recorded."""
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run([_deck(store, [b"good 1", b"good 2"])])
+        extract_pending(conn, test_db)
+        SyncStore(conn, "notebooklm").run(
+            [_deck(store, [b"good 1", b"good 2", b"bad 1", b"bad 2", b"bad 3"])]
+        )
+        monkeypatch.setattr(extract._Ocr, "read", classmethod(_picky))
+        counts = extract_pending(conn, test_db)
+        assert (counts.failed, counts.engine_failed, counts.stopped) == (3, False, None)
+        assert extract_pending(conn, test_db).failed == 0
+
+
+def test_deeply_nested_app_data_keeps_the_page_text(tmp_path) -> None:
+    page = tmp_path / "app.html"
+    page.write_text('<p>Visible</p><app-root data-app-data="' + "[" * 100000 + '">')
+    assert page_text(page) == "Visible"
