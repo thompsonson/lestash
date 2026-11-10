@@ -247,6 +247,12 @@ class _WorkerFailed(Exception):
     """The worker ran but stopped part way: the results it wrote are kept."""
 
 
+class Unfinished(str):
+    """A recording a stopped worker never reached: not the file's fault, so it waits."""
+
+    __slots__ = ()
+
+
 class _Transcriber:
     """Runs the worker on a batch of recordings: here, or on ``[transcribe] host``."""
 
@@ -298,7 +304,7 @@ class _Transcriber:
                 else:
                     cls._run_here(folder)
             except _WorkerFailed as e:  # the recordings it didn't finish fail, one by one
-                missing = f"no result: the worker stopped: {e}"
+                missing = Unfinished(f"the worker stopped: {e}")
             except (OSError, subprocess.SubprocessError) as e:
                 detail = _tail(getattr(e, "stderr", None)) or str(e)
                 raise EngineUnavailable(
@@ -346,9 +352,13 @@ class _Transcriber:
         if host.startswith("-"):  # ssh would read it as an option
             raise EngineUnavailable(f"transcripts: not a host name: {host}")
 
+        # Keepalives: a host that drops off mid-batch is noticed in minutes, not hours
+        options = "-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30"
+        options += " -o ServerAliveCountMax=4"
+
         def ssh(command: str, timeout: float = 120) -> str:
             return subprocess.run(
-                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "--", host, command],
+                ["ssh", *options.split(), "--", host, command],
                 check=True, capture_output=True, text=True, timeout=timeout,
             ).stdout  # fmt: skip
 
@@ -361,7 +371,7 @@ class _Transcriber:
         ssh(f"mkdir -p {q(job)}")
         failed = None
         try:
-            rsync = ["rsync", "-a", "-e", "ssh -o BatchMode=yes -o ConnectTimeout=15"]
+            rsync = ["rsync", "-a", "-e", f"ssh {options}"]
             subprocess.run(
                 [*rsync, _worker.__file__, f"{host}:{root}/transcribe_worker.py"],
                 check=True, capture_output=True, text=True, timeout=120,
@@ -376,7 +386,9 @@ class _Transcriber:
             try:
                 ssh(
                     f"{lock} systemd-run --user --wait --pipe --collect --quiet "
-                    f"--unit={unit} --nice=10 -p RuntimeMaxSec=5h "
+                    # A recording that runs out of memory kills its worker, not the
+                    # batch: the worker then does the rest one at a time
+                    f"--unit={unit} --nice=10 -p RuntimeMaxSec=5h -p OOMPolicy=continue "
                     f"-p CPUQuota={workers * threads * 100}% -p MemoryMax={3 * workers}G "
                     f"{q(root)}/.venv/bin/python -I {q(root)}/transcribe_worker.py run "
                     f"{q(job)} --models {q(root)}/models "
@@ -790,9 +802,13 @@ def extract_pending(
             held.pop(TRANSCRIPT_TOOL, None)
             waiting += len(jobs) - n
             break
-        ok = True
+        ok, stopped = True, None
         for job in batch:
             raw = results.get(job.sha256, "no result")
+            if isinstance(raw, Unfinished):
+                waiting += 1
+                stopped = str(raw)
+                continue
             if isinstance(raw, str):
                 logger.warning("Could not transcribe %s: %s", job.sha256, raw)
                 ok = failed(job.sha256, TRANSCRIPT_TOOL, raw)
@@ -800,6 +816,12 @@ def extract_pending(
                 ok = read(job.sha256, TRANSCRIPT_TOOL, transcript_text(raw), raw["version"])
             if not ok:
                 break
+        if stopped:  # the rest wait too, and the run says why
+            logger.warning("Transcripts: %s", stopped)
+            unavailable[TRANSCRIPT_TOOL] = f"transcripts: {stopped}"
+            held.pop(TRANSCRIPT_TOOL, None)
+            waiting += len(jobs) - n - len(batch)
+            break
         if not ok:
             break
     if not counts.stopped and not counts.pending:  # judged only on a whole run

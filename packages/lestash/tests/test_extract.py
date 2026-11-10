@@ -333,7 +333,12 @@ def test_deeply_nested_app_data_keeps_the_page_text(tmp_path) -> None:
 
 
 def _recording(
-    store: BlobStore, data: bytes, kind: str, mime: str, show: str | None = None
+    store: BlobStore,
+    data: bytes,
+    kind: str,
+    mime: str,
+    show: str | None = None,
+    name: str | None = None,
 ) -> ItemCreate:
     blob = store.put_stream(io.BytesIO(data))
     metadata = {"type": "artifact", "artifact_type": kind, "_parent_source_id": NB}
@@ -341,7 +346,7 @@ def _recording(
         metadata["options"] = {"generationOptions": {"showFormat": show}}
     return ItemCreate(
         source_type="notebooklm",
-        source_id=f"{NB}/Artifacts/{kind} metadata",
+        source_id=f"{NB}/Artifacts/{name or kind} metadata",
         title=kind,
         content=f"# {kind}",
         is_own_content=True,
@@ -595,6 +600,8 @@ def test_a_batch_runs_on_the_host_at_low_priority_and_is_deleted_there(
     started = [c for c in remote if "systemd-run" in c][0]
     assert started.startswith("flock /home/mt/lestash-worker/.lock systemd-run")
     assert "--nice=10" in started and "CPUQuota=2400%" in started and "--workers 4" in started
+    assert "OOMPolicy=continue" in started
+    assert "ServerAliveInterval=30" in " ".join(next(c for c in commands if c[0] == "ssh"))
     # Nothing kept there, and no unit left running
     assert remote[-1].startswith("systemctl --user stop lestash-transcribe-")
     assert remote[-1].endswith(f"; rm -rf {job}")
@@ -604,7 +611,39 @@ def test_a_worker_that_stops_part_way_keeps_what_it_finished(monkeypatch, tmp_pa
     _fake_host(monkeypatch, worker_exit=1)
     results = extract._Transcriber.run([extract.Job(s, tmp_path / s, 2) for s in ("a", "c")])
     assert results["a"]["version"] == "fake-worker 1"
-    assert results["c"] == "no result: the worker stopped: worker died"
+    assert results["c"] == "the worker stopped: worker died"
+    assert isinstance(results["c"], extract.Unfinished)
+
+
+def test_recordings_a_stopped_worker_never_reached_wait(test_db, monkeypatch) -> None:
+    calls = []
+
+    def run(cls, batch):
+        calls.append(len(batch))
+        if len(calls) == 1:  # the first batch is done
+            return {j.sha256: _raw("Fine.", 1) for j in batch}
+        first, *rest = batch  # the second stops after one
+        out: dict = {first.sha256: _raw("Fine.", 1)}
+        out.update({j.sha256: extract.Unfinished("the worker stopped: disk full") for j in rest})
+        return out
+
+    monkeypatch.setattr(extract._Transcriber, "run", classmethod(run))
+    monkeypatch.setattr(extract._Transcriber, "batch_size", classmethod(lambda cls: 2))
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run(
+            [
+                _recording(
+                    store, f"take {n}".encode(), "audio_overview", "audio/x-wav", name=f"take {n}"
+                )
+                for n in range(5)
+            ]
+        )
+        counts = extract_pending(conn, test_db)
+        failures = conn.execute("SELECT count(*) FROM blob_text WHERE text = ''").fetchone()[0]
+    assert calls == [2, 2]  # no third batch once the worker stopped
+    assert (counts.files, counts.failed, failures) == (3, 0, 0)
+    assert counts.pending == 2 and counts.engine_failed and "disk full" in (counts.stopped or "")
 
 
 def test_a_host_that_goes_away_makes_transcripts_wait(monkeypatch, tmp_path) -> None:
