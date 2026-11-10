@@ -11,11 +11,32 @@ W3 (#218): searchable text for files that have none.
 
 ## Step 2: NotebookLM audio overviews and explainer videos
 
-- faster-whisper's `small.en` model transcribes them on the CPU, at about 5.6 times real time on pop-mini. `base.en` is three times faster but mishears more ("a server out of you" for "a server outage").
-- Its voice-activity filter skips music and silence, where whisper otherwise makes up words.
-- A transcript has a `## 12:34` heading about each minute, so a search snippet shows where in the recording a phrase is.
-- The model is fetched on first use (about 480 MB) into `~/.local/share/lestash/whisper-models`, the folder `lestash-voice` uses.
-- The first run takes about two hours of transcription, spread over the hourly runs; a recording started before the hour is up is finished.
+- `lestash.core.transcribe_worker` makes a recording's words and speakers. faster-whisper's `small.en` model hears the words, with each word's time. sherpa-onnx finds when each voice speaks.
+- A two-host overview reads as turns: `**Speaker 1** (2:14): ...`. Speakers are numbered as they first speak.
+- One voice reads as text with a `## 12:34` heading about each minute. Briefs (`SHOW_FORMAT_THE_BRIEF`) and explainer videos have one voice.
+- An overview with no format recorded is taken to have two hosts: left to count them, the worker heard six voices in its first 17 seconds.
+- sherpa-onnx's CAM++ English voice model tells the two hosts apart; TitaNet small put both hosts of 3 overviews in 4 under one speaker.
+- A turn's last few words after its last full stop move to the next turn when that one goes on mid-sentence. A word at a turn's edge is often given to the wrong voice.
+- `base.en` is three times faster than `small.en` but mishears more ("a server out of you" for "a server outage"). Whisper's voice-activity filter skips music and silence, where it otherwise makes up words.
+- ffmpeg turns each recording into 16 kHz mono audio first.
+
+### Where it runs
+
+- With no `[transcribe]` table, the worker runs here: one recording at a time, on 4 threads. Its models go to `~/.local/share/lestash/whisper-models` (the folder `lestash-voice` uses) and `~/.local/share/lestash/speaker-models`.
+- With a host set, recordings go there in batches over ssh:
+
+  ```toml
+  [transcribe]
+  host = "computer"  # an ssh name; key login, no password
+  workers = 4        # recordings at once (default 4 on a host, 1 here)
+  threads = 6        # threads each (default 6 on a host, 4 here)
+  ```
+
+- The host keeps the worker in `~/lestash-worker`: its own Python environment, with the packages pinned, and the models (about 1 GB). It needs `python3`, `uv`, `rsync` and a user systemd.
+- Each batch is copied to `~/lestash-worker/jobs/<id>`, run at `nice` 10 with a CPU and memory cap (`workers × threads` CPUs, 3 GB a worker), and deleted once its results are back.
+- In a trial on computer, one worker on 6 threads ran at about 10 times real time.
+- If the host can't be reached, the recordings wait for the next run; pictures and pages are read as usual.
+- Two recordings a worker go between time-budget checks, so a batch started before the hour is up is finished.
 - A tool that seems broken is checked by reading again the smallest file it read before.
 
 ## Where the text goes
