@@ -328,6 +328,137 @@ def test_a_zip_too_big_for_the_disk_is_skipped_and_the_others_import(
 ART = f"{NB}/Artifacts"
 
 
+def _drive_of(monkeypatch, parts: dict[str, tuple[str, Path]]) -> FakeDrive:
+    """A fake Drive holding ``parts``: {file id: (zip name, local zip)}."""
+    service = FakeDrive(
+        [_file(fid, name) for fid, (name, _) in parts.items()],
+        {fid: path for fid, (_, path) in parts.items()},
+    )
+    service.downloaded = []
+
+    def fake_download(svc, file_id, dest):
+        dest.write_bytes(svc.blobs[file_id].read_bytes())
+        svc.downloaded.append(dest)
+        return dest
+
+    monkeypatch.setattr(source, "download", fake_download)
+    monkeypatch.setattr(source, "_drive_service", lambda: service)
+    monkeypatch.setattr(sources_cli, "load_plugins", lambda: {"takeout": source.TakeoutSource()})
+    return service
+
+
+def _artifact_media(test_db) -> dict[str, list[str]]:
+    with get_connection(test_db) as conn:
+        rows = conn.execute(
+            "SELECT i.title, m.alt_text FROM items i JOIN item_media m ON m.item_id = i.id "
+            "WHERE json_extract(i.metadata, '$.type') = 'artifact' ORDER BY i.title, m.alt_text"
+        ).fetchall()
+    out: dict[str, list[str]] = {}
+    for title, alt in rows:
+        out.setdefault(title, []).append(alt)
+    return out
+
+
+def test_one_requests_parts_are_one_export() -> None:
+    names = ["takeout-20260323T221713Z-001.zip", "takeout-20260323T221713Z-3-002.zip"]
+    assert {source.export_key({"name": n}) for n in names} == {
+        "notebooklm:takeout-20260323T221713Z"
+    }
+    assert source.export_key({"name": "takeout-9-001.zip"}) == "notebooklm:takeout-9"
+
+
+def test_a_file_waits_for_its_own_description_in_a_later_part(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    """ "Talk 2.wav" fits "Talk" by its name's start; its own description is in part two.
+    A media row once written stays, so the file waits for the last part."""
+    talk = {"title": "Talk", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
+    talk2 = {"title": "Talk 2", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
+    _drive_of(
+        monkeypatch,
+        {
+            "a": (
+                "takeout-20260101T000000Z-001.zip",
+                _zip(
+                    tmp_path / "a.zip",
+                    {
+                        **NOTEBOOK,
+                        f"{ART}/Talk metadata.json": json.dumps(talk),
+                        f"{ART}/Talk.wav": "one",
+                        f"{ART}/Talk 2.wav": "two",
+                    },
+                ),
+            ),
+            "b": (
+                "takeout-20260101T000000Z-002.zip",
+                _zip(tmp_path / "b.zip", {f"{ART}/Talk 2 metadata.json": json.dumps(talk2)}),
+            ),
+        },
+    )
+    _sync()
+    assert _artifact_media(test_db) == {"Talk": ["Talk.wav"], "Talk 2": ["Talk 2.wav"]}
+
+
+def test_a_last_part_with_nothing_else_completes_the_waiting_files(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    deck = {"title": "Deck", "type": "ARTIFACT_TYPE_SLIDES"}
+    service = _drive_of(
+        monkeypatch,
+        {
+            "a": (
+                "takeout-20260101T000000Z-001.zip",
+                _zip(
+                    tmp_path / "a.zip",
+                    {
+                        **NOTEBOOK,
+                        f"{ART}/Deck metadata.json": json.dumps(deck),
+                        f"{ART}/Deck shortened.pdf": "%PDF",  # matches only by its start
+                    },
+                ),
+            ),
+        },
+    )
+    later = ("takeout-20260101T000000Z-002.zip", _zip(tmp_path / "b.zip", {"Takeout/x.jpg": "x"}))
+    service._files.append(_file("b", later[0]))
+    service.blobs["b"] = later[1]
+    _sync()
+    assert _artifact_media(test_db) == {"Deck": ["Deck shortened.pdf"]}
+    assert _state(test_db)["b"]["status"] == "unrecognized"
+
+
+def test_a_file_store_that_cannot_be_written_stops_the_sync_and_records_nothing(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    from lestash.core.blobs import BlobStore
+
+    deck = {"title": "Deck", "type": "ARTIFACT_TYPE_SLIDES"}
+    _drive_of(
+        monkeypatch,
+        {
+            "a": (
+                "takeout-20260101T000000Z-001.zip",
+                _zip(
+                    tmp_path / "a.zip",
+                    {
+                        **NOTEBOOK,
+                        f"{ART}/Deck metadata.json": json.dumps(deck),
+                        f"{ART}/D.png": "x",
+                    },
+                ),
+            )
+        },
+    )
+
+    def full(self, stream):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(BlobStore, "put_stream", full)
+    _sync(fails=True)
+    assert "a" not in _state(test_db)  # no attempt counted
+    assert "file store" in (_last_sync(test_db)[1] or "")
+
+
 def test_artifacts_spread_over_parts_are_completed_by_the_last_part(
     test_db, tmp_path, monkeypatch
 ) -> None:

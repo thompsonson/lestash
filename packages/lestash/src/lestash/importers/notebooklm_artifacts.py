@@ -168,9 +168,14 @@ def index_zips(zips: list[Path], store: BlobStore) -> Index:
     return index
 
 
-def collect(index: Index) -> tuple[list[Artifact], list[str]]:
+def collect(index: Index, final: bool = True) -> tuple[list[Artifact], list[str]]:
     """The artifacts an index holds, with their files; and the files that belong to no
-    description."""
+    description.
+
+    Before an export's last part (``final=False``), a file goes only to a description of
+    its own name and type: one that fits better may be in a part not read yet, and a
+    media row once written stays. Until then it is unmatched.
+    """
     by_notebook: dict[str, list[Artifact]] = defaultdict(list)
     artifacts = []
     for member, description in index.descriptions.items():
@@ -189,11 +194,12 @@ def collect(index: Index) -> tuple[list[Artifact], list[str]]:
             a for a in by_notebook[notebook] if head.startswith(a.stem) or a.stem.startswith(head)
         ]
         # Of the right type if any is: a type NotebookLM adds later still finds its files
-        candidates = [
-            a for a in named if not kind or a.description.get("type") in (kind, None)
-        ] or named
+        typed = [a for a in named if not kind or a.description.get("type") in (kind, None)]
+        candidates = typed or named
         exact = [a for a in candidates if a.stem == head]
-        if exact or candidates:
+        if not final and not any(a.stem == head for a in typed):
+            unmatched.append(member)  # its own description may be in a later part
+        elif exact or candidates:
             owner = (exact or sorted(candidates, key=lambda a: -len(a.stem)))[0]
             owner.files.append(StoredFile(member, sha256, size))
         else:
