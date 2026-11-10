@@ -371,9 +371,13 @@ def test_a_database_restored_from_before_the_prune_finds_its_files(test_db) -> N
         conn.commit()
         adopt_media(conn, test_db)
         prune_media(conn, test_db)
-        conn.execute("UPDATE item_media SET sha256 = NULL")  # as in the old backup
+        # As in a backup from before the first adopt: no hashes, no blobs rows
+        conn.execute("UPDATE item_media SET sha256 = NULL")
+        conn.execute("DELETE FROM blobs")
+        healthy = _media(conn, test_db, item, f"{item}/b.png", b"new bytes")
         conn.commit()
         counts = adopt_media(conn, test_db)
         row = dict(conn.execute("SELECT * FROM item_media WHERE id = ?", (media_id,)).fetchone())
-    assert (counts.adopted, counts.missing) == (1, 0)
+        (other,) = conn.execute("SELECT sha256 FROM item_media WHERE id = ?", (healthy,)).fetchone()
+    assert (counts.adopted, counts.missing) == (2, 0) and other
     assert media_file(row, test_db).read_bytes() == b"kept bytes"

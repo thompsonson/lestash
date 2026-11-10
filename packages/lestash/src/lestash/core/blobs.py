@@ -160,7 +160,7 @@ def adopt_media(
         params = list(ids)
     rows = conn.execute(query + " ORDER BY id", params).fetchall()
     stored: list[tuple[int, Blob, str | None]] = []
-    repaired: list[tuple[int, str]] = []
+    repaired: list[tuple[int, Blob, str | None]] = []
     for media_id, local_path, mime_type in rows:
         src = media_dir / local_path
         if not src.is_file():
@@ -168,7 +168,8 @@ def adopt_media(
             # row naming the path points at its blob
             sha256 = _stored_sha_for(conn, store, local_path)
             if sha256:
-                repaired.append((media_id, sha256))
+                size = store.path(sha256).stat().st_size
+                repaired.append((media_id, Blob(sha256, size, new=False), mime_type))
             else:
                 counts.missing += 1
             continue
@@ -190,10 +191,11 @@ def adopt_media(
                     "UPDATE item_media SET sha256 = ? WHERE id = ? AND sha256 IS NULL",
                     (blob.sha256, media_id),
                 )
-            for media_id, sha256 in repaired:
+            for media_id, blob, mime_type in repaired:
+                record_blob(conn, blob, mime_type)  # a restored database may lack it
                 conn.execute(
                     "UPDATE item_media SET sha256 = ? WHERE id = ? AND sha256 IS NULL",
-                    (sha256, media_id),
+                    (blob.sha256, media_id),
                 )
         counts.adopted = len(stored) + len(repaired)
     return counts
@@ -222,7 +224,9 @@ def _stored_sha_for(conn: sqlite3.Connection, store: BlobStore, local_path: str)
         return None
     shard = store.blobs / stem[:2]
     matches = [p.name for p in shard.glob(f"{stem}*")] if shard.is_dir() else []
-    return matches[0] if len(matches) == 1 and len(matches[0]) == 64 else None
+    if len(matches) != 1 or len(matches[0]) != 64:
+        return None
+    return matches[0] if sha_file(shard / matches[0]) == matches[0] else None
 
 
 def media_file(conn_row: dict, config: Config | None = None) -> Path | None:
