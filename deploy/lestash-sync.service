@@ -5,3 +5,5 @@ Description=LeStash sync all sources
 Type=oneshot
 ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash sources sync --all
 WorkingDirectory=%h/Projects/thompsonson/lestash
+# Then text from new files, in its own unit, whether or not every source synced (#218)
+ExecStopPost=/usr/bin/systemctl --user start --no-block lestash-extract.service

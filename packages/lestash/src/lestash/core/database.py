@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -622,6 +622,21 @@ MIGRATIONS = [
             size INTEGER NOT NULL,
             mime_type TEXT,
             first_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+    ),
+    (
+        23,
+        "Add blob_text: the text read from a stored file, by the tool that read it",
+        # #218 (W3): read once per file; an item's text is built from it
+        """
+        CREATE TABLE IF NOT EXISTS blob_text (
+            sha256 TEXT NOT NULL REFERENCES blobs(sha256),
+            tool TEXT NOT NULL,
+            tool_version TEXT,
+            text TEXT NOT NULL,
+            extracted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (sha256, tool)
         );
         """,
     ),

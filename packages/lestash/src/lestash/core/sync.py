@@ -22,6 +22,7 @@ from lestash.core.database import (
     resolve_parent_source_ids,
     save_checkpoint,
 )
+from lestash.core.extract import content_on_import
 from lestash.core.links import link_items
 from lestash.importers import merge_with_stored
 from lestash.models.item import ItemCreate
@@ -158,6 +159,17 @@ class SyncStore:
             "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
             (item.source_type, item.source_id),
         ).fetchone()
+        # Text read from its files (#218) is kept, so an import adds no history
+        with_text = content_on_import(
+            self.conn,
+            item.source_type,
+            item.content,
+            item.metadata,
+            item.media or [],
+            stored[0] if stored else None,
+        )
+        if with_text is not None:
+            item = item.model_copy(update={"content": with_text[0], "metadata": with_text[1]})
         # A row back means the upsert wrote one; none, that the stored row is the same
         written = self.conn.execute(
             _UPSERT,
