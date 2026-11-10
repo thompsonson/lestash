@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 import typer
-from lestash.core.database import get_connection, get_media_dir
+from lestash.core.blobs import BlobStore, store_root
+from lestash.core.database import get_connection
 from lestash.core.sync import SyncStore
 from lestash.models.sync import SyncCheckpoint
 from lestash_kobo import KoboSource
@@ -22,7 +23,7 @@ T1 = datetime(2026, 11, 7, 9, 56, tzinfo=UTC)
 def _items(device: Path, tmp_path: Path, **kw):
     store = KoboStore(tmp_path / "store")
     snap = store.take(device, T1).snapshot
-    return list(KoboReader(store, snap, media_dir=tmp_path / "media", **kw).items())
+    return list(KoboReader(store, snap, **kw).items())
 
 
 def test_titles_skip_notebooks_and_unopened_store_books(device: Path, tmp_path: Path) -> None:
@@ -69,8 +70,25 @@ def test_markup_carries_its_images(device: Path, tmp_path: Path) -> None:
     markup = next(i for i in _items(device, tmp_path) if i.source_id == "bookmark:mk-1")
     assert markup.content == "[Handwritten markup]"
     assert [m.mime_type for m in markup.media or []] == ["image/jpeg", "image/svg+xml"]
-    jpg = (tmp_path / "media" / markup.media[0].local_path).read_bytes()
-    assert jpg == b"\xff\xd8jpeg"
+    jpg = markup.media[0]
+    assert jpg.local_path is None and jpg.superseded_at is None
+    assert jpg.seen_at == "2026-11-07 09:56:00"  # T1, the snapshot it was first in
+    store = KoboStore(tmp_path / "store")
+    assert store.blob_path(jpg.sha256 or "").read_bytes() == b"\xff\xd8jpeg"
+
+
+def test_a_book_file_is_media_pointing_at_its_blob(device: Path, tmp_path: Path) -> None:
+    items = _items(device, tmp_path)
+    pdf = next(i for i in items if i.source_id == DRIVE_PDF)
+    (media,) = pdf.media or []
+    assert (media.media_type, media.mime_type, media.alt_text) == (
+        "pdf",
+        "application/pdf",
+        "Judge.pdf",
+    )
+    assert media.sha256 == pdf.metadata["file_sha256"] and media.size == len(b"%PDF-1.4 clean")
+    # A Kobo store book has no file of its own on the device
+    assert not next(i for i in items if i.source_id == NN).media
 
 
 def test_sync_stores_children_under_books_and_is_idempotent(
@@ -95,7 +113,7 @@ def test_sync_stores_children_under_books_and_is_idempotent(
             "SELECT i.source_id, p.source_id FROM items i LEFT JOIN items p ON p.id = i.parent_id"
             " WHERE i.source_type = 'kobo' ORDER BY i.source_id"
         ).fetchall()
-        media = conn.execute("SELECT local_path FROM item_media").fetchall()
+        media = conn.execute("SELECT sha256, local_path, version FROM item_media").fetchall()
     assert dict(rows) == {
         DRIVE_PDF: None,
         NN: None,
@@ -104,9 +122,10 @@ def test_sync_stores_children_under_books_and_is_idempotent(
         "bookmark:hl-2": NN,
         "bookmark:mk-1": NN,
     }
-    assert len(media) == 2  # the second sync didn't add the images again
+    assert len(media) == 3  # the PDF and two images; the second sync added none again
     assert history == 0  # nor rewrite unchanged items
-    assert all((get_media_dir(test_db) / m[0]).is_file() for m in media)
+    shared = BlobStore(store_root(test_db))
+    assert all(shared.has(sha) and path is None and v == 1 for sha, path, v in media)
 
 
 def test_sync_without_store_is_quiet(tmp_path: Path, caplog) -> None:
@@ -149,11 +168,15 @@ def test_redrawn_markup_replaces_its_image(device: Path, tmp_path: Path, test_db
     with get_connection(test_db) as conn:
         SyncStore(conn, "kobo").run(KoboSource().sync(config))
         rows = conn.execute(
-            "SELECT m.local_path FROM item_media m JOIN items i ON i.id = m.item_id"
+            "SELECT m.sha256, m.version, m.superseded_at FROM item_media m"
+            " JOIN items i ON i.id = m.item_id"
             " WHERE i.source_id = 'bookmark:mk-1' AND m.mime_type = 'image/jpeg'"
+            " ORDER BY m.version"
         ).fetchall()
-    assert len(rows) == 1
-    assert (get_media_dir(test_db) / rows[0][0]).read_bytes() == b"\xff\xd8redrawn"
+    shared = BlobStore(store_root(test_db))
+    assert [(v, s) for _, v, s in rows] == [(1, "2026-11-07 09:57:00"), (2, None)]
+    assert shared.path(rows[1][0]).read_bytes() == b"\xff\xd8redrawn"
+    assert shared.path(rows[0][0]).read_bytes() == b"\xff\xd8jpeg"  # the old one is kept
 
 
 def test_unchanged_snapshot_is_not_imported_twice(device: Path, tmp_path: Path, test_db) -> None:
@@ -218,9 +241,8 @@ def test_titles_do_not_change_between_identical_snapshots(device: Path, tmp_path
     store = KoboStore(tmp_path / "store")
     a = store.take(device, T1).snapshot
     b = store.take(device, datetime(2026, 11, 7, 9, 57, tzinfo=UTC)).snapshot
-    media = tmp_path / "media"
-    first = [i.model_dump() for i in KoboReader(store, a, media_dir=media).items()]
-    second = [i.model_dump() for i in KoboReader(store, b, media_dir=media).items()]
+    first = [i.model_dump() for i in KoboReader(store, a).items()]
+    second = [i.model_dump() for i in KoboReader(store, b).items()]
     assert first == second
 
 
@@ -255,14 +277,6 @@ def test_store_title_with_only_hidden_marks_is_skipped(device: Path, tmp_path: P
     conn.commit()
     conn.close()
     assert STORE_UNOPENED not in {i.source_id for i in _items(device, tmp_path)}
-
-
-def test_markup_temp_files_from_a_killed_sync_are_swept(device: Path, tmp_path: Path) -> None:
-    leftover = tmp_path / "media" / "kobo" / ".tmp-markup-mk-1.jpg-abc"
-    leftover.parent.mkdir(parents=True)
-    leftover.write_bytes(b"half")
-    _items(device, tmp_path)
-    assert not leftover.exists()
 
 
 def test_a_snapshot_taken_during_an_import_is_imported_too(
@@ -328,7 +342,7 @@ def test_a_lost_markup_blob_skips_the_image_not_the_import(device: Path, tmp_pat
     blob = snap.blob(store, ".kobo/markups/mk-1.jpg")
     assert blob is not None
     blob.unlink()
-    items = list(KoboReader(store, snap, media_dir=tmp_path / "media").items())
+    items = list(KoboReader(store, snap).items())
     markup = next(i for i in items if i.source_id == "bookmark:mk-1")
     assert [m.mime_type for m in markup.media or []] == ["image/svg+xml"]
 
@@ -424,3 +438,79 @@ def test_orphan_highlights_name_their_book_and_skip_notebooks(device: Path, tmp_
     items = {i.source_id: i for i in _items(device, tmp_path)}
     assert items["bookmark:hl-gone"].metadata["book"] == "Gone Book"
     assert "bookmark:hl-nb" not in items
+
+
+def test_a_pdf_keeps_every_version_the_snapshots_saw(device: Path, tmp_path: Path, test_db) -> None:
+    store = KoboStore(tmp_path / "store")
+    config = {"store_dir": str(store.root)}
+    pdf = device / ".kobo" / "google_drive" / "Papers" / "Judge.pdf"
+    # Annotated on the Kobo, then Drive sync put the clean original back
+    for minute, body in (
+        (56, b"%PDF-1.4 clean"),
+        (57, b"%PDF-1.4 annotated"),
+        (58, b"%PDF-1.4 clean"),
+    ):
+        pdf.write_bytes(body)
+        store.take(device, datetime(2026, 11, 7, 9, minute, tzinfo=UTC))
+    snapshots = []
+    for _ in range(2):  # importing again writes nothing
+        with get_connection(test_db) as conn:
+            conn.execute("DELETE FROM sync_checkpoints WHERE source = 'kobo'")
+            conn.commit()
+            SyncStore(conn, "kobo").run(KoboSource().sync(config))
+            snapshots.append(conn.execute("SELECT * FROM item_media ORDER BY id").fetchall())
+    assert [tuple(r) for r in snapshots[0]] == [tuple(r) for r in snapshots[1]]
+    with get_connection(test_db) as conn:
+        rows = conn.execute(
+            "SELECT m.version, m.superseded_at, m.sha256 FROM item_media m"
+            " JOIN items i ON i.id = m.item_id WHERE i.source_id = ? ORDER BY m.version",
+            (DRIVE_PDF,),
+        ).fetchall()
+    assert [(v, s) for v, s, _ in rows] == [
+        (1, "2026-11-07 09:57:00"),
+        (2, "2026-11-07 09:58:00"),
+        (3, None),
+    ]
+    assert rows[0][2] == rows[2][2] != rows[1][2]
+
+
+def test_by_default_the_files_move_into_the_file_store(
+    device: Path, tmp_path: Path, test_db
+) -> None:
+    shared = store_root(test_db)
+    KoboStore(shared / "kobo").take(device, T1)  # as an older version kept them
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "kobo").run(KoboSource().sync({}))
+        shas = [r[0] for r in conn.execute("SELECT sha256 FROM item_media")]
+    assert len(shas) == 3 and all(BlobStore(shared).has(s) for s in shas)
+    assert not (shared / "kobo" / "blobs").exists()
+
+
+def test_a_lost_snapshot_renumbers_nothing(device: Path, tmp_path: Path, test_db) -> None:
+    store = KoboStore(tmp_path / "store")
+    config = {"store_dir": str(store.root)}
+    pdf = device / ".kobo" / "google_drive" / "Papers" / "Judge.pdf"
+    snaps = []
+    for minute, body in ((56, b"%PDF a"), (57, b"%PDF b"), (58, b"%PDF c")):
+        pdf.write_bytes(body)
+        snaps.append(store.take(device, datetime(2026, 11, 7, 9, minute, tzinfo=UTC)).snapshot)
+
+    def rows():
+        with get_connection(test_db) as conn:
+            conn.execute("DELETE FROM sync_checkpoints WHERE source = 'kobo'")
+            conn.commit()
+            SyncStore(conn, "kobo").run(KoboSource().sync(config))
+            return [
+                tuple(r)
+                for r in conn.execute(
+                    "SELECT m.version, m.superseded_at, m.sha256 FROM item_media m"
+                    " JOIN items i ON i.id = m.item_id WHERE i.source_id = ? ORDER BY m.version",
+                    (DRIVE_PDF,),
+                )
+            ]
+
+    before = rows()
+    assert [r[1] is None for r in before] == [False, False, True]
+    for lost in (snaps[0], snaps[1]):  # the oldest, then the middle one too
+        (lost.path / "manifest.json").write_text("{")
+        assert rows() == before

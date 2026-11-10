@@ -1512,6 +1512,8 @@ def add_item_media(
     source_origin: str = "sync",
     sha256: str | None = None,
     size: int | None = None,
+    seen_at: str | None = None,
+    superseded_at: str | None = None,
     _commit: bool = True,
 ) -> int:
     """Add a media attachment to an item.
@@ -1519,9 +1521,28 @@ def add_item_media(
     Skips insert if an identical (item_id, media_type, url, local_path, sha256) row
     exists. ``sha256`` names a file already in the file store, of ``size`` bytes.
 
+    With ``sha256`` and ``seen_at``, the file is one version of the media at this
+    position, from this ``source_origin``: see _put_media_version. A source that knows
+    each file's versions (the Kobo's snapshots) gives them all, every time.
+
     Returns:
         The media row ID.
     """
+    if sha256 and seen_at is not None:
+        return _put_media_version(
+            conn,
+            item_id,
+            media_type=media_type,
+            mime_type=mime_type,
+            alt_text=alt_text,
+            position=position,
+            source_origin=source_origin,
+            sha256=sha256,
+            size=size,
+            seen_at=seen_at,
+            superseded_at=superseded_at,
+            commit=_commit,
+        )
     if sha256:
         # A stored file is the same media at the same place: two identical slides in
         # one deck are two rows
@@ -1569,26 +1590,139 @@ def add_item_media(
     return cursor.lastrowid or 0
 
 
+def _put_media_version(
+    conn: sqlite3.Connection,
+    item_id: int,
+    *,
+    media_type: str,
+    mime_type: str | None,
+    alt_text: str | None,
+    position: int,
+    source_origin: str,
+    sha256: str,
+    size: int | None,
+    seen_at: str,
+    superseded_at: str | None,
+    commit: bool,
+) -> int:
+    """One version of the media at (item, type, position), from one origin.
+
+    The row is the one of this file first seen at ``seen_at`` (kept in created_at).
+    Its type and label are written when they differ, so an unchanged import writes
+    nothing. A replaced version stays replaced: superseded_at is only ever set on a
+    current row, so a source that forgets a snapshot (and with it, that a version was
+    replaced) never makes two rows current; and the current one closes any other
+    current row of the slot, a version the source no longer knows. A new row is
+    numbered after the slot's
+    others; numbers never change. Rows of another origin (an upload at the same
+    position) are never matched.
+
+    Else a current row of this file, or one replaced at the same time, is the one, and
+    takes ``seen_at``: a row from before versions (an adopted file, created when it
+    was synced, perhaps since redrawn), or one whose first sighting the source forgot.
+    """
+    conn.execute(
+        "INSERT OR IGNORE INTO blobs (sha256, size, mime_type) VALUES (?, ?, ?)",
+        (sha256, size or 0, mime_type),
+    )
+    slot = "item_id = ? AND media_type = ? AND position = ? AND source_origin = ?"
+    key = (item_id, media_type, position, source_origin)
+    row = conn.execute(
+        f"SELECT id FROM item_media WHERE {slot} AND sha256 = ? AND created_at = ? "
+        "ORDER BY id LIMIT 1",
+        (*key, sha256, seen_at),
+    ).fetchone()
+    if row is None:
+        row = conn.execute(
+            f"SELECT id FROM item_media WHERE {slot} AND sha256 = ? "
+            "AND (superseded_at IS NULL OR superseded_at IS ?) ORDER BY version, id LIMIT 1",
+            (*key, sha256, superseded_at),
+        ).fetchone()
+        if row is not None:
+            conn.execute("UPDATE item_media SET created_at = ? WHERE id = ?", (seen_at, row[0]))
+    # The source's current file. A replaced row of it means the file came back after a
+    # version the source no longer knows: its current row, else a new one.
+    if (
+        superseded_at is None
+        and row is not None
+        and conn.execute(
+            "SELECT superseded_at IS NOT NULL FROM item_media WHERE id = ?", (row[0],)
+        ).fetchone()[0]
+    ):
+        row = conn.execute(
+            f"SELECT id FROM item_media WHERE {slot} AND sha256 = ? "
+            "AND superseded_at IS NULL ORDER BY version DESC, id DESC LIMIT 1",
+            (*key, sha256),
+        ).fetchone()
+    if row:
+        conn.execute(
+            """UPDATE item_media
+               SET mime_type = ?, alt_text = ?, superseded_at = coalesce(superseded_at, ?)
+               WHERE id = ? AND (mime_type IS NOT ? OR alt_text IS NOT ?
+                     OR (superseded_at IS NULL AND ? IS NOT NULL))""",
+            (mime_type, alt_text, superseded_at, row[0], mime_type, alt_text, superseded_at),
+        )
+        media_id = row[0]
+    else:
+        (last,) = conn.execute(
+            f"SELECT coalesce(max(version), 0) FROM item_media WHERE {slot}", key
+        ).fetchone()
+        cursor = conn.execute(
+            """INSERT INTO item_media
+               (item_id, media_type, mime_type, alt_text, position, source_origin,
+                sha256, version, superseded_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                item_id,
+                media_type,
+                mime_type,
+                alt_text,
+                position,
+                source_origin,
+                sha256,
+                last + 1,
+                superseded_at,
+                seen_at,
+            ),
+        )
+        media_id = cursor.lastrowid or 0
+    if superseded_at is None:
+        # One current row: any other is a version the source no longer knows (its
+        # snapshot or blob lost), replaced when this one was seen, or when it was itself
+        # first seen if that is later (a file come back keeps its first sighting)
+        conn.execute(
+            f"UPDATE item_media SET superseded_at = max(?, coalesce(created_at, ?)) "
+            f"WHERE {slot} AND superseded_at IS NULL AND id != ? AND sha256 IS NOT NULL",
+            (seen_at, seen_at, *key, media_id),
+        )
+    if commit:
+        conn.commit()
+    return media_id
+
+
 def get_item_media(conn: sqlite3.Connection, item_id: int) -> list[dict]:
-    """Get all media attachments for an item, ordered by position."""
+    """Get all media attachments for an item, older versions too, ordered by
+    position, then version."""
     rows = conn.execute(
         """SELECT id, item_id, media_type, url, local_path, mime_type,
-                  alt_text, position, source_origin, created_at, sha256
-           FROM item_media WHERE item_id = ? ORDER BY position""",
+                  alt_text, position, source_origin, created_at, sha256,
+                  version, superseded_at
+           FROM item_media WHERE item_id = ? ORDER BY position, version, id""",
         (item_id,),
     ).fetchall()
     return [dict(row) for row in rows]
 
 
 def get_item_media_batch(conn: sqlite3.Connection, item_ids: list[int]) -> dict[int, list[dict]]:
-    """Batch-fetch media for multiple items. Returns {item_id: [media_dicts]}."""
+    """Batch-fetch the current media of several items (no older versions), for
+    listings. Returns {item_id: [media_dicts]}."""
     if not item_ids:
         return {}
     placeholders = ",".join("?" for _ in item_ids)
     rows = conn.execute(
         f"""SELECT id, item_id, media_type, url, local_path, mime_type,
                    alt_text, position, source_origin, created_at, sha256
-            FROM item_media WHERE item_id IN ({placeholders})
+            FROM item_media WHERE item_id IN ({placeholders}) AND superseded_at IS NULL
             ORDER BY item_id, position""",
         item_ids,
     ).fetchall()

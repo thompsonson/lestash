@@ -44,8 +44,11 @@ lestash sources sync kobo                             # import the newest snapsh
 
 ```toml
 [kobo]
-store_dir = "~/.local/share/lestash/kobo"   # default
+# store_dir = "/path/to/kobo-store"   # default: kobo/ in the file store, files in its blobs/
 include_store_titles = false                # default
 ```
+
+A `store_dir` of its own keeps its snapshots' files there too; each book file and
+markup image an import attaches is copied into the file store, which serves it.
 
 Or set one from the command line: `lestash config set kobo.include_store_titles true`.

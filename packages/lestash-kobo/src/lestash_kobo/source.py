@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from lestash.core.blobs import BlobStore, store_root
 from lestash.core.config import Config, as_bool
-from lestash.core.database import get_checkpoints, get_connection, get_media_dir
+from lestash.core.database import get_checkpoints, get_connection
 from lestash.core.logging import get_plugin_logger
 from lestash.models.item import ItemCreate
 from lestash.models.sync import SyncCheckpoint
@@ -53,7 +54,18 @@ def _raise_on_sigterm(signum: int, frame: object) -> None:
 
 
 def _store(config: dict) -> KoboStore:
-    return KoboStore(config.get("store_dir"))
+    """By default, snapshots in ``kobo`` in the file store and their files in its blob
+    folder (#217). A ``store_dir`` of its own keeps both there, as before: the file
+    store follows the database, so a test environment's would otherwise take the files
+    of the store_dir it names."""
+    if config.get("store_dir"):
+        return KoboStore(config["store_dir"])
+    shared = store_root(Config.load())
+    return KoboStore(shared / "kobo", blobs=shared / "blobs")
+
+
+def _files() -> BlobStore:
+    return BlobStore(store_root(Config.load()))
 
 
 def _report(result: SnapshotResult) -> None:
@@ -179,8 +191,9 @@ class KoboSource(SourcePlugin):
                         logger.info("Kobo snapshot %s is already imported", snapshot.name)
                         return
                 logger.info("Reading Kobo snapshot %s", snapshot.name)
+                store.move_own_blobs()
                 reader = KoboReader(
-                    store, snapshot, media_dir=get_media_dir(), include_store_titles=include_store
+                    store, snapshot, include_store_titles=include_store, files=_files()
                 )
                 yield from reader.items()
                 yield SyncCheckpoint(key=STATE_KEY, value=state)

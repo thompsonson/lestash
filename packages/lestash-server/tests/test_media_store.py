@@ -60,3 +60,36 @@ def test_a_stored_app_page_is_a_download_and_audio_plays_inline(client, test_con
     audio = client.get(f"/api/media/{ids['Talk.wav']}")
     assert "attachment" not in audio.headers.get("content-disposition", "")
     assert audio.content == b"RIFF"
+
+
+def test_older_versions_are_listed_and_served(client, test_config) -> None:
+    from lestash.core.blobs import BlobStore
+    from lestash.core.database import add_item_media
+
+    store = BlobStore(store_root(test_config))
+    with get_connection(test_config) as conn:
+        item = conn.execute(
+            "INSERT INTO items (source_type, content) VALUES ('kobo', 'x') RETURNING id"
+        ).fetchone()[0]
+        old, new = (store.put_stream(io.BytesIO(b)) for b in (b"%PDF annotated", b"%PDF clean"))
+        for seen, blob, superseded in (
+            ("2026-11-07 09:56:00", old, "2026-11-07 09:57:00"),
+            ("2026-11-07 09:57:00", new, None),
+        ):
+            add_item_media(
+                conn,
+                item,
+                media_type="pdf",
+                mime_type="application/pdf",
+                alt_text="Judge.pdf",
+                sha256=blob.sha256,
+                size=blob.size,
+                seen_at=seen,
+                superseded_at=superseded,
+            )
+    media = client.get(f"/api/items/{item}").json()["media"]
+    assert [(m["version"], m["superseded_at"]) for m in media] == [
+        (1, "2026-11-07 09:57:00"),
+        (2, None),
+    ]
+    assert client.get(media[0]["serve_url"]).content == b"%PDF annotated"

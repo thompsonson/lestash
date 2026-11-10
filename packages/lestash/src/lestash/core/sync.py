@@ -206,6 +206,8 @@ class SyncStore:
                     source_origin=media.source_origin,
                     sha256=media.sha256,
                     size=media.size,
+                    seen_at=media.seen_at,
+                    superseded_at=media.superseded_at,
                     _commit=False,
                 )
         finally:

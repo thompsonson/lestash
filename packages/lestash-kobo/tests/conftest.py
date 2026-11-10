@@ -218,8 +218,10 @@ def device(tmp_path: Path) -> Path:
     return root
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def test_db(monkeypatch):
+    """A temporary LeStash database, for every test: the source writes into the file
+    store beside it, never into the real one."""
     with tempfile.TemporaryDirectory() as tmpdir:
         config = Config(general=GeneralConfig(database_path=str(Path(tmpdir) / "test.db")))
         init_database(config)

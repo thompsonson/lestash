@@ -2,7 +2,8 @@
 
 Each title becomes a parent item (``source_id`` = the Kobo ContentID). Highlights,
 notes, dog-ears and pen markups become its children, linked through
-``metadata._parent_source_id``. Markup images are copied into LeStash's media folder.
+``metadata._parent_source_id``. A book's file and a markup's images are media pointing
+at their blobs in the file store, one row per version the snapshots have seen (#217).
 
 Columns are read by name. Optional ones read as empty when missing, so a firmware
 update that adds or drops one doesn't break the import; the keys (ContentID,
@@ -13,7 +14,7 @@ from __future__ import annotations
 
 import html
 import logging
-import os
+import mimetypes
 import re
 import shutil
 import sqlite3
@@ -24,15 +25,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from lestash.core.blobs import BlobStore
 from lestash.models.item import ItemCreate, MediaCreate
 
-from lestash_kobo.store import DB_PATH, KoboStore, Snapshot, sha_file
+from lestash_kobo.store import DB_PATH, FileEntry, KoboStore, Snapshot
 
 logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "kobo"
 # Bump when the items change shape, so the next sync re-imports an unchanged snapshot
-READER_VERSION = 1
+READER_VERSION = 2  # 2: book files and markups as stored, versioned media
 DEVICE_ROOT = "file:///mnt/onboard/"
 MARKUP_PLACEHOLDER = "[Handwritten markup]"
 BOOKMARK_PLACEHOLDER = "[Bookmark]"
@@ -48,6 +50,11 @@ def parse_date(value: str | None) -> datetime | None:
     except ValueError:
         return None
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _db_time(when: datetime) -> str:
+    """A time as SQLite's CURRENT_TIMESTAMP writes it: UTC, to the second."""
+    return when.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _text(value: Any) -> str:
@@ -118,12 +125,15 @@ class KoboReader:
         self,
         store: KoboStore,
         snapshot: Snapshot,
-        media_dir: Path | None = None,
         include_store_titles: bool = False,
+        files: BlobStore | None = None,
     ) -> None:
+        """``files`` is the file store media are served from; a Kobo store keeping its own
+        blobs (a ``store_dir`` of its own) has each attached file copied there."""
         self.store, self.snapshot = store, snapshot
-        self.media_dir = media_dir
         self.include_store_titles = include_store_titles
+        self.files = files
+        self._history: list[Snapshot] | None = None
 
     def _read_db(self) -> tuple[list[dict], list[dict], dict[str, dict]]:
         db = self.snapshot.blob(self.store, DB_PATH)
@@ -158,7 +168,6 @@ class KoboReader:
         return titles, marks, chapters
 
     def items(self) -> Iterator[ItemCreate]:
-        self._sweep_media_temp()
         titles, marks, chapters = self._read_db()
 
         marks = [m for m in marks if str(m.get("Hidden")).lower() != "true"]
@@ -218,6 +227,7 @@ class KoboReader:
             entry = self.snapshot.files.get(path)
             if entry:
                 meta["file_sha256"] = entry.sha256
+        media = self._book_media(path, row.get("MimeType")) if path else None
         return ItemCreate(
             source_type=SOURCE_TYPE,
             source_id=row["ContentID"],
@@ -226,6 +236,7 @@ class KoboReader:
             author=author,
             created_at=parse_date(row.get("DateAdded")) or parse_date(row.get("___SyncTime")),
             metadata={k: v for k, v in meta.items() if v not in (None, "")},
+            media=media,
         )
 
     def bookmark_item(self, mark: dict[str, Any], chapters: dict[str, dict]) -> ItemCreate:
@@ -264,56 +275,85 @@ class KoboReader:
             media=self._markup_media(mark["BookmarkID"]) if kind == "markup" else None,
         )
 
-    def _sweep_media_temp(self) -> None:
-        """Remove markup temp files left by a killed sync. Imports hold the store lock."""
-        if self.media_dir is not None:
-            for leftover in (self.media_dir / "kobo").glob(".tmp-*"):
-                leftover.unlink(missing_ok=True)
+    def _versions(self, device_path: str) -> list[tuple[FileEntry, str, str | None]]:
+        """Each version of a device file the snapshots up to this one have seen, oldest
+        first: when it was first seen, and when the next one replaced it (None for the
+        newest).
 
-    def _markup_media(self, bookmark_id: str) -> list[MediaCreate] | None:
-        """The pen strokes of a markup: a JPG of the page and an SVG of the ink.
-
-        The file name follows the bookmark, not the contents, so a redrawn markup
-        replaces its image instead of adding a second one.
+        Only while the file is in this snapshot: a file gone from the Kobo keeps the
+        media rows an earlier import wrote.
         """
-        if self.media_dir is None:
-            return None
-        safe_id = re.sub(r"[^A-Za-z0-9._-]", "_", bookmark_id)
+        if device_path not in self.snapshot.files:
+            return []
+        if self._history is None:
+            self._history = [
+                s for s in self.store.snapshots() if s.taken_at <= self.snapshot.taken_at
+            ]
+            if not any(s.name == self.snapshot.name for s in self._history):
+                self._history.append(self.snapshot)
+        seen: list[tuple[FileEntry, datetime]] = []
+        for snap in self._history:
+            entry = snap.files.get(device_path)
+            if entry and (not seen or seen[-1][0].sha256 != entry.sha256):
+                seen.append((entry, snap.taken_at))
+        return [
+            (entry, _db_time(when), _db_time(seen[i + 1][1]) if i + 1 < len(seen) else None)
+            for i, (entry, when) in enumerate(seen)
+        ]
+
+    def _stored_media(
+        self,
+        device_path: str,
+        media_type: str,
+        mime_type: str | None,
+        alt_text: str,
+        position: int = 0,
+    ) -> list[MediaCreate]:
+        """A media row per version of the file, pointing at its blob; versions whose
+        blob is lost are left out, so one lost file never blocks an import."""
         media = []
-        for pos, (ext, mime) in enumerate((("jpg", "image/jpeg"), ("svg", "image/svg+xml"))):
-            entry = self.snapshot.files.get(f".kobo/markups/{bookmark_id}.{ext}")
-            if not entry:
+        for entry, seen_at, superseded_at in self._versions(device_path):
+            blob = self.store.blob_path(entry.sha256)
+            if not blob.is_file():
+                logger.warning("Kobo file %s is missing from the store", device_path)
                 continue
-            if not self.store.blob_path(entry.sha256).is_file():
-                # One lost image must not block every later import
-                logger.warning(
-                    "Kobo markup image %s.%s is missing from the store", bookmark_id, ext
-                )
-                continue
-            rel = f"kobo/markup-{safe_id}.{ext}"
-            dest = self.media_dir / rel
-            if (
-                not dest.exists()
-                or dest.stat().st_size != entry.size
-                or sha_file(dest) != entry.sha256
-            ):
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                fd, tmp_name = tempfile.mkstemp(prefix=f".tmp-{dest.name}-", dir=dest.parent)
-                os.close(fd)
+            if self.files is not None and not self.files.has(entry.sha256):
                 try:
-                    shutil.copyfile(self.store.blob_path(entry.sha256), tmp_name)
-                    os.replace(tmp_name, dest)
-                except BaseException:
-                    Path(tmp_name).unlink(missing_ok=True)
-                    raise
+                    stored = self.files.put_file(blob)
+                except OSError as e:
+                    logger.warning("Could not store Kobo file %s: %s", device_path, e)
+                    continue
+                if stored.sha256 != entry.sha256:
+                    logger.warning("Kobo file %s does not match its snapshot", device_path)
+                    continue
             media.append(
                 MediaCreate(
-                    media_type="image",
-                    local_path=rel,
-                    mime_type=mime,
-                    alt_text="Kobo pen markup",
-                    position=pos,
+                    media_type=media_type,
+                    mime_type=mime_type,
+                    alt_text=alt_text,
+                    position=position,
+                    sha256=entry.sha256,
+                    size=entry.size,
+                    seen_at=seen_at,
+                    superseded_at=superseded_at,
                 )
+            )
+        return media
+
+    def _book_media(self, path: str, mime_type: str | None) -> list[MediaCreate] | None:
+        """The book's file: a PDF to open, or an EPUB to download. Kobo store books
+        (no device path) are encrypted, and are left out."""
+        mime = mimetypes.guess_type(path)[0] or mime_type
+        media_type = "pdf" if mime == "application/pdf" else "file"
+        return self._stored_media(path, media_type, mime, Path(path).name) or None
+
+    def _markup_media(self, bookmark_id: str) -> list[MediaCreate] | None:
+        """The pen strokes of a markup: a JPG of the page and an SVG of the ink. A
+        redrawn markup adds a version at the same place."""
+        media = []
+        for pos, (ext, mime) in enumerate((("jpg", "image/jpeg"), ("svg", "image/svg+xml"))):
+            media += self._stored_media(
+                f".kobo/markups/{bookmark_id}.{ext}", "image", mime, "Kobo pen markup", pos
             )
         return media or None
 

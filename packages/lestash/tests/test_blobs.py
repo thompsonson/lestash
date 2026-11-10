@@ -116,3 +116,135 @@ def test_media_added_again_by_path_after_adopting_is_not_doubled(test_db) -> Non
         # A sync names the same file again by its path, as the Kobo reader does
         add_item_media(conn, item, media_type="image", local_path=f"{item}/a.png")
         assert conn.execute("SELECT count(*) FROM item_media").fetchone()[0] == 1
+
+
+def test_media_versions_are_matched_on_the_file_and_when_it_was_first_seen(test_db) -> None:
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        # An adopted markup from before versions: a media-folder file, also in the store
+        first = _media(conn, test_db, item, "kobo/markup-a.jpg", b"one")
+        adopt_media(conn, test_db)
+        sha_one = conn.execute("SELECT sha256 FROM item_media").fetchone()[0]
+
+        def put(sha: str, seen: str, superseded: str | None, origin: str = "sync") -> int:
+            return add_item_media(
+                conn,
+                item,
+                media_type="image",
+                mime_type="image/png",
+                source_origin=origin,
+                sha256=sha,
+                size=3,
+                seen_at=seen,
+                superseded_at=superseded,
+            )
+
+        t1, t2, t3 = "2026-11-07 09:56:00", "2026-11-07 09:57:00", "2026-11-07 09:58:00"
+        assert put(sha_one, t1, None) == first  # the same file, current: the same row
+        before = conn.total_changes
+        put(sha_one, t1, None)
+        assert conn.total_changes == before  # nothing differs, nothing is written
+        # Redrawn, then back to the first drawing: three versions, numbered as they came
+        put(sha_one, t1, t2)
+        second = put("b" * 64, t2, t3)
+        third = put(sha_one, t3, None)
+        rows = conn.execute(
+            "SELECT id, version, superseded_at, local_path FROM item_media ORDER BY version"
+        ).fetchall()
+        assert [tuple(r) for r in rows] == [
+            (first, 1, t2, "kobo/markup-a.jpg"),
+            (second, 2, t3, None),
+            (third, 3, None, None),
+        ]
+        # The source forgets the first sighting (a lost snapshot): nothing renumbers,
+        # and no second current row appears
+        put("b" * 64, t2, t3)
+        put(sha_one, t3, None)
+        assert conn.execute("SELECT count(*) FROM item_media").fetchone()[0] == 3
+        # It forgets the middle one: the two sightings of the first drawing look like
+        # one, current since t1. The first row stays replaced.
+        put(sha_one, t1, None)
+        current = conn.execute("SELECT id FROM item_media WHERE superseded_at IS NULL")
+        assert [r[0] for r in current] == [third]
+
+
+def test_an_adopted_row_redrawn_before_its_first_versioned_import(test_db) -> None:
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        first = _media(conn, test_db, item, "kobo/markup-a.jpg", b"one")
+        adopt_media(conn, test_db)
+        sha_one = conn.execute("SELECT sha256 FROM item_media").fetchone()[0]
+        t1, t2 = "2026-11-07 09:56:00", "2026-11-07 09:57:00"
+        for sha, seen, superseded in ((sha_one, t1, t2), ("b" * 64, t2, None)):
+            add_item_media(
+                conn,
+                item,
+                media_type="image",
+                sha256=sha,
+                size=3,
+                seen_at=seen,
+                superseded_at=superseded,
+            )
+        rows = conn.execute(
+            "SELECT id, version, superseded_at FROM item_media ORDER BY version"
+        ).fetchall()
+    assert [tuple(r) for r in rows] == [(first, 1, t2), (rows[1][0], 2, None)]
+
+
+def test_a_versioned_import_never_takes_an_upload_at_the_same_place(test_db) -> None:
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        upload = add_item_media(
+            conn, item, media_type="pdf", local_path="1/mine.pdf", source_origin="upload"
+        )
+        add_item_media(
+            conn,
+            item,
+            media_type="pdf",
+            sha256="a" * 64,
+            size=1,
+            seen_at="2026-11-07 09:56:00",
+        )
+        rows = conn.execute(
+            "SELECT id, source_origin, local_path, sha256 FROM item_media ORDER BY id"
+        ).fetchall()
+    assert tuple(rows[0]) == (upload, "upload", "1/mine.pdf", None)
+    assert len(rows) == 2 and rows[1][1] == "sync"
+
+
+def test_a_lost_newest_version_does_not_stay_current(test_db) -> None:
+    t1, t2, t3 = "2026-11-07 09:56:00", "2026-11-07 09:57:00", "2026-11-07 09:58:00"
+    a, b, c = "a" * 64, "b" * 64, "c" * 64
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+
+        def put(sha: str, seen: str, superseded: str | None) -> int:
+            return add_item_media(
+                conn,
+                item,
+                media_type="pdf",
+                sha256=sha,
+                size=1,
+                seen_at=seen,
+                superseded_at=superseded,
+            )
+
+        def current() -> list[str]:
+            return [
+                r[0]
+                for r in conn.execute("SELECT sha256 FROM item_media WHERE superseded_at IS NULL")
+            ]
+
+        put(a, t1, t2)
+        put(b, t2, None)  # B imported as current; then its snapshot is lost
+        put(a, t1, t3)
+        put(c, t3, None)
+        assert current() == [c]
+        (closed,) = conn.execute("SELECT superseded_at FROM item_media WHERE sha256 = ?", (b,))
+        assert closed[0] == t3  # replaced when C was seen
+        # A-B-A, B's snapshot lost: the source says A is current since t1
+        put(a, t1, None)
+        assert current() == [a]
+        before = conn.total_changes
+        put(a, t1, None)
+        assert conn.total_changes == before  # and stays so, writing nothing

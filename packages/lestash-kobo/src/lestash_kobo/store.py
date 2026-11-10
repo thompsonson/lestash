@@ -3,8 +3,13 @@
 The Kobo keeps no history, and its Drive sync can replace an annotated PDF with the
 clean original. So each plug-in copies the device into a store that never forgets:
 
-    <root>/blobs/ab/abcdef…            file contents, stored once by SHA-256
+    <blobs>/ab/abcdef…                 file contents, stored once by SHA-256
     <root>/snapshots/<time>/manifest.json   device path -> sha256, size, mtime
+
+The blobs live in LeStash's one file store (#217), so a book or markup the import
+attaches to an item is served from there. A store made with no shared folder keeps
+its own ``<root>/blobs``; files an older version left there move to the shared
+folder on the next snapshot or sync (``move_own_blobs``).
 
 A snapshot is written to a temporary folder and renamed when complete, so an unplug
 mid-copy never leaves a half-written snapshot. Temp files a killed copy leaves behind
@@ -13,6 +18,7 @@ are removed by the next one.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -40,6 +46,9 @@ SNAPSHOT_NAME = re.compile(r"\d{8}T\d{6}Z")
 # Written by macOS and Windows when the Kobo was mounted there; not Kobo data
 SKIP_DIRS = frozenset({".Spotlight-V100", ".fseventsd", ".Trashes", "System Volume Information"})
 CHUNK = 1 << 20
+# This store's temp files in the shared folder, so its sweep never removes another
+# writer's (core.blobs uses ".tmp-" followed by hex digits, or ".tmp-" alone)
+TMP_PREFIX = ".tmp-kobo-"
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,13 @@ class Snapshot:
     def blob(self, store: KoboStore, device_path: str) -> Path | None:
         entry = self.files.get(device_path)
         return store.blob_path(entry.sha256) if entry else None
+
+
+@dataclass
+class MoveCounts:
+    moved: int = 0  # files renamed into the shared folder
+    duplicates: int = 0  # files the shared folder already held, checked, then removed here
+    kept: int = 0  # files left where they were: a copy that does not match its name
 
 
 @dataclass
@@ -145,13 +161,85 @@ def _iso(ns: int) -> str:
 
 
 class KoboStore:
-    def __init__(self, root: Path | str | None = None) -> None:
+    def __init__(self, root: Path | str | None = None, blobs: Path | str | None = None) -> None:
+        """``blobs`` is the shared file store's blob folder; without it, ``<root>/blobs``."""
         self.root = Path(root).expanduser() if root else default_root()
-        self.blobs = self.root / "blobs"
+        own = self.root / "blobs"
+        self.blobs = Path(blobs).expanduser() if blobs else own
+        # Where an older version kept its blobs, until move_own_blobs empties it
+        self.own_blobs = own if self.blobs != own else None
         self.snapshots_dir = self.root / "snapshots"
 
     def blob_path(self, sha256: str) -> Path:
-        return self.blobs / sha256[:2] / sha256
+        """Where the blob is: the shared folder, else this store's own not yet moved."""
+        path = self.blobs / sha256[:2] / sha256
+        if self.own_blobs is not None and not path.is_file():
+            old = self.own_blobs / sha256[:2] / sha256
+            if old.is_file():
+                return old
+        return path
+
+    def move_own_blobs(self) -> MoveCounts:
+        """Move the blobs this store kept itself into the shared folder. Safe to rerun.
+
+        A rename on one disk, so no file is copied. Where the shared folder already
+        holds a blob of that name, its contents are checked before this copy goes.
+        Takes the snapshot lock, so no snapshot is reading the folder meanwhile.
+        """
+        counts = MoveCounts()
+        if self.own_blobs is None or not self.own_blobs.is_dir():
+            return counts
+        with open(self.root / ".snapshot.lock", "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if not self.own_blobs.is_dir():  # another process moved them meanwhile
+                return counts
+            for leftover in self.own_blobs.glob(".tmp-*"):  # from a killed copy
+                leftover.unlink(missing_ok=True)
+            for shard in sorted(p for p in self.own_blobs.iterdir() if p.is_dir()):
+                for src in sorted(shard.iterdir()):
+                    self._move_one(src, counts)
+                with contextlib.suppress(OSError):
+                    shard.rmdir()  # only when empty
+            with contextlib.suppress(OSError):
+                self.own_blobs.rmdir()
+        if counts.moved or counts.duplicates:
+            logger.info(
+                "Moved %d Kobo files into %s (%d were there already)",
+                counts.moved,
+                self.blobs,
+                counts.duplicates,
+            )
+        return counts
+
+    def _move_one(self, src: Path, counts: MoveCounts) -> None:
+        sha = src.name
+        if src.name.startswith(".tmp-"):
+            src.unlink(missing_ok=True)
+            return
+        dest = self.blobs / sha[:2] / sha
+        if not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)  # core may make it meanwhile
+            try:
+                src.rename(dest)
+            except OSError:
+                # Another disk: copy, check, then let the copy go
+                got, _ = self._store_blob(src)
+                if got != sha:
+                    logger.warning("Kobo blob %s does not match its name; kept", src)
+                    counts.kept += 1
+                    return
+                src.unlink()
+            counts.moved += 1
+            return
+        if sha_file(dest) == sha:
+            src.unlink()
+            counts.duplicates += 1
+        elif sha_file(src) == sha:
+            src.replace(dest)  # the shared copy was damaged; this one is good
+            counts.moved += 1
+        else:
+            logger.warning("Kobo blob %s and %s both differ from their name; kept", src, dest)
+            counts.kept += 1
 
     def _manifests(self, newest_first: bool = False):
         """Readable snapshots in name order (names are UTC times, so time order)."""
@@ -215,6 +303,7 @@ class KoboStore:
         if not (source / DB_PATH).is_file():
             raise FileNotFoundError(f"{source} has no {DB_PATH}: is the Kobo mounted?")
         self.root.mkdir(parents=True, exist_ok=True)
+        self.move_own_blobs()  # takes the lock itself, so before this one does
         # One snapshot at a time, also when one is run by hand during a plug-in: the
         # temp sweep below would otherwise delete the other run's files
         with open(self.root / ".snapshot.lock", "w") as lock:
@@ -283,12 +372,14 @@ class KoboStore:
     def _sweep_temp(self) -> None:
         """Remove temp files left by a copy that was killed (e.g. the Kobo unplugged).
 
-        Safe because the caller holds the snapshot lock.
+        Safe because the caller holds the snapshot lock. In a shared blob folder only
+        this store's own temp files: another writer may be storing a file there now.
         """
-        for parent in (self.snapshots_dir, self.blobs):
+        blob_tmp = TMP_PREFIX if self.own_blobs is not None else ".tmp-"
+        for parent, prefix in ((self.snapshots_dir, ".tmp-"), (self.blobs, blob_tmp)):
             if not parent.is_dir():
                 continue
-            for leftover in parent.glob(".tmp-*"):
+            for leftover in parent.glob(prefix + "*"):
                 if leftover.is_dir():
                     shutil.rmtree(leftover, ignore_errors=True)
                 else:
@@ -314,7 +405,7 @@ class KoboStore:
         """
         digest = hashlib.sha256()
         self.blobs.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(prefix=".tmp-", dir=self.blobs)
+        fd, tmp_name = tempfile.mkstemp(prefix=TMP_PREFIX, dir=self.blobs)
         tmp = Path(tmp_name)
         try:
             with os.fdopen(fd, "wb") as dst, path.open("rb") as src:
@@ -326,7 +417,7 @@ class KoboStore:
                 dst.flush()
                 os.fsync(dst.fileno())
             sha = digest.hexdigest()
-            dest = self.blob_path(sha)
+            dest = self.blobs / sha[:2] / sha
             if dest.exists() and not (repair and sha_file(dest) != sha):
                 tmp.unlink()
                 return sha, False

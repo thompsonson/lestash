@@ -18,6 +18,11 @@ class MediaCreate(BaseModel):
     source_origin: str = "sync"
     sha256: str | None = None  # the file in the file store, already stored (#217)
     size: int | None = None  # its size in bytes, with sha256
+    # With sha256: this file is one version of the media at this position, first seen
+    # at seen_at, and replaced at superseded_at (None: the current one). The row is
+    # matched on the file and seen_at; LeStash numbers the versions as they arrive.
+    seen_at: str | None = None
+    superseded_at: str | None = None
 
 
 class ActivityCreate(BaseModel):

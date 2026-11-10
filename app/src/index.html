@@ -1457,7 +1457,7 @@
         : null;
       const displayTitle = item.title || engagementHeader || item.preview || '(untitled)';
       const showPreviewBlock = item.preview && item.preview !== displayTitle;
-      const firstImg = (item.media || []).find(m => (m.media_type === 'image' || m.media_type === 'thumbnail') && m.available);
+      const firstImg = (item.media || []).find(m => (m.media_type === 'image' || m.media_type === 'thumbnail') && m.available && !m.superseded_at);
       const thumbHtml = firstImg ? `<img src="${getApiBase()}${escHtml(firstImg.serve_url)}" alt="${escHtml(firstImg.alt_text || '')}" class="item-card-thumb" loading="lazy">` : '';
       card.innerHTML = `
         <div class="item-card-header">
@@ -1647,7 +1647,12 @@
       </div>`;
 
       // Media gallery
-      const visibleMedia = (item.media || []).filter(m => m.available || m.media_type === 'link' || m.media_type === 'pdf');
+      const shownMedia = (item.media || []).filter(m => m.available || m.media_type === 'link' || m.media_type === 'pdf');
+      // Older versions of a file are kept; they are listed under the current ones
+      const visibleMedia = shownMedia.filter(m => !m.superseded_at);
+      // Newest first, by when each was replaced: a version found later can be older
+      const olderMedia = shownMedia.filter(m => m.superseded_at && m.available)
+        .sort((a, b) => String(b.superseded_at).localeCompare(String(a.superseded_at)));
       if (visibleMedia.length > 0) {
         html += '<div class="item-media-gallery">';
         for (const m of visibleMedia) {
@@ -1668,6 +1673,14 @@
           }
         }
         html += '</div>';
+      }
+      if (olderMedia.length > 0) {
+        html += '<div class="item-detail-field"><label>Earlier versions</label><ul class="media-versions">';
+        for (const m of olderMedia) {
+          const when = String(m.superseded_at).slice(0, 10);
+          html += `<li><a href="${getApiBase()}${escHtml(m.serve_url)}" target="_blank" rel="noopener">${escHtml(m.alt_text || m.media_type)}</a>, version ${escHtml(String(m.version))}, replaced ${escHtml(when)}</li>`;
+        }
+        html += '</ul></div>';
       }
 
       if (item.metadata && item.metadata.processed_text) {
