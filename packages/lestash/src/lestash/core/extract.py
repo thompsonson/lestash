@@ -324,12 +324,12 @@ def _items_wanting_text(conn: sqlite3.Connection) -> list[int]:
     ]
 
 
-def _still_reads(conn: sqlite3.Connection, store: BlobStore, tool: str) -> bool:
-    """Whether the tool reads a file it read before: if so, files that fail are bad,
-    not the tool. With no such file, it can't be told, and is taken as broken."""
+def _still_reads(conn: sqlite3.Connection, store: BlobStore, tool: str) -> bool | None:
+    """Whether the tool reads again a file it read before: if so, files that fail are
+    bad, not the tool. None if it has read no file still in the store."""
     for (sha,) in conn.execute(
-        "SELECT sha256 FROM blob_text WHERE tool = ? AND text != '' "
-        "AND tool_version NOT LIKE 'failed [%' ORDER BY extracted_at DESC LIMIT 3",
+        "SELECT sha256 FROM blob_text WHERE tool = ? AND tool_version NOT LIKE 'failed [%' "
+        "ORDER BY extracted_at DESC",
         (tool,),
     ):
         path = store.path(sha)
@@ -339,7 +339,7 @@ def _still_reads(conn: sqlite3.Connection, store: BlobStore, tool: str) -> bool:
             except Exception:  # noqa: BLE001 - any failure: the tool is broken
                 return False
             return True
-    return False
+    return None
 
 
 def extract_pending(
@@ -436,7 +436,8 @@ def extract_pending(
     if not counts.stopped and not counts.pending:  # judged only on a whole run
         broken = []
         for tool, rows in sorted(held.items()):
-            if len(rows) >= 3 and not _still_reads(conn, store, tool):
+            reads = _still_reads(conn, store, tool)
+            if reads is False or (reads is None and len(rows) >= 3):
                 broken.append(tool)
             elif not write(rows):  # the files, not the tool: record them
                 break
