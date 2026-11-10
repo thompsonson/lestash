@@ -240,6 +240,8 @@ def test_a_lost_newest_version_does_not_stay_current(test_db) -> None:
         put(a, t1, t3)
         put(c, t3, None)
         assert current() == [c]
+        (closed,) = conn.execute("SELECT superseded_at FROM item_media WHERE sha256 = ?", (b,))
+        assert closed[0] == t3  # replaced when C was seen
         # A-B-A, B's snapshot lost: the source says A is current since t1
         put(a, t1, None)
         assert current() == [a]

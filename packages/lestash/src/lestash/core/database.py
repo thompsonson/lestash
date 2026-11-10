@@ -1688,11 +1688,12 @@ def _put_media_version(
         media_id = cursor.lastrowid or 0
     if superseded_at is None:
         # One current row: any other is a version the source no longer knows (its
-        # snapshot or blob lost), replaced now
+        # snapshot or blob lost), replaced when this one was seen, or when it was itself
+        # first seen if that is later (a file come back keeps its first sighting)
         conn.execute(
-            f"UPDATE item_media SET superseded_at = CURRENT_TIMESTAMP "
+            f"UPDATE item_media SET superseded_at = max(?, coalesce(created_at, ?)) "
             f"WHERE {slot} AND superseded_at IS NULL AND id != ? AND sha256 IS NOT NULL",
-            (*key, media_id),
+            (seen_at, seen_at, *key, media_id),
         )
     if commit:
         conn.commit()
