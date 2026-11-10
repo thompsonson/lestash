@@ -270,3 +270,26 @@ def test_page_text_skips_scripts() -> None:
         page = Path(d) / "p.html"
         page.write_text("<p>a</p><script>b</script><svg><text>c</text></svg><p>d</p>")
         assert page_text(page) == "a\nd"
+
+
+def test_bad_files_first_do_not_stop_the_good_ones(test_db, fake_ocr, monkeypatch) -> None:
+    """Files are read in hash order, so the same bad ones come first every run."""
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run(
+            [_deck(store, [b"bad 1", b"bad 2", b"bad 3", b"bad 4", b"good"])]
+        )
+        monkeypatch.setattr(extract._Ocr, "read", classmethod(_picky))
+        counts = extract_pending(conn, test_db)
+        assert (counts.files, counts.failed, counts.engine_failed) == (1, 4, False)
+        assert extract_pending(conn, test_db).failed == 0  # all recorded
+
+
+def test_a_file_missing_from_the_store_is_skipped(test_db, fake_ocr) -> None:
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        deck = _deck(store, [b"gone", b"here"])
+        SyncStore(conn, "notebooklm").run([deck])
+        store.path(deck.media[0].sha256).unlink()
+        counts = extract_pending(conn, test_db)
+    assert (counts.files, counts.failed) == (1, 0)

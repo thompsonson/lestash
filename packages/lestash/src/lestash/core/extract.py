@@ -344,31 +344,12 @@ def extract_pending(
         done.add((sha, tool))
     started = time.monotonic()
     pending = [key for key in sorted(todo) if key not in done]
-    unrecorded: list[tuple[str, str, str, str]] = []  # failures before any file was read
-    for n, (sha, tool) in enumerate(pending):
-        if budget_s is not None and time.monotonic() - started > budget_s:
-            counts.pending = len(pending) - n
-            break
-        path = store.path(sha)
-        try:
-            text, version = read_file(tool, path)
-            counts.files += 1
-            rows = [*unrecorded, (sha, tool, version, text)]
-            unrecorded = []
-        except EngineUnavailable as e:
-            counts.stopped, counts.engine_failed = str(e), True  # every file would fail
-            break
-        except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
-            logger.warning("Could not read text from %s (%s): %s", path.name, tool, e)
-            failure = f"{_failed(tool_version(tool))}: {type(e).__name__}: {e}"[:300]
-            counts.failed += 1
-            if not counts.files:
-                unrecorded.append((sha, tool, failure, ""))
-                if len(unrecorded) >= 3:  # the first reads all failed: the tool is broken
-                    counts.stopped, counts.engine_failed = f"{tool} fails on every file", True
-                    break
-                continue
-            rows = [(sha, tool, failure, "")]
+    # Failures of a tool are kept back until that tool reads a file: if it reads none,
+    # the tool is broken, not the files, and they are read again next run
+    held: dict[str, list[tuple[str, str, str, str]]] = {}
+    good: set[str] = set()
+
+    def write(rows: list[tuple[str, str, str, str]]) -> bool:
         try:
             with conn:
                 conn.executemany(
@@ -378,7 +359,46 @@ def extract_pending(
                 )
         except sqlite3.OperationalError as e:  # a sync holds the lock: go on next run
             counts.stopped = f"database: {e}"
+            return False
+        return True
+
+    for n, (sha, tool) in enumerate(pending):
+        if budget_s is not None and time.monotonic() - started > budget_s:
+            counts.pending = len(pending) - n
             break
+        path = store.path(sha)
+        if not path.is_file():
+            logger.warning("Not in the file store: %s", sha)  # not the file's fault
+            continue
+        try:
+            text, version = read_file(tool, path)
+        except EngineUnavailable as e:
+            counts.stopped, counts.engine_failed = str(e), True  # every file would fail
+            break
+        except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
+            logger.warning("Could not read text from %s (%s): %s", path.name, tool, e)
+            failure = (
+                sha,
+                tool,
+                f"{_failed(tool_version(tool))}: {type(e).__name__}: {e}"[:300],
+                "",
+            )
+            counts.failed += 1
+            if tool in good:
+                if not write([failure]):
+                    break
+            else:
+                held.setdefault(tool, []).append(failure)
+            continue
+        counts.files += 1
+        rows = [*held.pop(tool, []), (sha, tool, version, text)]
+        good.add(tool)
+        if not write(rows):
+            break
+    if any(len(rows) >= 3 for rows in held.values()) and not counts.stopped:
+        broken = sorted(tool for tool, rows in held.items() if len(rows) >= 3)
+        counts.stopped = f"{', '.join(broken)} read no file and failed on every one"
+        counts.engine_failed = True
     try:
         conn.execute("BEGIN IMMEDIATE")  # read and write each item under one lock
         try:
