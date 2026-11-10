@@ -13,6 +13,7 @@ copy never leaves a half-written blob.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -135,7 +136,8 @@ def adopt_media(
     conn: sqlite3.Connection, config: Config | None = None, ids: list[int] | None = None
 ) -> AdoptCounts:
     """Copy each media file not yet in the store into it, and point its row at it; only
-    the rows ``ids`` if given. The file in the media folder stays. Safe to run again.
+    the rows ``ids`` if given. The file in the media folder stays until
+    ``prune_media`` checks the stored copy. Safe to run again.
 
     The files are copied first, with no write open, then the rows are written and
     committed in one short transaction: a first run's backlog must not hold the write
@@ -200,3 +202,60 @@ def media_file(conn_row: dict, config: Config | None = None) -> Path | None:
         if path.is_file():
             return path
     return None
+
+
+@dataclass
+class PruneCounts:
+    removed: int = 0  # media-folder copies removed, their files kept in the store
+    removed_bytes: int = 0
+    kept: int = 0  # copies kept: not yet stored, named by no row, or not matching
+
+
+def prune_media(
+    conn: sqlite3.Connection, config: Config | None = None, *, delete: bool = True
+) -> PruneCounts:
+    """Remove each media-folder file whose copy in the store is checked (#217).
+
+    A file goes only when every media row naming it points at one blob, that blob is
+    in the store, and the file's own hash is that blob's. Anything else stays: a file
+    no row names yet (a writer between saving and recording it), a row not yet
+    adopted, or a file that differs from its row's blob. With ``delete=False`` it
+    only counts. Empty item folders are removed. Safe to run again.
+    """
+    from lestash.core.database import get_media_dir
+
+    config = config or Config.load()
+    store = BlobStore(store_root(config))
+    media_dir = get_media_dir(config)
+    shas: dict[str, set[str | None]] = {}
+    for local_path, sha256 in conn.execute(
+        "SELECT local_path, sha256 FROM item_media WHERE local_path IS NOT NULL"
+    ):
+        shas.setdefault(local_path, set()).add(sha256)
+    counts = PruneCounts()
+    for path in sorted(p for p in media_dir.rglob("*") if p.is_file()):
+        named = shas.get(path.relative_to(media_dir).as_posix(), set())
+        sha256 = next(iter(named)) if len(named) == 1 else None
+        try:
+            ok = (
+                sha256 is not None
+                and store.has(sha256)
+                and sha_file(path) == sha256
+                and sha_file(store.path(sha256)) == sha256  # the stored copy is whole
+            )
+            if ok:
+                size = path.stat().st_size
+                if delete:
+                    path.unlink()
+                counts.removed += 1
+                counts.removed_bytes += size
+            else:
+                counts.kept += 1
+        except OSError as e:
+            logger.warning("Could not prune media file %s: %s", path, e)
+            counts.kept += 1
+    if delete:
+        for folder in sorted((p for p in media_dir.rglob("*") if p.is_dir()), reverse=True):
+            with contextlib.suppress(OSError):  # not empty
+                folder.rmdir()
+    return counts

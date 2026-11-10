@@ -28,10 +28,10 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from lestash.core.blobs import media_file
 from lestash.core.config import Config
 from lestash.core.database import (
     add_item_media,
-    get_media_dir,
     mark_recent_history,
     max_history_id,
     save_media_file,
@@ -508,7 +508,7 @@ def set_source_pdf(
     Does not commit. Returns the media row ID.
     """
     rows = conn.execute(
-        "SELECT id, local_path, url, source_origin FROM item_media "
+        "SELECT id, local_path, url, source_origin, sha256 FROM item_media "
         "WHERE item_id = ? AND media_type = ? ORDER BY id",
         (item_id, SOURCE_PDF_MEDIA_TYPE),
     ).fetchall()
@@ -527,7 +527,6 @@ def set_source_pdf(
         )
 
     keep_id: int = rows[0][0]
-    media_dir = get_media_dir(config)
     seen: set[str] = set()
     for row in rows:
         # Only a real earlier file is a version, once each. A url-only row, or one
@@ -535,7 +534,8 @@ def set_source_pdf(
         old_path = row[1]
         if old_path and old_path != local_path and old_path not in seen:
             seen.add(old_path)
-            if (media_dir / old_path).is_file():
+            # Its file in the store, else the media folder (#217)
+            if media_file({"local_path": old_path, "sha256": row[4]}, config) is not None:
                 _record_previous_source_pdf(conn, item_id, row)
     changed = local_path not in {row[1] for row in rows}
     # A different file without a url of its own must not keep the old file's link.
@@ -552,10 +552,12 @@ def set_source_pdf(
         """
         UPDATE item_media SET local_path = ?, url = ?, mime_type = ?,
             alt_text = 'original PDF', position = 0,
-            source_origin = CASE WHEN ? THEN ? ELSE source_origin END
+            source_origin = CASE WHEN ? THEN ? ELSE source_origin END,
+            -- another file is not the stored one; the next adopt stores it
+            sha256 = CASE WHEN local_path IS ? THEN sha256 ELSE NULL END
         WHERE id = ?
         """,
-        (local_path, new_url, PDF_MIME, changed, source_origin, keep_id),
+        (local_path, new_url, PDF_MIME, changed, source_origin, local_path, keep_id),
     )
     return keep_id
 
@@ -573,9 +575,10 @@ def _record_previous_source_pdf(
     ).fetchone()
     conn.execute(
         """INSERT INTO item_media
-           (item_id, media_type, url, local_path, mime_type, alt_text, position, source_origin)
-           VALUES (?, ?, ?, ?, ?, 'previous PDF', ?, ?)""",
-        (item_id, SOURCE_PDF_VERSION_MEDIA_TYPE, row[2], row[1], PDF_MIME, count, row[3]),
+           (item_id, media_type, url, local_path, mime_type, alt_text, position, source_origin,
+            sha256)
+           VALUES (?, ?, ?, ?, ?, 'previous PDF', ?, ?, ?)""",
+        (item_id, SOURCE_PDF_VERSION_MEDIA_TYPE, row[2], row[1], PDF_MIME, count, row[3], row[4]),
     )
 
 

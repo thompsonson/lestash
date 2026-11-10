@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lestash.core.blobs import BlobStore, adopt_media, media_file, sha_file, store_root
+from lestash.core.blobs import (
+    BlobStore,
+    adopt_media,
+    media_file,
+    prune_media,
+    sha_file,
+    store_root,
+)
 from lestash.core.config import Config, GeneralConfig
 from lestash.core.database import (
     SCHEMA_VERSION,
@@ -248,3 +255,60 @@ def test_a_lost_newest_version_does_not_stay_current(test_db) -> None:
         before = conn.total_changes
         put(a, t1, None)
         assert conn.total_changes == before  # and stays so, writing nothing
+
+
+def test_pruning_removes_only_copies_checked_against_the_store(test_db) -> None:
+    media = get_media_dir(test_db)
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        stored = _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        _media(conn, test_db, item, f"{item}/twin.png", b"png a")  # same bytes, own name
+        adopt_media(conn, test_db)
+        _media(conn, test_db, item, f"{item}/new.png", b"not adopted yet")
+        (media / f"{item}/unnamed.png").write_bytes(b"no row names this")
+        # A row whose file changed after it was stored: the copy is not its blob
+        changed = _media(conn, test_db, item, f"{item}/changed.png", b"before")
+        adopt_media(conn, test_db, ids=[changed])
+        (media / f"{item}/changed.png").write_bytes(b"after")
+        conn.commit()
+
+        counted = prune_media(conn, test_db, delete=False)
+        assert (counted.removed, counted.kept) == (2, 3)
+        assert (media / f"{item}/a.png").is_file()  # counting removes nothing
+
+        counts = prune_media(conn, test_db)
+        assert (counts.removed, counts.removed_bytes, counts.kept) == (2, 10, 3)
+        left = sorted(p.name for p in (media / str(item)).iterdir())
+        assert left == ["changed.png", "new.png", "unnamed.png"]
+        # A pruned file is still served, from the store
+        row = dict(conn.execute("SELECT * FROM item_media WHERE id = ?", (stored,)).fetchone())
+        assert media_file(row, test_db).read_bytes() == b"png a"
+        assert prune_media(conn, test_db).removed == 0  # runs again cleanly
+
+
+def test_pruning_keeps_a_copy_whose_stored_file_is_missing_or_damaged(test_db) -> None:
+    media = get_media_dir(test_db)
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/lost.png", b"lost")
+        _media(conn, test_db, item, f"{item}/bad.png", b"bad")
+        adopt_media(conn, test_db)
+        conn.commit()
+        shas = dict(conn.execute("SELECT local_path, sha256 FROM item_media").fetchall())
+        store.path(shas[f"{item}/lost.png"]).unlink()
+        store.path(shas[f"{item}/bad.png"]).write_bytes(b"damaged")
+        counts = prune_media(conn, test_db)
+    assert (counts.removed, counts.kept) == (0, 2)
+    assert (media / f"{item}/lost.png").is_file() and (media / f"{item}/bad.png").is_file()
+
+
+def test_pruning_removes_emptied_item_folders(test_db) -> None:
+    media = get_media_dir(test_db)
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        adopt_media(conn, test_db)
+        conn.commit()
+        prune_media(conn, test_db)
+    assert not (media / str(item)).exists() and media.is_dir()

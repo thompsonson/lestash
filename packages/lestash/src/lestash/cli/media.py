@@ -244,6 +244,26 @@ def adopt() -> None:
         console.print(f"[yellow]{counts.missing} media row(s) name a file that is gone.[/yellow]")
 
 
+@app.command("prune")
+def prune(
+    delete: bool = typer.Option(False, "--delete", help="Remove the copies; else only count"),
+) -> None:
+    """Remove media-folder copies of files the file store holds (#217). A copy goes only
+    when its stored file is there and has the same hash. Each sync does this too."""
+    from lestash.core.blobs import prune_media
+    from lestash.core.config import Config
+    from lestash.core.database import get_media_dir
+
+    config = Config.load()
+    with get_connection(config) as conn:
+        counts = prune_media(conn, config, delete=delete)
+    verb = "Removed" if delete else "Would remove"
+    console.print(
+        f"{verb} {counts.removed} file(s) ({counts.removed_bytes / 1e6:.1f} MB) "
+        f"from {get_media_dir(config)}; {counts.kept} kept."
+    )
+
+
 @app.command("notebooklm")
 def notebooklm(
     zips: list[Path] = typer.Argument(..., help="Every part of one Google Takeout export"),  # noqa: B008

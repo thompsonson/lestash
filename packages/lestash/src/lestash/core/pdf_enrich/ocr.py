@@ -191,21 +191,21 @@ def _render_annotation_png(
 
 
 def _resolve_parent_pdf(conn: sqlite3.Connection, config: Config, parent_id: int):
-    from lestash.core.database import get_media_dir
+    from lestash.core.blobs import media_file
 
     row = conn.execute(
         """
-        SELECT local_path FROM item_media
+        SELECT local_path, sha256 FROM item_media
         WHERE item_id = ? AND media_type = ?
         ORDER BY id LIMIT 1
         """,
         (parent_id, SOURCE_PDF_MEDIA_TYPE),
     ).fetchone()
-    if not row or not row["local_path"]:
+    if not row or not (row["local_path"] or row["sha256"]):
         raise _OcrUnavailable("parent has no source_pdf media row")
-    candidate = get_media_dir(config) / row["local_path"]
-    if not candidate.exists():
-        raise _OcrUnavailable(f"source PDF missing on disk: {candidate}")
+    candidate = media_file({"local_path": row["local_path"], "sha256": row["sha256"]}, config)
+    if candidate is None:
+        raise _OcrUnavailable(f"source PDF missing on disk: {row['local_path']}")
     return candidate
 
 

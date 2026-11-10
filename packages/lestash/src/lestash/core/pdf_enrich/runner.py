@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from lestash.core.blobs import media_file
 from lestash.core.config import Config
 from lestash.core.database import (
     get_connection,
@@ -208,22 +209,20 @@ def _resolve_source_pdf(conn: sqlite3.Connection, config: Config, item_row: sqli
     Raises `_SourceUnavailable` if neither path works.
     """
     item_id = item_row[0]
-    media_dir = get_media_dir(config)
 
     media_row = conn.execute(
         """
-        SELECT local_path, url FROM item_media
+        SELECT local_path, sha256 FROM item_media
         WHERE item_id = ? AND media_type = ?
         ORDER BY id LIMIT 1
         """,
         (item_id, SOURCE_PDF_MEDIA_TYPE),
     ).fetchone()
     if media_row:
-        local = media_row[0]
-        if local:
-            candidate = media_dir / local
-            if candidate.exists():
-                return candidate
+        # From the file store, else the media folder
+        candidate = media_file({"local_path": media_row[0], "sha256": media_row[1]}, config)
+        if candidate is not None:
+            return candidate
         # Fall through to Drive re-download
 
     metadata = {}
