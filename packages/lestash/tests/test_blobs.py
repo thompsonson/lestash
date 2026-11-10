@@ -357,3 +357,23 @@ def test_a_media_folder_shared_with_another_database_is_not_pruned(test_db) -> N
         conn.commit()
         counts = prune_media(conn, test_db)
     assert counts.removed == 0 and (get_media_dir(test_db) / f"{item}/a.png").is_file()
+
+
+def test_a_database_restored_from_before_the_prune_finds_its_files(test_db) -> None:
+    """Its rows have no sha256 and their media-folder copies are gone; each file is
+    found in the store by its name, the start of its hash."""
+    from lestash.core.database import save_media_file
+
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        rel = save_media_file(item, b"kept bytes", "a.png", test_db)
+        media_id = add_item_media(conn, item, media_type="image", local_path=rel)
+        conn.commit()
+        adopt_media(conn, test_db)
+        prune_media(conn, test_db)
+        conn.execute("UPDATE item_media SET sha256 = NULL")  # as in the old backup
+        conn.commit()
+        counts = adopt_media(conn, test_db)
+        row = dict(conn.execute("SELECT * FROM item_media WHERE id = ?", (media_id,)).fetchone())
+    assert (counts.adopted, counts.missing) == (1, 0)
+    assert media_file(row, test_db).read_bytes() == b"kept bytes"

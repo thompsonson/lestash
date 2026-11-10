@@ -200,8 +200,9 @@ def adopt_media(
 
 
 def _stored_sha_for(conn: sqlite3.Connection, store: BlobStore, local_path: str) -> str | None:
-    """The blob another row naming ``local_path`` points at, if the store has it and
-    the file's name (``<sha256[:12]><ext>``, see save_media_file) agrees."""
+    """The stored file ``local_path`` was: the blob another row naming it points at,
+    else the one blob whose hash starts with its name (``<sha256[:12]><ext>``, see
+    save_media_file)."""
     stem = Path(local_path).stem
     found = {
         sha256
@@ -210,10 +211,18 @@ def _stored_sha_for(conn: sqlite3.Connection, store: BlobStore, local_path: str)
             (local_path,),
         )
     }
-    if len(found) != 1:
+    if len(found) > 1:
         return None
-    sha256 = found.pop()
-    return sha256 if sha256.startswith(stem) and store.has(sha256) else None
+    if found:
+        sha256 = found.pop()
+        return sha256 if sha256.startswith(stem) and store.has(sha256) else None
+    # No row names it with a hash, as in a database restored from a backup taken
+    # before the prune: the one stored file whose hash starts with the name
+    if len(stem) != 12 or any(c not in "0123456789abcdef" for c in stem):
+        return None
+    shard = store.blobs / stem[:2]
+    matches = [p.name for p in shard.glob(f"{stem}*")] if shard.is_dir() else []
+    return matches[0] if len(matches) == 1 and len(matches[0]) == 64 else None
 
 
 def media_file(conn_row: dict, config: Config | None = None) -> Path | None:
@@ -307,7 +316,7 @@ def prune_media(
                 counts.removed_bytes += size
             else:
                 counts.kept += 1
-        except OSError as e:
+        except (OSError, sqlite3.OperationalError) as e:  # a busy lock: next time
             logger.warning("Could not prune media file %s: %s", path, e)
             counts.kept += 1
     if delete:

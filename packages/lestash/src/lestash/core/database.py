@@ -1485,7 +1485,6 @@ def save_media_file(
 
     media_dir = get_media_dir(config)
     item_dir = media_dir / str(item_id)
-    item_dir.mkdir(parents=True, exist_ok=True)
 
     ext = Path(filename).suffix or ".bin"
     file_hash = hashlib.sha256(data).hexdigest()[:12]
@@ -1493,7 +1492,14 @@ def save_media_file(
 
     dest = media_dir / rel_path
     if not dest.exists():
-        dest.write_bytes(data)
+        for attempt in (1, 2):
+            item_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                dest.write_bytes(data)
+                break
+            except FileNotFoundError:
+                if attempt == 2:  # a prune removes empty item folders (#217)
+                    raise
         logger.debug(f"Saved media file: {rel_path} ({len(data)} bytes)")
 
     return rel_path
