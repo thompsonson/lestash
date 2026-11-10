@@ -296,7 +296,7 @@ class _Transcriber:
                     return -1, f"took over {FFMPEG_TIMEOUT_S} s"
                 if done.returncode:
                     target.unlink(missing_ok=True)  # a part-made file only takes space
-                return done.returncode, _tail(done.stderr, 250)
+                return done.returncode, done.stderr or ""
 
             def ffmpeg_works() -> bool:
                 """Whether ffmpeg converts a second of silence, made here, into the same
@@ -324,11 +324,12 @@ class _Transcriber:
             for job in jobs:
                 code, stderr = convert(job.path, folder / "in" / f"{job.sha256}.wav")
                 if code:
-                    why = f"ffmpeg: {stderr or f'exit {code}'}"
+                    why = f"ffmpeg: {_tail(stderr, 250) or f'exit {code}'}"
                     # The recording's fault is recorded; this machine's makes it wait
                     # A full disk frees itself as the part-made file goes, so the probe
                     # can't see it; ffmpeg says so
-                    local = "No space left" in stderr or not ffmpeg_works()
+                    full = any(m in stderr for m in ("No space left", "Disk quota exceeded"))
+                    local = full or not ffmpeg_works()
                     results[job.sha256] = Unfinished(why) if local else why
                 else:
                     ready.append({"sha256": job.sha256, "speakers": job.speakers})
