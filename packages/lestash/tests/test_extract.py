@@ -450,5 +450,6 @@ def test_a_whisper_that_cannot_start_leaves_the_other_tools_reading(
         tools = [r[0] for r in conn.execute("SELECT tool FROM blob_text")]
         _, content, _ = _item(conn)
     assert counts.files == 1 and counts.engine_failed and "offline" in (counts.stopped or "")
+    assert counts.pending == 1
     assert tools == [extract.OCR_TOOL]  # the recording waits, unrecorded
     assert "Slide text" in content

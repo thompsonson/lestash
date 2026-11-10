@@ -394,7 +394,7 @@ def _still_reads(conn: sqlite3.Connection, store: BlobStore, tool: str) -> bool 
     for (sha,) in conn.execute(
         "SELECT t.sha256 FROM blob_text t LEFT JOIN blobs b ON b.sha256 = t.sha256 "
         "WHERE t.tool = ? AND t.tool_version NOT LIKE 'failed [%' "
-        "ORDER BY b.size IS NULL, b.size, t.extracted_at DESC",
+        "ORDER BY coalesce(b.size, 0) = 0, b.size, t.extracted_at DESC",  # 0: size unknown
         (tool,),
     ):
         path = store.path(sha)
@@ -446,13 +446,18 @@ def extract_pending(
             continue  # failed with another version: try again
         done.add((sha, tool))
     started = time.monotonic()
-    pending = [key for key in sorted(todo) if key not in done]
+    # Transcripts last: they are slow, and a recording that kills the run then stops
+    # no picture or page from being read
+    pending = sorted(
+        (key for key in todo if key not in done), key=lambda k: (k[1] == WHISPER_TOOL, k)
+    )
     # Failures of a tool are kept back until that tool reads a file: if it reads none,
     # the tool is broken, not the files, and they are read again next run
     held: dict[str, list[tuple[str, str, str, str]]] = {}
     good: set[str] = set()
     # A tool whose engine can't start: its files wait, and the other tools go on
     unavailable: dict[str, str] = {}
+    waiting = 0  # files of an unavailable tool
 
     def write(rows: list[tuple[str, str, str, str]]) -> bool:
         try:
@@ -472,6 +477,7 @@ def extract_pending(
             counts.pending = len(pending) - n
             break
         if tool in unavailable:
+            waiting += 1
             continue
         path = store.path(sha)
         if not path.is_file():
@@ -483,6 +489,7 @@ def extract_pending(
             logger.warning("%s", e)
             unavailable[tool] = str(e)
             held.pop(tool, None)
+            waiting += 1
             continue
         except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
             logger.warning("Could not read text from %s (%s): %s", path.name, tool, e)
@@ -515,6 +522,7 @@ def extract_pending(
         if broken and not counts.stopped:
             counts.stopped = f"{', '.join(broken)} read no file and failed on every one"
             counts.engine_failed = True
+    counts.pending += waiting  # after the judging above, which a budget stop skips
     if unavailable:
         counts.engine_failed = True
         counts.stopped = "; ".join([*unavailable.values(), *filter(None, [counts.stopped])])
@@ -529,7 +537,7 @@ def extract_pending(
             raise
         conn.commit()
     except sqlite3.OperationalError as e:
-        counts.stopped = f"database: {e}"
+        counts.stopped = "; ".join(filter(None, [counts.stopped, f"database: {e}"]))
         return counts
     counts.items = len(changed)
     return counts
