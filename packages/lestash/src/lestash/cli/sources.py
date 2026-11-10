@@ -252,7 +252,13 @@ def sync_source(
                         else:
                             # Then their media-folder copies go, once each is checked
                             try:
-                                prune_media(conn, config)
+                                pruned = prune_media(conn, config)
+                                if pruned.shared_with:
+                                    console.print(
+                                        "  [yellow]Media copies not pruned: "
+                                        f"{escape(str(pruned.shared_with))} shares the "
+                                        "media folder[/yellow]"
+                                    )
                             except Exception as e:  # never fails the sync
                                 console.print(
                                     f"  [yellow]Media copies not pruned: {escape(str(e))}[/yellow]"

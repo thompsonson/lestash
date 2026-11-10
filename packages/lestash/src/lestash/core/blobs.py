@@ -158,6 +158,7 @@ def adopt_media(
     if ids is not None:
         query += f" AND id IN ({','.join('?' * len(ids))})"
         params = list(ids)
+    _clear_stale_shas(conn)
     rows = conn.execute(query + " ORDER BY id", params).fetchall()
     stored: list[tuple[int, Blob, str | None]] = []
     repaired: list[tuple[int, Blob, str | None]] = []
@@ -201,6 +202,36 @@ def adopt_media(
     return counts
 
 
+def _clear_stale_shas(conn: sqlite3.Connection) -> None:
+    """Clear a sha256 that is not the file its row names, so adopt stores the file.
+
+    A media-folder file is named by the start of its hash (save_media_file). Before
+    #217 step 4, ``set_source_pdf`` could move a row to another file and keep the old
+    file's hash, and the store would serve the old file.
+    """
+    stale = [
+        media_id
+        for media_id, local_path, sha256 in conn.execute(
+            "SELECT id, local_path, sha256 FROM item_media "
+            "WHERE local_path IS NOT NULL AND sha256 IS NOT NULL"
+        )
+        if _hash_stem(local_path) and not sha256.startswith(_hash_stem(local_path) or "")
+    ]
+    if stale:
+        logger.warning("Media rows naming another file than their hash: %s", stale)
+        with conn:
+            conn.executemany(
+                "UPDATE item_media SET sha256 = NULL WHERE id = ?", [(i,) for i in stale]
+            )
+
+
+def _hash_stem(local_path: str) -> str | None:
+    """The hash start a media-folder file is named by, if it is so named."""
+    stem = Path(local_path).stem
+    hexdigits = "0123456789abcdef"
+    return stem if len(stem) == 12 and all(c in hexdigits for c in stem) else None
+
+
 def _stored_sha_for(conn: sqlite3.Connection, store: BlobStore, local_path: str) -> str | None:
     """The stored file ``local_path`` was: the blob another row naming it points at,
     else the one blob whose hash starts with its name (``<sha256[:12]><ext>``, see
@@ -220,7 +251,7 @@ def _stored_sha_for(conn: sqlite3.Connection, store: BlobStore, local_path: str)
         return sha256 if sha256.startswith(stem) and store.has(sha256) else None
     # No row names it with a hash, as in a database restored from a backup taken
     # before the prune: the one stored file whose hash starts with the name
-    if len(stem) != 12 or any(c not in "0123456789abcdef" for c in stem):
+    if _hash_stem(local_path) is None:
         return None
     shard = store.blobs / stem[:2]
     matches = [p.name for p in shard.glob(f"{stem}*")] if shard.is_dir() else []
@@ -251,6 +282,7 @@ class PruneCounts:
     removed: int = 0  # media-folder copies removed, their files kept in the store
     removed_bytes: int = 0
     kept: int = 0  # copies kept: not yet stored, named by no row, or not matching
+    shared_with: Path | None = None  # another database sharing the folder: none pruned
 
 
 def prune_media(
@@ -273,11 +305,15 @@ def prune_media(
     media_dir = get_media_dir(config)
     counts = PruneCounts()
     db_path = Path(config.general.database_path).expanduser()
-    others = [p for p in db_path.parent.glob("*.db") if p.name != db_path.name]
+    from lestash.core.db_admin import BACKUP_GLOB
+
+    backups = set(db_path.parent.glob(BACKUP_GLOB))  # older copies of this database
+    others = [p for p in db_path.parent.glob("*.db") if p.name != db_path.name and p not in backups]
     if others:
         # The media folder is <db dir>/media: another database there shares it, and
         # its rows are not ours to read
         logger.warning("Not pruning %s: shared with %s", media_dir, others[0])
+        counts.shared_with = others[0]
         return counts
     shas: dict[str, set[str | None]] = {}
     for local_path, sha256 in conn.execute(
@@ -320,9 +356,13 @@ def prune_media(
                 counts.removed_bytes += size
             else:
                 counts.kept += 1
-        except (OSError, sqlite3.OperationalError) as e:  # a busy lock: next time
+        except OSError as e:
             logger.warning("Could not prune media file %s: %s", path, e)
             counts.kept += 1
+        except sqlite3.OperationalError as e:  # the lock is busy: the rest next time
+            logger.warning("Stopped pruning media at %s: %s", path, e)
+            counts.kept += 1
+            break
     if delete:
         for folder in sorted((p for p in media_dir.rglob("*") if p.is_dir()), reverse=True):
             with contextlib.suppress(OSError):  # not empty

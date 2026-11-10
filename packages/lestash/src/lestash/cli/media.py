@@ -257,6 +257,11 @@ def prune(
     config = Config.load()
     with get_connection(config) as conn:
         counts = prune_media(conn, config, delete=delete)
+    if counts.shared_with:
+        console.print(
+            f"[yellow]Nothing pruned: {counts.shared_with} shares the media folder.[/yellow]"
+        )
+        raise typer.Exit(1)
     verb = "Removed" if delete else "Would remove"
     console.print(
         f"{verb} {counts.removed} file(s) ({counts.removed_bytes / 1e6:.1f} MB) "

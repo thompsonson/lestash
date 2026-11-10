@@ -60,7 +60,9 @@ W2 (#217): one store for every file LeStash keeps.
 - Each removal checks the rows again under the write lock, so a row a writer has just recorded keeps its file.
 - A writer that found the file just before it was removed records a row naming a missing file; the next adopt points it at the stored file another row names.
 - A database restored from a backup taken before a prune finds each file in the store by its name, which is the start of its hash, at its next sync; until then those media are not served.
-- Nothing is removed when another `*.db` shares the database's folder, since that database shares the media folder too.
+- Nothing is removed when another `*.db` shares the database's folder, since that database shares the media folder too; the sync and the command say so. Managed backups (`lestash-backup-*.db`) are older copies of this database and do not count.
+- Adopt first clears a hash that is not the file its row names (the name is the start of the file's hash), so the file is stored again.
+- A busy write lock stops the prune; the next sync goes on.
 - Writers still save into the media folder; their files stay there until the next sync stores them.
 - A download is still named after the file it was saved as, not its hash.
 - PDF enrichment and OCR read a source PDF from the store, else the media folder.

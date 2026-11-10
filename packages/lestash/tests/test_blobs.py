@@ -381,3 +381,33 @@ def test_a_database_restored_from_before_the_prune_finds_its_files(test_db) -> N
         (other,) = conn.execute("SELECT sha256 FROM item_media WHERE id = ?", (healthy,)).fetchone()
     assert (counts.adopted, counts.missing) == (2, 0) and other
     assert media_file(row, test_db).read_bytes() == b"kept bytes"
+
+
+def test_a_managed_backup_beside_the_database_does_not_stop_pruning(test_db) -> None:
+    db = Path(test_db.general.database_path)
+    (db.parent / "lestash-backup-20261110T110000.db").write_bytes(b"")
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        adopt_media(conn, test_db)
+        conn.commit()
+        counts = prune_media(conn, test_db)
+    assert counts.removed == 1 and counts.shared_with is None
+
+
+def test_a_row_moved_to_another_file_with_the_old_hash_is_stored_again(test_db) -> None:
+    """Left by set_source_pdf before #217 step 4: the store served the old file."""
+    from lestash.core.database import save_media_file
+
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        old = save_media_file(item, b"old pdf", "a.pdf", test_db)
+        media_id = add_item_media(conn, item, media_type="source_pdf", local_path=old)
+        conn.commit()
+        adopt_media(conn, test_db)
+        new = save_media_file(item, b"new pdf", "a.pdf", test_db)
+        conn.execute("UPDATE item_media SET local_path = ? WHERE id = ?", (new, media_id))
+        conn.commit()
+        adopt_media(conn, test_db)
+        row = dict(conn.execute("SELECT * FROM item_media WHERE id = ?", (media_id,)).fetchone())
+    assert media_file(row, test_db).read_bytes() == b"new pdf"
