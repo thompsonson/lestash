@@ -135,7 +135,7 @@ def test_an_app_page_gives_its_visible_text_and_never_its_scripts(test_db, fake_
     assert metadata["text_from"] == ["html.parser"]
 
 
-def test_a_file_that_cannot_be_read_is_counted_and_tried_again(
+def test_a_file_that_cannot_be_read_is_recorded_and_not_read_again(
     test_db, fake_ocr, monkeypatch
 ) -> None:
     store = BlobStore(store_root(test_db))
@@ -146,10 +146,41 @@ def test_a_file_that_cannot_be_read_is_counted_and_tried_again(
             raise RuntimeError("bad picture")
 
         monkeypatch.setattr(extract._Ocr, "read", classmethod(broken))
-        assert extract_pending(conn, test_db).failed == 1
-        monkeypatch.undo()
-        monkeypatch.setattr(extract._Ocr, "read", classmethod(lambda cls, p: "read now"))
-        assert extract_pending(conn, test_db).files == 1
+        first = extract_pending(conn, test_db)
+        assert (first.failed, first.stopped) == (1, None)
+        assert extract_pending(conn, test_db).failed == 0  # not read again
+        assert PART not in _item(conn)[1]
+
+
+def test_an_ocr_engine_that_cannot_start_stops_the_run(test_db, fake_ocr, monkeypatch) -> None:
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run([_deck(store, [b"one", b"two"])])
+
+        def no_engine(cls, path):
+            raise extract.EngineUnavailable("model could not be fetched")
+
+        monkeypatch.setattr(extract._Ocr, "read", classmethod(no_engine))
+        counts = extract_pending(conn, test_db)
+        assert counts.stopped and counts.failed == 0
+        assert conn.execute("SELECT count(*) FROM blob_text").fetchone()[0] == 0
+        monkeypatch.setattr(extract._Ocr, "read", classmethod(lambda cls, p: "read"))
+        assert extract_pending(conn, test_db).files == 2
+
+
+def test_a_deck_made_again_reads_only_its_newest_slides(test_db, fake_ocr) -> None:
+    """The old export's slides stay as media beside the new ones at the same places."""
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run([_deck(store, [b"old one", b"old two"])])
+        extract_pending(conn, test_db)
+        SyncStore(conn, "notebooklm").run([_deck(store, [b"new one", b"new two"])])
+        extract_pending(conn, test_db)
+        content = _item(conn)[1]
+        # And an import of the old export again changes nothing
+        SyncStore(conn, "notebooklm").run([_deck(store, [b"old one", b"old two"])])
+        assert _item(conn)[1] == content
+    assert content.endswith("## Slide 1\n\nnew one\n\n## Slide 2\n\nnew two")
 
 
 def test_a_time_budget_leaves_the_rest_for_next_time(test_db, fake_ocr) -> None:

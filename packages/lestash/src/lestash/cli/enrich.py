@@ -107,10 +107,11 @@ def text(
     with get_connection(config) as conn:
         counts = extract_pending(conn, config, budget_s=budget)
     console.print(
-        f"Read {counts.files} file(s), {counts.failed} failed; "
+        f"Read {counts.files} file(s), {counts.failed} unreadable (not tried again); "
         f"{counts.items} item(s) updated; {counts.pending} file(s) left for next time."
     )
-    if counts.failed:
+    if counts.stopped:
+        console.print(f"[yellow]Stopped: {counts.stopped}. The next run goes on.[/yellow]")
         raise typer.Exit(1)
 
 

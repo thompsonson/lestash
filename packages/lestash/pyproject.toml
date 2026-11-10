@@ -16,6 +16,7 @@ dependencies = [
     "sqlite-vec>=0.1.6",
     "sentence-transformers>=3.0.0",
     "docling>=2.84.0",
+    "rapidocr>=3.7.0",  # OCR for slides and pictures (#218); docling uses it too
     "pymupdf>=1.27.0",
     "anthropic>=0.40.0",
     "markdownify>=1.1",

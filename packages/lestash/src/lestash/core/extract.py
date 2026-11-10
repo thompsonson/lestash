@@ -58,6 +58,10 @@ def tool_for(media_type: str, mime_type: str | None) -> str | None:
 # Reading files
 
 
+class EngineUnavailable(Exception):
+    """The OCR engine can't start (e.g. its model can't be fetched): no file can be read."""
+
+
 class _Ocr:
     """RapidOCR, loaded once: its models take a second to load."""
 
@@ -70,10 +74,14 @@ class _Ocr:
             import rapidocr
             from rapidocr import LangRec, OCRVersion, RapidOCR
 
-            # The default model is Chinese, and runs English words together
-            cls._engine = RapidOCR(
-                params={"Rec.lang_type": LangRec.EN, "Rec.ocr_version": OCRVersion.PPOCRV5}
-            )
+            # The default model is Chinese, and runs English words together. The
+            # English one is fetched on first use, into rapidocr's models folder.
+            try:
+                cls._engine = RapidOCR(
+                    params={"Rec.lang_type": LangRec.EN, "Rec.ocr_version": OCRVersion.PPOCRV5}
+                )
+            except Exception as e:
+                raise EngineUnavailable(f"RapidOCR could not start: {e}") from e
             cls.version = f"rapidocr {rapidocr.__version__}, PP-OCRv5 en"
         result = cls._engine(str(path))
         return "\n".join(t.strip() for t in (result.txts or ()) if t.strip())
@@ -129,6 +137,7 @@ class Media:
     position: int
     alt_text: str | None
     sha256: str
+    order: int = 1 << 62  # its row id: a later version is newer; one being imported newest
 
 
 def base_content(content: str | None) -> str:
@@ -147,14 +156,22 @@ def compose(content: str | None, media: Iterable[Media], texts: Texts) -> tuple[
     """``content`` with its files' text, and the tool versions that read it."""
     sections = []
     versions: set[str] = set()
-    seen: set[tuple[str, str, int]] = set()
-    for m in sorted(media, key=lambda m: (m.media_type != "image", m.position, m.sha256)):
+    # One file per place: a deck made again keeps its old slides as media too, and
+    # only the newest at each position is read into the text
+    newest: dict[tuple[str, int, str], Media] = {}
+    for m in media:
         tool = tool_for(m.media_type, m.mime_type)
-        text, version = texts.get((m.sha256, tool or ""), ("", ""))
-        text = text.strip()
-        if not tool or not text or (m.sha256, m.media_type, m.position) in seen:
+        if tool is None:
             continue
-        seen.add((m.sha256, m.media_type, m.position))
+        key = (m.media_type, m.position, tool)
+        if key not in newest or m.order > newest[key].order:
+            newest[key] = m
+    for m in sorted(newest.values(), key=lambda m: (m.media_type != "image", m.position)):
+        tool = tool_for(m.media_type, m.mime_type) or ""
+        text, version = texts.get((m.sha256, tool), ("", ""))
+        text = text.strip()
+        if not text:
+            continue
         versions.add(version)
         heading = m.alt_text if (m.alt_text or "").startswith("Slide ") else None
         sections.append(f"## {heading}\n\n{text}" if heading else text)
@@ -176,7 +193,7 @@ def _current_media(conn: sqlite3.Connection, item_id: int) -> list[Media]:
     return [
         Media(*row)
         for row in conn.execute(
-            "SELECT media_type, mime_type, position, alt_text, sha256 FROM item_media "
+            "SELECT media_type, mime_type, position, alt_text, sha256, id FROM item_media "
             "WHERE item_id = ? AND sha256 IS NOT NULL AND superseded_at IS NULL",
             (item_id,),
         )
@@ -213,7 +230,9 @@ def content_on_import(
         if getattr(m, "sha256", None)
     ]
     stored = _current_media(conn, item_id) if item_id is not None else []
-    every = stored + incoming
+    # An incoming file already stored keeps its row's place among the versions
+    known = {(m.media_type, m.position, m.sha256) for m in stored}
+    every = stored + [m for m in incoming if (m.media_type, m.position, m.sha256) not in known]
     text, versions = compose(content, every, _texts(conn, every))
     return text, with_text_from(metadata, versions)
 
@@ -247,7 +266,8 @@ def refresh_item(conn: sqlite3.Connection, item_id: int) -> bool:
 @dataclass
 class ExtractCounts:
     files: int = 0  # files read this run
-    failed: int = 0
+    failed: int = 0  # files that could not be read: recorded, not tried again
+    stopped: str | None = None  # why the run stopped early: the rest wait
     items: int = 0  # items whose text changed
     pending: int = 0  # files left for the next run (time budget)
 
@@ -303,20 +323,37 @@ def extract_pending(
         path = store.path(sha)
         try:
             text, version = read_file(tool, path)
+            counts.files += 1
+        except EngineUnavailable as e:
+            counts.stopped = str(e)  # every file would fail the same way
+            break
         except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
+            # Recorded with no text, so it is not read again every run
             logger.warning("Could not read text from %s (%s): %s", path.name, tool, e)
+            text, version = "", f"failed: {type(e).__name__}: {e}"[:300]
             counts.failed += 1
-            continue
-        with conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO blob_text (sha256, tool, tool_version, text) "
-                "VALUES (?, ?, ?, ?)",
-                (sha, tool, version, text),
-            )
-        counts.files += 1
-    with conn:
-        since = max_history_id(conn)
-        changed = [i for i in item_ids if refresh_item(conn, i)]
-        mark_recent_history(conn, since, "extract", item_ids=changed)
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO blob_text (sha256, tool, tool_version, text) "
+                    "VALUES (?, ?, ?, ?)",
+                    (sha, tool, version, text),
+                )
+        except sqlite3.OperationalError as e:  # a sync holds the lock: go on next run
+            counts.stopped = f"database busy: {e}"
+            break
+    try:
+        conn.execute("BEGIN IMMEDIATE")  # read and write each item under one lock
+        try:
+            since = max_history_id(conn)
+            changed = [i for i in item_ids if refresh_item(conn, i)]
+            mark_recent_history(conn, since, "extract", item_ids=changed)
+        except BaseException:
+            conn.rollback()
+            raise
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        counts.stopped = f"database busy: {e}"
+        return counts
     counts.items = len(changed)
     return counts

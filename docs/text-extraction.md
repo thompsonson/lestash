@@ -17,3 +17,7 @@ W3 (#218): searchable text for files that have none.
 - `metadata.text_from` names the tool versions that read it.
 - The part is rebuilt from `blob_text` each time the item is stored, so an import keeps it and writes no history. A change to the text is kept in `item_history`, tagged `extract`.
 - Keyword search finds a phrase on a slide; the snippet shows the text near it.
+- A deck made again keeps its old slides as media; only the newest file at each position is read into the text.
+- A file that can't be read is recorded with no text and not tried again. A run that can't start the OCR engine, or finds the database busy, stops and says so; the next run goes on.
+- RapidOCR fetches its English model on first use, into its package folder, so the first run after an install needs the network.
+- The part under `## Text from the files` is rebuilt: an edit made inside it is lost.
