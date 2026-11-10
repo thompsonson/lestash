@@ -72,8 +72,10 @@ W2 (#217): one store for every file LeStash keeps.
 - The Takeout sync downloads one part at a time. Each part's artifact files go into the store as it is read.
 - What the export's parts held so far (descriptions, and each file's hash and size) is kept as the checkpoint `notebooklm:takeout-<request time>`; `takeout-<time>-001.zip` and `takeout-<time>-3-002.zip` are parts of one request.
 - Until the export's last part is read, a file goes only to a description of its own name and type: a better fit may be in a later part, and a media row once written stays. The last part, even one with nothing else in it, attaches the rest by the start of their names.
-- A file store that can't be written stops the sync and records nothing, like a full download disk.
-- Parts imported before this step are not in the index; the March export's artifacts came from `lestash media notebooklm`.
+- An export whose parts are all settled, but whose last read was not final (its last part was given up, or left Drive), is completed from its index after the parts; no zip is read.
+- A part counts as settled once this importer has read it (`indexed` in its record), or once given up.
+- A file store that can't be written stops the sync and records nothing, like a full download disk. A damaged file inside a part counts an attempt for that part.
+- Parts imported before this step are not in the index and never settle, so a later part of such an export leaves near-named files waiting rather than guess; `lestash takeout forget` on the old parts reads them again. The March export's artifacts came from `lestash media notebooklm`.
 - Each part yields its export's artifacts again with every file seen so far, so the last part completes them, whichever part a file or description is in.
 - An artifact's text and metadata come from its description alone, and media are only added, so a part read alone never undoes what another wrote. The slide count is no longer in the text; the slides are its media.
 - `lestash media notebooklm <zips>` reads the parts through the same index.

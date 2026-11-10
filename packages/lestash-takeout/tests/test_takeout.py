@@ -525,3 +525,88 @@ def test_artifacts_spread_over_parts_are_completed_by_the_last_part(
     source.forget("p2")
     _sync()
     assert artifacts() == {"Deck": (NB, 2), "Talk": (NB, 1)}
+
+
+def _long_titled_parts(tmp_path) -> tuple[dict, Path, str]:
+    """A description cut a byte shorter than its file: they never match exactly."""
+    title = "Continual Learning Without Forgetting Old Tasks Ever"
+    desc = {"title": title, "type": "ARTIFACT_TYPE_INFOGRAPHIC"}
+    one = _zip(
+        tmp_path / "a.zip",
+        {
+            **NOTEBOOK,
+            f"{ART}/Continual Learning Without Forgetting Old Ta.json": json.dumps(desc),
+            f"{ART}/Continual Learning Without Forgetting Old Tas.png": "png",
+        },
+    )
+    return desc, one, title
+
+
+def test_an_export_whose_last_part_is_given_up_is_completed_from_its_index(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    _, one, title = _long_titled_parts(tmp_path)
+    bad = tmp_path / "bad.zip"
+    bad.write_bytes(b"not a zip")
+    _drive_of(
+        monkeypatch,
+        {
+            "a": ("takeout-20260101T000000Z-001.zip", one),
+            "b": ("takeout-20260101T000000Z-002.zip", bad),
+        },
+    )
+    for _ in range(source.MAX_ATTEMPTS - 1):
+        _sync(fails=True)
+        assert _artifact_media(test_db) == {}  # the png waits for part two
+    _sync(fails=True)  # part two is given up: the export is completed without it
+    assert _artifact_media(test_db) == {
+        title: ["Continual Learning Without Forgetting Old Tas.png"]
+    }
+    assert _state(test_db)["notebooklm:takeout-20260101T000000Z"]["final"] is True
+
+
+def test_a_part_imported_before_artifacts_were_indexed_keeps_files_waiting(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    """Its descriptions are in no index, so a file must not take a near name."""
+    from lestash.core.database import save_checkpoint
+
+    _, one, _ = _long_titled_parts(tmp_path)
+    _drive_of(
+        monkeypatch,
+        {
+            "old": ("takeout-20260101T000000Z-001.zip", _zip(tmp_path / "o.zip", NOTEBOOK)),
+            "a": ("takeout-20260101T000000Z-002.zip", one),
+        },
+    )
+    with get_connection(test_db) as conn:
+        record = {
+            "name": "x",
+            "status": "imported",
+            "items": 2,
+            "source_type": "notebooklm",
+            "importer_version": IMPORTER_VERSION,
+            "imported_at": "2026-03-30T00:00:00",
+        }
+        save_checkpoint(conn, "takeout", "old", record)
+        conn.commit()
+    _sync()
+    assert _artifact_media(test_db) == {}
+    assert _state(test_db)["notebooklm:takeout-20260101T000000Z"]["final"] is False
+
+
+def test_a_damaged_artifact_file_counts_an_attempt(test_db, tmp_path, monkeypatch) -> None:
+    import zlib
+
+    from lestash.core.blobs import BlobStore
+
+    _, one, _ = _long_titled_parts(tmp_path)
+    _drive_of(monkeypatch, {"a": ("takeout-20260101T000000Z-001.zip", one)})
+
+    def damaged(self, stream):
+        raise zlib.error("Error -3 while decompressing data")
+
+    monkeypatch.setattr(BlobStore, "put_stream", damaged)
+    _sync(fails=True)
+    record = _state(test_db)["a"]
+    assert record["status"] == "failed" and record["attempts"] == 1
