@@ -429,3 +429,26 @@ def test_the_probe_reads_the_smallest_file_read_before(test_db, monkeypatch) -> 
             )
         assert extract._still_reads(conn, store, extract.WHISPER_TOOL) is True
     assert read == [store.path(small.sha256).name]
+
+
+def test_a_whisper_that_cannot_start_leaves_the_other_tools_reading(
+    test_db, fake_ocr, monkeypatch
+) -> None:
+    def no_engine(cls, path):
+        raise extract.EngineUnavailable("faster-whisper could not start: offline")
+
+    monkeypatch.setattr(extract._Whisper, "read", classmethod(no_engine))
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run(
+            [
+                _recording(store, b"a recording", "audio_overview", "audio/x-wav"),
+                _deck(store, [b"Slide text"]),
+            ]
+        )
+        counts = extract_pending(conn, test_db)
+        tools = [r[0] for r in conn.execute("SELECT tool FROM blob_text")]
+        _, content, _ = _item(conn)
+    assert counts.files == 1 and counts.engine_failed and "offline" in (counts.stopped or "")
+    assert tools == [extract.OCR_TOOL]  # the recording waits, unrecorded
+    assert "Slide text" in content

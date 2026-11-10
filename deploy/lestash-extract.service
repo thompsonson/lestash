@@ -1,5 +1,5 @@
 [Unit]
-Description=LeStash text from files (OCR), after each sync (#218)
+Description=LeStash text from files (OCR and transcripts), after each sync (#218)
 
 [Service]
 Type=oneshot

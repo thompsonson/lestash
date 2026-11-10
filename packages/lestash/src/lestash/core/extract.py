@@ -124,16 +124,16 @@ def clock(seconds: float) -> str:
 
 def transcript(segments: Iterable[tuple[float, str]], every: float = HEADING_EVERY_S) -> str:
     """A transcript from (start, text) segments: a ``## 12:34`` heading, then the text
-    until the next segment that starts ``every`` seconds or more after it."""
+    until the first segment that starts in a later ``every``-second span."""
     parts: list[str] = []
-    since: float | None = None
+    span: int | None = None
     for start, text in segments:
         text = " ".join(text.split())
         if not text:
             continue
-        if since is None or start - since >= every:
+        if span is None or int(start // every) > span:
             parts.append(f"## {clock(start)}\n\n{text}")
-            since = start
+            span = int(start // every)
         else:
             parts[-1] += f" {text}"
     return "\n\n".join(parts)
@@ -451,6 +451,8 @@ def extract_pending(
     # the tool is broken, not the files, and they are read again next run
     held: dict[str, list[tuple[str, str, str, str]]] = {}
     good: set[str] = set()
+    # A tool whose engine can't start: its files wait, and the other tools go on
+    unavailable: dict[str, str] = {}
 
     def write(rows: list[tuple[str, str, str, str]]) -> bool:
         try:
@@ -469,15 +471,19 @@ def extract_pending(
         if budget_s is not None and time.monotonic() - started > budget_s:
             counts.pending = len(pending) - n
             break
+        if tool in unavailable:
+            continue
         path = store.path(sha)
         if not path.is_file():
             logger.warning("Not in the file store: %s", sha)  # not the file's fault
             continue
         try:
             text, version = read_file(tool, path)
-        except EngineUnavailable as e:
-            counts.stopped, counts.engine_failed = str(e), True  # every file would fail
-            break
+        except EngineUnavailable as e:  # every file of this tool would fail
+            logger.warning("%s", e)
+            unavailable[tool] = str(e)
+            held.pop(tool, None)
+            continue
         except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
             logger.warning("Could not read text from %s (%s): %s", path.name, tool, e)
             failure = (
@@ -509,6 +515,9 @@ def extract_pending(
         if broken and not counts.stopped:
             counts.stopped = f"{', '.join(broken)} read no file and failed on every one"
             counts.engine_failed = True
+    if unavailable:
+        counts.engine_failed = True
+        counts.stopped = "; ".join([*unavailable.values(), *filter(None, [counts.stopped])])
     try:
         conn.execute("BEGIN IMMEDIATE")  # read and write each item under one lock
         try:
