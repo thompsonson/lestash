@@ -18,7 +18,8 @@ W2 (#217): one store for every file LeStash keeps.
 
 ## Writing and reading
 
-- `lestash media adopt` copies each media file not yet in the store into it and sets its row's `sha256`. The file in the media folder stays.
+- `lestash media adopt` copies each media file not yet in the store into it and sets its row's `sha256`.
+- `lestash media prune` then removes the media folder's copy, once the stored file is there with the same hash. Each sync runs both.
 - Each `lestash sources sync` and each upload through `/api/items/{id}/media` adopts new media the same way.
 - Media written elsewhere (PDF enrichment, imports) wait for the next sync or `lestash media adopt`; until then they are served from the media folder.
 - `/api/media/{id}` serves the blob from the store, else the media folder's file, else redirects to the remote URL.
@@ -27,7 +28,6 @@ W2 (#217): one store for every file LeStash keeps.
 
 - Files are copied with no write open, then recorded in one short transaction; a file that cannot be read is skipped and tried next time, so it never fails a sync.
 - On a copy of the live database: 755 media files adopted as 617 blobs (155 MB, against 175 MB in the media folder); a second run adds none.
-- Not yet: removing the media folder's copies (step 3 covers the Kobo blobs and media versions; step 2, NotebookLM).
 
 ## As built (#217, step 2): NotebookLM artifacts
 
@@ -52,3 +52,18 @@ W2 (#217): one store for every file LeStash keeps.
 - The detail view shows current media, and lists older versions under "Earlier versions"; listings use current media only.
 - `blobs` lists the Kobo files media point at; snapshot-only files (the Kobo's database, logs) are in the store but not in the table.
 - On a copy of the live database: 581 Kobo files moved (18 already here), 38 book files attached (37 PDFs, 1 EPUB); a second import adds nothing. The snapshots so far hold one version of each book file.
+
+## As built (#217, step 4): media-folder copies removed
+
+- Each sync, after adopting, removes a media-folder file whose rows all point at one blob, that blob is in the store, and both hash the same; `lestash media prune --delete` does the same by hand, and without `--delete` only counts.
+- A file stays when no row names it yet, a row naming it is not adopted, its rows name different blobs, or its stored copy is missing or damaged.
+- Each removal checks the rows again under the write lock, so a row a writer has just recorded keeps its file.
+- A writer that found the file just before it was removed records a row naming a missing file; the next adopt points it at the stored file another row names.
+- A database restored from a backup taken before a prune finds each file in the store by its name, which is the start of its hash, at its next sync; until then those media are not served.
+- Nothing is removed when another `*.db` shares the database's folder, since that database shares the media folder too; the sync and the command say so. Managed backups (`lestash-backup-*.db`) are older copies of this database and do not count.
+- Adopt first clears a hash that is not the file its row names (the name is the start of the file's hash), so the file is stored again.
+- A busy write lock stops the prune; the next sync goes on.
+- Writers still save into the media folder; their files stay there until the next sync stores them.
+- A download is still named after the file it was saved as, not its hash.
+- PDF enrichment and OCR read a source PDF from the store, else the media folder.
+- A source PDF replaced by another file keeps its stored file on the `source_pdf_version` row; the current row waits for the next adopt.

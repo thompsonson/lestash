@@ -93,3 +93,26 @@ def test_older_versions_are_listed_and_served(client, test_config) -> None:
         (2, None),
     ]
     assert client.get(media[0]["serve_url"]).content == b"%PDF annotated"
+
+
+def test_a_pruned_download_keeps_the_name_it_was_saved_under(client, test_config) -> None:
+    from lestash.core.blobs import prune_media
+
+    with get_connection(test_config) as conn:
+        item = conn.execute(
+            "INSERT INTO items (source_type, content) VALUES ('t', 'x') RETURNING id"
+        ).fetchone()[0]
+        conn.commit()
+    resp = client.post(
+        f"/api/items/{item}/media", files={"file": ("notes.txt", b"plain", "text/plain")}
+    )
+    media_id = resp.json()["id"]
+    with get_connection(test_config) as conn:
+        assert prune_media(conn, test_config).removed == 1
+        (local_path,) = conn.execute(
+            "SELECT local_path FROM item_media WHERE id = ?", (media_id,)
+        ).fetchone()
+    served = client.get(f"/api/media/{media_id}")
+    assert served.status_code == 200 and served.content == b"plain"
+    disposition = served.headers["content-disposition"]
+    assert disposition.startswith("attachment") and local_path.rsplit("/", 1)[1] in disposition

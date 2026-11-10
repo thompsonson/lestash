@@ -3,6 +3,7 @@
 import logging
 import mimetypes
 import sqlite3
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
@@ -53,7 +54,12 @@ def serve_media(media_id: int):
             file_path,
             media_type=content_type,
             content_disposition_type="inline" if inline else "attachment",
-            filename=(media["alt_text"] or file_path.name) if not inline else None,
+            # A stored file is named by its hash: the name it was saved under is kept
+            filename=(
+                (media["alt_text"] or Path(media["local_path"] or file_path).name)
+                if not inline
+                else None
+            ),
         )
 
     # Fall back to remote URL (only if it's an actual HTTP URL)

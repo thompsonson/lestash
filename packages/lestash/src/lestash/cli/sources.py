@@ -240,7 +240,7 @@ def sync_source(
                         # New media files into the file store (#217), once the sync's
                         # own work is committed: a file that fails is tried next time
                         try:
-                            from lestash.core.blobs import adopt_media
+                            from lestash.core.blobs import adopt_media, prune_media
 
                             adopted = adopt_media(conn, config)
                             if adopted.adopted:
@@ -249,6 +249,20 @@ def sync_source(
                                 )
                         except Exception as e:  # never fails the sync
                             console.print(f"  [yellow]Media not stored: {escape(str(e))}[/yellow]")
+                        else:
+                            # Then their media-folder copies go, once each is checked
+                            try:
+                                pruned = prune_media(conn, config)
+                                if pruned.shared_with:
+                                    console.print(
+                                        "  [yellow]Media copies not pruned: "
+                                        f"{escape(str(pruned.shared_with))} shares the "
+                                        "media folder[/yellow]"
+                                    )
+                            except Exception as e:  # never fails the sync
+                                console.print(
+                                    f"  [yellow]Media copies not pruned: {escape(str(e))}[/yellow]"
+                                )
 
                         status = "completed"
                     except Exception as e:

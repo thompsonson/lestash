@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lestash.core.blobs import BlobStore, adopt_media, media_file, sha_file, store_root
+from lestash.core.blobs import (
+    BlobStore,
+    adopt_media,
+    media_file,
+    prune_media,
+    sha_file,
+    store_root,
+)
 from lestash.core.config import Config, GeneralConfig
 from lestash.core.database import (
     SCHEMA_VERSION,
@@ -248,3 +255,186 @@ def test_a_lost_newest_version_does_not_stay_current(test_db) -> None:
         before = conn.total_changes
         put(a, t1, None)
         assert conn.total_changes == before  # and stays so, writing nothing
+
+
+def test_pruning_removes_only_copies_checked_against_the_store(test_db) -> None:
+    media = get_media_dir(test_db)
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        stored = _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        _media(conn, test_db, item, f"{item}/twin.png", b"png a")  # same bytes, own name
+        adopt_media(conn, test_db)
+        _media(conn, test_db, item, f"{item}/new.png", b"not adopted yet")
+        (media / f"{item}/unnamed.png").write_bytes(b"no row names this")
+        # A row whose file changed after it was stored: the copy is not its blob
+        changed = _media(conn, test_db, item, f"{item}/changed.png", b"before")
+        adopt_media(conn, test_db, ids=[changed])
+        (media / f"{item}/changed.png").write_bytes(b"after")
+        conn.commit()
+
+        counted = prune_media(conn, test_db, delete=False)
+        assert (counted.removed, counted.kept) == (2, 3)
+        assert (media / f"{item}/a.png").is_file()  # counting removes nothing
+
+        counts = prune_media(conn, test_db)
+        assert (counts.removed, counts.removed_bytes, counts.kept) == (2, 10, 3)
+        left = sorted(p.name for p in (media / str(item)).iterdir())
+        assert left == ["changed.png", "new.png", "unnamed.png"]
+        # A pruned file is still served, from the store
+        row = dict(conn.execute("SELECT * FROM item_media WHERE id = ?", (stored,)).fetchone())
+        assert media_file(row, test_db).read_bytes() == b"png a"
+        assert prune_media(conn, test_db).removed == 0  # runs again cleanly
+
+
+def test_pruning_keeps_a_copy_whose_stored_file_is_missing_or_damaged(test_db) -> None:
+    media = get_media_dir(test_db)
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/lost.png", b"lost")
+        _media(conn, test_db, item, f"{item}/bad.png", b"bad")
+        adopt_media(conn, test_db)
+        conn.commit()
+        shas = dict(conn.execute("SELECT local_path, sha256 FROM item_media").fetchall())
+        store.path(shas[f"{item}/lost.png"]).unlink()
+        store.path(shas[f"{item}/bad.png"]).write_bytes(b"damaged")
+        counts = prune_media(conn, test_db)
+    assert (counts.removed, counts.kept) == (0, 2)
+    assert (media / f"{item}/lost.png").is_file() and (media / f"{item}/bad.png").is_file()
+
+
+def test_pruning_removes_emptied_item_folders(test_db) -> None:
+    media = get_media_dir(test_db)
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        adopt_media(conn, test_db)
+        conn.commit()
+        prune_media(conn, test_db)
+    assert not (media / str(item)).exists() and media.is_dir()
+
+
+def test_a_file_named_by_an_adopted_and_an_unadopted_row_is_kept(test_db) -> None:
+    media = get_media_dir(test_db)
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        adopt_media(conn, test_db)
+        # A writer's new row for the same file, recorded before the next adopt
+        add_item_media(conn, item, media_type="pdf", local_path=f"{item}/a.png")
+        conn.commit()
+        assert prune_media(conn, test_db).kept == 1
+    assert (media / f"{item}/a.png").is_file()
+
+
+def test_a_row_recorded_while_its_file_was_pruned_is_repaired(test_db) -> None:
+    """The race prune's re-check narrows: a writer finds the file, prune removes it,
+    then the writer records a row. The next adopt points that row at the stored file."""
+    from lestash.core.database import save_media_file
+
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        rel = save_media_file(item, b"pdf bytes", "doc.pdf", test_db)
+        add_item_media(conn, item, media_type="image", local_path=rel)
+        conn.commit()
+        adopt_media(conn, test_db)
+        prune_media(conn, test_db)
+        late = add_item_media(conn, item, media_type="pdf", local_path=rel)
+        conn.commit()
+        counts = adopt_media(conn, test_db)
+        row = dict(conn.execute("SELECT * FROM item_media WHERE id = ?", (late,)).fetchone())
+    assert (counts.adopted, counts.missing) == (1, 0)
+    assert media_file(row, test_db).read_bytes() == b"pdf bytes"
+
+
+def test_a_media_folder_shared_with_another_database_is_not_pruned(test_db) -> None:
+    db = Path(test_db.general.database_path)
+    (db.parent / "other.db").write_bytes(b"")
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        adopt_media(conn, test_db)
+        conn.commit()
+        counts = prune_media(conn, test_db)
+    assert counts.removed == 0 and (get_media_dir(test_db) / f"{item}/a.png").is_file()
+
+
+def test_a_database_restored_from_before_the_prune_finds_its_files(test_db) -> None:
+    """Its rows have no sha256 and their media-folder copies are gone; each file is
+    found in the store by its name, the start of its hash."""
+    from lestash.core.database import save_media_file
+
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        rel = save_media_file(item, b"kept bytes", "a.png", test_db)
+        media_id = add_item_media(conn, item, media_type="image", local_path=rel)
+        conn.commit()
+        adopt_media(conn, test_db)
+        prune_media(conn, test_db)
+        # As in a backup from before the first adopt: no hashes, no blobs rows
+        conn.execute("UPDATE item_media SET sha256 = NULL")
+        conn.execute("DELETE FROM blobs")
+        healthy = _media(conn, test_db, item, f"{item}/b.png", b"new bytes")
+        conn.commit()
+        counts = adopt_media(conn, test_db)
+        row = dict(conn.execute("SELECT * FROM item_media WHERE id = ?", (media_id,)).fetchone())
+        (other,) = conn.execute("SELECT sha256 FROM item_media WHERE id = ?", (healthy,)).fetchone()
+    assert (counts.adopted, counts.missing) == (2, 0) and other
+    assert media_file(row, test_db).read_bytes() == b"kept bytes"
+
+
+def test_a_managed_backup_beside_the_database_does_not_stop_pruning(test_db) -> None:
+    db = Path(test_db.general.database_path)
+    (db.parent / "lestash-backup-20261110T110000.db").write_bytes(b"")
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        adopt_media(conn, test_db)
+        conn.commit()
+        counts = prune_media(conn, test_db)
+    assert counts.removed == 1 and counts.shared_with is None
+
+
+def test_a_row_moved_to_another_file_with_the_old_hash_is_stored_again(test_db) -> None:
+    """Left by set_source_pdf before #217 step 4: the store served the old file."""
+    from lestash.core.database import save_media_file
+
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        old = save_media_file(item, b"old pdf", "a.pdf", test_db)
+        media_id = add_item_media(conn, item, media_type="source_pdf", local_path=old)
+        conn.commit()
+        adopt_media(conn, test_db)
+        new = save_media_file(item, b"new pdf", "a.pdf", test_db)
+        conn.execute("UPDATE item_media SET local_path = ? WHERE id = ?", (new, media_id))
+        conn.commit()
+        adopt_media(conn, test_db)
+        row = dict(conn.execute("SELECT * FROM item_media WHERE id = ?", (media_id,)).fetchone())
+    assert media_file(row, test_db).read_bytes() == b"new pdf"
+
+
+def test_a_busy_write_lock_stops_the_prune_and_keeps_the_file(test_db, monkeypatch) -> None:
+    import sqlite3
+
+    from lestash.core import database
+
+    media = get_media_dir(test_db)
+    with get_connection(test_db) as conn:
+        item = _item(conn)
+        _media(conn, test_db, item, f"{item}/a.png", b"png a")
+        _media(conn, test_db, item, f"{item}/b.png", b"png b")
+        adopt_media(conn, test_db)
+        conn.commit()
+    monkeypatch.setattr(database, "BUSY_TIMEOUT_S", 0.1)
+    holder = sqlite3.connect(test_db.general.database_path)
+    holder.execute("BEGIN IMMEDIATE")  # another writer holds the lock
+    try:
+        with get_connection(test_db) as conn:
+            counts = prune_media(conn, test_db)
+    finally:
+        holder.rollback()
+        holder.close()
+    assert counts.stopped and counts.removed == 0
+    assert (media / f"{item}/a.png").is_file() and (media / f"{item}/b.png").is_file()
+    with get_connection(test_db) as conn:
+        assert prune_media(conn, test_db).removed == 2  # the next run goes on

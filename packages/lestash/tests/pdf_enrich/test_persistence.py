@@ -590,3 +590,79 @@ def test_same_file_in_a_folded_legacy_row_keeps_its_link(config, parent_pdf_item
             (parent_pdf_item,),
         ).fetchall()
     assert [tuple(r) for r in rows] == [("1/new.pdf", "https://drive.example/file")]
+
+
+def test_a_stored_source_pdf_replaced_by_another_file(config, parent_pdf_item):
+    """The row's stored file is the old one: it moves to the version row, and the
+    current row waits for the next adopt rather than naming the old file (#217)."""
+    from lestash.core.blobs import adopt_media, media_file, prune_media
+    from lestash.core.database import get_media_dir
+
+    media = get_media_dir(config)
+    (media / "1").mkdir(parents=True, exist_ok=True)
+    (media / "1/old.pdf").write_bytes(b"%PDF old")
+    with get_connection(config) as conn:
+        set_source_pdf(conn, config, parent_pdf_item, local_path="1/old.pdf")
+        conn.commit()
+        adopt_media(conn, config)
+        prune_media(conn, config)  # the old file is now only in the store
+        (media / "1").mkdir(parents=True, exist_ok=True)
+        (media / "1/new.pdf").write_bytes(b"%PDF new")
+        set_source_pdf(conn, config, parent_pdf_item, local_path="1/new.pdf")
+        rows = {
+            r["media_type"]: dict(r)
+            for r in conn.execute(
+                "SELECT * FROM item_media WHERE item_id = ?", (parent_pdf_item,)
+            ).fetchall()
+        }
+        assert media_file(rows["source_pdf"], config).read_bytes() == b"%PDF new"
+        assert media_file(rows["source_pdf_version"], config).read_bytes() == b"%PDF old"
+        conn.commit()
+        adopt_media(conn, config)
+        prune_media(conn, config)
+        current = dict(
+            conn.execute(
+                "SELECT * FROM item_media WHERE item_id = ? AND media_type = 'source_pdf'",
+                (parent_pdf_item,),
+            ).fetchone()
+        )
+    assert current["sha256"] and not (media / "1/new.pdf").exists()
+    assert media_file(current, config).read_bytes() == b"%PDF new"
+
+
+def test_enrichment_and_ocr_read_a_pruned_source_pdf_from_the_store(config, parent_pdf_item):
+    from lestash.core.blobs import adopt_media, prune_media
+    from lestash.core.database import get_media_dir
+    from lestash.core.pdf_enrich.ocr import _resolve_parent_pdf
+    from lestash.core.pdf_enrich.runner import _resolve_source_pdf
+
+    media = get_media_dir(config)
+    (media / "1").mkdir(parents=True, exist_ok=True)
+    (media / "1/doc.pdf").write_bytes(b"%PDF doc")
+    with get_connection(config) as conn:
+        set_source_pdf(conn, config, parent_pdf_item, local_path="1/doc.pdf")
+        conn.commit()
+        adopt_media(conn, config)
+        assert prune_media(conn, config).removed == 1
+        item_row = (parent_pdf_item, None, None, None)  # no drive_id: no download
+        assert _resolve_source_pdf(conn, config, item_row).read_bytes() == b"%PDF doc"
+        assert _resolve_parent_pdf(conn, config, parent_pdf_item).read_bytes() == b"%PDF doc"
+
+
+def test_reattaching_the_same_stored_source_pdf_keeps_its_file(config, parent_pdf_item):
+    from lestash.core.blobs import adopt_media
+    from lestash.core.database import get_media_dir
+
+    media = get_media_dir(config)
+    (media / "1").mkdir(parents=True, exist_ok=True)
+    (media / "1/doc.pdf").write_bytes(b"%PDF doc")
+    with get_connection(config) as conn:
+        set_source_pdf(conn, config, parent_pdf_item, local_path="1/doc.pdf")
+        conn.commit()
+        adopt_media(conn, config)
+        set_source_pdf(conn, config, parent_pdf_item, local_path="1/doc.pdf")
+        (sha,) = conn.execute(
+            "SELECT sha256 FROM item_media WHERE item_id = ? AND media_type = 'source_pdf'",
+            (parent_pdf_item,),
+        ).fetchone()
+    assert sha
