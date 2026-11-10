@@ -54,6 +54,7 @@ TRANSCRIPT_TOOL = f"faster-whisper-{_worker.WHISPER_MODEL}+speakers"
 WHISPER_MODELS = Path.home() / ".local" / "share" / "lestash" / "whisper-models"
 SPEAKER_MODELS = Path.home() / ".local" / "share" / "lestash" / "speaker-models"
 REMOTE_ROOT = "lestash-worker"  # the worker's folder in the host's home
+FFMPEG_TIMEOUT_S = 600  # converting an hour's recording takes seconds
 HEADING_EVERY_S = 60  # a transcript's ``## 12:34`` headings, about this far apart
 # Which items get text: NotebookLM artifacts of these kinds
 ARTIFACT_KINDS = frozenset({"slides", "infographic", "app", "audio_overview", "explainer_video"})
@@ -282,32 +283,49 @@ class _Transcriber:
             folder = Path(tmp)
             (folder / "in").mkdir()
             ready = []
-            sound: bool | None = None  # whether ffmpeg works here at all
+
+            def convert(source: Path, target: Path) -> tuple[int, str]:
+                try:
+                    done = subprocess.run(
+                        [ffmpeg, "-nostdin", "-v", "error", "-y", "-i", str(source), "-vn",
+                         "-ar", str(_worker.RATE), "-ac", "1", "-c:a", "pcm_s16le", str(target)],
+                        capture_output=True, text=True, check=False, timeout=FFMPEG_TIMEOUT_S,
+                    )  # fmt: skip
+                except subprocess.TimeoutExpired:
+                    target.unlink(missing_ok=True)
+                    return -1, f"took over {FFMPEG_TIMEOUT_S} s"
+                if done.returncode:
+                    target.unlink(missing_ok=True)  # a part-made file only takes space
+                return done.returncode, _tail(done.stderr, 250)
 
             def ffmpeg_works() -> bool:
-                # One second of made-up silence, into the same folder: if that fails
-                # too, this machine is at fault (a full disk, a broken install)
-                probe = subprocess.run(
-                    [ffmpeg, "-nostdin", "-v", "error", "-y", "-f", "lavfi",
-                     "-i", f"anullsrc=r={_worker.RATE}:cl=mono", "-t", "1",
-                     str(folder / "probe.wav")],
-                    capture_output=True, text=True, check=False,
-                )  # fmt: skip
-                return probe.returncode == 0
+                """Whether ffmpeg converts a second of silence, made here, into the same
+                folder: if not, this machine is at fault (a full disk, a broken
+                install), not the recording. Asked after each failure: the disk can
+                fill part way through a batch."""
+                import wave
+
+                silence = folder / "probe-in.wav"
+                try:
+                    with wave.open(str(silence), "wb") as w:
+                        w.setnchannels(1)
+                        w.setsampwidth(2)
+                        w.setframerate(_worker.RATE)
+                        w.writeframes(b"\0\0" * _worker.RATE)
+                except OSError:
+                    return False
+                try:
+                    return convert(silence, folder / "in" / "probe.wav")[0] == 0
+                finally:
+                    silence.unlink(missing_ok=True)
+                    (folder / "in" / "probe.wav").unlink(missing_ok=True)
 
             for job in jobs:
-                done = subprocess.run(
-                    [ffmpeg, "-nostdin", "-v", "error", "-y", "-i", str(job.path), "-vn",
-                     "-ar", str(_worker.RATE), "-ac", "1", "-c:a", "pcm_s16le",
-                     str(folder / "in" / f"{job.sha256}.wav")],
-                    capture_output=True, text=True, check=False,
-                )  # fmt: skip
-                if done.returncode:
-                    why = f"ffmpeg: {_tail(done.stderr, 250) or f'exit {done.returncode}'}"
-                    if sound is None:
-                        sound = ffmpeg_works()
+                code, stderr = convert(job.path, folder / "in" / f"{job.sha256}.wav")
+                if code:
+                    why = f"ffmpeg: {stderr or f'exit {code}'}"
                     # The recording's fault is recorded; this machine's makes it wait
-                    results[job.sha256] = why if sound else Unfinished(why)
+                    results[job.sha256] = why if ffmpeg_works() else Unfinished(why)
                 else:
                     ready.append({"sha256": job.sha256, "speakers": job.speakers})
             if not ready:

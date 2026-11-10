@@ -656,11 +656,16 @@ def test_a_host_that_goes_away_makes_transcripts_wait(monkeypatch, tmp_path) -> 
         extract._Transcriber.run([extract.Job("a", tmp_path / "a", 2)])
 
 
-def _ffmpeg(monkeypatch, works: bool):
-    """ffmpeg that fails on every recording; on its own silent probe only if not ``works``."""
+def _ffmpeg(monkeypatch, works: bool | list[bool]):
+    """ffmpeg that fails on every recording, and on its probe (the silence made here) as
+    ``works`` says: one answer, or one per probe in turn."""
+    answers = iter(works) if isinstance(works, list) else None
 
     def run(cmd, **kwargs):
-        ok = works and "lavfi" in cmd
+        probe = cmd[cmd.index("-i") + 1].endswith("probe-in.wav")
+        if probe:
+            assert Path(cmd[cmd.index("-i") + 1]).is_file()  # the silence is there
+        ok = probe and (next(answers) if answers else works)
         return subprocess.CompletedProcess(cmd, 0 if ok else 1, "", "" if ok else "Invalid data")
 
     monkeypatch.setattr(extract.subprocess, "run", run)
@@ -675,6 +680,11 @@ def test_an_ffmpeg_failure_is_the_recordings_only_if_ffmpeg_works(monkeypatch, t
     assert not any(isinstance(r, extract.Unfinished) for r in results.values())
     _ffmpeg(monkeypatch, works=False)  # this machine is: they wait
     assert all(isinstance(r, extract.Unfinished) for r in extract._Transcriber.run(jobs).values())
+    # The disk fills part way through: the first is bad, the second waits
+    _ffmpeg(monkeypatch, works=[True, False])
+    results = extract._Transcriber.run(jobs)
+    assert not isinstance(results["a"], extract.Unfinished)
+    assert isinstance(results["b"], extract.Unfinished)
 
 
 def test_bad_recordings_together_do_not_stop_the_good_ones(test_db, monkeypatch) -> None:
