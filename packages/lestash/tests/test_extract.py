@@ -1,4 +1,4 @@
-"""Text from NotebookLM slides, infographics and apps (#218, W3)."""
+"""Text from NotebookLM slides, infographics, apps, audio and video (#218, W3)."""
 
 from __future__ import annotations
 
@@ -245,7 +245,7 @@ def test_a_time_budget_leaves_the_rest_for_next_time(test_db, fake_ocr) -> None:
 def test_other_items_get_no_text_part(test_db, fake_ocr) -> None:
     store = BlobStore(store_root(test_db))
     item = _deck(store, [b"x"])
-    item.metadata = {"type": "artifact", "artifact_type": "audio_overview"}
+    item.metadata = {"type": "artifact", "artifact_type": "file"}
     with get_connection(test_db) as conn:
         SyncStore(conn, "notebooklm").run([item])
         assert extract_pending(conn, test_db).files == 0
@@ -324,3 +324,108 @@ def test_deeply_nested_app_data_keeps_the_page_text(tmp_path) -> None:
     page = tmp_path / "app.html"
     page.write_text('<p>Visible</p><app-root data-app-data="' + "[" * 100000 + '">')
     assert page_text(page) == "Visible"
+
+
+# --------------------------------------------------------------------------- #
+# Audio and video (step 2)
+
+
+def _recording(store: BlobStore, data: bytes, kind: str, mime: str) -> ItemCreate:
+    blob = store.put_stream(io.BytesIO(data))
+    return ItemCreate(
+        source_type="notebooklm",
+        source_id=f"{NB}/Artifacts/{kind} metadata",
+        title=kind,
+        content=f"# {kind}",
+        is_own_content=True,
+        metadata={"type": "artifact", "artifact_type": kind, "_parent_source_id": NB},
+        media=[
+            MediaCreate(
+                media_type=mime.split("/")[0],
+                mime_type=mime,
+                position=0,
+                source_origin="takeout",
+                sha256=blob.sha256,
+                size=blob.size,
+            )
+        ],
+    )
+
+
+def test_clock_and_transcript_headings() -> None:
+    assert [extract.clock(s) for s in (0, 59.9, 754, 3725)] == ["0:00", "0:59", "12:34", "1:02:05"]
+    segments = [(0.0, " Hello "), (20.0, "there."), (25.0, "  "), (61.5, "Next"), (130.0, "Last")]
+    assert extract.transcript(segments) == (
+        "## 0:00\n\nHello there.\n\n## 1:01\n\nNext\n\n## 2:10\n\nLast"
+    )
+    assert extract.transcript([]) == ""
+
+
+def test_audio_and_video_get_their_transcripts(test_db, monkeypatch) -> None:
+    def read(cls, path):
+        words = path.read_bytes().decode().split()
+        return extract.transcript((60.0 * n, w) for n, w in enumerate(words))
+
+    monkeypatch.setattr(extract._Whisper, "read", classmethod(read))
+    real = extract.tool_version
+    monkeypatch.setattr(
+        extract,
+        "tool_version",
+        lambda tool: "fake-whisper 1" if tool == extract.WHISPER_TOOL else real(tool),
+    )
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run(
+            [
+                _recording(store, b"Hebbian plasticity", "audio_overview", "audio/x-wav"),
+                _recording(store, b"Neurons wire", "explainer_video", "video/mp4"),
+            ]
+        )
+        counts = extract_pending(conn, test_db)
+        rows = dict(
+            conn.execute(
+                "SELECT json_extract(metadata, '$.artifact_type'), content FROM items "
+                "WHERE json_extract(metadata, '$.text_from[0]') = 'fake-whisper 1'"
+            ).fetchall()
+        )
+    assert (counts.files, counts.items, counts.failed) == (2, 2, 0)
+    assert rows["audio_overview"] == (
+        f"# audio_overview\n\n{PART}\n\n## 0:00\n\nHebbian\n\n## 1:00\n\nplasticity"
+    )
+    assert rows["explainer_video"].endswith("## 0:00\n\nNeurons\n\n## 1:00\n\nwire")
+
+
+def test_the_tool_for_each_file() -> None:
+    assert extract.tool_for("audio", "audio/x-wav") == extract.WHISPER_TOOL
+    assert extract.tool_for("video", "video/mp4") == extract.WHISPER_TOOL
+    assert extract.tool_for("file", "audio/x-wav") is None
+    assert extract.tool_for("image", "image/png") == extract.OCR_TOOL
+    assert extract.wants_text(
+        "notebooklm", {"type": "artifact", "artifact_type": "explainer_video"}
+    )
+
+
+def test_a_whisper_that_cannot_start_is_unavailable(monkeypatch, tmp_path) -> None:
+    import sys
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", None)  # the import fails
+    monkeypatch.setattr(extract._Whisper, "_model", None)
+    with pytest.raises(extract.EngineUnavailable, match="faster-whisper could not start"):
+        extract._Whisper.read(tmp_path / "a.wav")
+
+
+def test_the_probe_reads_the_smallest_file_read_before(test_db, monkeypatch) -> None:
+    store = BlobStore(store_root(test_db))
+    big = store.put_stream(io.BytesIO(b"x" * 1000))
+    small = store.put_stream(io.BytesIO(b"y" * 10))
+    read: list[str] = []
+    monkeypatch.setattr(extract, "read_file", lambda tool, path: read.append(path.name) or ("", ""))
+    with get_connection(test_db) as conn:
+        for blob in (big, small):
+            conn.execute("INSERT INTO blobs (sha256, size) VALUES (?, ?)", (blob.sha256, blob.size))
+            conn.execute(
+                "INSERT INTO blob_text (sha256, tool, tool_version, text) VALUES (?, ?, 'v', 't')",
+                (blob.sha256, extract.WHISPER_TOOL),
+            )
+        assert extract._still_reads(conn, store, extract.WHISPER_TOOL) is True
+    assert read == [store.path(small.sha256).name]

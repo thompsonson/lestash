@@ -1,4 +1,5 @@
-"""Text from files that have none: NotebookLM slides, infographics and apps (#218, W3).
+"""Text from files that have none: NotebookLM slides, infographics, apps, audio and video
+(#218, W3).
 
 Text is read once per stored file and kept in ``blob_text`` (by hash and tool), so a
 file in two items, or an item imported again, is never read twice. An item's text is
@@ -10,7 +11,9 @@ so an import keeps it and adds no history.
 Slides and infographics are pictures: RapidOCR's English model reads them (the same
 OCR Docling uses; Docling itself drops most of a slide's text as a picture). Apps are
 web pages: their visible text is kept, and the texts in the data a NotebookLM app
-draws itself from (``data-app-data``).
+draws itself from (``data-app-data``). Audio overviews and explainer videos are
+transcribed by faster-whisper's ``small.en`` model, with a ``## 12:34`` heading about
+each minute.
 """
 
 from __future__ import annotations
@@ -34,8 +37,13 @@ logger = logging.getLogger(__name__)
 PART = "## Text from the files"
 OCR_TOOL = "rapidocr-en"
 HTML_TOOL = "html-text"
+WHISPER_MODEL = "small.en"
+WHISPER_TOOL = f"faster-whisper-{WHISPER_MODEL}"
+# The model folder lestash-voice uses too
+WHISPER_MODELS = Path.home() / ".local" / "share" / "lestash" / "whisper-models"
+HEADING_EVERY_S = 60  # a transcript's ``## 12:34`` headings, about this far apart
 # Which items get text: NotebookLM artifacts of these kinds
-ARTIFACT_KINDS = frozenset({"slides", "infographic", "app"})
+ARTIFACT_KINDS = frozenset({"slides", "infographic", "app", "audio_overview", "explainer_video"})
 
 
 def wants_text(source_type: str, metadata: dict[str, Any] | None) -> bool:
@@ -53,6 +61,8 @@ def tool_for(media_type: str, mime_type: str | None) -> str | None:
         return OCR_TOOL
     if mime_type == "text/html":
         return HTML_TOOL
+    if media_type in ("audio", "video") and (mime_type or "").startswith(("audio/", "video/")):
+        return WHISPER_TOOL
     return None
 
 
@@ -61,7 +71,7 @@ def tool_for(media_type: str, mime_type: str | None) -> str | None:
 
 
 class EngineUnavailable(Exception):
-    """The OCR engine can't start (e.g. its model can't be fetched): no file can be read."""
+    """A tool's engine can't start (e.g. its model can't be fetched): no file can be read."""
 
 
 def _package_version(name: str) -> str:
@@ -78,6 +88,8 @@ def tool_version(tool: str) -> str:
     version is tried again."""
     if tool == OCR_TOOL:
         return f"rapidocr {_package_version('rapidocr')}, PP-OCRv5 en"
+    if tool == WHISPER_TOOL:
+        return f"faster-whisper {_package_version('faster-whisper')}, {WHISPER_MODEL}"
     return "html.parser"
 
 
@@ -101,6 +113,55 @@ class _Ocr:
                 raise EngineUnavailable(f"RapidOCR could not start: {e}") from e
         result = cls._engine(str(path))
         return "\n".join(t.strip() for t in (result.txts or ()) if t.strip())
+
+
+def clock(seconds: float) -> str:
+    """``12:34``, or ``1:02:03`` from an hour on."""
+    s = int(seconds)
+    h, m, s = s // 3600, s // 60 % 60, s % 60
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def transcript(segments: Iterable[tuple[float, str]], every: float = HEADING_EVERY_S) -> str:
+    """A transcript from (start, text) segments: a ``## 12:34`` heading, then the text
+    until the next segment that starts ``every`` seconds or more after it."""
+    parts: list[str] = []
+    since: float | None = None
+    for start, text in segments:
+        text = " ".join(text.split())
+        if not text:
+            continue
+        if since is None or start - since >= every:
+            parts.append(f"## {clock(start)}\n\n{text}")
+            since = start
+        else:
+            parts[-1] += f" {text}"
+    return "\n\n".join(parts)
+
+
+class _Whisper:
+    """faster-whisper, loaded once: its model takes seconds to load."""
+
+    _model: Any = None
+
+    @classmethod
+    def read(cls, path: Path) -> str:
+        if cls._model is None:
+            # The model is fetched on first use, into the folder lestash-voice uses
+            try:
+                from faster_whisper import WhisperModel
+
+                cls._model = WhisperModel(
+                    WHISPER_MODEL,
+                    device="cpu",
+                    compute_type="int8",
+                    download_root=str(WHISPER_MODELS),
+                )
+            except Exception as e:  # an import (ctranslate2, av) or the model fetch
+                raise EngineUnavailable(f"faster-whisper could not start: {e}") from e
+        # The voice-activity filter skips music and silence, where whisper makes up words
+        segments, _ = cls._model.transcribe(str(path), vad_filter=True)
+        return transcript((seg.start, seg.text) for seg in segments)
 
 
 class _PageText(HTMLParser):
@@ -156,6 +217,8 @@ def read_file(tool: str, path: Path) -> tuple[str, str]:
         return _Ocr.read(path), tool_version(tool)
     if tool == HTML_TOOL:
         return page_text(path), tool_version(tool)
+    if tool == WHISPER_TOOL:
+        return _Whisper.read(path), tool_version(tool)
     raise ValueError(f"unknown tool {tool}")
 
 
@@ -327,9 +390,11 @@ def _items_wanting_text(conn: sqlite3.Connection) -> list[int]:
 def _still_reads(conn: sqlite3.Connection, store: BlobStore, tool: str) -> bool | None:
     """Whether the tool reads again a file it read before: if so, files that fail are
     bad, not the tool. None if it has read no file still in the store."""
+    # The smallest first: transcribing a long recording takes minutes
     for (sha,) in conn.execute(
-        "SELECT sha256 FROM blob_text WHERE tool = ? AND tool_version NOT LIKE 'failed [%' "
-        "ORDER BY extracted_at DESC",
+        "SELECT t.sha256 FROM blob_text t LEFT JOIN blobs b ON b.sha256 = t.sha256 "
+        "WHERE t.tool = ? AND t.tool_version NOT LIKE 'failed [%' "
+        "ORDER BY b.size IS NULL, b.size, t.extracted_at DESC",
         (tool,),
     ):
         path = store.path(sha)
