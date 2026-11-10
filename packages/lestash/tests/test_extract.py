@@ -656,7 +656,7 @@ def test_a_host_that_goes_away_makes_transcripts_wait(monkeypatch, tmp_path) -> 
         extract._Transcriber.run([extract.Job("a", tmp_path / "a", 2)])
 
 
-def _ffmpeg(monkeypatch, works: bool | list[bool]):
+def _ffmpeg(monkeypatch, works: bool | list[bool], stderr: str = "Invalid data"):
     """ffmpeg that fails on every recording, and on its probe (the silence made here) as
     ``works`` says: one answer, or one per probe in turn."""
     answers = iter(works) if isinstance(works, list) else None
@@ -666,7 +666,7 @@ def _ffmpeg(monkeypatch, works: bool | list[bool]):
         if probe:
             assert Path(cmd[cmd.index("-i") + 1]).is_file()  # the silence is there
         ok = probe and (next(answers) if answers else works)
-        return subprocess.CompletedProcess(cmd, 0 if ok else 1, "", "" if ok else "Invalid data")
+        return subprocess.CompletedProcess(cmd, 0 if ok else 1, "", "" if ok else stderr)
 
     monkeypatch.setattr(extract.subprocess, "run", run)
     monkeypatch.setattr(extract.shutil, "which", lambda name: f"/usr/bin/{name}")
@@ -685,6 +685,9 @@ def test_an_ffmpeg_failure_is_the_recordings_only_if_ffmpeg_works(monkeypatch, t
     results = extract._Transcriber.run(jobs)
     assert not isinstance(results["a"], extract.Unfinished)
     assert isinstance(results["b"], extract.Unfinished)
+    # The disk was full, though the probe, run once the part-made file went, works
+    _ffmpeg(monkeypatch, works=True, stderr="Error: No space left on device")
+    assert all(isinstance(r, extract.Unfinished) for r in extract._Transcriber.run(jobs).values())
 
 
 def test_bad_recordings_together_do_not_stop_the_good_ones(test_db, monkeypatch) -> None:

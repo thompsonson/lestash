@@ -313,6 +313,7 @@ class _Transcriber:
                         w.setframerate(_worker.RATE)
                         w.writeframes(b"\0\0" * _worker.RATE)
                 except OSError:
+                    silence.unlink(missing_ok=True)
                     return False
                 try:
                     return convert(silence, folder / "in" / "probe.wav")[0] == 0
@@ -325,7 +326,10 @@ class _Transcriber:
                 if code:
                     why = f"ffmpeg: {stderr or f'exit {code}'}"
                     # The recording's fault is recorded; this machine's makes it wait
-                    results[job.sha256] = why if ffmpeg_works() else Unfinished(why)
+                    # A full disk frees itself as the part-made file goes, so the probe
+                    # can't see it; ffmpeg says so
+                    local = "No space left" in stderr or not ffmpeg_works()
+                    results[job.sha256] = Unfinished(why) if local else why
                 else:
                     ready.append({"sha256": job.sha256, "speakers": job.speakers})
             if not ready:
