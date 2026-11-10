@@ -328,6 +328,12 @@ def test_a_zip_too_big_for_the_disk_is_skipped_and_the_others_import(
 ART = f"{NB}/Artifacts"
 
 
+def datetime_now_iso() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat()
+
+
 def _drive_of(monkeypatch, parts: dict[str, tuple[str, Path]]) -> FakeDrive:
     """A fake Drive holding ``parts``: {file id: (zip name, local zip)}."""
     service = FakeDrive(
@@ -610,3 +616,54 @@ def test_a_damaged_artifact_file_counts_an_attempt(test_db, tmp_path, monkeypatc
     _sync(fails=True)
     record = _state(test_db)["a"]
     assert record["status"] == "failed" and record["attempts"] == 1
+
+
+def test_an_export_still_uploading_is_not_complete(test_db, tmp_path, monkeypatch) -> None:
+    """Part one alone, just uploaded: its near-named file waits, as part two may hold its
+    own description. Part two arrives later and the file goes to it."""
+    from datetime import UTC, datetime, timedelta
+
+    talk = {"title": "Talk", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
+    talk2 = {"title": "Talk 2", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
+    one = _zip(
+        tmp_path / "a.zip",
+        {**NOTEBOOK, f"{ART}/Talk metadata.json": json.dumps(talk), f"{ART}/Talk 2.wav": "two"},
+    )
+    service = _drive_of(monkeypatch, {"a": ("takeout-20260101T000000Z-001.zip", one)})
+    just_now = datetime.now(UTC).isoformat()
+    service._files[0]["createdTime"] = just_now
+    _sync()
+    assert _artifact_media(test_db) == {}
+    two = _zip(tmp_path / "b.zip", {f"{ART}/Talk 2 metadata.json": json.dumps(talk2)})
+    service._files.append(
+        {**_file("b", "takeout-20260101T000000Z-002.zip"), "createdTime": just_now}
+    )
+    service.blobs["b"] = two
+    _sync()
+    assert _artifact_media(test_db) == {"Talk 2": ["Talk 2.wav"]}  # an exact match
+    assert _state(test_db)["notebooklm:takeout-20260101T000000Z"]["final"] is False
+    # Once the upload is long done, the export is completed with no zip read
+    later = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    for f in service._files:
+        f["createdTime"] = later
+    service.downloaded.clear()
+    _sync()
+    assert service.downloaded == []
+    assert _state(test_db)["notebooklm:takeout-20260101T000000Z"]["final"] is True
+
+
+def test_an_export_whose_parts_left_drive_is_completed_once(test_db, tmp_path, monkeypatch) -> None:
+    _, one, title = _long_titled_parts(tmp_path)
+    service = _drive_of(
+        monkeypatch,
+        {
+            "a": ("takeout-20260101T000000Z-001.zip", one),
+            "b": ("takeout-20260101T000000Z-002.zip", _zip(tmp_path / "b.zip", NOTEBOOK)),
+        },
+    )
+    service._files[1]["createdTime"] = datetime_now_iso()  # part two still uploading
+    _sync()
+    assert _artifact_media(test_db) == {}
+    service._files.clear()  # both parts deleted from Drive
+    _sync()
+    assert list(_artifact_media(test_db)) == [title]

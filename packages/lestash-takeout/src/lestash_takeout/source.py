@@ -28,7 +28,7 @@ import tempfile
 import zipfile
 import zlib
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -104,6 +104,26 @@ def is_done(record: dict[str, Any] | None) -> bool:
         return record.get("importer_version", 1) >= IMPORTER_VERSION
     if record.get("status") == "failed":
         return attempts(record) >= MAX_ATTEMPTS
+    return True
+
+
+# Takeout uploads a big export's parts to Drive over a while: until its newest part is this
+# old, another may still come, so the export is not treated as complete
+UPLOAD_GRACE = timedelta(hours=12)
+
+
+def uploads_done(parts: list[dict[str, Any]], now: datetime | None = None) -> bool:
+    """Whether an export's listed parts are old enough that no more are coming."""
+    now = now or datetime.now(UTC)
+    for f in parts:
+        try:
+            created = datetime.fromisoformat(str(f.get("createdTime", "")).replace("Z", "+00:00"))
+        except ValueError:
+            continue  # unknown: no reason to wait
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        if now - created < UPLOAD_GRACE:
+            return False
     return True
 
 
@@ -224,7 +244,12 @@ def finish_exports(
     exports = {k for k in state if k.startswith("notebooklm:")}
     for export in sorted(exports):
         kept = state[export]
-        if kept.get("final") or not all(settled(state.get(f["id"])) for f in parts.get(export, [])):
+        listed_parts = parts.get(export, [])
+        if (
+            kept.get("final")
+            or not uploads_done(listed_parts)
+            or not all(settled(state.get(f["id"])) for f in listed_parts)
+        ):
             continue
         items, value = _complete(Index.from_json(kept), final=True)
         yield from items
@@ -391,11 +416,11 @@ class TakeoutSource(SourcePlugin):
                     problems.append(f"{file['name']} ({reason})")
                     continue
                 export = export_key(file)
-                # The last of its export's parts still to read: the others are done
-                final = all(
-                    settled(state.get(f["id"]))
-                    for f in listed
-                    if f["id"] != file["id"] and export_key(f) == export
+                # The last of its export's parts still to read: the others are done, and
+                # no more are still being uploaded
+                siblings = [f for f in listed if export_key(f) == export]
+                final = uploads_done(siblings) and all(
+                    settled(state.get(f["id"])) for f in siblings if f["id"] != file["id"]
                 )
                 parts = import_zip(
                     service,
