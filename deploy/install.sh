@@ -12,6 +12,7 @@ cp "$SCRIPT_DIR/lestash-server.service" "$DEST/"
 # Deploy sync timer
 cp "$SCRIPT_DIR/lestash-sync.service" "$DEST/"
 cp "$SCRIPT_DIR/lestash-sync.timer" "$DEST/"
+cp "$SCRIPT_DIR/lestash-extract.service" "$DEST/"  # started by the sync, not enabled
 
 # Deploy TLS cert renewal timer
 cp "$SCRIPT_DIR/lestash-cert.service" "$DEST/"

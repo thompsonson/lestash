@@ -86,11 +86,10 @@ def test_migration_22_adds_blobs_and_media_versions(test_db) -> None:
             "ALTER TABLE item_media DROP COLUMN superseded_at; DROP TABLE blobs; "
             "PRAGMA user_version = 21;"
         )
-        assert apply_migrations(conn) == 1
+        assert apply_migrations(conn) == SCHEMA_VERSION - 21  # 22 on
         columns = {r[1] for r in conn.execute("PRAGMA table_info(item_media)")}
         assert {"sha256", "version", "superseded_at"} <= columns
         assert apply_migrations(conn) == 0
-        assert SCHEMA_VERSION == 22
 
 
 def test_a_file_that_cannot_be_read_is_skipped_and_tried_again(test_db, monkeypatch) -> None:
