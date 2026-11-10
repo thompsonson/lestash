@@ -1607,15 +1607,17 @@ def _put_media_version(
 ) -> int:
     """One version of the media at (item, type, position), from one origin.
 
-    The row is the one of this file first seen at ``seen_at`` (kept in created_at);
-    only its superseded_at, type and label are written, and only when they differ, so
-    an unchanged import writes nothing. A new one is numbered after the slot's others:
-    numbers never change, also when a source forgets an old version. Rows of another
-    origin (an upload at the same position) are never matched.
+    The row is the one of this file first seen at ``seen_at`` (kept in created_at).
+    Its type and label are written when they differ, so an unchanged import writes
+    nothing. A replaced version stays replaced: superseded_at is only ever set on a
+    current row, so a source that forgets a snapshot (and with it, that a version was
+    replaced) never makes two rows current. A new row is numbered after the slot's
+    others; numbers never change. Rows of another origin (an upload at the same
+    position) are never matched.
 
-    Else a row of this file in the same state (current, or replaced at the same time)
-    is the one, and takes ``seen_at``: a row from before versions (an adopted file,
-    created when it was synced), or one whose first sighting the source has forgotten.
+    Else a current row of this file, or one replaced at the same time, is the one, and
+    takes ``seen_at``: a row from before versions (an adopted file, created when it
+    was synced, perhaps since redrawn), or one whose first sighting the source forgot.
     """
     conn.execute(
         "INSERT OR IGNORE INTO blobs (sha256, size, mime_type) VALUES (?, ?, ?)",
@@ -1630,17 +1632,18 @@ def _put_media_version(
     ).fetchone()
     if row is None:
         row = conn.execute(
-            f"SELECT id FROM item_media WHERE {slot} AND sha256 = ? AND superseded_at IS ? "
-            "ORDER BY id LIMIT 1",
+            f"SELECT id FROM item_media WHERE {slot} AND sha256 = ? "
+            "AND (superseded_at IS NULL OR superseded_at IS ?) ORDER BY version, id LIMIT 1",
             (*key, sha256, superseded_at),
         ).fetchone()
         if row is not None:
             conn.execute("UPDATE item_media SET created_at = ? WHERE id = ?", (seen_at, row[0]))
     if row:
         conn.execute(
-            """UPDATE item_media SET mime_type = ?, alt_text = ?, superseded_at = ?
+            """UPDATE item_media
+               SET mime_type = ?, alt_text = ?, superseded_at = coalesce(superseded_at, ?)
                WHERE id = ? AND (mime_type IS NOT ? OR alt_text IS NOT ?
-                     OR superseded_at IS NOT ?)""",
+                     OR (superseded_at IS NULL AND ? IS NOT NULL))""",
             (mime_type, alt_text, superseded_at, row[0], mime_type, alt_text, superseded_at),
         )
         media_id = row[0]

@@ -317,11 +317,14 @@ class KoboReader:
             if not blob.is_file():
                 logger.warning("Kobo file %s is missing from the store", device_path)
                 continue
-            if self.files is not None and self.files.path(entry.sha256) != blob:
+            if self.files is not None and not self.files.has(entry.sha256):
                 try:
-                    self.files.put_file(blob)  # stored once; already there costs a lookup
+                    stored = self.files.put_file(blob)
                 except OSError as e:
                     logger.warning("Could not store Kobo file %s: %s", device_path, e)
+                    continue
+                if stored.sha256 != entry.sha256:
+                    logger.warning("Kobo file %s does not match its snapshot", device_path)
                     continue
             media.append(
                 MediaCreate(

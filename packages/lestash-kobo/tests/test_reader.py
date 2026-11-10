@@ -510,5 +510,7 @@ def test_a_lost_snapshot_renumbers_nothing(device: Path, tmp_path: Path, test_db
             ]
 
     before = rows()
-    (snaps[0].path / "manifest.json").write_text("{")
-    assert rows() == before and [r[1] is None for r in before] == [False, False, True]
+    assert [r[1] is None for r in before] == [False, False, True]
+    for lost in (snaps[0], snaps[1]):  # the oldest, then the middle one too
+        (lost.path / "manifest.json").write_text("{")
+        assert rows() == before
