@@ -26,7 +26,12 @@ def fake_ocr(monkeypatch):
         return path.read_bytes().decode()
 
     monkeypatch.setattr(extract._Ocr, "read", classmethod(read))
-    monkeypatch.setattr(extract._Ocr, "version", "fake-ocr 1")
+    real = extract.tool_version
+    monkeypatch.setattr(
+        extract,
+        "tool_version",
+        lambda tool: "fake-ocr 1" if tool == extract.OCR_TOOL else real(tool),
+    )
     return reads
 
 
@@ -135,21 +140,66 @@ def test_an_app_page_gives_its_visible_text_and_never_its_scripts(test_db, fake_
     assert metadata["text_from"] == ["html.parser"]
 
 
-def test_a_file_that_cannot_be_read_is_recorded_and_not_read_again(
+def _picky(cls, path):
+    data = path.read_bytes().decode()
+    if data.startswith("bad"):
+        raise RuntimeError("bad picture")
+    return data
+
+
+def test_a_file_that_cannot_be_read_is_recorded_and_read_again_by_a_new_version(
     test_db, fake_ocr, monkeypatch
 ) -> None:
     store = BlobStore(store_root(test_db))
     with get_connection(test_db) as conn:
-        SyncStore(conn, "notebooklm").run([_deck(store, [b"one"])])
-
-        def broken(cls, path):
-            raise RuntimeError("bad picture")
-
-        monkeypatch.setattr(extract._Ocr, "read", classmethod(broken))
+        SyncStore(conn, "notebooklm").run([_deck(store, [b"good", b"bad", b"fine"])])
+        monkeypatch.setattr(extract._Ocr, "read", classmethod(_picky))
         first = extract_pending(conn, test_db)
-        assert (first.failed, first.stopped) == (1, None)
-        assert extract_pending(conn, test_db).failed == 0  # not read again
-        assert PART not in _item(conn)[1]
+        assert (first.files, first.failed, first.stopped) == (2, 1, None)
+        assert extract_pending(conn, test_db).failed == 0  # recorded: not read again
+        assert extract_pending(conn, test_db, retry_failed=True).failed == 1
+        monkeypatch.setattr(extract, "tool_version", lambda tool: "rapidocr 9")
+        assert extract_pending(conn, test_db).failed == 1  # a new version tries it
+
+
+def test_a_run_whose_first_reads_all_fail_records_nothing(test_db, fake_ocr, monkeypatch) -> None:
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run([_deck(store, [b"bad 1", b"bad 2", b"bad 3"])])
+        monkeypatch.setattr(extract._Ocr, "read", classmethod(_picky))
+        counts = extract_pending(conn, test_db)
+        assert counts.engine_failed and counts.failed == 3
+        assert conn.execute("SELECT count(*) FROM blob_text").fetchone()[0] == 0
+
+
+def test_the_ocr_engine_names_its_version(monkeypatch, tmp_path) -> None:
+    """The real reader, with RapidOCR stood in for: its version comes from the package."""
+    import sys
+    import types
+
+    calls = []
+
+    class FakeRapidOCR:
+        def __init__(self, params):
+            calls.append(params)
+
+        def __call__(self, path):
+            return types.SimpleNamespace(txts=(" Hello ", "", "world"))
+
+    fake = types.SimpleNamespace(
+        RapidOCR=FakeRapidOCR,
+        LangRec=types.SimpleNamespace(EN="en"),
+        OCRVersion=types.SimpleNamespace(PPOCRV5="v5"),
+    )
+    monkeypatch.setitem(sys.modules, "rapidocr", fake)
+    monkeypatch.setattr(extract._Ocr, "_engine", None)
+    picture = tmp_path / "p.png"
+    picture.write_bytes(b"x")
+    text, version = extract.read_file(extract.OCR_TOOL, picture)
+    assert text == "Hello\nworld" and len(calls) == 1
+    assert version.startswith("rapidocr 3.") and "en" in version
+    extract.read_file(extract.OCR_TOOL, picture)
+    assert len(calls) == 1  # loaded once
 
 
 def test_an_ocr_engine_that_cannot_start_stops_the_run(test_db, fake_ocr, monkeypatch) -> None:

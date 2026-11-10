@@ -96,6 +96,9 @@ def text(
     budget: float | None = typer.Option(
         None, "--budget", help="Stop reading files after this many seconds; the rest wait"
     ),
+    retry_failed: bool = typer.Option(
+        False, "--retry-failed", help="Read again files that failed before"
+    ),
 ) -> None:
     """Read text from NotebookLM slides, infographics and apps into their items (#218).
     Each file is read once; run again to go on. Runs after each timer sync."""
@@ -105,14 +108,15 @@ def text(
 
     config = Config.load()
     with get_connection(config) as conn:
-        counts = extract_pending(conn, config, budget_s=budget)
+        counts = extract_pending(conn, config, budget_s=budget, retry_failed=retry_failed)
     console.print(
         f"Read {counts.files} file(s), {counts.failed} unreadable (not tried again); "
         f"{counts.items} item(s) updated; {counts.pending} file(s) left for next time."
     )
     if counts.stopped:
         console.print(f"[yellow]Stopped: {counts.stopped}. The next run goes on.[/yellow]")
-        raise typer.Exit(1)
+        if counts.engine_failed:  # needs fixing; a busy database clears by itself
+            raise typer.Exit(1)
 
 
 @app.command("backfill-sources")

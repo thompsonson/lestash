@@ -62,27 +62,41 @@ class EngineUnavailable(Exception):
     """The OCR engine can't start (e.g. its model can't be fetched): no file can be read."""
 
 
+def _package_version(name: str) -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(name)
+    except PackageNotFoundError:
+        return "?"
+
+
+def tool_version(tool: str) -> str:
+    """The version of the tool that reads files now: a file that failed with another
+    version is tried again."""
+    if tool == OCR_TOOL:
+        return f"rapidocr {_package_version('rapidocr')}, PP-OCRv5 en"
+    return "html.parser"
+
+
 class _Ocr:
     """RapidOCR, loaded once: its models take a second to load."""
 
     _engine: Any = None
-    version = ""
 
     @classmethod
     def read(cls, path: Path) -> str:
         if cls._engine is None:
-            import rapidocr
-            from rapidocr import LangRec, OCRVersion, RapidOCR
-
             # The default model is Chinese, and runs English words together. The
             # English one is fetched on first use, into rapidocr's models folder.
             try:
+                from rapidocr import LangRec, OCRVersion, RapidOCR
+
                 cls._engine = RapidOCR(
                     params={"Rec.lang_type": LangRec.EN, "Rec.ocr_version": OCRVersion.PPOCRV5}
                 )
-            except Exception as e:
+            except Exception as e:  # an import (cv2, onnxruntime) or the model fetch
                 raise EngineUnavailable(f"RapidOCR could not start: {e}") from e
-            cls.version = f"rapidocr {rapidocr.__version__}, PP-OCRv5 en"
         result = cls._engine(str(path))
         return "\n".join(t.strip() for t in (result.txts or ()) if t.strip())
 
@@ -119,11 +133,14 @@ def page_text(path: Path) -> str:
 def read_file(tool: str, path: Path) -> tuple[str, str]:
     """The text of a file and the tool's version."""
     if tool == OCR_TOOL:
-        text = _Ocr.read(path)
-        return text, _Ocr.version
+        return _Ocr.read(path), tool_version(tool)
     if tool == HTML_TOOL:
-        return page_text(path), "html.parser"
+        return page_text(path), tool_version(tool)
     raise ValueError(f"unknown tool {tool}")
+
+
+def _failed(version: str) -> str:
+    return f"failed [{version}]"
 
 
 # --------------------------------------------------------------------------- #
@@ -225,9 +242,9 @@ def content_on_import(
     if not wants_text(source_type, metadata):
         return None
     incoming = [
-        Media(m.media_type, m.mime_type, m.position, m.alt_text, m.sha256)
-        for m in media
-        if getattr(m, "sha256", None)
+        # In the order they come, after every stored row
+        Media(m.media_type, m.mime_type, m.position, m.alt_text, m.sha256, (1 << 62) + n)
+        for n, m in enumerate(m for m in media if getattr(m, "sha256", None))
     ]
     stored = _current_media(conn, item_id) if item_id is not None else []
     # An incoming file already stored keeps its row's place among the versions
@@ -266,8 +283,9 @@ def refresh_item(conn: sqlite3.Connection, item_id: int) -> bool:
 @dataclass
 class ExtractCounts:
     files: int = 0  # files read this run
-    failed: int = 0  # files that could not be read: recorded, not tried again
+    failed: int = 0  # files that could not be read: recorded, tried again by a new version
     stopped: str | None = None  # why the run stopped early: the rest wait
+    engine_failed: bool = False  # the tool itself is broken, not one file
     items: int = 0  # items whose text changed
     pending: int = 0  # files left for the next run (time budget)
 
@@ -291,12 +309,17 @@ def extract_pending(
     config: Config | None = None,
     *,
     budget_s: float | None = None,
+    retry_failed: bool = False,
 ) -> ExtractCounts:
     """Read each wanted file not read yet, then rebuild the items whose text changed.
 
     Files are read with no write open; each file's text is committed on its own, so a
     run stopped part-way keeps what it read. ``budget_s`` stops reading after that
     many seconds; the rest wait for the next run. Call it with no transaction open.
+
+    A file that fails is recorded, and read again once the tool's version changes,
+    or with ``retry_failed``. Failures are only recorded once a file in the run has
+    been read: a run whose first reads all fail stops, as the tool is broken.
     """
     from lestash.core.database import mark_recent_history, max_history_id
 
@@ -309,13 +332,19 @@ def extract_pending(
         for m in _current_media(conn, item_id):
             if tool := tool_for(m.media_type, m.mime_type):
                 todo.setdefault((m.sha256, tool), m.mime_type)
-    done = {
-        (sha, tool)
-        for sha, tool in conn.execute("SELECT sha256, tool FROM blob_text")
-        if (sha, tool) in todo
-    }
+    done = set()
+    for sha, tool, version in conn.execute("SELECT sha256, tool, tool_version FROM blob_text"):
+        if (sha, tool) not in todo:
+            continue
+        version = version or ""
+        if version.startswith("failed [") and (
+            retry_failed or not version.startswith(_failed(tool_version(tool)))
+        ):
+            continue  # failed with another version: try again
+        done.add((sha, tool))
     started = time.monotonic()
     pending = [key for key in sorted(todo) if key not in done]
+    unrecorded: list[tuple[str, str, str, str]] = []  # failures before any file was read
     for n, (sha, tool) in enumerate(pending):
         if budget_s is not None and time.monotonic() - started > budget_s:
             counts.pending = len(pending) - n
@@ -324,23 +353,31 @@ def extract_pending(
         try:
             text, version = read_file(tool, path)
             counts.files += 1
+            rows = [*unrecorded, (sha, tool, version, text)]
+            unrecorded = []
         except EngineUnavailable as e:
-            counts.stopped = str(e)  # every file would fail the same way
+            counts.stopped, counts.engine_failed = str(e), True  # every file would fail
             break
         except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
-            # Recorded with no text, so it is not read again every run
             logger.warning("Could not read text from %s (%s): %s", path.name, tool, e)
-            text, version = "", f"failed: {type(e).__name__}: {e}"[:300]
+            failure = f"{_failed(tool_version(tool))}: {type(e).__name__}: {e}"[:300]
             counts.failed += 1
+            if not counts.files:
+                unrecorded.append((sha, tool, failure, ""))
+                if len(unrecorded) >= 3:  # the first reads all failed: the tool is broken
+                    counts.stopped, counts.engine_failed = f"{tool} fails on every file", True
+                    break
+                continue
+            rows = [(sha, tool, failure, "")]
         try:
             with conn:
-                conn.execute(
+                conn.executemany(
                     "INSERT OR REPLACE INTO blob_text (sha256, tool, tool_version, text) "
                     "VALUES (?, ?, ?, ?)",
-                    (sha, tool, version, text),
+                    rows,
                 )
         except sqlite3.OperationalError as e:  # a sync holds the lock: go on next run
-            counts.stopped = f"database busy: {e}"
+            counts.stopped = f"database: {e}"
             break
     try:
         conn.execute("BEGIN IMMEDIATE")  # read and write each item under one lock
@@ -353,7 +390,7 @@ def extract_pending(
             raise
         conn.commit()
     except sqlite3.OperationalError as e:
-        counts.stopped = f"database busy: {e}"
+        counts.stopped = f"database: {e}"
         return counts
     counts.items = len(changed)
     return counts
