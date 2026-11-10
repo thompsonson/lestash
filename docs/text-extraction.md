@@ -7,7 +7,7 @@ W3 (#218): searchable text for files that have none.
 - `lestash enrich text` reads each file not read yet, then rebuilds the text of the items that show it.
 - The timer sync starts it afterwards (`lestash-extract.service`, at low priority), whether or not every source synced. A run stops reading after an hour; the next one goes on.
 - Slides and infographics are pictures. RapidOCR's English model (PP-OCRv5) reads them, about 0.7 s a picture on pop-mini's CPU. Docling, tried first, dropped most of a slide's text as a picture, and RapidOCR's default Chinese model ran English words together.
-- Apps are web pages: their visible text is kept; scripts and styles are skipped, and nothing is run.
+- Apps are web pages drawn by scripts from data in their `data-app-data` attribute: the texts in that data (flashcards, mind maps) and the page's visible text are kept; scripts and styles are skipped, and nothing is run.
 - Audio and video come in step 2 (faster-whisper).
 
 ## Where the text goes

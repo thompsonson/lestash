@@ -293,3 +293,12 @@ def test_a_file_missing_from_the_store_is_skipped(test_db, fake_ocr) -> None:
         store.path(deck.media[0].sha256).unlink()
         counts = extract_pending(conn, test_db)
     assert (counts.files, counts.failed) == (1, 0)
+
+
+def test_an_apps_own_data_gives_its_cards(tmp_path) -> None:
+    page = tmp_path / "app.html"
+    data = json.dumps({"flashcards": [{"f": "What is  Hebb's rule?", "b": "Fire together"}]})
+    page.write_text(
+        f'<title>Cards</title><app-root data-app-data="{data.replace(chr(34), "&quot;")}">'
+    )
+    assert page_text(page) == "Cards\nWhat is Hebb's rule?\nFire together"

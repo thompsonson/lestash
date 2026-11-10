@@ -9,11 +9,13 @@ so an import keeps it and adds no history.
 
 Slides and infographics are pictures: RapidOCR's English model reads them (the same
 OCR Docling uses; Docling itself drops most of a slide's text as a picture). Apps are
-web pages: their visible text is kept.
+web pages: their visible text is kept, and the texts in the data a NotebookLM app
+draws itself from (``data-app-data``).
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sqlite3
@@ -112,6 +114,12 @@ class _PageText(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in self.SKIP:
             self._skipping += 1
+        for name, value in attrs:
+            # A NotebookLM app draws its page with scripts from data in this attribute:
+            # flashcards, mind maps, quizzes
+            if name == "data-app-data" and value:
+                with contextlib.suppress(ValueError):
+                    self.parts.extend(_strings(json.loads(value)))
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self.SKIP and self._skipping:
@@ -120,6 +128,18 @@ class _PageText(HTMLParser):
     def handle_data(self, data: str) -> None:
         if not self._skipping and data.strip():
             self.parts.append(" ".join(data.split()))
+
+
+def _strings(value: Any) -> list[str]:
+    """Every text in a JSON value, in order, one per line."""
+    if isinstance(value, str):
+        text = " ".join(value.split())
+        return [text] if text else []
+    if isinstance(value, dict):
+        return [t for v in value.values() for t in _strings(v)]
+    if isinstance(value, list):
+        return [t for v in value for t in _strings(v)]
+    return []
 
 
 def page_text(path: Path) -> str:
