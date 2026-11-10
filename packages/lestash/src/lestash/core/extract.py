@@ -253,10 +253,6 @@ class Unfinished(str):
     __slots__ = ()
 
 
-# ffmpeg errors that say this machine is at fault, not the recording
-_NOT_THE_FILE = ("No space left", "error while loading shared libraries", "Cannot allocate")
-
-
 class _Transcriber:
     """Runs the worker on a batch of recordings: here, or on ``[transcribe] host``."""
 
@@ -286,6 +282,19 @@ class _Transcriber:
             folder = Path(tmp)
             (folder / "in").mkdir()
             ready = []
+            sound: bool | None = None  # whether ffmpeg works here at all
+
+            def ffmpeg_works() -> bool:
+                # One second of made-up silence, into the same folder: if that fails
+                # too, this machine is at fault (a full disk, a broken install)
+                probe = subprocess.run(
+                    [ffmpeg, "-nostdin", "-v", "error", "-y", "-f", "lavfi",
+                     "-i", f"anullsrc=r={_worker.RATE}:cl=mono", "-t", "1",
+                     str(folder / "probe.wav")],
+                    capture_output=True, text=True, check=False,
+                )  # fmt: skip
+                return probe.returncode == 0
+
             for job in jobs:
                 done = subprocess.run(
                     [ffmpeg, "-nostdin", "-v", "error", "-y", "-i", str(job.path), "-vn",
@@ -294,17 +303,14 @@ class _Transcriber:
                     capture_output=True, text=True, check=False,
                 )  # fmt: skip
                 if done.returncode:
-                    why = f"ffmpeg: {_tail(done.stderr, 250)}"
-                    # Killed, or this machine's fault (a full disk, a broken install):
-                    # the recording waits rather than fail for good
-                    local = done.returncode < 0 or any(m in done.stderr for m in _NOT_THE_FILE)
-                    results[job.sha256] = Unfinished(why) if local else why
+                    why = f"ffmpeg: {_tail(done.stderr, 250) or f'exit {done.returncode}'}"
+                    if sound is None:
+                        sound = ffmpeg_works()
+                    # The recording's fault is recorded; this machine's makes it wait
+                    results[job.sha256] = why if sound else Unfinished(why)
                 else:
                     ready.append({"sha256": job.sha256, "speakers": job.speakers})
             if not ready:
-                if len(jobs) > 1 and not any(isinstance(r, Unfinished) for r in results.values()):
-                    # Every recording failing at once is ffmpeg, not the recordings
-                    return {sha: Unfinished(why) for sha, why in results.items()}
                 return results
             (folder / "job.json").write_text(json.dumps(ready))
             host = cls.settings.get("host")

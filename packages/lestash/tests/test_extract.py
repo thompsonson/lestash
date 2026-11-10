@@ -656,23 +656,51 @@ def test_a_host_that_goes_away_makes_transcripts_wait(monkeypatch, tmp_path) -> 
         extract._Transcriber.run([extract.Job("a", tmp_path / "a", 2)])
 
 
-def test_ffmpeg_failing_for_its_own_reasons_makes_recordings_wait(monkeypatch, tmp_path) -> None:
-    def ffmpeg(stderr: str, code: int = 1):
-        def run(cmd, **kwargs):
-            return subprocess.CompletedProcess(cmd, code, "", stderr)
+def _ffmpeg(monkeypatch, works: bool):
+    """ffmpeg that fails on every recording; on its own silent probe only if not ``works``."""
 
-        monkeypatch.setattr(extract.subprocess, "run", run)
+    def run(cmd, **kwargs):
+        ok = works and "lavfi" in cmd
+        return subprocess.CompletedProcess(cmd, 0 if ok else 1, "", "" if ok else "Invalid data")
 
+    monkeypatch.setattr(extract.subprocess, "run", run)
     monkeypatch.setattr(extract.shutil, "which", lambda name: f"/usr/bin/{name}")
-    one = [extract.Job("a", tmp_path / "a", 2)]
-    two = [*one, extract.Job("b", tmp_path / "b", 2)]
-    ffmpeg("Invalid data found when processing input")
-    assert not isinstance(extract._Transcriber.run(one)["a"], extract.Unfinished)  # the file
-    assert all(isinstance(r, extract.Unfinished) for r in extract._Transcriber.run(two).values())
-    ffmpeg("No space left on device")
-    assert isinstance(extract._Transcriber.run(one)["a"], extract.Unfinished)
-    ffmpeg("", code=-9)  # killed
-    assert isinstance(extract._Transcriber.run(one)["a"], extract.Unfinished)
+
+
+def test_an_ffmpeg_failure_is_the_recordings_only_if_ffmpeg_works(monkeypatch, tmp_path) -> None:
+    jobs = [extract.Job(s, tmp_path / s, 2) for s in ("a", "b")]
+    _ffmpeg(monkeypatch, works=True)  # the files are bad: recorded
+    results = extract._Transcriber.run(jobs)
+    assert results["a"] == "ffmpeg: Invalid data"
+    assert not any(isinstance(r, extract.Unfinished) for r in results.values())
+    _ffmpeg(monkeypatch, works=False)  # this machine is: they wait
+    assert all(isinstance(r, extract.Unfinished) for r in extract._Transcriber.run(jobs).values())
+
+
+def test_bad_recordings_together_do_not_stop_the_good_ones(test_db, monkeypatch) -> None:
+    _ffmpeg(monkeypatch, works=True)
+    real_run = extract._Transcriber.run.__func__
+
+    def run(cls, batch):
+        bad = [j for j in batch if b"bad" in j.path.read_bytes()]
+        out = real_run(cls, bad) if bad else {}
+        out.update({j.sha256: _raw("Fine.", 1) for j in batch if j not in bad})
+        return out
+
+    monkeypatch.setattr(extract._Transcriber, "run", classmethod(run))
+    monkeypatch.setattr(extract._Transcriber, "batch_size", classmethod(lambda cls: 2))
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run(
+            [
+                _recording(store, d, "audio_overview", "audio/x-wav", name=d.decode())
+                for d in (b"bad 1", b"bad 2", b"good")
+            ]
+        )
+        first = extract_pending(conn, test_db)
+        second = extract_pending(conn, test_db)
+    assert (first.files, first.failed, first.pending) == (1, 2, 0)
+    assert (second.files, second.failed, second.pending) == (0, 0, 0)  # not tried again
 
 
 def test_a_segment_without_word_times_keeps_its_text() -> None:
