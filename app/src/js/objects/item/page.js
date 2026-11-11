@@ -51,7 +51,14 @@ export function cleanContent(item, title) {
   }
   text = lines.join('\n');
   if (item.kind === 'artifact') {
-    text = text.replace(/^NotebookLM [a-z ]+$/m, '').replace(/^\*\*[a-zA-Z]+:\*\* .*$/gm, '');
+    // Only the lines the importer wrote from this item's own settings, which the
+    // header shows in words; other bold labels in a report's text stay
+    const options = item.metadata && item.metadata.options;
+    const keys = Object.keys((options && options.generationOptions) || {});
+    text = text.replace(/^NotebookLM [a-z ]+$/m, '');
+    for (const key of keys) {
+      text = text.replace(new RegExp(`^\\*\\*${key}:\\*\\* .*$`, 'gm'), '');
+    }
   }
   return text.replace(/\n{3,}/g, '\n\n').trim();
 }
@@ -138,9 +145,14 @@ export function wireReactions(container, item) {
     if (open || list.dataset.loaded) return;
     list.textContent = 'Loading…';
     try {
-      const data = await api(`/api/items?parent_id=${item.id}&kind=reaction&limit=100`);
+      const reactions = [];
+      for (let offset = 0; ; offset += 100) {
+        const page = await api(`/api/items?parent_id=${item.id}&kind=reaction&limit=100&offset=${offset}`);
+        reactions.push(...page.items);
+        if (page.items.length < 100 || reactions.length >= page.total) break;
+      }
       list.dataset.loaded = '1';
-      list.innerHTML = data.items.map(r => {
+      list.innerHTML = reactions.map(r => {
         const who = r.is_own_content ? 'You' : personName(r.actor_display, r.source_type) || 'Someone';
         const how = (r.metadata && r.metadata.reaction_type || 'like').toLowerCase();
         return `<a href="/items/${r.id}">${escHtml(who)}</a> <span class="muted">${escHtml(how)}</span>`;

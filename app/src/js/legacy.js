@@ -485,8 +485,8 @@ function renderItemView(item) {
   html += `<div class="item-view-children">
     <div class="item-view-children-title" id="parts-title">${partsTitle(item)}</div>
     <div class="item-list" id="children-list" data-item-id="${item.id}">${item.child_count - (item.reaction_count || 0) > 0
-      ? '<span style="color:var(--muted);font-size:0.8rem">Loading...</span>'
-      : '<span style="color:var(--muted);font-size:0.8rem">No notes yet</span>'
+      ? '<span class="parts-placeholder" style="color:var(--muted);font-size:0.8rem">Loading...</span>'
+      : '<span class="parts-placeholder" style="color:var(--muted);font-size:0.8rem">No notes yet</span>'
     }</div>
   </div>`;
 
@@ -886,7 +886,7 @@ function renderItemView(item) {
         // Append the new note to the children list
         const list = document.getElementById('children-list');
         if (list) {
-          const placeholder = list.querySelector('span');
+          const placeholder = list.querySelector(':scope > .parts-placeholder');
           if (placeholder) list.innerHTML = '';
           list.appendChild(renderCard(note));
         }
@@ -2269,7 +2269,7 @@ async function saveLink() {
     const container = document.getElementById('item-view-content');
     const list = container?.querySelector('#children-list');
     if (list) {
-      const placeholder = list.querySelector('span');
+      const placeholder = list.querySelector(':scope > .parts-placeholder');
       if (placeholder) list.innerHTML = '';
       list.appendChild(renderCard(linked));
       const shown = cachedItem(parentId);
