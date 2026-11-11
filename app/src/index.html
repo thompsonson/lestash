@@ -23,22 +23,33 @@
   </header>
 
   <!-- Tabs -->
-  <nav id="tabs">
+  <nav id="tabs" aria-label="Places">
     <button class="active" data-tab="timeline" data-icon="☰">Timeline</button>
-    <button data-tab="recent" data-icon="⏱">Recent</button>
-    <button data-tab="notes" data-icon="✎">Notes</button>
-    <button data-tab="search" data-icon="⌕">Search</button>
+    <button data-tab="library" data-icon="▥">Library</button>
     <button data-tab="people" data-icon="●">People</button>
-    <button data-tab="sources" data-icon="⇄">Sources</button>
-    <button data-tab="collections" data-icon="▤">Collections</button>
-    <button data-tab="stats" data-icon="◩">Stats</button>
-    <button data-tab="debug" data-icon="⚙">Debug</button>
+    <button data-tab="search" data-icon="⌕">Search</button>
+    <button data-tab="more" data-icon="⋯">More</button>
   </nav>
 
   <!-- Main content -->
   <main>
     <!-- Timeline tab: built by js/places/timeline.js -->
     <div class="tab-content active" id="tab-timeline"></div>
+
+    <!-- Library tab: built by js/places/library.js -->
+    <div class="tab-content" id="tab-library"></div>
+
+    <!-- More: the places that are not on the bar -->
+    <div class="tab-content" id="tab-more">
+      <ul class="more-list">
+        <li><a href="/collections">▤ Collections<span class="muted">Sets of items you put together</span></a></li>
+        <li><a href="/notes">✎ Record a note<span class="muted">Voice notes and their transcripts</span></a></li>
+        <li><a href="/recent">⏱ Recently added<span class="muted">What the last syncs brought in</span></a></li>
+        <li><a href="/settings/sources">⇄ Sources<span class="muted">Connect and sync</span></a></li>
+        <li><a href="/settings/stats">◩ Stats</a></li>
+        <li><a href="/settings/debug">⚙ Debug</a></li>
+      </ul>
+    </div>
 
     <!-- People tab: built by js/places/people.js -->
     <div class="tab-content" id="tab-people"></div>

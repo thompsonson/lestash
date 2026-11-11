@@ -62,6 +62,8 @@ def list_items(
     exclude_kind: str | None = Query(None, description="Comma-separated kinds to leave out"),
     person: int | None = Query(None, description="Items this person made, voiced or received"),
     role: str | None = Query(None, description="With person: only this role (author, creator...)"),
+    year: str | None = Query(None, pattern=r"^\d{4}$", description="Made in this year"),
+    sort: Literal["recent", "oldest", "title"] = Query("recent", description="Order of the list"),
     parent_id: int | None = Query(None, description="Filter to children of this parent item"),
     include_children: bool = Query(False, description="Include items that have a parent"),
     limit: int = Query(20, ge=1, le=100),
@@ -114,6 +116,10 @@ def list_items(
             params.append(role)
         where.append(f"EXISTS ({agent})")
 
+    if year:
+        where.append("strftime('%Y', items.created_at) = ?")
+        params.append(year)
+
     for column_values, op in ((kind, "IN"), (exclude_kind, "NOT IN")):
         values = sorted({v.strip() for v in (column_values or "").split(",") if v.strip()})
         if values:
@@ -129,14 +135,18 @@ def list_items(
     body = f"FROM items{joins}" + (" WHERE " + " AND ".join(where) if where else "")
     # Sort by fetched_at when filtering recent, otherwise by created_at
     sort_col = "fetched_at" if since else "created_at"
+    order = {
+        "recent": f"datetime(items.{sort_col}) DESC, items.id DESC",
+        "oldest": f"datetime(items.{sort_col}) IS NULL, datetime(items.{sort_col}), items.id",
+        "title": "lower(coalesce(nullif(items.title, ''), items.content)), items.id",
+    }[sort]
 
     with get_db() as conn:
         total = conn.execute(f"SELECT COUNT(*) {body}", params).fetchone()[0]
         # Ties go to insertion order: a chat's reply, stored after its prompt with the
         # same time, sorts after it
         rows = conn.execute(
-            f"SELECT items.* {body} ORDER BY datetime(items.{sort_col}) DESC, items.id DESC"
-            " LIMIT ? OFFSET ?",
+            f"SELECT items.* {body} ORDER BY {order} LIMIT ? OFFSET ?",
             [*params, limit, offset],
         ).fetchall()
         items = [enrich_item(conn, Item.from_row(row)) for row in rows]

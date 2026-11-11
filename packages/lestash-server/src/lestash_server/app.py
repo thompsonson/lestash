@@ -15,6 +15,7 @@ from lestash_server.routes import (
     google_auth,
     imports,
     items,
+    library,
     media,
     people,
     profiles,
@@ -67,6 +68,7 @@ def create_app(static_dir: str | None = None) -> FastAPI:
     app.include_router(stats.router)
     app.include_router(timeline.router)
     app.include_router(people.router)
+    app.include_router(library.router)
     app.include_router(imports.router)
     app.include_router(voice.router)
     app.include_router(collections.router)
