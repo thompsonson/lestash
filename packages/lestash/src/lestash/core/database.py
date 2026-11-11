@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -649,6 +649,13 @@ MIGRATIONS = [
         # re-adds the column.
         "",
     ),
+    (
+        25,
+        'Add people.short_name: what the app calls a person in a byline ("by Matt")',
+        # Run in apply_migrations: SQLite's ADD COLUMN has no IF NOT EXISTS. Null means
+        # the first word of the name.
+        "",
+    ),
 ]
 
 
@@ -876,6 +883,8 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                     f" GENERATED ALWAYS AS ({KIND_SQL}) VIRTUAL"
                 )
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_items_kind ON items(kind, parent_id)")
+            if version == 25 and not _column_exists(conn, "people", "short_name"):
+                conn.execute("ALTER TABLE people ADD COLUMN short_name TEXT")
             if version == 16:
                 _migrate_16(conn)  # sets the version in its own transaction
             elif version == 20:

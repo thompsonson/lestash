@@ -6,7 +6,9 @@
   <title>LeStash</title>
   <script src="/marked.min.js"></script>
   <script src="/purify.min.js"></script>
+  <link rel="stylesheet" href="/css/themes.css">
   <link rel="stylesheet" href="/css/app.css">
+  <script src="/js/appearance.js"></script>
 </head>
 <body>
 
@@ -221,15 +223,28 @@
 
     <!-- Item detail view (replaces list when an item is clicked) -->
     <div id="item-view" style="display:none">
-      <button class="item-view-back" onclick="closeItemView()">&larr; Back</button>
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button class="item-view-back" onclick="closeItemView()"><span class="back-word">&larr; Back</span><span class="close-word">✕ Close</span></button>
       <div id="item-view-content"></div>
     </div>
   </main>
+
+  <!-- Behind the item sheet on a phone; a tap closes it -->
+  <div id="sheet-backdrop" aria-hidden="true"></div>
 
   <!-- Settings modal -->
   <div class="modal-overlay" id="settings-modal">
     <div class="modal">
       <h2>Settings</h2>
+      <fieldset class="appearance">
+        <legend>Appearance <span class="muted">· on this device, applied straight away</span></legend>
+        <label for="s-theme">Theme</label>
+        <select id="s-theme"></select>
+        <label for="s-density">Density</label>
+        <select id="s-density"></select>
+        <label for="s-font">Type</label>
+        <select id="s-font"></select>
+      </fieldset>
       <label for="s-host">Server host</label>
       <input type="text" id="s-host">
       <label for="s-port">Server port</label>

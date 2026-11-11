@@ -4,7 +4,7 @@ One builder for every route that returns items (items, collections, similar item
 """
 
 from lestash.core.database import get_item_media, get_tags
-from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
+from lestash.core.enrichment import get_author_actor, get_byline, get_item_subtype, get_preview
 from lestash.core.kinds import KINDS, item_kind, kind_detail
 from lestash.models.item import Item
 
@@ -45,6 +45,7 @@ def enrich_item(conn, item: Item) -> ItemResponse:
         parent = conn.execute(
             "SELECT title, kind FROM items WHERE id = ?", (item.parent_id,)
         ).fetchone()
+    byline = get_byline(conn, item, kind)
     return ItemResponse(
         id=item.id,
         source_type=item.source_type,
@@ -71,5 +72,8 @@ def enrich_item(conn, item: Item) -> ItemResponse:
         kind_detail=kind_detail(kind, item.metadata),
         parent_title=parent[0] if parent else None,
         parent_kind=parent[1] if parent else None,
+        by_id=byline.person_id if byline else None,
+        by_name=byline.name if byline else None,
+        by_self=byline.is_self if byline else False,
         media=media_responses(conn, item.id),
     )

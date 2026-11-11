@@ -4,8 +4,9 @@
 
 import { getApiBase } from '../../api.js';
 import { cacheItem } from '../../router.js';
-import { escHtml, relTime, dateText, sourceClass, sourceName, sourceLabel } from '../../util.js';
+import { escHtml, dateText, sourceClass, sourceName, sourceLabel } from '../../util.js';
 import { kindIcon, kindText, personName } from './kinds.js';
+import { selfName } from '../person/self.js';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
@@ -15,7 +16,8 @@ function firstLine(text, max = 140) {
 }
 
 export function cardTitle(item) {
-  const by = personName(item.actor_display, item.source_type);
+  // Your own reaction is yours: "Matt reacted"
+  const by = item.kind === 'reaction' && item.is_own_content ? selfName() : personName(item.actor_display, item.source_type);
   switch (item.kind) {
     case 'reaction': {
       const target = item.parent_title || firstLine(item.preview);
@@ -30,11 +32,18 @@ export function cardTitle(item) {
   }
 }
 
-// Who and when: "Post · LinkedIn · 20 Jan 2026 · by You"
-function whoWhen(item) {
+// Who an item is by, as a name: "Matt" for you, a person's name, or an account in words
+export function byName(item) {
+  if (item.by_name) return item.by_name;
+  const author = personName(item.author_display, item.source_type);
+  return item.kind === 'comment' ? personName(item.actor_display, item.source_type) || author : author;
+}
+
+// Who and when: "Post · LinkedIn · 20 Jan 2026 · by Matt". Within its parent's
+// page, a part leaves out the parent ("in <notebook>", "on <post>")
+function whoWhen(item, within) {
   const parts = [kindText(item)];
   const meta = item.metadata || {};
-  const author = personName(item.author_display, item.source_type);
   const when = dateText(item.created_at || meta.last_at);
   switch (item.kind) {
     case 'video':
@@ -42,11 +51,11 @@ function whoWhen(item) {
       else parts.push(sourceLabel(item.source_type));
       break;
     case 'comment':
-      if (item.parent_title) parts.push(`on “${firstLine(item.parent_title, 60)}”`);
+      if (item.parent_title && !within) parts.push(`on “${firstLine(item.parent_title, 60)}”`);
       else parts.push(sourceLabel(item.source_type));
       break;
     case 'artifact':
-      if (item.parent_title) parts.push(`in ${firstLine(item.parent_title, 60)}`);
+      if (item.parent_title && !within) parts.push(`in ${firstLine(item.parent_title, 60)}`);
       break;
     case 'stub':
       try { parts.push(new URL(item.url).host); } catch { parts.push(sourceLabel(item.source_type)); }
@@ -55,7 +64,7 @@ function whoWhen(item) {
       parts.push(sourceLabel(item.source_type));
   }
   if (when) parts.push(when);
-  const by = item.kind === 'comment' ? personName(item.actor_display, item.source_type) || author : author;
+  const by = byName(item);
   // A highlight or note in a book is yours; its author is the book's
   if (by && !['video', 'search', 'stub', 'highlight'].includes(item.kind)) parts.push(`by ${by}`);
   return parts.filter(Boolean).join(' · ');
@@ -94,26 +103,31 @@ function inside(item, title) {
   }
 }
 
-export function renderCard(item) {
+// A row: a tile on the left (the cover or thumbnail, else the kind's icon on its
+// colour), then the title, who and when, and what's inside. `within` is the item
+// whose parts the list shows, if it is one.
+export function renderCard(item, { within = null } = {}) {
   cacheItem(item);
   const card = document.createElement('a');
   card.className = `item-card kind-${item.kind || 'other'}`;
   card.href = `/items/${item.id}`;
+  const inParent = within && within.id === item.parent_id;
   const title = cardTitle(item);
   const emoji = item.metadata && item.metadata.emoji ? item.metadata.emoji + ' ' : '';
   const firstImg = (item.media || []).find(m => (m.media_type === 'image' || m.media_type === 'thumbnail') && m.available && !m.superseded_at);
-  const thumb = firstImg ? `<img src="${getApiBase()}${escHtml(firstImg.serve_url)}" alt="${escHtml(firstImg.alt_text || '')}" class="item-card-thumb" loading="lazy">` : '';
+  const tile = firstImg
+    ? `<img src="${getApiBase()}${escHtml(firstImg.serve_url)}" alt="" loading="lazy">`
+    : `<span aria-hidden="true">${kindIcon(item)}</span>`;
   // A search result's preview holds the matched words, marked <<like this>>
   const found = inside(item, title);
   const preview = item.preview && item.preview.includes('<<') ? item.preview : found.preview;
   card.innerHTML = `
+    <div class="item-tile${firstImg ? ' cover' : ''}">${tile}</div>
+    <div class="item-body">
     <div class="item-card-header">
-      <span class="kind-icon" aria-hidden="true">${kindIcon(item)}</span>
       <span class="item-title">${emoji}${escHtml(title)}</span>
-      <span class="item-date">${relTime(item.created_at)}</span>
     </div>
-    <div class="item-card-line">${escHtml(whoWhen(item))}</div>
-    ${thumb}
+    <div class="item-card-line">${escHtml(whoWhen(item, inParent))}</div>
     ${preview ? `<div class="item-preview">${escHtml(preview)}</div>` : ''}
     ${found.counts ? `<div class="item-card-counts">${escHtml(found.counts)}</div>` : ''}
     <div class="debug-only">
@@ -127,6 +141,7 @@ export function renderCard(item) {
         ${item.is_own_content ? '<span style="color:var(--ok)">own</span>' : ''}
         <span>id:${item.id}</span>
       </div>
+    </div>
     </div>
   `;
   return card;

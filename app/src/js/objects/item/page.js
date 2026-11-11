@@ -5,10 +5,25 @@
 
 import { api, getApiBase } from '../../api.js';
 import { escHtml, dateText, sourceLabel } from '../../util.js';
-import { renderCard } from './card.js';
+import { renderCard, byName } from './card.js';
 import { kindIcon, kindText, personName, generationSettings } from './kinds.js';
+import { selfName, selfFullName } from '../person/self.js';
 
 // ── Header ──────────────────────────────────────────────────────────────────────
+
+// A post's title is often its first words, cut off, which the text then repeats.
+// Returns the title to show once: the whole first line when it is short, else the
+// kind ("Post on LinkedIn"); and whether the text should drop that first line.
+export function titleOnce(item, title) {
+  const same = { title, dropFirstLine: false };
+  if (!['post', 'comment', 'note', 'message'].includes(item.kind)) return same;
+  const text = (item.content || '').trim();
+  const stem = (title || '').replace(/(\.\.\.|…)\s*$/, '').trim();
+  if (!stem || !text.startsWith(stem)) return same;
+  const first = text.split('\n')[0].trim();
+  if (first.length <= 120) return { title: first, dropFirstLine: true };
+  return { title: `${kindText(item)} on ${sourceLabel(item.source_type)}`, dropFirstLine: false };
+}
 
 export function itemHeader(item, title) {
   let html = '';
@@ -20,16 +35,21 @@ export function itemHeader(item, title) {
   const parts = [kindText(item), sourceLabel(item.source_type)];
   const when = dateText(item.created_at || (item.metadata && item.metadata.last_at));
   if (when) parts.push(when);
-  const by = item.is_own_content ? 'You' : personName(item.author_display, item.source_type);
-  if (by && item.kind !== 'video') parts.push(`by ${by}`);
   if (item.kind === 'video' && item.metadata && item.metadata.channel_title) parts.push(item.metadata.channel_title);
-  const link = item.url ? ` · <a href="${escHtml(item.url)}" target="_blank" rel="noopener">open original</a>` : '';
-  html += `<div class="item-view-meta">${parts.filter(Boolean).map(escHtml).join(' · ')}${link}</div>`;
+  const meta = parts.filter(Boolean).map(escHtml);
+  // "by Matt", linked to the person it is by
+  const by = item.kind === 'video' ? '' : byName(item);
+  if (by) meta.push(item.by_id ? `by <a href="/people/${item.by_id}">${escHtml(by)}</a>` : `by ${escHtml(by)}`);
+  if (item.url) meta.push(`<a href="${escHtml(item.url)}" target="_blank" rel="noopener">open original</a>`);
+  html += `<div class="item-view-meta">${meta.join(' · ')}</div>`;
   const gen = generationSettings(item);
   if (gen.settings.length) {
     html += `<div class="item-settings">${gen.settings.map(([k, v]) => `<span><b>${escHtml(k)}</b> ${escHtml(v)}</span>`).join('')}</div>`;
   }
-  if (gen.prompt) html += `<div class="item-prompt"><b>Prompt</b> ${escHtml(gen.prompt)}</div>`;
+  // A long prompt folds to two lines, so the player stays near the top
+  if (gen.prompt) {
+    html += `<details class="item-prompt"><summary><b>Prompt</b> <span class="clamp">${escHtml(gen.prompt)}</span></summary></details>`;
+  }
   return html;
 }
 
@@ -40,9 +60,10 @@ const KIND_WORDS = {
 
 // The content without what the header already shows: a heading repeating the title,
 // and an artifact's "NotebookLM audio overview" line and raw **option:** lines
-export function cleanContent(item, title) {
+export function cleanContent(item, title, { dropFirstLine = false } = {}) {
   let text = item.content || '';
-  const lines = text.split('\n');
+  const lines = text.trim().split('\n');
+  if (dropFirstLine) lines.shift();
   const first = lines.findIndex(l => l.trim());
   // The title as stored, without the emoji the header puts before it
   const bare = (item.title || title || '').trim();
@@ -153,7 +174,7 @@ export function wireReactions(container, item) {
       }
       list.dataset.loaded = '1';
       list.innerHTML = reactions.map(r => {
-        const who = r.is_own_content ? 'You' : personName(r.actor_display, r.source_type) || 'Someone';
+        const who = r.is_own_content ? selfName() : personName(r.actor_display, r.source_type) || 'Someone';
         const how = (r.metadata && r.metadata.reaction_type || 'like').toLowerCase();
         return `<a href="/items/${r.id}">${escHtml(who)}</a> <span class="muted">${escHtml(how)}</span>`;
       }).join(' · ');
@@ -202,22 +223,42 @@ export function renderParts(item, children, list) {
     const sorted = label === 'Generated'
       ? items.slice().sort((a, b) => String(a.kind_detail).localeCompare(String(b.kind_detail)))
       : items;
-    sorted.forEach(c => list.appendChild(renderCard(c)));
+    sorted.forEach(c => list.appendChild(renderCard(c, { within: item })));
   }
 }
 
+// Replies as a conversation: each author's initial, their name once per run of
+// replies, and their words. A name a reply starts with (whom it answers) is marked.
 function thread(replies) {
   const box = document.createElement('div');
   box.className = 'thread';
   const sorted = replies.slice().sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  const who = r => r.by_name || (r.is_own_content ? selfName() : personName(r.actor_display, r.source_type) || personName(r.author_display, r.source_type) || 'Someone');
+  // Names a reply may start with: the repliers' and yours in full
+  const names = [...new Set([...sorted.map(who), selfFullName()])]
+    .filter(n => n && n.split(' ').length > 1).sort((a, b) => b.length - a.length);
+  let last = null;
   for (const r of sorted) {
-    const who = r.is_own_content ? 'You' : personName(r.actor_display, r.source_type) || personName(r.author_display, r.source_type) || 'Someone';
+    const name = who(r);
     const row = document.createElement('div');
-    row.className = 'thread-row';
+    row.className = 'thread-row' + (name === last ? ' same-author' : '');
+    row.style.setProperty('--hue', String([...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7)));
+    let text = r.content || '';
+    const answered = names.find(n => n !== name && !(r.by_self && n === selfFullName()) && text.startsWith(n));
+    let lead = '';
+    if (answered) {
+      lead = `<span class="mention">${escHtml(answered)}</span>`;
+      text = text.slice(answered.length);
+    }
+    const person = r.by_id ? `<a href="/people/${r.by_id}">${escHtml(name)}</a>` : escHtml(name);
     row.innerHTML = `
-      <div class="thread-head"><a href="/items/${r.id}">${escHtml(who)}</a> <span class="muted">${escHtml(dateText(r.created_at))}</span></div>
-      <div class="thread-text">${linkify(escHtml(r.content || '')).replace(/\n/g, '<br>')}</div>`;
+      <span class="avatar" aria-hidden="true">${escHtml((name.match(/\p{L}|\p{N}/u) || ['?'])[0].toUpperCase())}</span>
+      <div class="thread-body">
+        <div class="thread-head">${person} <a class="muted" href="/items/${r.id}">${escHtml(dateText(r.created_at))}</a></div>
+        <div class="thread-text">${lead}${linkify(escHtml(text)).replace(/\n/g, '<br>')}</div>
+      </div>`;
     box.appendChild(row);
+    last = name;
   }
   return box;
 }

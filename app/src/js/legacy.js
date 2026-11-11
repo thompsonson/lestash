@@ -9,8 +9,10 @@ import { startPeople, redrawPeople } from './places/people.js';
 import { startLibrary, redrawLibrary } from './places/library.js';
 import {
   itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
-  renderParts, PARTS_QUERY,
+  renderParts, PARTS_QUERY, titleOnce,
 } from './objects/item/page.js';
+import { selfName, selfReady } from './objects/person/self.js';
+import { setSheet, onSheetClose } from './sheet.js';
 import {
   route, navigate, back, render, setAddress, startRouter, routerReady, cacheItem, cachedItem,
 } from './router.js';
@@ -21,7 +23,23 @@ window.onerror = function(msg, url, line) {
   console.error('JS Error:', msg, 'at', url, ':', line);
 };
 
+// Theme, density and type apply as they change; js/appearance.js keeps them
+function wireAppearance() {
+  const A = window.LeStashAppearance;
+  if (!A) return;
+  const now = A.load();
+  for (const [id, key, options] of [['s-theme', 'theme', A.THEMES], ['s-density', 'density', A.DENSITIES], ['s-font', 'font', A.FONTS]]) {
+    const select = document.getElementById(id);
+    if (!select.options.length) {
+      select.innerHTML = options.map(([v, l]) => `<option value="${v}">${escHtml(l)}</option>`).join('');
+      select.addEventListener('change', () => A.save({ [key]: select.value }));
+    }
+    select.value = now[key];
+  }
+}
+
 function openSettings() {
+  wireAppearance();
   document.getElementById('s-host').value = settings.host;
   document.getElementById('s-port').value = settings.port;
   document.getElementById('s-llm-url').value = settings.llmUrl || '';
@@ -158,15 +176,25 @@ const TAB_PATHS = {
   stats: '/settings/stats', debug: '/settings/debug',
 };
 
-// Show one page and hide every other; `tab` is the tab to mark, if any
+// The list place last shown: an item opened from it slides over it as a sheet
+let placeShown = null;
+
+// Show one page and hide every other; `tab` is the tab to mark, if any. An item or
+// person page opened from a list place opens over it (js/sheet.js); opened directly,
+// it is the whole page.
 function showOnly(id, tab) {
   if (id !== 'tab-search') clearTimeout(searchTimer);
   if (tab && id === `tab-${tab}`) tabAddress[tab] = location.pathname + location.search;
+  const sheet = id === 'item-view' && placeShown !== null;
+  if (id !== 'item-view') placeShown = id;
   document.querySelectorAll('.tab-content').forEach(t => {
-    t.classList.toggle('active', t.id === id);
+    t.classList.toggle('active', t.id === id || (sheet && t.id === placeShown));
     t.style.display = '';
   });
   document.getElementById('item-view').style.display = id === 'item-view' ? 'block' : 'none';
+  setSheet(sheet);
+  // Under a sheet, the place it opened over stays marked
+  if (sheet) tab = placeShown.replace(/^tab-/, '');
   // A place without its own button (Collections, Notes, Settings...) lives under More
   const mark = !tab || document.querySelector(`#tabs [data-tab="${tab}"]`) ? tab : 'more';
   document.querySelectorAll('#tabs button').forEach(b => {
@@ -217,7 +245,7 @@ function renderChatBubble(item) {
   const role = getChatRole(item);
   const isUser = role === 'user' || role === 'human';
   const roleClass = isUser ? 'user' : 'model';
-  const roleLabel = isUser ? 'You' : (item.source_type === 'claude' || item.source_type === 'claude-code' ? 'Claude' : item.source_type === 'mistral' ? 'Mistral' : item.source_type === 'gemini' ? 'Gemini' : 'Assistant');
+  const roleLabel = isUser ? (item.by_self && item.by_name) || selfName() : (item.source_type === 'claude' || item.source_type === 'claude-code' ? 'Claude' : item.source_type === 'mistral' ? 'Mistral' : item.source_type === 'gemini' ? 'Gemini' : 'Assistant');
   const wrapper = document.createElement('div');
   wrapper.innerHTML = `
     <div class="chat-role ${roleClass}">${roleLabel}</div>
@@ -320,7 +348,8 @@ function renderItemView(item) {
   const container = document.getElementById('item-view-content');
   const emoji = item.metadata && item.metadata.emoji ? item.metadata.emoji + ' ' : '';
 
-  const title = `${emoji}${item.title || item.preview || (item.held === false && item.url) || '(untitled)'}`;
+  const once = titleOnce(item, item.title || item.preview);
+  const title = `${emoji}${once.title || (item.held === false && item.url) || '(untitled)'}`;
   let html = itemHeader(item, title);
   const player = itemPlayer(item);
   html += player.html;
@@ -329,7 +358,7 @@ function renderItemView(item) {
     // A stub: known by its address only, so it has no content to show
     html += `<div class="item-view-content" id="item-content-display" style="color:var(--muted)">LeStash doesn't hold this; it knows it only by its address. Its links and activity are below.</div>`;
   } else {
-    html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(cleanContent(item, title))}</div>`;
+    html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(cleanContent(item, title, once))}</div>`;
   }
 
   // People: who made, voiced, published or received it. Under the content, as a
@@ -1054,15 +1083,15 @@ async function loadPeople(itemId, sourceType) {
     return;
   }
   const rows = data.agents.map(a => {
-    const name = a.person.is_self ? 'You' : a.person.name;
-    // The account on a web page: the one on this item's platform first, so "You"
+    const name = a.person.is_self ? selfName() : a.person.name;
+    // The account on a web page: the one on this item's platform first, so "Matt"
     // on a LinkedIn post links your LinkedIn profile. Only web and mail addresses:
     // a URL from imported data must not run script.
     const safe = a.accounts.filter(x => x.url && /^(https?:|mailto:)/i.test(x.url));
     const platform = ACCOUNT_PLATFORM[sourceType] || sourceType;
     const account = safe.find(x => x.platform === platform) || safe[0];
     // The name opens their page here; their account elsewhere is the ↗ beside it
-    const shown = `<a href="/people/${a.person.id}" style="color:var(--ok)">${escHtml(name)}</a>`
+    const shown = `<a href="/people/${a.person.id}">${escHtml(name)}</a>`
       + (account ? ` <a href="${escHtml(account.url)}" target="_blank" rel="noopener" class="muted" aria-label="${escHtml(name)} on ${escHtml(account.platform)}">↗</a>` : '');
     const kind = a.person.kind === 'person' ? '' : a.person.kind;
     return `<div style="display:flex;gap:0.4rem;align-items:baseline;padding:0.1rem 0">
@@ -1284,7 +1313,7 @@ async function doSearch(q) {
       if (preview && item.preview && item.preview.includes('<<')) {
         preview.innerHTML = item.preview
           .replace(/</g, '&lt;').replace(/>/g, '&gt;')
-          .replace(/&lt;&lt;/g, '<mark style="background:var(--accent);color:#fff;padding:0 2px;border-radius:2px">')
+          .replace(/&lt;&lt;/g, '<mark style="background:var(--accent);color:var(--on-accent);padding:0 2px;border-radius:2px">')
           .replace(/&gt;&gt;/g, '</mark>');
       }
       list.appendChild(card);
@@ -3234,6 +3263,7 @@ document.getElementById('debug-toggle').addEventListener('click', () => {
   localStorage.setItem('lestash-debug-mode', document.body.classList.contains('debug-mode'));
 });
 document.getElementById('settings-btn').addEventListener('click', openSettings);
+onSheetClose(closeItemView);
 loadAppVersion().then(renderDebugInfo);
 renderDebugInfo();
 
@@ -3242,7 +3272,8 @@ startTimeline(() => showOnly('tab-timeline', 'timeline'));
 startPeople(showOnly);
 startLibrary(showOnly);
 route(/^\/more$/, () => showOnly('tab-more', 'more'));
-startRouter();
+// Draw once your name is known ("Matt" in bylines), waiting no more than 1.5 s
+Promise.race([selfReady, new Promise(r => setTimeout(r, 1500))]).finally(startRouter);
 setInterval(checkHealth, 30000);
 
 // Inline handlers (onclick="…") in the markup and in rendered HTML call these by name.

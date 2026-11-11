@@ -329,6 +329,18 @@ Decided by engineering, since each step needs the one before:
 
 Each step ships on its own and is walked through before the next.
 
+## Look and feel (11 Nov 2026)
+
+The layout held up in the walk-through; the look did not. These are the choices, each a setting where taste differs.
+
+- **Themes:** chosen in Settings, kept on the device. Nord is the default. Also Automatic (Nord, light or dark as the system is), Catppuccin, Rosé Pine, Gruvbox, Tokyo Night, Solarized, and LeStash's earlier colours. Every theme sets the same tokens (`css/themes.css`), and `scripts/adhoc/theme-contrast.mjs` checks them: 4.5:1 for text, 3:1 for icons.
+- **Density:** compact by default; comfortable is the option.
+- **Type:** sans-serif by default; serif for reading, or monospace throughout.
+- **Rows, not boxes:** a list row has a tile on its left: the cover or thumbnail where there is one, else the kind's icon on its colour. Each kind takes one of the theme's eight colours.
+- **The item opens over its list:** a sheet sliding up on a phone, a panel on the right on a wider screen. The list keeps its place; Back, Escape, the backdrop or a swipe down closes it. An item opened from a link is a whole page.
+- **Show what differs, fold what repeats:** a chat's prompts fold under one Timeline line that opens to what you asked; replies show each author's initial, their name once per run, and mark whom they answer; a part's row in its parent's page leaves the parent out.
+- **You are named, not "You":** bylines say "by Matt", from your person's short name, which you set on your page. Sentences addressed to you keep "you" ("You watched 466 of their videos (502 times), since Jan 2022").
+
 ## References
 - Sophia Prater, Object-Oriented UX and the ORCA process.
 - Louis Rosenfeld and Peter Morville, *Information Architecture*: exact and ambiguous organisation schemes.

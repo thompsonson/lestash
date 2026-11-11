@@ -1,0 +1,132 @@
+/* Themes: the colours each theme gives the app's tokens. Chosen in Settings, stored
+   on the device; js/appearance.js sets <html data-theme>. Every theme sets the same
+   tokens. scripts/adhoc/theme-contrast.mjs checks their contrast (4.5:1 for text,
+   3:1 for icons).
+
+   --bg page · --surface cards · --surface-2 raised or hovered · --border lines
+   --text · --muted secondary text · --accent marks and edges · --accent-text accent
+   used as text · --on-accent text on an accent fill · --link
+   --c-* eight colours for kinds: red, orange, yellow, green, teal, blue, purple, pink */
+
+/* Nord, the default (nordtheme.com) */
+:root, [data-theme="nord"] {
+  color-scheme: dark;
+  --bg: #2e3440; --surface: #3b4252; --surface-2: #434c5e; --border: #4c566a;
+  --text: #eceff4; --muted: #c0c8d6; --accent: #88c0d0; --accent-text: #88c0d0;
+  --on-accent: #2e3440; --link: #88c0d0;
+  --ok: #a3be8c; --warn: #ebcb8b; --error: #bf616a;
+  --c-red: #d57780; --c-orange: #d08770; --c-yellow: #ebcb8b; --c-green: #a3be8c;
+  --c-teal: #8fbcbb; --c-blue: #81a1c1; --c-purple: #b48ead; --c-pink: #c895b8;
+}
+[data-theme="nord-light"] {
+  color-scheme: light;
+  --bg: #e5e9f0; --surface: #f4f6f9; --surface-2: #eceff4; --border: #d8dee9;
+  --text: #2e3440; --muted: #4c566a; --accent: #4b6e9a; --accent-text: #3f5f88;
+  --on-accent: #ffffff; --link: #3f5f88;
+  --ok: #5b7a43; --warn: #946b16; --error: #a5434d;
+  --c-red: #b24a55; --c-orange: #b25d3a; --c-yellow: #8c6d1a; --c-green: #5b7a43;
+  --c-teal: #3f7b7a; --c-blue: #5e81ac; --c-purple: #8c5f86; --c-pink: #a8517e;
+}
+
+/* Catppuccin Mocha and Latte (catppuccin.com) */
+[data-theme="catppuccin"] {
+  color-scheme: dark;
+  --bg: #181825; --surface: #1e1e2e; --surface-2: #313244; --border: #313244;
+  --text: #cdd6f4; --muted: #a6adc8; --accent: #cba6f7; --accent-text: #cba6f7;
+  --on-accent: #1e1e2e; --link: #89b4fa;
+  --ok: #a6e3a1; --warn: #f9e2af; --error: #f38ba8;
+  --c-red: #f38ba8; --c-orange: #fab387; --c-yellow: #f9e2af; --c-green: #a6e3a1;
+  --c-teal: #94e2d5; --c-blue: #89b4fa; --c-purple: #cba6f7; --c-pink: #f5c2e7;
+}
+[data-theme="catppuccin-latte"] {
+  color-scheme: light;
+  --bg: #e6e9ef; --surface: #eff1f5; --surface-2: #dce0e8; --border: #ccd0da;
+  --text: #4c4f69; --muted: #5c5f77; --accent: #8839ef; --accent-text: #7528d9;
+  --on-accent: #ffffff; --link: #1a55cc;
+  --ok: #40a02b; --warn: #df8e1d; --error: #d20f39;
+  --c-red: #d20f39; --c-orange: #d55309; --c-yellow: #b0700f; --c-green: #3a8c27;
+  --c-teal: #137d83; --c-blue: #1e66f5; --c-purple: #8839ef; --c-pink: #c6479f;
+}
+
+/* Rosé Pine and Rosé Pine Dawn (rosepinetheme.com) */
+[data-theme="rose-pine"] {
+  color-scheme: dark;
+  --bg: #191724; --surface: #1f1d2e; --surface-2: #26233a; --border: #403d52;
+  --text: #e0def4; --muted: #a29fbd; --accent: #c4a7e7; --accent-text: #c4a7e7;
+  --on-accent: #191724; --link: #9ccfd8;
+  --ok: #9ccfd8; --warn: #f6c177; --error: #eb6f92;
+  --c-red: #eb6f92; --c-orange: #ebbcba; --c-yellow: #f6c177; --c-green: #9ccfd8;
+  --c-teal: #6fb3c4; --c-blue: #569fba; --c-purple: #c4a7e7; --c-pink: #e8a0bf;
+}
+[data-theme="rose-pine-dawn"] {
+  color-scheme: light;
+  --bg: #f2e9e1; --surface: #fffaf3; --surface-2: #f4ede8; --border: #dfdad9;
+  --text: #575279; --muted: #625e80; --accent: #286983; --accent-text: #286983;
+  --on-accent: #ffffff; --link: #286983;
+  --ok: #286983; --warn: #b8761d; --error: #b4637a;
+  --c-red: #b4637a; --c-orange: #c0625d; --c-yellow: #b8761d; --c-green: #3d7f8a;
+  --c-teal: #56949f; --c-blue: #286983; --c-purple: #907aa9; --c-pink: #c0625d;
+}
+
+/* Gruvbox dark and light (github.com/morhetz/gruvbox) */
+[data-theme="gruvbox"] {
+  color-scheme: dark;
+  --bg: #282828; --surface: #32302f; --surface-2: #3c3836; --border: #504945;
+  --text: #ebdbb2; --muted: #bdae93; --accent: #fabd2f; --accent-text: #fabd2f;
+  --on-accent: #282828; --link: #83a598;
+  --ok: #b8bb26; --warn: #fabd2f; --error: #fb4934;
+  --c-red: #fb4934; --c-orange: #fe8019; --c-yellow: #fabd2f; --c-green: #b8bb26;
+  --c-teal: #8ec07c; --c-blue: #83a598; --c-purple: #d3869b; --c-pink: #d3869b;
+}
+[data-theme="gruvbox-light"] {
+  color-scheme: light;
+  --bg: #f2e5bc; --surface: #fbf1c7; --surface-2: #ebdbb2; --border: #d5c4a1;
+  --text: #3c3836; --muted: #5f564f; --accent: #af3a03; --accent-text: #af3a03;
+  --on-accent: #fbf1c7; --link: #076678;
+  --ok: #79740e; --warn: #b57614; --error: #9d0006;
+  --c-red: #9d0006; --c-orange: #af3a03; --c-yellow: #a06512; --c-green: #79740e;
+  --c-teal: #427b58; --c-blue: #076678; --c-purple: #8f3f71; --c-pink: #8f3f71;
+}
+
+/* Tokyo Night (github.com/enkia/tokyo-night-vscode-theme) */
+[data-theme="tokyo-night"] {
+  color-scheme: dark;
+  --bg: #16161e; --surface: #1a1b26; --surface-2: #24283b; --border: #292e42;
+  --text: #c0caf5; --muted: #9aa5ce; --accent: #7aa2f7; --accent-text: #7aa2f7;
+  --on-accent: #16161e; --link: #7dcfff;
+  --ok: #9ece6a; --warn: #e0af68; --error: #f7768e;
+  --c-red: #f7768e; --c-orange: #ff9e64; --c-yellow: #e0af68; --c-green: #9ece6a;
+  --c-teal: #73daca; --c-blue: #7aa2f7; --c-purple: #bb9af7; --c-pink: #f799c4;
+}
+
+/* Solarized dark and light (ethanschoonover.com/solarized); text one step brighter
+   than the original, which is below 4.5:1 on cards */
+[data-theme="solarized"] {
+  color-scheme: dark;
+  --bg: #00212b; --surface: #002b36; --surface-2: #073642; --border: #0b4553;
+  --text: #a7b4b4; --muted: #8fa0a2; --accent: #1f75b3; --accent-text: #3a9fe0;
+  --on-accent: #ffffff; --link: #3a9fe0;
+  --ok: #859900; --warn: #b58900; --error: #dc322f;
+  --c-red: #e2504d; --c-orange: #db6a3a; --c-yellow: #b58900; --c-green: #859900;
+  --c-teal: #2aa198; --c-blue: #268bd2; --c-purple: #8589d6; --c-pink: #dd5596;
+}
+[data-theme="solarized-light"] {
+  color-scheme: light;
+  --bg: #eee8d5; --surface: #fdf6e3; --surface-2: #f5efdc; --border: #e0d9c3;
+  --text: #073642; --muted: #4f6369; --accent: #1f75b3; --accent-text: #1a6aa3;
+  --on-accent: #ffffff; --link: #1a6aa3;
+  --ok: #6b7b00; --warn: #8f6c00; --error: #c42926;
+  --c-red: #c42926; --c-orange: #b8410f; --c-yellow: #8f6c00; --c-green: #6b7b00;
+  --c-teal: #1f8178; --c-blue: #1f75b3; --c-purple: #5a5fb5; --c-pink: #b52c6f;
+}
+
+/* LeStash's colours before themes */
+[data-theme="classic"] {
+  color-scheme: dark;
+  --bg: #1a1a2e; --surface: #16213e; --surface-2: #1c2a4e; --border: #0f3460;
+  --text: #e0e0e0; --muted: #9a9a9a; --accent: #d63651; --accent-text: #f06a80;
+  --on-accent: #ffffff; --link: #f06a80;
+  --ok: #4ecca3; --warn: #f0a500; --error: #e94560;
+  --c-red: #ff5c5c; --c-orange: #ff8800; --c-yellow: #f0a500; --c-green: #4ecca3;
+  --c-teal: #3fc1c9; --c-blue: #4d9fff; --c-purple: #a97cf8; --c-pink: #f06a80;
+}

@@ -43,8 +43,9 @@ export function cachedItem(id) {
   return items.get(String(id));
 }
 
+// What scrolls: the item sheet when one is open over a list (js/sheet.js), else the page
 function main() {
-  return document.querySelector('main');
+  return document.querySelector('body.sheet-open #item-view') || document.querySelector('main');
 }
 
 function depth() {
