@@ -44,6 +44,15 @@ class ItemResponse(BaseModel):
     preview: str
     tags: list[str] = []
     child_count: int = 0
+    reaction_count: int = 0  # children that are reactions, shown as one line
+    # What the item is (core/kinds.py): "book", its label "Book", and a finer label
+    # within the kind where one exists ("Audio overview" for a generated artifact)
+    kind: str = "document"
+    kind_label: str = "Document"
+    kind_detail: str | None = None
+    # The item this one is part of, for "up" links and "on <title>" lines
+    parent_title: str | None = None
+    parent_kind: str | None = None
     media: list[MediaResponse] = []
 
 

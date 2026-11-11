@@ -155,6 +155,38 @@ class TestItems:
         assert data["total"] == 2
         assert sorted(i["id"] for i in data["items"]) == sorted([parent, cur.lastrowid])
 
+    def test_items_carry_their_kind(self, client):
+        """Each item says what it is (#261); kind filters run before paging."""
+        items = {i["source_id"]: i for i in client.get("/api/items").json()["items"]}
+        assert (items["li-1"]["kind"], items["li-1"]["kind_label"]) == ("post", "Post")
+        assert items["2401.12345"]["kind"] == "paper"
+        assert items["yt-1"]["kind"] == "video"
+        data = client.get("/api/items?kind=paper,video").json()
+        assert data["total"] == 2
+        assert {i["kind"] for i in data["items"]} == {"paper", "video"}
+        assert client.get("/api/items?exclude_kind=reaction").json()["total"] == 4
+
+    def test_parent_title_and_reaction_count(self, client, test_config):
+        with get_connection(test_config) as conn:
+            post = conn.execute("SELECT id FROM items WHERE source_id = 'li-1'").fetchone()[0]
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content, parent_id, metadata)"
+                " VALUES ('linkedin', 'like-a', 'like', ?, ?)",
+                (post, json.dumps({"resource_name": "socialActions/likes"})),
+            )
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content, parent_id, metadata)"
+                " VALUES ('linkedin', 'reply-a', 'a reply', ?, ?)",
+                (post, json.dumps({"resource_name": "socialActions/comments"})),
+            )
+            conn.commit()
+        detail = client.get(f"/api/items/{post}").json()
+        assert (detail["child_count"], detail["reaction_count"]) == (2, 1)
+        replies = client.get(f"/api/items?parent_id={post}&exclude_kind=reaction").json()
+        assert [i["kind"] for i in replies["items"]] == ["comment"]
+        assert replies["items"][0]["parent_title"] == "First Post"
+        assert replies["items"][0]["parent_kind"] == "post"
+
     def test_list_items_exclude_subtype_default_returns_all(self, client):
         """No exclude param should return all items."""
         resp = client.get("/api/items")

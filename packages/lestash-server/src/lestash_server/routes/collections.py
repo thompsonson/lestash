@@ -1,48 +1,18 @@
 """Collection API endpoints."""
 
 from fastapi import APIRouter, HTTPException
-from lestash.core.database import get_tags
-from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
 from lestash.models.item import Item
 
 from lestash_server.deps import get_db
+from lestash_server.enrich import enrich_item
 from lestash_server.models import (
     CollectionCreate,
     CollectionDetailResponse,
     CollectionItemAdd,
     CollectionResponse,
-    ItemResponse,
 )
 
 router = APIRouter(prefix="/api/collections", tags=["collections"])
-
-
-def _enrich_item(conn, item: Item) -> ItemResponse:
-    """Convert an Item to an enriched API response."""
-    author_display, actor_display = get_author_actor(conn, item)
-    child_count = conn.execute(
-        "SELECT COUNT(*) FROM items WHERE parent_id = ?", (item.id,)
-    ).fetchone()[0]
-    return ItemResponse(
-        id=item.id,
-        source_type=item.source_type,
-        source_id=item.source_id,
-        url=item.url,
-        title=item.title,
-        content=item.content,
-        author=item.author,
-        created_at=item.created_at,
-        fetched_at=item.fetched_at,
-        is_own_content=item.is_own_content,
-        metadata=item.metadata,
-        parent_id=item.parent_id,
-        subtype=get_item_subtype(item),
-        author_display=author_display,
-        actor_display=actor_display,
-        preview=get_preview(conn, item, max_length=120),
-        tags=get_tags(conn, item.id),
-        child_count=child_count,
-    )
 
 
 @router.get("", response_model=list[CollectionResponse])
@@ -106,7 +76,7 @@ def get_collection(collection_id: int):
             (collection_id,),
         ).fetchall()
 
-        items = [_enrich_item(conn, Item.from_row(r)) for r in item_rows]
+        items = [enrich_item(conn, Item.from_row(r)) for r in item_rows]
 
         return CollectionDetailResponse(
             id=row["id"],

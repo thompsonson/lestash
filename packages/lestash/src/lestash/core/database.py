@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -640,6 +640,15 @@ MIGRATIONS = [
         );
         """,
     ),
+    (
+        24,
+        "Add items.kind: what an item is (post, book, video...), generated from its source",
+        # #261 (U2). Run in apply_migrations: SQLite's ADD COLUMN has no IF NOT EXISTS. A
+        # virtual generated column, so every writer gets it for free. Its rule is
+        # core/kinds.py's KIND_SQL; changing that rule needs a migration that drops and
+        # re-adds the column.
+        "",
+    ),
 ]
 
 
@@ -789,7 +798,8 @@ def linkedin_person(conn: sqlite3.Connection, urn: str) -> int | None:
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     """Check if a column exists in a table."""
-    cursor = conn.execute(f"PRAGMA table_info({table})")
+    # table_xinfo: table_info leaves out generated columns, such as items.kind
+    cursor = conn.execute(f"PRAGMA table_xinfo({table})")
     return any(row[1] == column for row in cursor.fetchall())
 
 
@@ -858,6 +868,14 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                 conn.execute("ALTER TABLE tags ADD COLUMN kind TEXT NOT NULL DEFAULT 'ad-hoc'")
             if version == 18 and not _column_exists(conn, "items", "held"):
                 conn.execute("ALTER TABLE items ADD COLUMN held INTEGER NOT NULL DEFAULT 1")
+            if version == 24 and not _column_exists(conn, "items", "kind"):
+                from lestash.core.kinds import KIND_SQL
+
+                conn.execute(
+                    "ALTER TABLE items ADD COLUMN kind TEXT"
+                    f" GENERATED ALWAYS AS ({KIND_SQL}) VIRTUAL"
+                )
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_items_kind ON items(kind, parent_id)")
             if version == 16:
                 _migrate_16(conn)  # sets the version in its own transaction
             elif version == 20:
