@@ -131,7 +131,8 @@ def list_items(
         where.append("items.parent_id = ?")
         params.append(parent_id)
     else:
-        if not include_children:
+        # A tag lists whatever carries it, children included, as it always has
+        if not include_children and not tag:
             where.append("items.parent_id IS NULL")
         # Stubs are known by their address only; their detail view shows them
         where.append("items.held = 1")

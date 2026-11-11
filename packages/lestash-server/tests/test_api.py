@@ -134,8 +134,8 @@ class TestItems:
         assert len(set(ids)) == 26
         assert all("reaction" not in i["subtype"] for p in pages for i in p["items"])
 
-    def test_list_items_tag_keeps_top_level_only(self, client, test_config):
-        """A tag filter used to drop the parent_id condition and list children."""
+    def test_list_items_tag_includes_tagged_children(self, client, test_config):
+        """A tag lists whatever carries it, children included, with an exact total."""
         with get_connection(test_config) as conn:
             parent = conn.execute("SELECT id FROM items WHERE source_id = 'li-1'").fetchone()[0]
             cur = conn.execute(
@@ -152,8 +152,8 @@ class TestItems:
                 )
             conn.commit()
         data = client.get("/api/items?tag=t1").json()
-        assert data["total"] == 1
-        assert [i["id"] for i in data["items"]] == [parent]
+        assert data["total"] == 2
+        assert sorted(i["id"] for i in data["items"]) == sorted([parent, cur.lastrowid])
 
     def test_list_items_exclude_subtype_default_returns_all(self, client):
         """No exclude param should return all items."""

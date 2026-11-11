@@ -103,10 +103,13 @@ def get_item_subtype(item: Item) -> str:
 
 
 def _meta(key: str, column: str) -> str:
-    return f"json_extract(CASE WHEN json_valid({column}) THEN {column} END, '$.{key}')"
+    # Text values only, as get_item_subtype treats anything else as absent
+    doc = f"CASE WHEN json_valid({column}) THEN {column} END"
+    return f"CASE WHEN json_type({doc}, '$.{key}') = 'text' THEN json_extract({doc}, '$.{key}') END"
 
 
 def _has_resource(column: str) -> str:
+    # A plain text test; json.dumps never escapes this key, so it is never missed
     return f"instr(COALESCE({column}, ''), '\"resource_name\"') > 0"
 
 

@@ -30,6 +30,10 @@ CASES = [
     {"resource_name": "people/positions"},
     {"resource_name": "socialActions/shares"},
     {"type": "notebook"},
+    {"resource_name": 0},
+    {"resource_name": False},
+    {"resource_name": "socialActions/likes", "reaction_type": 0},
+    {"resource_name": "socialActions/likes", "reacted_to": 0},
 ]
 
 

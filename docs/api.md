@@ -37,7 +37,7 @@ List items with filters and pagination.
 |---|---|---|---|
 | `source` | string | — | Filter by source type |
 | `own` | bool | — | Filter own content |
-| `exclude_subtype` | string | — | Comma-separated subtypes to exclude (e.g. `reaction,invitation`) |
+| `exclude_subtype` | string | — | Comma-separated terms; drops items whose subtype contains any (e.g. `reaction,invitation`). Applied before paging, so pages are full and `total` is exact |
 | `since` | datetime | — | Only items fetched since this time |
 | `tag` | string | — | Filter by tag |
 | `parent_id` | int | — | Show children of this item |
