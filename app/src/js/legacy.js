@@ -6,6 +6,7 @@ import { escHtml, relTime, sourceClass, sourceName } from './util.js';
 import { renderCard } from './objects/item/card.js';
 import { startTimeline, redrawTimeline } from './places/timeline.js';
 import { startPeople, redrawPeople } from './places/people.js';
+import { startLibrary, redrawLibrary } from './places/library.js';
 import {
   itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
   renderParts, PARTS_QUERY,
@@ -152,6 +153,7 @@ function showToast(message, level) {
 /* ── Pages (#260): the router draws exactly one; see js/router.js ── */
 const TAB_PATHS = {
   timeline: '/', recent: '/recent', notes: '/notes', search: '/search', people: '/people',
+  library: '/library', more: '/more',
   collections: '/collections', sources: '/settings/sources',
   stats: '/settings/stats', debug: '/settings/debug',
 };
@@ -165,8 +167,10 @@ function showOnly(id, tab) {
     t.style.display = '';
   });
   document.getElementById('item-view').style.display = id === 'item-view' ? 'block' : 'none';
+  // A place without its own button (Collections, Notes, Settings...) lives under More
+  const mark = !tab || document.querySelector(`#tabs [data-tab="${tab}"]`) ? tab : 'more';
   document.querySelectorAll('#tabs button').forEach(b => {
-    const on = b.dataset.tab === tab;
+    const on = b.dataset.tab === mark;
     b.classList.toggle('active', on);
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
@@ -1160,7 +1164,9 @@ function renderMarkdown(s) {
 // After saving something new, the Timeline shows it if it is open
 function refreshTimeline() {
   redrawTimeline();
-  if (location.pathname === '/' || location.pathname.startsWith('/day/')) render();
+  redrawLibrary();
+  const path = location.pathname;
+  if (path === '/' || path.startsWith('/day/') || path === '/library') render();
 }
 
 /* ── Recent Activity ── */
@@ -2448,7 +2454,7 @@ async function handlePendingShare() {
       addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
 
       // Switch to Notes tab and show transcription UI
-      document.querySelector('[data-tab="notes"]')?.click();
+      navigate('/notes');
       const uploadBtn = document.getElementById('upload-btn');
       const recordStatus = document.getElementById('record-status');
       if (uploadBtn) { uploadBtn.style.pointerEvents = 'none'; uploadBtn.style.opacity = '0.5'; uploadBtn.innerText = 'Transcribing...'; }
@@ -2520,7 +2526,7 @@ async function handlePendingShare() {
       for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
       const file = new File([bytes], fileData.fileName, { type: 'application/pdf' });
       addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
-      document.querySelector('[data-tab="sources"]')?.click();
+      navigate('/settings/sources');
       await uploadImport(file);
     } else if (share.text) {
       openCaptureDialog(share);
@@ -3177,7 +3183,7 @@ async function reconnect() {
   // scroll position stay
   const path = location.pathname;
   if (failedPath === path) { render(); return; }
-  if (path === '/' || path.startsWith('/day/')) { refreshTimeline(); return; }
+  if (path === '/' || path.startsWith('/day/') || path === '/library') { refreshTimeline(); return; }
   if (path === '/people' || path.startsWith('/people/')) {
     // Nothing to lose on these pages: draw them again, a failed load included
     redrawPeople();
@@ -3234,6 +3240,8 @@ renderDebugInfo();
 checkHealth();
 startTimeline(() => showOnly('tab-timeline', 'timeline'));
 startPeople(showOnly);
+startLibrary(showOnly);
+route(/^\/more$/, () => showOnly('tab-more', 'more'));
 startRouter();
 setInterval(checkHealth, 30000);
 

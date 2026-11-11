@@ -42,6 +42,9 @@ List items with filters and pagination.
 | `exclude_kind` | string | — | Comma-separated kinds to leave out (e.g. `reaction`) |
 | `person` | int | — | Items this person made, voiced, published or received (children included) |
 | `role` | string | — | With `person`: only this role (`author`, `creator`, `narrator`, `publisher`, `recipient`) |
+| `year` | `YYYY` | — | Made in this year (`created_at`) |
+| `sort` | string | `recent` | `recent`, `oldest` or `title` |
+| `top_level` | bool | false | Only items not part of another, even with `tag` or `person` (which otherwise include parts) |
 | `since` | datetime | — | Only items fetched since this time |
 | `tag` | string | — | Filter by tag |
 | `parent_id` | int | — | Show children of this item |
@@ -269,6 +272,16 @@ What you did and what you made between two times, newest first (#262).
 | `kind` | string | — | Comma-separated item kinds to keep |
 
 Each entry has `at` (UTC), `verb` (an activity's verb, or `made`), `item` (id, title, kind, kind_label, kind_detail, source_type, parent, channel), `context` (e.g. the notebook a prompt used) and `details`. `made` entries are posts, replies, notes, notebooks, chats, generated items, projects and email threads, on the day they were made. `previous` and `next` are the nearest times outside the span with entries. Up to 5,000 entries; `truncated` says when there were more.
+
+## Library
+
+### `GET /api/library`
+
+The shelves, each with its kinds and how many top-level items it holds (#264): Books (`book`), Papers (`paper`), Videos (`video`), Notebooks (`notebook`, `project`), Posts (`post`), Chats (`chat`), Notes (`note`). A shelf's items are `GET /api/items?kind=<its kinds>`.
+
+### `GET /api/library/{shelf}/facets`
+
+What a shelf holds, counted by `people` (in any role, top 30), `topics` (tags, top 30) and `years`. 404 for an unknown shelf. The counts match `GET /api/items?kind=<shelf kinds>&top_level=true` with the same filter.
 
 ## People
 

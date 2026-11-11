@@ -6,6 +6,7 @@ import { api } from '../api.js';
 import { route, navigate } from '../router.js';
 import { escHtml } from '../util.js';
 import { kindIcon } from '../objects/item/kinds.js';
+import { openFiltersWhenWide } from '../util.js';
 
 // Verbs that fold into one line once a day has more than FOLD_AT of one kind
 const FOLDING = new Set(['watched', 'viewed', 'liked', 'disliked', 'shared', 'searched']);
@@ -65,11 +66,14 @@ function shell() {
       <a class="day-step" data-step="next" href="#" aria-label="Next day with activity">›</a>
       <a class="day-today" href="/">Today</a>
     </div>
-    <div class="filters timeline-filters">
-      <select class="verb-filter" aria-label="What you did">${VERB_FILTERS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
-      <select class="kind-filter" aria-label="Kind of item">${KIND_FILTERS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
-    </div>
+    <details class="fold-filters"><summary>Filters</summary>
+      <div class="filters timeline-filters">
+        <select class="verb-filter" aria-label="What you did">${VERB_FILTERS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
+        <select class="kind-filter" aria-label="Kind of item">${KIND_FILTERS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
+      </div>
+    </details>
     <div class="timeline-list" aria-live="polite"></div>`;
+  openFiltersWhenWide(tab);
   tab.querySelector('.timeline-search').addEventListener('submit', e => {
     e.preventDefault();
     const q = e.target.q.value.trim();
@@ -172,6 +176,8 @@ async function drawDay(day, url) {
   tab.querySelector('.day-pick').value = isoDay(day);
   tab.querySelector('.verb-filter').value = params.get('verb') || '';
   tab.querySelector('.kind-filter').value = params.get('kind') || '';
+  const active = ['verb', 'kind'].filter(k => params.get(k)).length;
+  tab.querySelector('.fold-filters summary').textContent = active ? `Filters (${active})` : 'Filters';
   tab.querySelector('.day-today').hidden = isoDay(day) === isoDay(new Date());
   if (key === shown) return;
   shown = key;

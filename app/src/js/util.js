@@ -49,3 +49,10 @@ const SOURCE_LABELS = {
 export function sourceLabel(source) {
   return SOURCE_LABELS[source] || source || '';
 }
+
+// Filters fold behind one button on a phone; on a wider screen they stay open
+export function openFiltersWhenWide(root) {
+  if (window.matchMedia('(min-width: 601px)').matches) {
+    root.querySelectorAll('details.fold-filters').forEach(d => { d.open = true; });
+  }
+}
