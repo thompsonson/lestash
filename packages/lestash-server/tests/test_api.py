@@ -109,6 +109,52 @@ class TestItems:
         subtypes = [i["subtype"] for i in data["items"]]
         assert all("reaction" not in s and "post" not in s for s in subtypes)
 
+    def test_list_items_exclude_fills_every_page(self, client, test_config):
+        """Excluded subtypes are dropped before LIMIT: full pages, exact total (#260)."""
+        with get_connection(test_config) as conn:
+            for n in range(30):
+                conn.execute(
+                    "INSERT INTO items (source_type, source_id, content, created_at, metadata)"
+                    " VALUES ('linkedin', ?, 'like', '2025-01-01', ?)",
+                    (f"like-{n}", json.dumps({"resource_name": "socialActions/likes"})),
+                )
+            post = "ugcPosts"
+            for n in range(25):
+                conn.execute(
+                    "INSERT INTO items (source_type, source_id, content, created_at, metadata)"
+                    " VALUES ('linkedin', ?, 'post', ?, ?)",
+                    (f"post-{n}", f"2024-12-{n + 1:02d}", json.dumps({"resource_name": post})),
+                )
+            conn.commit()
+        q = "/api/items?source=linkedin&exclude_subtype=reaction,invitation,message&limit=10"
+        pages = [client.get(f"{q}&offset={o}").json() for o in (0, 10, 20)]
+        assert [len(p["items"]) for p in pages] == [10, 10, 6]
+        assert all(p["total"] == 26 for p in pages)
+        ids = [i["id"] for p in pages for i in p["items"]]
+        assert len(set(ids)) == 26
+        assert all("reaction" not in i["subtype"] for p in pages for i in p["items"])
+
+    def test_list_items_tag_keeps_top_level_only(self, client, test_config):
+        """A tag filter used to drop the parent_id condition and list children."""
+        with get_connection(test_config) as conn:
+            parent = conn.execute("SELECT id FROM items WHERE source_id = 'li-1'").fetchone()[0]
+            cur = conn.execute(
+                "INSERT INTO items (source_type, source_id, content, parent_id)"
+                " VALUES ('linkedin', 'child-1', 'child', ?)",
+                (parent,),
+            )
+            for item_id in (parent, cur.lastrowid):
+                conn.execute("INSERT OR IGNORE INTO tags (name) VALUES ('t1')")
+                conn.execute(
+                    "INSERT INTO item_tags (item_id, tag_id)"
+                    " SELECT ?, id FROM tags WHERE name = 't1'",
+                    (item_id,),
+                )
+            conn.commit()
+        data = client.get("/api/items?tag=t1").json()
+        assert data["total"] == 1
+        assert [i["id"] for i in data["items"]] == [parent]
+
     def test_list_items_exclude_subtype_default_returns_all(self, client):
         """No exclude param should return all items."""
         resp = client.get("/api/items")
