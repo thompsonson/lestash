@@ -100,7 +100,8 @@ def text(
         False, "--retry-failed", help="Read again files that failed before"
     ),
 ) -> None:
-    """Read text from NotebookLM slides, infographics and apps into their items (#218).
+    """Read text from NotebookLM slides, infographics, apps, audio and video into their
+    items (#218).
     Each file is read once; run again to go on. Runs after each timer sync."""
     from lestash.core.config import Config
     from lestash.core.database import get_connection
