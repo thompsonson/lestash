@@ -22,7 +22,7 @@ function shell() {
     <details class="fold-filters">
       <summary>Filters</summary>
       <div class="filters library-filters">
-        <select data-facet="person" aria-label="Made by"></select>
+        <select data-facet="person" aria-label="Person"></select>
         <select data-facet="tag" aria-label="Topic"></select>
         <select data-facet="year" aria-label="Year"></select>
         <select data-facet="sort" aria-label="Sort">${SORTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
@@ -85,7 +85,7 @@ async function drawShelf(url) {
 
   api(`/api/library/${current.shelf}/facets`).then(f => {
     if (shown !== key) return;
-    options(sel('person'), 'Anyone', f.people, params.get('person'), p => p.id, p => `${p.name} (${p.count})`);
+    options(sel('person'), 'Any person', f.people, params.get('person'), p => p.id, p => `${p.name} (${p.count})`);
     options(sel('tag'), 'Any topic', f.topics, params.get('tag'), t => t.name, t => `${t.name} (${t.count})`);
     options(sel('year'), 'Any year', f.years, params.get('year'), y => y.name, y => `${y.name} (${y.count})`);
     const active = ['person', 'tag', 'year'].filter(k => params.get(k)).length;

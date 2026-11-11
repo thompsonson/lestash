@@ -1165,7 +1165,8 @@ function renderMarkdown(s) {
 function refreshTimeline() {
   redrawTimeline();
   redrawLibrary();
-  if (location.pathname === '/' || location.pathname.startsWith('/day/')) render();
+  const path = location.pathname;
+  if (path === '/' || path.startsWith('/day/') || path === '/library') render();
 }
 
 /* ── Recent Activity ── */
@@ -3182,7 +3183,7 @@ async function reconnect() {
   // scroll position stay
   const path = location.pathname;
   if (failedPath === path) { render(); return; }
-  if (path === '/' || path.startsWith('/day/')) { refreshTimeline(); return; }
+  if (path === '/' || path.startsWith('/day/') || path === '/library') { refreshTimeline(); return; }
   if (path === '/people' || path.startsWith('/people/')) {
     // Nothing to lose on these pages: draw them again, a failed load included
     redrawPeople();

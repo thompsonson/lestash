@@ -44,6 +44,7 @@ List items with filters and pagination.
 | `role` | string | — | With `person`: only this role (`author`, `creator`, `narrator`, `publisher`, `recipient`) |
 | `year` | `YYYY` | — | Made in this year (`created_at`) |
 | `sort` | string | `recent` | `recent`, `oldest` or `title` |
+| `top_level` | bool | false | Only items not part of another, even with `tag` or `person` (which otherwise include parts) |
 | `since` | datetime | — | Only items fetched since this time |
 | `tag` | string | — | Filter by tag |
 | `parent_id` | int | — | Show children of this item |
@@ -280,7 +281,7 @@ The shelves, each with its kinds and how many top-level items it holds (#264): B
 
 ### `GET /api/library/{shelf}/facets`
 
-What a shelf holds, counted by `people` (who made them: author or creator, top 30), `topics` (tags, top 30) and `years`. 404 for an unknown shelf.
+What a shelf holds, counted by `people` (in any role, top 30), `topics` (tags, top 30) and `years`. 404 for an unknown shelf. The counts match `GET /api/items?kind=<shelf kinds>&top_level=true` with the same filter.
 
 ## People
 
