@@ -56,6 +56,35 @@ get "/api/items?limit=5" "$PAGE and (.items | length) > 0"
 get /api/items/tags '.tags | type == "array"'
 get /api/collections 'type == "array" and all(.[]; (.id | type == "number") and (.name | type == "string"))'
 
+echo
+echo "-- Kinds, Timeline, People, Library (#268, U2-U6)"
+KINDED='all(.items[]; (.kind | type == "string") and (.kind_label | type == "string") and (.reaction_count | type == "number"))'
+get "/api/items?limit=5" "$PAGE and $KINDED"
+get "/api/items?kind=book&limit=5" "$PAGE and all(.items[]; .kind == \"book\")"
+get "/api/items?exclude_kind=reaction,turn&limit=20" "$PAGE and all(.items[]; .kind != \"reaction\" and .kind != \"turn\")"
+get "/api/items?kind=paper&sort=title&limit=5" "$PAGE"
+get "/api/items?kind=video&year=2024&top_level=true&limit=5" "$PAGE and all(.items[]; .kind == \"video\" and .parent_id == null)"
+get "/api/items?kind=artifact&include_children=true&limit=3" "$PAGE and all(.items[]; (.parent_title | type == \"string\") and (.kind_detail | type == \"string\"))"
+day=$(date -u -d "yesterday" +%Y-%m-%dT00:00:00Z); next=$(date -u +%Y-%m-%dT00:00:00Z)
+get "/api/timeline?start=$day&end=$next" '(.entries | type == "array") and has("previous") and has("next") and all(.entries[]; (.at | type == "string") and (.verb | type == "string"))'
+get "/api/timeline?start=$day&end=$next&verb=made" 'all(.entries[]; .verb == "made")'
+get "/api/library" 'type == "array" and length == 7 and all(.[]; (.count | type == "number") and (.kinds | length) > 0)'
+get "/api/library/books/facets" '(.people | type == "array") and (.topics | type == "array") and (.years | type == "array")'
+for sw in people channels ai; do
+    get "/api/people?switch=$sw&limit=3" '(.people | type == "array") and (.total | type == "number")'
+done
+get "/api/people/me" '.is_self == true and (.made | type == "array")'
+if get "/api/people?switch=channels&limit=1" '.people | length == 1'; then
+    pid=$(jq -r '.people[0].id' <<<"$BODY")
+    get "/api/people/$pid" "(.id == $pid) and (.your_activity | type == \"array\") and (.accounts | type == \"array\")"
+    get "/api/items?person=$pid&limit=5" "$PAGE"
+fi
+# The app's files are checked on every load, so a deploy never mixes old and new code
+for path in / /js/router.js /js/places/timeline.js; do
+    cc=$(curl -s -m 15 -o /dev/null -D - "$BASE$path" | tr -d '\r' | awk -F': ' 'tolower($1)=="cache-control"{print $2}')
+    if [ "$cc" = "no-cache" ]; then echo "200  no-cache  $BASE$path"; else echo "FAIL  cache-control '$cc'  $BASE$path"; fail=1; fi
+done
+
 # One item's detail, children and similar items, taken from the newest top-level item
 if get "/api/items?limit=1" "$PAGE"; then
     id=$(jq -r '(.items // .)[0].id // empty' <<<"$BODY")
