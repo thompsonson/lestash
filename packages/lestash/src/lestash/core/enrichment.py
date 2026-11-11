@@ -130,7 +130,7 @@ def subtype_sql(table: str = "items") -> str:
         " ELSE ' (→post)' END"
         " WHEN 'invitations' THEN 'invitation'"
         " WHEN 'messages' THEN 'message'"
-        f" ELSE replace({resource}, 'socialActions/', '') END, '')"
+        f" ELSE NULLIF(replace({resource}, 'socialActions/', ''), '') END, '')"
     )
 
 
