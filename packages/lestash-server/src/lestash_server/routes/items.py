@@ -10,8 +10,6 @@ from fastapi import APIRouter, HTTPException, Query
 from lestash.core.agents import agents_for
 from lestash.core.database import (
     add_tag,
-    get_item_media,
-    get_tags,
     list_tags,
     mark_recent_history,
     max_history_id,
@@ -19,9 +17,6 @@ from lestash.core.database import (
 )
 from lestash.core.embeddings import re_embed_item
 from lestash.core.enrichment import (
-    get_author_actor,
-    get_item_subtype,
-    get_preview,
     subtype_excludes_sql,
 )
 from lestash.core.links import links_of, reject_link
@@ -29,6 +24,7 @@ from lestash.core.search import keyword_search
 from lestash.models.item import Item
 
 from lestash_server.deps import get_db
+from lestash_server.enrich import enrich_item
 from lestash_server.models import (
     _UNSET,
     Activity,
@@ -44,7 +40,6 @@ from lestash_server.models import (
     ItemListResponse,
     ItemPatchRequest,
     ItemResponse,
-    MediaResponse,
     TagAddRequest,
     TagListResponse,
 )
@@ -52,57 +47,6 @@ from lestash_server.models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/items", tags=["items"])
-
-
-def _media_responses(conn, item_id: int) -> list[MediaResponse]:
-    """Build MediaResponse list for an item."""
-    return [
-        MediaResponse(
-            id=m["id"],
-            media_type=m["media_type"],
-            url=m["url"],
-            serve_url=f"/api/media/{m['id']}",
-            alt_text=m["alt_text"],
-            position=m["position"],
-            available=bool(
-                m["sha256"] or m["local_path"] or (m["url"] and m["url"].startswith("http"))
-            ),
-            mime_type=m["mime_type"],
-            version=m["version"],
-            superseded_at=m["superseded_at"],
-        )
-        for m in get_item_media(conn, item_id)
-    ]
-
-
-def _enrich_item(conn, item: Item) -> ItemResponse:
-    """Convert an Item to an enriched API response."""
-    author_display, actor_display = get_author_actor(conn, item)
-    child_count = conn.execute(
-        "SELECT COUNT(*) FROM items WHERE parent_id = ?", (item.id,)
-    ).fetchone()[0]
-    return ItemResponse(
-        id=item.id,
-        source_type=item.source_type,
-        source_id=item.source_id,
-        url=item.url,
-        title=item.title,
-        content=item.content,
-        author=item.author,
-        created_at=item.created_at,
-        fetched_at=item.fetched_at,
-        is_own_content=item.is_own_content,
-        metadata=item.metadata,
-        parent_id=item.parent_id,
-        held=item.held,
-        subtype=get_item_subtype(item),
-        author_display=author_display,
-        actor_display=actor_display,
-        preview=get_preview(conn, item, max_length=120),
-        tags=get_tags(conn, item.id),
-        child_count=child_count,
-        media=_media_responses(conn, item.id),
-    )
 
 
 @router.get("", response_model=ItemListResponse)
@@ -114,6 +58,8 @@ def list_items(
     ),
     since: str | None = Query(None, description="Only items fetched since this ISO datetime"),
     tag: str | None = Query(None, description="Filter by tag name"),
+    kind: str | None = Query(None, description="Comma-separated kinds to keep (book,paper)"),
+    exclude_kind: str | None = Query(None, description="Comma-separated kinds to leave out"),
     parent_id: int | None = Query(None, description="Filter to children of this parent item"),
     include_children: bool = Query(False, description="Include items that have a parent"),
     limit: int = Query(20, ge=1, le=100),
@@ -157,6 +103,12 @@ def list_items(
         where.append("datetime(items.fetched_at) >= datetime(?)")
         params.append(since)
 
+    for column_values, op in ((kind, "IN"), (exclude_kind, "NOT IN")):
+        values = sorted({v.strip() for v in (column_values or "").split(",") if v.strip()})
+        if values:
+            where.append(f"items.kind {op} ({', '.join('?' for _ in values)})")
+            params.extend(values)
+
     excludes = sorted({s.strip() for s in (exclude_subtype or "").split(",") if s.strip()})
     if excludes:
         clause, clause_params = subtype_excludes_sql(excludes)
@@ -176,7 +128,7 @@ def list_items(
             " LIMIT ? OFFSET ?",
             [*params, limit, offset],
         ).fetchall()
-        items = [_enrich_item(conn, Item.from_row(row)) for row in rows]
+        items = [enrich_item(conn, Item.from_row(row)) for row in rows]
 
     return ItemListResponse(items=items, total=total, limit=limit, offset=offset)
 
@@ -288,7 +240,7 @@ def search_items(
             if item_id in fts_results:
                 row = fts_results[item_id]["row"]
                 item = Item.from_row(row)
-                enriched = _enrich_item(conn, item)
+                enriched = enrich_item(conn, item)
                 snippet = fts_results[item_id]["snippet"]
                 if snippet:
                     enriched.preview = snippet
@@ -297,7 +249,7 @@ def search_items(
                 if not row:
                     continue
                 item = Item.from_row(row)
-                enriched = _enrich_item(conn, item)
+                enriched = enrich_item(conn, item)
             items.append(enriched)
 
     return ItemListResponse(items=items, total=len(items), limit=limit, offset=0)
@@ -347,7 +299,7 @@ def create_item(body: ItemCreateRequest):
                 "SELECT * FROM items WHERE source_type = ? AND source_id = ?",
                 (body.source_type, source_id),
             ).fetchone()
-        return _enrich_item(conn, Item.from_row(row))
+        return enrich_item(conn, Item.from_row(row))
 
 
 @router.get("/tags", response_model=TagListResponse)
@@ -432,7 +384,7 @@ def update_item(item_id: int, body: ItemPatchRequest):
             re_embed_item(conn, item_id)
 
         row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
-        return _enrich_item(conn, Item.from_row(row))
+        return enrich_item(conn, Item.from_row(row))
 
 
 def _content_preview(content: str | None, max_length: int = 200) -> str | None:
@@ -678,7 +630,7 @@ def restore_item_history_version(
         re_embed_item(conn, item_id)
 
         row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
-        return _enrich_item(conn, Item.from_row(row))
+        return enrich_item(conn, Item.from_row(row))
 
 
 @router.get("/{item_id}", response_model=ItemResponse)
@@ -688,7 +640,7 @@ def get_item(item_id: int):
         row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
-        return _enrich_item(conn, Item.from_row(row))
+        return enrich_item(conn, Item.from_row(row))
 
 
 @router.post("/{item_id}/tags", response_model=ItemResponse, status_code=201)
@@ -699,7 +651,7 @@ def add_item_tag(item_id: int, body: TagAddRequest):
         if not row:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
         add_tag(conn, item_id, body.name)
-        return _enrich_item(conn, Item.from_row(row))
+        return enrich_item(conn, Item.from_row(row))
 
 
 @router.delete("/{item_id}/tags/{tag_name}", response_model=ItemResponse)
@@ -710,4 +662,4 @@ def remove_item_tag(item_id: int, tag_name: str):
         if not row:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
         remove_tag(conn, item_id, tag_name)
-        return _enrich_item(conn, Item.from_row(row))
+        return enrich_item(conn, Item.from_row(row))

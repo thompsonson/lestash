@@ -32,6 +32,9 @@ def _link(conn: sqlite3.Connection, from_id: int, to_id: int, kind: str) -> None
 
 def test_migration_18_marks_every_stored_item_held(test_db) -> None:
     with get_connection(test_db) as conn:
+        # A version 17 database has neither column; kind (24) is built on held
+        conn.execute("DROP INDEX idx_items_kind")
+        conn.execute("ALTER TABLE items DROP COLUMN kind")
         conn.execute("ALTER TABLE items DROP COLUMN held")
         conn.execute("PRAGMA user_version = 17")
         _item(conn, "a")

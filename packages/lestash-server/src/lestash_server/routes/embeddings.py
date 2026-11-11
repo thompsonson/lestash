@@ -4,7 +4,6 @@ import logging
 import threading
 
 from fastapi import APIRouter, HTTPException
-from lestash.core.database import get_tags
 from lestash.core.embeddings import (
     embed_text,
     ensure_vec_table,
@@ -13,11 +12,11 @@ from lestash.core.embeddings import (
     rebuild_embeddings,
     search_similar,
 )
-from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
 from lestash.models.item import Item
 from pydantic import BaseModel
 
 from lestash_server.deps import get_config, get_db
+from lestash_server.enrich import enrich_item
 from lestash_server.models import ItemResponse
 
 logger = logging.getLogger(__name__)
@@ -40,34 +39,6 @@ class EmbeddingStatus(BaseModel):
 class RebuildResponse(BaseModel):
     status: str
     message: str
-
-
-def _enrich_item(conn, item: Item) -> ItemResponse:
-    """Convert an Item to an enriched API response."""
-    author_display, actor_display = get_author_actor(conn, item)
-    child_count = conn.execute(
-        "SELECT COUNT(*) FROM items WHERE parent_id = ?", (item.id,)
-    ).fetchone()[0]
-    return ItemResponse(
-        id=item.id,
-        source_type=item.source_type,
-        source_id=item.source_id,
-        url=item.url,
-        title=item.title,
-        content=item.content,
-        author=item.author,
-        created_at=item.created_at,
-        fetched_at=item.fetched_at,
-        is_own_content=item.is_own_content,
-        metadata=item.metadata,
-        parent_id=item.parent_id,
-        subtype=get_item_subtype(item),
-        author_display=author_display,
-        actor_display=actor_display,
-        preview=get_preview(conn, item, max_length=120),
-        tags=get_tags(conn, item.id),
-        child_count=child_count,
-    )
 
 
 @router.get("/status", response_model=EmbeddingStatus)
@@ -137,7 +108,7 @@ def find_similar(item_id: int, limit: int = 10):
                 continue
             r = conn.execute("SELECT * FROM items WHERE id = ?", (rid,)).fetchone()
             if r:
-                items.append(_enrich_item(conn, Item.from_row(r)))
+                items.append(enrich_item(conn, Item.from_row(r)))
             if len(items) >= limit:
                 break
 
