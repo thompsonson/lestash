@@ -71,7 +71,7 @@ def _summary(row) -> PersonSummary:
 
 
 _COUNTS = """
-    (SELECT count(*) FROM item_agents a WHERE a.person_id = p.id) AS items,
+    (SELECT count(DISTINCT a.item_id) FROM item_agents a WHERE a.person_id = p.id) AS items,
     (SELECT group_concat(DISTINCT i.platform) FROM person_identities i
      WHERE i.person_id = p.id) AS platforms
 """
@@ -163,9 +163,10 @@ def person(person_id: int):
             activity = [
                 VerbCount(verb=r["verb"], count=r["n"], last_at=r["last_at"])
                 for r in conn.execute(
+                    # IN, not a join: a person with two roles on an item counts once
                     "SELECT act.verb, count(*) n, max(act.occurred_at) last_at"
-                    " FROM activities act JOIN item_agents a ON a.item_id = act.item_id"
-                    " WHERE a.person_id = ? AND act.actor_id IS NULL"
+                    " FROM activities act WHERE act.actor_id IS NULL AND act.item_id IN"
+                    " (SELECT item_id FROM item_agents WHERE person_id = ?)"
                     " GROUP BY act.verb ORDER BY n DESC",
                     (person_id,),
                 )

@@ -67,8 +67,9 @@ export async function drawPerson(id, container, url) {
   let offset = 0;
   const load = async () => {
     more.disabled = true;
-    const q = new URLSearchParams({ person: p.id, limit: PAGE, offset, exclude_kind: 'reaction,turn' });
-    if (kind) { q.set('kind', kind); q.delete('exclude_kind'); }
+    // Every kind, so the list adds up to the counts above it
+    const q = new URLSearchParams({ person: p.id, limit: PAGE, offset });
+    if (kind) q.set('kind', kind);
     try {
       const data = await api(`/api/items?${q}`);
       if (location.pathname !== `/people/${id}`) return;

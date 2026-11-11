@@ -51,7 +51,7 @@ class TestTimeline:
 
     def test_a_zone_offset_moves_the_day(self, client, test_config):
         _seed_day(test_config)
-        # 10 Mar 10:30 in UTC-2 starts at 12:30 UTC: only the post is after that
+        # 10 Mar 10:30 in UTC-2 starts at 12:30 UTC: nothing is after that
         day = client.get(
             "/api/timeline",
             params={"start": "2026-03-10T10:30:00-02:00", "end": "2026-03-11T00:00:00-02:00"},
@@ -129,3 +129,33 @@ class TestPeople:
             _person(conn, "Me Myself", "person", is_self=1)
             conn.commit()
         assert client.get("/api/people/me").json()["is_self"] is True
+
+
+def test_day_steps_follow_the_filters(client, test_config):
+    """A step lands on the nearest day the filters leave something on."""
+    _seed_day(test_config)  # 9 Mar has only a watch; 10 Mar has the post you made
+    span = {"start": "2026-03-11T00:00:00Z", "end": "2026-03-12T00:00:00Z"}
+    made = client.get("/api/timeline", params={**span, "verb": "made"}).json()
+    assert made["previous"] == "2026-03-10T12:00:00Z"
+    # Unfiltered, the step back from 10 Mar is the watch on 9 Mar; for "made" it
+    # skips that day for the seeded posts of 2024
+    span = {"start": "2026-03-10T00:00:00Z", "end": "2026-03-11T00:00:00Z"}
+    assert client.get("/api/timeline", params=span).json()["previous"].startswith("2026-03-09")
+    made = client.get("/api/timeline", params={**span, "verb": "made"}).json()
+    assert made["previous"].startswith("2024-")
+
+
+def test_two_roles_on_one_item_count_once(client, test_config):
+    video = _seed_day(test_config)
+    with get_connection(test_config) as conn:
+        person = _person(conn, "Both", "organization")
+        for role in ("creator", "publisher"):
+            conn.execute(
+                "INSERT INTO item_agents (item_id, person_id, role, origin)"
+                " VALUES (?, ?, ?, 'test')",
+                (video, person, role),
+            )
+        conn.commit()
+    page = client.get(f"/api/people/{person}").json()
+    assert page["items"] == 1
+    assert {a["verb"]: a["count"] for a in page["your_activity"]} == {"watched": 3, "liked": 1}

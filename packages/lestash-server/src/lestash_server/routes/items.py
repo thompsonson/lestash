@@ -144,7 +144,7 @@ def list_items(
     return ItemListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
-FULL_TEXT = 300  # characters from which an item's semantic match counts in full
+FULL_TEXT = 150  # characters from which a hybrid search result counts in full
 
 
 @router.get("/search", response_model=ItemListResponse)
@@ -235,17 +235,21 @@ def search_items(
 
         # A near-empty item (a session named "atomicguard" and nothing else) matches a
         # one-word query in both halves without being about it, and fusion adds the two.
-        # In hybrid mode its score counts by how much text it has, in full from
-        # FULL_TEXT characters, never below a tenth. Keyword and semantic modes keep
-        # their own order.
+        # In hybrid mode such an item's score counts by how much text it has, in full
+        # from FULL_TEXT characters, never below a tenth. An item with parts (a chat, a
+        # notebook) keeps its weight: its text is in them. Keyword and semantic modes
+        # keep their own order.
         weight: dict[int, float] = {}
         ids_found = list(set(fts_results) | set(vec_results))
         if ids_found and mode == "hybrid":
             marks = ",".join("?" * len(ids_found))
-            for item_id, size in conn.execute(
-                f"SELECT id, length(content) FROM items WHERE id IN ({marks})", ids_found
+            for item_id, size, parts in conn.execute(
+                f"SELECT id, length(content), EXISTS (SELECT 1 FROM items c"
+                f" WHERE c.parent_id = items.id) FROM items WHERE id IN ({marks})",
+                ids_found,
             ):
-                weight[item_id] = max(0.1, min(1.0, (size or 0) / FULL_TEXT))
+                if not parts:
+                    weight[item_id] = max(0.1, min(1.0, (size or 0) / FULL_TEXT))
 
         # Merge results via RRF (Reciprocal Rank Fusion)
         k = 60  # RRF constant

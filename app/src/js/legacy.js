@@ -5,7 +5,7 @@ import {
 import { escHtml, relTime, sourceClass, sourceName } from './util.js';
 import { renderCard } from './objects/item/card.js';
 import { startTimeline, redrawTimeline } from './places/timeline.js';
-import { startPeople } from './places/people.js';
+import { startPeople, redrawPeople } from './places/people.js';
 import {
   itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
   renderParts, PARTS_QUERY,
@@ -3178,6 +3178,12 @@ async function reconnect() {
   const path = location.pathname;
   if (failedPath === path) { render(); return; }
   if (path === '/' || path.startsWith('/day/')) { refreshTimeline(); return; }
+  if (path === '/people' || path.startsWith('/people/')) {
+    // Nothing to lose on these pages: draw them again, a failed load included
+    redrawPeople();
+    render();
+    return;
+  }
   if (path === '/search') {
     // A failed search left searchShown empty: run it again, in place
     const q = document.getElementById('search-input').value.trim();

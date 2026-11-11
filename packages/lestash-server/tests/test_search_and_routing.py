@@ -331,3 +331,29 @@ def test_hybrid_ranks_a_near_empty_item_below_a_full_one(client, monkeypatch):
     resp = client.get("/api/items/search", params={"q": "qqqnothing", "mode": "hybrid"})
     assert resp.status_code == 200
     assert [i["id"] for i in resp.json()["items"]][:2] == [full, thin]
+
+
+def test_hybrid_keeps_the_weight_of_an_item_with_parts(client, monkeypatch):
+    """A chat's text is in its turns: a short parent is not a near-empty item."""
+    import lestash.core.embeddings as emb
+
+    with deps.get_db() as conn:
+        chat = conn.execute(
+            "INSERT INTO items (source_type, source_id, title, content)"
+            " VALUES ('claude', 'chat', 'zebracorn', 'zebracorn chat')"
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO items (source_type, source_id, content, parent_id)"
+            " VALUES ('claude', 'turn', 'a long turn', ?)",
+            (chat,),
+        )
+        full = conn.execute(
+            "INSERT INTO items (source_type, source_id, title, content)"
+            " VALUES ('notebooklm', 'full2', 'A notebook', ?)",
+            ("A long notebook about many things. " * 20,),
+        ).lastrowid
+        conn.commit()
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: [(chat, 0.1), (full, 0.2)])
+    resp = client.get("/api/items/search", params={"q": "qqqnothing", "mode": "hybrid"})
+    assert [i["id"] for i in resp.json()["items"]][:2] == [chat, full]

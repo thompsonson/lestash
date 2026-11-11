@@ -174,19 +174,31 @@ def timeline(
         entries.sort(key=lambda e: e.at, reverse=True)
         truncated = len(entries) > MAX_ENTRIES
 
+        # The nearest entries outside the span, under the same filters, so a step
+        # never lands on a day the filters leave empty
         def nearest(op: str, order: str, bound: str) -> str | None:
-            act = conn.execute(
-                f"SELECT occurred_at FROM activities WHERE occurred_at {op} ? AND actor_id IS NULL"
-                f" ORDER BY occurred_at {order} LIMIT 1",
-                (bound,),
-            ).fetchone()
-            made = conn.execute(
-                f"""SELECT strftime('%Y-%m-%dT%H:%M:%SZ', i.created_at) FROM items i
-                WHERE {_made_where(MADE_KINDS)} AND datetime(i.created_at) {op} datetime(?)
-                ORDER BY datetime(i.created_at) {order} LIMIT 1""",
-                [*MADE_KINDS, bound],
-            ).fetchone()
-            found = [x[0] for x in (act, made) if x and x[0]]
+            found = []
+            if not verbs or act_verbs:
+                filters = act_where[2:]  # the verb and kind conditions, without the span
+                act = conn.execute(
+                    f"""SELECT a.occurred_at FROM activities a
+                    LEFT JOIN items i ON i.id = a.item_id
+                    WHERE a.occurred_at {op} ? AND a.actor_id IS NULL
+                    {"".join(" AND " + f for f in filters)}
+                    ORDER BY a.occurred_at {order} LIMIT 1""",
+                    [bound, *act_params[2:]],
+                ).fetchone()
+                if act:
+                    found.append(act[0])
+            if want_made and made_kinds:
+                made = conn.execute(
+                    f"""SELECT strftime('%Y-%m-%dT%H:%M:%SZ', i.created_at) FROM items i
+                    WHERE {_made_where(made_kinds)} AND datetime(i.created_at) {op} datetime(?)
+                    ORDER BY datetime(i.created_at) {order} LIMIT 1""",
+                    [*made_kinds, bound],
+                ).fetchone()
+                if made and made[0]:
+                    found.append(made[0])
             if not found:
                 return None
             return max(found) if order == "DESC" else min(found)
