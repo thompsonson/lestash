@@ -4,6 +4,8 @@ import {
 } from './api.js';
 import { escHtml, relTime, sourceClass, sourceName } from './util.js';
 import { renderCard } from './objects/item/card.js';
+import { startTimeline, redrawTimeline } from './places/timeline.js';
+import { startPeople, redrawPeople } from './places/people.js';
 import {
   itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
   renderParts, PARTS_QUERY,
@@ -149,7 +151,7 @@ function showToast(message, level) {
 
 /* ── Pages (#260): the router draws exactly one; see js/router.js ── */
 const TAB_PATHS = {
-  feed: '/', recent: '/recent', notes: '/notes', search: '/search',
+  timeline: '/', recent: '/recent', notes: '/notes', search: '/search', people: '/people',
   collections: '/collections', sources: '/settings/sources',
   stats: '/settings/stats', debug: '/settings/debug',
 };
@@ -225,13 +227,16 @@ function renderChatBubble(item) {
 }
 
 /* ── Item and collection pages ── */
+// The item or collection address that could not load, so Reconnect redraws it
+let failedPath = null;
 function openItemView(item) {
   navigate(`/items/${cacheItem(item).id}`);
 }
 
 // ← Back returns to the page before; a link opened directly falls back to its list
 function closeItemView() {
-  back(location.pathname.startsWith('/collections/') ? '/collections' : '/');
+  const path = location.pathname;
+  back(path.startsWith('/collections/') ? '/collections' : path.startsWith('/people/') ? '/people' : '/');
 }
 
 route(/^\/items\/(\d+)$/, async ([, id]) => {
@@ -1052,9 +1057,9 @@ async function loadPeople(itemId, sourceType) {
     const safe = a.accounts.filter(x => x.url && /^(https?:|mailto:)/i.test(x.url));
     const platform = ACCOUNT_PLATFORM[sourceType] || sourceType;
     const account = safe.find(x => x.platform === platform) || safe[0];
-    const shown = account
-      ? `<a href="${escHtml(account.url)}" target="_blank" rel="noopener" style="color:var(--ok);text-decoration:none">${escHtml(name)}</a>`
-      : `<span>${escHtml(name)}</span>`;
+    // The name opens their page here; their account elsewhere is the ↗ beside it
+    const shown = `<a href="/people/${a.person.id}" style="color:var(--ok)">${escHtml(name)}</a>`
+      + (account ? ` <a href="${escHtml(account.url)}" target="_blank" rel="noopener" class="muted" aria-label="${escHtml(name)} on ${escHtml(account.platform)}">↗</a>` : '');
     const kind = a.person.kind === 'person' ? '' : a.person.kind;
     return `<div style="display:flex;gap:0.4rem;align-items:baseline;padding:0.1rem 0">
       <span style="color:var(--muted);white-space:nowrap">${escHtml(ROLE_LABELS[a.role] || a.role)}</span>
@@ -1152,138 +1157,11 @@ function renderMarkdown(s) {
   return DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
 }
 
-/* ── Feed ── */
-let feedItems = [];
-let feedOffset = 0;
-const FEED_LIMIT = 20;
-
-// What the feed shows, so returning to it reloads only when that changed
-function feedKeyNow() {
-  return [
-    document.getElementById('feed-source').value,
-    document.getElementById('feed-tag').value,
-    document.getElementById('feed-own').checked,
-    getExcludedSubtypes(),
-  ].join('|');
+// After saving something new, the Timeline shows it if it is open
+function refreshTimeline() {
+  redrawTimeline();
+  if (location.pathname === '/' || location.pathname.startsWith('/day/')) render();
 }
-let feedKey = null;
-// The item or collection address that could not load, so Reconnect redraws it
-let failedPath = null;
-let feedSeq = 0;
-
-async function loadFeed(append) {
-  if (!append) { feedOffset = 0; feedItems = []; feedKey = feedKeyNow(); }
-  const seq = ++feedSeq;
-  const list = document.getElementById('feed-list');
-  const btn = document.getElementById('feed-more');
-
-  if (!append) list.innerHTML = renderSkeletons(5);
-
-  try {
-    const source = document.getElementById('feed-source').value;
-    const own = document.getElementById('feed-own').checked;
-    const tag = document.getElementById('feed-tag').value;
-    let url = `/api/items?limit=${FEED_LIMIT}&offset=${feedOffset}`;
-    if (source) url += `&source=${encodeURIComponent(source)}`;
-    if (own) url += `&own=true`;
-    if (tag) url += `&tag=${encodeURIComponent(tag)}`;
-
-    // Subtype exclusions
-    const excluded = getExcludedSubtypes();
-    if (excluded) url += `&exclude_subtype=${encodeURIComponent(excluded)}`;
-
-    const data = await api(url);
-    if (seq !== feedSeq) return;  // a newer load owns the list
-
-    if (!append) list.innerHTML = '';
-
-    if (data.items.length === 0 && feedItems.length === 0) {
-      list.innerHTML = '<div class="empty-state"><div class="empty-icon">&#128218;</div>No items yet. Sync a source to get started.</div>';
-      btn.style.display = 'none';
-      return;
-    }
-
-    data.items.forEach(item => {
-      feedItems.push(item);
-      list.appendChild(renderCard(item));
-    });
-
-    feedOffset += data.items.length;
-    btn.style.display = feedOffset < data.total ? '' : 'none';
-  } catch (e) {
-    if (seq !== feedSeq) return;
-    if (!append) { list.innerHTML = ''; feedKey = null; }  // returning to the feed retries
-    showToast(`Failed to load items: ${e.message}`, 'error');
-  }
-}
-
-function loadMoreFeed() { loadFeed(true); }
-
-function feedAddress() {
-  const params = new URLSearchParams();
-  const source = document.getElementById('feed-source').value;
-  const tag = document.getElementById('feed-tag').value;
-  if (source) params.set('source', source);
-  if (tag) params.set('tag', tag);
-  if (document.getElementById('feed-own').checked) params.set('own', '1');
-  const qs = params.toString();
-  return qs ? '/?' + qs : '/';
-}
-
-['feed-source', 'feed-tag', 'feed-own'].forEach(id =>
-  document.getElementById(id).addEventListener('change', () => navigate(feedAddress())));
-
-route(/^\/$/, async (m, url) => {
-  showOnly('tab-feed', 'feed');
-  await filtersReady;
-  if (location.pathname !== '/' || location.search !== url.search) return;
-  const p = url.searchParams;
-  // A value the list lacks (offline at start, or a name no longer counted) still
-  // filters, so the feed always shows what its address says
-  const pick = (id, value) => {
-    const sel = document.getElementById(id);
-    sel.querySelectorAll('option[data-adhoc]').forEach(o => { if (o.value !== value) o.remove(); });
-    keepValue(sel, value || '');
-  };
-  pick('feed-source', p.get('source'));
-  pick('feed-tag', p.get('tag'));
-  document.getElementById('feed-own').checked = p.get('own') === '1';
-  if (feedKeyNow() !== feedKey) return loadFeed();
-});
-
-/* ── Subtype filters ── */
-const SUBTYPE_STORAGE_KEY = 'lestash-subtype-filters';
-
-function getExcludedSubtypes() {
-  const checks = document.querySelectorAll('#subtype-filters input[type="checkbox"]');
-  const excluded = [];
-  checks.forEach(cb => { if (!cb.checked) excluded.push(cb.value); });
-  return excluded.join(',');
-}
-
-function saveSubtypeFilters() {
-  const checks = document.querySelectorAll('#subtype-filters input[type="checkbox"]');
-  const state = {};
-  checks.forEach(cb => { state[cb.value] = cb.checked; });
-  localStorage.setItem(SUBTYPE_STORAGE_KEY, JSON.stringify(state));
-}
-
-function loadSubtypeFilters() {
-  try {
-    const raw = localStorage.getItem(SUBTYPE_STORAGE_KEY);
-    if (!raw) return;
-    const state = JSON.parse(raw);
-    document.querySelectorAll('#subtype-filters input[type="checkbox"]').forEach(cb => {
-      if (cb.value in state) cb.checked = state[cb.value];
-    });
-  } catch {}
-}
-
-loadSubtypeFilters();
-document.getElementById('subtype-filters').addEventListener('change', () => {
-  saveSubtypeFilters();
-  loadFeed();
-});
 
 /* ── Recent Activity ── */
 async function loadRecent() {
@@ -2218,7 +2096,7 @@ async function saveCaptureItem() {
       showToast(savedYouTube ? 'Saved video' : 'Saved', 'ok');
     }
     closeCaptureDialog();
-    loadFeed();
+    refreshTimeline();
     loadRecent();
   } catch (e) {
     showToast('Save failed: ' + e.message, 'error');
@@ -2343,7 +2221,7 @@ async function saveHtmlImport() {
     if (!res.ok) throw new Error(data.detail || res.status);
     showToast(`Imported ${data.items_added} items from ${data.source_type}`, 'ok');
     closeHtmlImportDialog();
-    loadFeed();
+    refreshTimeline();
     loadRecent();
   } catch (e) {
     showToast('Import failed: ' + e.message, 'error');
@@ -2424,7 +2302,7 @@ async function saveImageCapture() {
 
     showToast(mode === 'new' ? 'Image saved' : 'Image attached', 'ok');
     closeImageCaptureDialog();
-    loadFeed();
+    refreshTimeline();
     loadRecent();
   } catch (e) {
     showToast('Save failed: ' + e.message, 'error');
@@ -2533,7 +2411,7 @@ async function saveMultiImageCapture() {
 
     showToast(`Saved ${total} images`, 'ok');
     closeMultiImageCaptureDialog();
-    loadFeed();
+    refreshTimeline();
     loadRecent();
   } catch (e) {
     showToast('Save failed: ' + e.message, 'error');
@@ -2581,7 +2459,7 @@ async function handlePendingShare() {
           if (recordStatus) recordStatus.textContent = `${data.text.split(' ').length} words transcribed`;
           showToast(`Saved: ${data.title}`, 'ok');
           loadSavedNotes();
-          loadFeed();
+          refreshTimeline();
           loadRecent();
         }
       } finally {
@@ -2831,40 +2709,7 @@ async function loadStats() {
 }
 
 /* ── Populate source filter ── */
-async function populateSourceFilter() {
-  try {
-    const sel = document.getElementById('feed-source');
-    // Use stats endpoint to get all source types with counts
-    const stats = await api('/api/stats');
-    const current = sel.value;
-    sel.innerHTML = '<option value="">All sources</option>';
-    if (stats.sources) {
-      Object.entries(stats.sources).sort().forEach(([src, count]) => {
-        const opt = document.createElement('option');
-        opt.value = src;
-        opt.textContent = `${src} (${count})`;
-        sel.appendChild(opt);
-      });
-    }
-    keepValue(sel, current);
-  } catch {}
-}
 
-async function populateTagFilter() {
-  try {
-    const data = await api('/api/items/tags');
-    const sel = document.getElementById('feed-tag');
-    const current = sel.value;
-    sel.innerHTML = '<option value="">All tags</option>';
-    data.tags.forEach(t => {
-      const opt = document.createElement('option');
-      opt.value = t.name;
-      opt.textContent = `${t.name} (${t.count})`;
-      sel.appendChild(opt);
-    });
-    keepValue(sel, current);
-  } catch {}
-}
 
 /* ── Skeleton loading ── */
 function renderSkeletons(count) {
@@ -2882,18 +2727,6 @@ function renderSkeletons(count) {
 /* ── Health check ── */
 let wasDisconnected = false;
 
-// A rebuilt list keeps the value it had, adding it back when the server no longer
-// lists it, so the feed's filters still match its address
-function keepValue(sel, value) {
-  if (value && ![...sel.options].some(o => o.value === value)) {
-    const opt = document.createElement('option');
-    opt.value = value;
-    opt.textContent = value;
-    opt.dataset.adhoc = '1';
-    sel.appendChild(opt);
-  }
-  sel.value = value;
-}
 
 async function checkHealth() {
   const dot = document.getElementById('dot');
@@ -3340,12 +3173,17 @@ async function confirmAddToCollection(selectEl) {
 async function reconnect() {
   showToast('Reconnecting...', '');
   await checkHealth();
-  await Promise.all([populateSourceFilter(), populateTagFilter()]);
   // Reload only what failed, never redraw the page: an edit in progress and the
   // scroll position stay
   const path = location.pathname;
   if (failedPath === path) { render(); return; }
-  if (path === '/') { if (feedKey === null) loadFeed(); return; }
+  if (path === '/' || path.startsWith('/day/')) { refreshTimeline(); return; }
+  if (path === '/people' || path.startsWith('/people/')) {
+    // Nothing to lose on these pages: draw them again, a failed load included
+    redrawPeople();
+    render();
+    return;
+  }
   if (path === '/search') {
     // A failed search left searchShown empty: run it again, in place
     const q = document.getElementById('search-input').value.trim();
@@ -3393,9 +3231,9 @@ document.getElementById('settings-btn').addEventListener('click', openSettings);
 loadAppVersion().then(renderDebugInfo);
 renderDebugInfo();
 
-// The feed's filters need their options before the address can set them
-const filtersReady = checkHealth().then(() =>
-  Promise.all([populateSourceFilter(), populateTagFilter()]));
+checkHealth();
+startTimeline(() => showOnly('tab-timeline', 'timeline'));
+startPeople(showOnly);
 startRouter();
 setInterval(checkHealth, 30000);
 
@@ -3407,7 +3245,7 @@ Object.assign(window, {
   closeLinkDialog, closeLinkedInCompose, closeMicroblogCompose,
   closeMultiImageCaptureDialog, closeProcessDialog, closeSettings, completeAudibleAuth,
   completeGoogleAuth, confirmAddToCollection, debugTestConnection, escHtml, importDriveUrl,
-  loadMoreFeed, openLinkedInCompose, openMicroblogCompose, openNewCollectionDialog,
+  openLinkedInCompose, openMicroblogCompose, openNewCollectionDialog,
   openProcessDialog, reconnect, runProcessDialog, saveCaptureItem, saveHtmlImport,
   saveImageCapture, saveLink, saveMultiImageCapture, saveNewCollection, saveSettingsForm,
   saveVoiceNote, startAudibleAuth, startGoogleAuth, startLinkedInAuth, submitLinkedInPost,

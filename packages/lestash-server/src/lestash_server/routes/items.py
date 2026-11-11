@@ -60,6 +60,8 @@ def list_items(
     tag: str | None = Query(None, description="Filter by tag name"),
     kind: str | None = Query(None, description="Comma-separated kinds to keep (book,paper)"),
     exclude_kind: str | None = Query(None, description="Comma-separated kinds to leave out"),
+    person: int | None = Query(None, description="Items this person made, voiced or received"),
+    role: str | None = Query(None, description="With person: only this role (author, creator...)"),
     parent_id: int | None = Query(None, description="Filter to children of this parent item"),
     include_children: bool = Query(False, description="Include items that have a parent"),
     limit: int = Query(20, ge=1, le=100),
@@ -77,8 +79,9 @@ def list_items(
         where.append("items.parent_id = ?")
         params.append(parent_id)
     else:
-        # A tag lists whatever carries it, children included, as it always has
-        if not include_children and not tag:
+        # A tag lists whatever carries it, and a person whatever they made, children
+        # (a reply, a highlight) included
+        if not include_children and not tag and person is None:
             where.append("items.parent_id IS NULL")
         # Stubs are known by their address only; their detail view shows them
         where.append("items.held = 1")
@@ -102,6 +105,14 @@ def list_items(
     if since:
         where.append("datetime(items.fetched_at) >= datetime(?)")
         params.append(since)
+
+    if person is not None:
+        agent = "SELECT 1 FROM item_agents ag WHERE ag.item_id = items.id AND ag.person_id = ?"
+        params.append(person)
+        if role:
+            agent += " AND ag.role = ?"
+            params.append(role)
+        where.append(f"EXISTS ({agent})")
 
     for column_values, op in ((kind, "IN"), (exclude_kind, "NOT IN")):
         values = sorted({v.strip() for v in (column_values or "").split(",") if v.strip()})
@@ -131,6 +142,9 @@ def list_items(
         items = [enrich_item(conn, Item.from_row(row)) for row in rows]
 
     return ItemListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+FULL_TEXT = 150  # characters from which a hybrid search result counts in full
 
 
 @router.get("/search", response_model=ItemListResponse)
@@ -219,6 +233,24 @@ def search_items(
             # "no results" when the search never ran properly
             raise HTTPException(status_code=500, detail="Search unavailable; see the server log")
 
+        # A near-empty item (a session named "atomicguard" and nothing else) matches a
+        # one-word query in both halves without being about it, and fusion adds the two.
+        # In hybrid mode such an item's score counts by how much text it has, in full
+        # from FULL_TEXT characters, never below a tenth. An item with parts (a chat, a
+        # notebook) keeps its weight: its text is in them. Keyword and semantic modes
+        # keep their own order.
+        weight: dict[int, float] = {}
+        ids_found = list(set(fts_results) | set(vec_results))
+        if ids_found and mode == "hybrid":
+            marks = ",".join("?" * len(ids_found))
+            for item_id, size, parts in conn.execute(
+                f"SELECT id, length(content), EXISTS (SELECT 1 FROM items c"
+                f" WHERE c.parent_id = items.id) FROM items WHERE id IN ({marks})",
+                ids_found,
+            ):
+                if not parts:
+                    weight[item_id] = max(0.1, min(1.0, (size or 0) / FULL_TEXT))
+
         # Merge results via RRF (Reciprocal Rank Fusion)
         k = 60  # RRF constant
         scores: dict[int, float] = {}
@@ -230,7 +262,7 @@ def search_items(
                 score += 1.0 / (k + fts_results[item_id]["rank"])
             if item_id in vec_results:
                 score += 1.0 / (k + vec_results[item_id])
-            scores[item_id] = score
+            scores[item_id] = score * weight.get(item_id, 1.0)
 
         ranked_ids = sorted(scores, key=lambda x: scores[x], reverse=True)[:limit]
 

@@ -24,10 +24,11 @@
 
   <!-- Tabs -->
   <nav id="tabs">
-    <button class="active" data-tab="feed" data-icon="☰">Feed</button>
+    <button class="active" data-tab="timeline" data-icon="☰">Timeline</button>
     <button data-tab="recent" data-icon="⏱">Recent</button>
     <button data-tab="notes" data-icon="✎">Notes</button>
     <button data-tab="search" data-icon="⌕">Search</button>
+    <button data-tab="people" data-icon="●">People</button>
     <button data-tab="sources" data-icon="⇄">Sources</button>
     <button data-tab="collections" data-icon="▤">Collections</button>
     <button data-tab="stats" data-icon="◩">Stats</button>
@@ -36,29 +37,11 @@
 
   <!-- Main content -->
   <main>
-    <!-- Feed tab -->
-    <div class="tab-content active" id="tab-feed">
-      <div class="filters">
-        <select id="feed-source">
-          <option value="">All sources</option>
-        </select>
-        <select id="feed-tag">
-          <option value="">All tags</option>
-        </select>
-        <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;color:var(--muted)">
-          <input type="checkbox" id="feed-own"> Own
-        </label>
-        <div class="subtype-filters" id="subtype-filters">
-          <label><input type="checkbox" value="post" checked> Posts</label>
-          <label><input type="checkbox" value="comment" checked> Comments</label>
-          <label><input type="checkbox" value="reaction"> Reactions</label>
-          <label><input type="checkbox" value="invitation"> Invitations</label>
-          <label><input type="checkbox" value="message"> Messages</label>
-        </div>
-      </div>
-      <div class="item-list" id="feed-list"></div>
-      <button class="load-more" id="feed-more" onclick="loadMoreFeed()" style="display:none">Load more</button>
-    </div>
+    <!-- Timeline tab: built by js/places/timeline.js -->
+    <div class="tab-content active" id="tab-timeline"></div>
+
+    <!-- People tab: built by js/places/people.js -->
+    <div class="tab-content" id="tab-people"></div>
 
     <!-- Search tab -->
     <div class="tab-content" id="tab-search">

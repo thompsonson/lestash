@@ -693,3 +693,48 @@ button.seek:hover, button.seek:focus-visible { text-decoration: underline; }
 .thread-head { font-size: 0.8rem; margin-bottom: 0.15rem; }
 .thread-text { font-size: 0.85rem; line-height: 1.5; overflow-wrap: anywhere; }
 
+
+/* ── Timeline (#262) ── */
+.timeline-search { margin-bottom: 0.6rem; }
+.timeline-nav { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; flex-wrap: wrap; }
+.day-step {
+  font-size: 1.3rem; color: var(--accent-text); text-decoration: none; min-width: 44px; min-height: 44px;
+  display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 6px;
+}
+.day-step[aria-disabled="true"] { color: var(--muted); opacity: 0.5; pointer-events: none; }
+.day-label { position: relative; font-weight: bold; cursor: pointer; }
+.day-pick { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.day-today { margin-left: auto; color: var(--accent-text); font-size: 0.85rem; }
+.timeline, .timeline-sub { list-style: none; }
+.timeline-entry, .timeline-group > details > summary {
+  display: grid; grid-template-columns: 3.5rem 6.5rem 1.2rem 1fr; gap: 0.4rem; align-items: baseline;
+  padding: 0.35rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem;
+}
+.timeline-group > details > summary { display: block; cursor: pointer; }
+.timeline-group > details > summary .t-time { display: inline-block; width: 3.5rem; }
+.timeline-group > details > summary .t-verb { display: inline-block; width: 6.5rem; }
+.timeline-sub { margin-left: 1rem; }
+.timeline-entry.landmark { background: var(--surface); border-left: 3px solid var(--ok); padding-left: 0.4rem; }
+.t-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.t-verb { color: var(--muted); }
+.t-icon { color: var(--muted); text-align: center; }
+.t-what a { color: var(--text); }
+.t-what { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .timeline-entry { grid-template-columns: 3rem 1fr; }
+  .timeline-entry .t-verb, .timeline-entry .t-icon { display: none; }
+}
+.timeline-search .search-input { width: 100%; }
+
+/* ── People (#263) ── */
+.switch { display: flex; gap: 0.4rem; margin-bottom: 0.6rem; }
+.switch a, .chip {
+  padding: 0.3rem 0.8rem; border: 1px solid var(--border); border-radius: 999px; color: var(--text);
+  text-decoration: none; font-size: 0.85rem; min-height: 32px; display: inline-flex; align-items: center;
+}
+.switch a.on, .chip.on { border-color: var(--accent); color: var(--accent-text); }
+.chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.6rem; }
+.person-accounts { font-size: 0.8rem; margin: 0.3rem 0 0.6rem; }
+.person-accounts a { color: var(--accent-text); }
+.person-activity { list-style: none; font-size: 0.85rem; line-height: 1.7; }
+.people-count { font-size: 0.75rem; margin: 0.2rem 0 0.4rem; }
