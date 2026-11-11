@@ -178,6 +178,8 @@ const TAB_PATHS = {
 
 // The list place last shown: an item opened from it slides over it as a sheet
 let placeShown = null;
+// The history depth of the list under the sheet, for ✕ Close
+let sheetFrom = null;
 
 // Show one page and hide every other; `tab` is the tab to mark, if any. An item or
 // person page opened from a list place opens over it (js/sheet.js); opened directly,
@@ -192,6 +194,10 @@ function showOnly(id, tab) {
     t.style.display = '';
   });
   document.getElementById('item-view').style.display = id === 'item-view' ? 'block' : 'none';
+  if (sheet && !document.body.classList.contains('sheet-open')) {
+    sheetFrom = Math.max(0, ((history.state && history.state.depth) || 1) - 1);
+  }
+  if (!sheet) sheetFrom = null;
   setSheet(sheet);
   // Under a sheet, the place it opened over stays marked
   if (sheet) tab = placeShown.replace(/^tab-/, '');
@@ -248,7 +254,7 @@ function renderChatBubble(item) {
   const roleLabel = isUser ? (item.by_self && item.by_name) || selfName() : (item.source_type === 'claude' || item.source_type === 'claude-code' ? 'Claude' : item.source_type === 'mistral' ? 'Mistral' : item.source_type === 'gemini' ? 'Gemini' : 'Assistant');
   const wrapper = document.createElement('div');
   wrapper.innerHTML = `
-    <div class="chat-role ${roleClass}">${roleLabel}</div>
+    <div class="chat-role ${roleClass}">${escHtml(roleLabel)}</div>
     <div class="chat-bubble ${roleClass}">${renderMarkdown(item.content)}</div>
   `;
   wrapper.querySelector('.chat-bubble').addEventListener('click', e => {
@@ -265,8 +271,15 @@ function openItemView(item) {
   navigate(`/items/${cacheItem(item).id}`);
 }
 
-// ← Back returns to the page before; a link opened directly falls back to its list
+// ← Back returns to the page before; a link opened directly falls back to its list.
+// ✕ Close on the sheet returns to the list under it, however many items were opened
+// in the sheet since.
 function closeItemView() {
+  const depth = (history.state && history.state.depth) || 0;
+  if (document.body.classList.contains('sheet-open') && sheetFrom !== null && depth > sheetFrom) {
+    history.go(sheetFrom - depth);
+    return;
+  }
   const path = location.pathname;
   back(path.startsWith('/collections/') ? '/collections' : path.startsWith('/people/') ? '/people' : '/');
 }

@@ -109,7 +109,7 @@ function inside(item, title) {
 export function renderCard(item, { within = null } = {}) {
   cacheItem(item);
   const card = document.createElement('a');
-  card.className = `item-card kind-${item.kind || 'other'}`;
+  card.className = `item-card row kind-${item.kind || 'other'}`;
   card.href = `/items/${item.id}`;
   const inParent = within && within.id === item.parent_id;
   const title = cardTitle(item);

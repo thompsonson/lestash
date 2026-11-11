@@ -8,7 +8,7 @@ const ICON = { person: '●', group: '◎', organization: '▶', software: '✦'
 
 export function renderPersonCard(p) {
   const a = document.createElement('a');
-  a.className = 'item-card person-card';
+  a.className = 'item-card row person-card';
   a.href = `/people/${p.id}`;
   const kind = p.is_self ? 'You' : (PERSON_KIND[p.kind] || p.kind);
   const where = (p.platforms || []).join(' · ');

@@ -40,6 +40,8 @@ function wire() {
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape' || !sheetOpen()) return;
     if (document.querySelector('.modal-overlay.open')) return;  // Escape is the dialog's
+    // Escape while typing (an edit, a tag) belongs to the field, not the sheet
+    if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
     e.preventDefault();
     closeSheet();
   });

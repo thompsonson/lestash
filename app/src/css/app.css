@@ -815,11 +815,13 @@ a { color: var(--link); }
 /* A row: a tile, then the words */
 .item-list { gap: var(--list-gap); }
 .item-card {
-  display: grid; grid-template-columns: var(--tile) minmax(0, 1fr); gap: 0.7rem; align-items: start;
   padding: var(--card-pad); border: 1px solid transparent; border-radius: var(--radius);
   background: var(--surface);
 }
-a.item-card { display: grid; }
+/* Rows with a tile (items, people); other cards, such as collections, keep one column */
+.item-card.row, a.item-card.row {
+  display: grid; grid-template-columns: var(--tile) minmax(0, 1fr); gap: 0.7rem; align-items: start;
+}
 .item-card:hover { border-color: transparent; background: var(--surface-2); }
 .item-card-header { margin-bottom: 0.1rem; }
 .item-tile {
