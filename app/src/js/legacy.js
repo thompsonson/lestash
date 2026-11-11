@@ -1380,6 +1380,7 @@ function searchAddress() {
 document.getElementById('search-input').addEventListener('input', () => {
   // The address follows every keystroke, so nothing typed is lost; the search waits
   setAddress(searchAddress());
+  tabAddress.search = location.pathname + location.search;
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     if (location.pathname === '/search') navigate(searchAddress(), { replace: true });
@@ -1444,6 +1445,7 @@ async function doSearch(q) {
     });
   } catch (e) {
     if (seq !== searchSeq) return;
+    searchShown = null;  // coming back to this search tries again
     // Keep the failure on the page, not only in a toast that fades.
     // api() throws "<status>: <body>"; show the server's detail when there is one.
     let reason = e.message;
