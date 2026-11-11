@@ -299,7 +299,7 @@ function closeItemView() {
 
 route(/^\/items\/(\d+)$/, async ([, id]) => {
   showOnly('item-view', null);
-  pageFailed = false;
+  failedPath = null;
   let item = cachedItem(id);
   if (!item) {
     const container = document.getElementById('item-view-content');
@@ -309,7 +309,7 @@ route(/^\/items\/(\d+)$/, async ([, id]) => {
     } catch (e) {
       if (location.pathname === `/items/${id}`) {
         container.innerHTML = `<div class="empty-state" style="padding:2rem">Item not found: ${escHtml(e.message)}</div>`;
-        pageFailed = true;
+        failedPath = `/items/${id}`;
       }
       return;
     }
@@ -1193,8 +1193,8 @@ marked.use({
         own = u.origin === location.origin && !u.pathname.startsWith('/api/');
       } catch { /* not an address: leave as written */ }
       if (href.startsWith('/api/')) href = getApiBase() + href;
-      return own ? `<a href="${href}">${token.text}</a>`
-        : `<a href="${href}" target="_blank" rel="noopener">${token.text}</a>`;
+      return own ? `<a href="${escHtml(href)}">${token.text}</a>`
+        : `<a href="${escHtml(href)}" target="_blank" rel="noopener">${token.text}</a>`;
     },
     image(token) {
       let href = token.href || '';
@@ -1225,8 +1225,8 @@ function feedKeyNow() {
   ].join('|');
 }
 let feedKey = null;
-// Set when an item or collection page could not load, so Reconnect redraws it
-let pageFailed = false;
+// The item or collection address that could not load, so Reconnect redraws it
+let failedPath = null;
 let feedSeq = 0;
 
 async function loadFeed(append) {
@@ -1301,14 +1301,7 @@ route(/^\/$/, async (m, url) => {
   const pick = (id, value) => {
     const sel = document.getElementById(id);
     sel.querySelectorAll('option[data-adhoc]').forEach(o => { if (o.value !== value) o.remove(); });
-    if (value && ![...sel.options].some(o => o.value === value)) {
-      const opt = document.createElement('option');
-      opt.dataset.adhoc = '1';
-      opt.value = value;
-      opt.textContent = value;
-      sel.appendChild(opt);
-    }
-    sel.value = value || '';
+    keepValue(sel, value || '');
   };
   pick('feed-source', p.get('source'));
   pick('feed-tag', p.get('tag'));
@@ -2910,7 +2903,7 @@ async function populateSourceFilter() {
         sel.appendChild(opt);
       });
     }
-    sel.value = current;
+    keepValue(sel, current);
   } catch {}
 }
 
@@ -2926,7 +2919,7 @@ async function populateTagFilter() {
       opt.textContent = `${t.name} (${t.count})`;
       sel.appendChild(opt);
     });
-    sel.value = current;
+    keepValue(sel, current);
   } catch {}
 }
 
@@ -2945,6 +2938,19 @@ function renderSkeletons(count) {
 
 /* ── Health check ── */
 let wasDisconnected = false;
+
+// A rebuilt list keeps the value it had, adding it back when the server no longer
+// lists it, so the feed's filters still match its address
+function keepValue(sel, value) {
+  if (value && ![...sel.options].some(o => o.value === value)) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = value;
+    opt.dataset.adhoc = '1';
+    sel.appendChild(opt);
+  }
+  sel.value = value;
+}
 
 async function checkHealth() {
   const dot = document.getElementById('dot');
@@ -3015,7 +3021,7 @@ async function loadCollections() {
 route(/^\/collections$/, () => showTab('collections'));
 route(/^\/collections\/(\d+)$/, async ([, id]) => {
   showOnly('item-view', 'collections');
-  pageFailed = false;
+  failedPath = null;
   const container = document.getElementById('item-view-content');
   container.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
   try {
@@ -3035,7 +3041,7 @@ route(/^\/collections\/(\d+)$/, async ([, id]) => {
   } catch (e) {
     if (location.pathname !== `/collections/${id}`) return;
     container.innerHTML = `<div class="empty-state" style="padding:2rem">Collection not found: ${escHtml(e.message)}</div>`;
-    pageFailed = true;
+    failedPath = `/collections/${id}`;
   }
 });
 
@@ -3392,8 +3398,13 @@ async function reconnect() {
   showToast('Reconnecting...', '');
   await checkHealth();
   await Promise.all([populateSourceFilter(), populateTagFilter()]);
-  // Redraw only a page whose load failed, so an edit in progress and the scroll stay
-  if (pageFailed || (location.pathname === '/' && feedKey === null)) render();
+  // Reload only what failed, never redraw the page: an edit in progress and the
+  // scroll position stay
+  const path = location.pathname;
+  if (failedPath === path) { render(); return; }
+  if (path === '/') { if (feedKey === null) loadFeed(); return; }
+  const tab = Object.keys(TAB_PATHS).find(t => TAB_PATHS[t] === path);
+  if (tab && tab !== 'search') showTab(tab);
 }
 
 /* ── Clipboard ── */
