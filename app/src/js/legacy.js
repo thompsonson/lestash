@@ -1199,7 +1199,7 @@ marked.use({
     image(token) {
       let href = token.href || '';
       if (href.startsWith('/api/')) href = getApiBase() + href;
-      return `<img src="${href}" alt="${token.text || ''}" style="max-width:100%;height:auto">`;
+      return `<img src="${escHtml(href)}" alt="${escHtml(token.text || '')}" style="max-width:100%;height:auto">`;
     }
   }
 });
@@ -3403,6 +3403,15 @@ async function reconnect() {
   const path = location.pathname;
   if (failedPath === path) { render(); return; }
   if (path === '/') { if (feedKey === null) loadFeed(); return; }
+  if (path === '/search') {
+    // A failed search left searchShown empty: run it again, in place
+    const q = document.getElementById('search-input').value.trim();
+    if (q && searchShown === null) {
+      searchShown = q + '|' + document.getElementById('search-mode').value;
+      doSearch(q);
+    }
+    return;
+  }
   const tab = Object.keys(TAB_PATHS).find(t => TAB_PATHS[t] === path);
   if (tab && tab !== 'search') showTab(tab);
 }
