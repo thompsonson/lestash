@@ -1,6 +1,6 @@
 # UX Object Model — an ORCA pass over the ontology
 
-Status: draft for review, 11 Nov 2026. Refs #257, #222.
+Status: decisions taken 11 Nov 2026 (see "Decided"). Refs #257, #222.
 
 ## Why
 
@@ -275,20 +275,55 @@ Left for separate work: search ranking of near-empty sessions; speaker splits in
 - **Reactions** returned as counts with their parent, not as items in lists.
 - **Unnamed accounts** need a display rule and a "name them" action.
 
-## Open questions for you
+## Decided (11 Nov 2026)
 
-1. Library kinds: are Books, Papers, Videos, Notebooks, Posts, Chats, Notes the right shelves?
-2. Channels: inside People (as organisations), or a shelf of their own?
-3. Home: the Timeline (what you did today), or Search?
-4. Feed: drop it, or keep it as "New" inside Timeline?
-5. Order of work: router first (#257), then item page, then person page, then timeline and library?
+### Library shelves
+- Books, Papers, Videos, Notebooks, Posts, Chats, Notes.
+- Shelves sort by what a thing *is*. Each item sits on one shelf: an exact scheme, in Rosenfeld and Morville's terms.
 
-## Proposed order of work
+### Themes are not a shelf
+- A theme cuts across shelves: a paper, a video and a notebook can share one. That is an ambiguous, topic scheme, so it gets its own place beside the shelves.
+- **Collections and themes** is that place:
+  - your collections, made by hand, as now;
+  - *suggested themes*, inferred from the item vectors, shown as suggestions you can keep as a collection or dismiss.
+- Suggested themes build on W4 (#219, related items as `suggested` links), so they come after it.
 
-1. Router and top bar; fixes #257. Server-side feed filters.
-2. Item kinds and card faces; item page sections (related, who, when); thread view; grouped reactions.
-3. Person page and People list; the API behind them.
-4. Timeline by day; Library by kind with facets.
-5. Phone layout: bottom bar.
+### Channels
+- A channel is its own object on screen: **Channel**, beside Person and AI.
+- Underneath it stays a `people` row of kind `organization`; no new table.
+- They share one page, **People**, with a switch: People · Channels · AI. Each has its own card and page sections, such as "videos" and "you watched" for a channel.
+
+### Home is the Timeline
+- `/` opens today on the Timeline, with the search box at its top.
+
+### The Feed goes
+- Its job, "what's new", becomes the Timeline's "added" entries, so a new item shows on the day it arrived.
+- Industry practice for activity streams, followed here:
+  - **Aggregate** repeated activity by verb, object kind and time: "watched 61 videos" as one line that opens. Stream's aggregated feeds group by such a key, with a count and a few examples.
+  - **Group by day**, with day and month steps. Lifelog studies find a yearly scale useless for minute-level data (Teraoka) and that people cope with about 10 landmarks at a glance (Chen and Jones).
+  - **Pair the timeline with search** (LifeLens 2.0), so you can jump or narrow.
+  - **Landmarks:** your own posts, notes and new notebooks stand out; watches and likes fold.
+- Feed filters (source, own, subtypes) become Timeline filters: verb and kind.
+
+### Order of work
+Decided by engineering, since each step needs the one before:
+
+1. Router and top bar; fixes #257. Server-side filters before paging.
+2. Item kinds and card faces; the item page (related, who, when); threads; grouped reactions.
+3. Timeline as home; the activities API; aggregation by day.
+4. People · Channels · AI; their pages and API.
+5. Library shelves with facets.
+6. Phone layout: bottom bar.
+7. Suggested themes, after W4 (#219).
 
 Each step ships on its own and is walked through before the next.
+
+## References
+- Sophia Prater, Object-Oriented UX and the ORCA process.
+- Louis Rosenfeld and Peter Morville, *Information Architecture*: exact and ambiguous organisation schemes.
+- Marti Hearst, *Search User Interfaces*: faceted navigation.
+- Nielsen Norman Group, *Streams, Walls, and Feeds* (2010) and the 10 usability heuristics.
+- Stream, aggregated feeds: https://getstream.io/blog/scalable-activity-feed-architecture/
+- Chen and Jones, timeline landmarks for lifelogs: https://doras.dcu.ie/15978
+- Teraoka, calendar and timeline views of personal logs: https://link.springer.com/doi/10.1186/2192-1962-2-1
+- LifeLens 2.0, search with a timeline: https://doras.dcu.ie/30674/1/3643489.3661119.pdf
