@@ -18,7 +18,12 @@ from lestash.core.database import (
     remove_tag,
 )
 from lestash.core.embeddings import re_embed_item
-from lestash.core.enrichment import get_author_actor, get_item_subtype, get_preview
+from lestash.core.enrichment import (
+    get_author_actor,
+    get_item_subtype,
+    get_preview,
+    subtype_excludes_sql,
+)
 from lestash.core.links import links_of, reject_link
 from lestash.core.search import keyword_search
 from lestash.models.item import Item
@@ -100,11 +105,6 @@ def _enrich_item(conn, item: Item) -> ItemResponse:
     )
 
 
-def _matches_exclude(subtype: str, excludes: set[str]) -> bool:
-    """Check if a subtype matches any exclude term."""
-    return any(ex in subtype for ex in excludes)
-
-
 @router.get("", response_model=ItemListResponse)
 def list_items(
     source: str | None = Query(None, description="Filter by source type"),
@@ -119,88 +119,64 @@ def list_items(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
-    """List items with optional filters."""
+    """List items with optional filters.
+
+    Every filter runs in SQL before LIMIT, so each page is full and `total` is exact.
+    """
+    where: list[str] = []
+    params: list = []
+    joins = ""
+
+    if parent_id is not None:
+        where.append("items.parent_id = ?")
+        params.append(parent_id)
+    else:
+        # A tag lists whatever carries it, children included, as it always has
+        if not include_children and not tag:
+            where.append("items.parent_id IS NULL")
+        # Stubs are known by their address only; their detail view shows them
+        where.append("items.held = 1")
+
+    if tag:
+        joins = (
+            " JOIN item_tags ON items.id = item_tags.item_id"
+            " JOIN tags ON item_tags.tag_id = tags.id"
+        )
+        where.append("tags.name = ?")
+        params.append(tag.strip().lower())
+
+    if source:
+        where.append("items.source_type = ?")
+        params.append(source)
+
+    if own is not None:
+        where.append("items.is_own_content = ?")
+        params.append(own)
+
+    if since:
+        where.append("datetime(items.fetched_at) >= datetime(?)")
+        params.append(since)
+
+    excludes = sorted({s.strip() for s in (exclude_subtype or "").split(",") if s.strip()})
+    if excludes:
+        clause, clause_params = subtype_excludes_sql(excludes)
+        where.append(clause)
+        params.extend(clause_params)
+
+    body = f"FROM items{joins}" + (" WHERE " + " AND ".join(where) if where else "")
+    # Sort by fetched_at when filtering recent, otherwise by created_at
+    sort_col = "fetched_at" if since else "created_at"
+
     with get_db() as conn:
-        count_query = "SELECT COUNT(*) FROM items WHERE 1=1"
-        query = "SELECT * FROM items WHERE 1=1"
-        params: list = []
-
-        if parent_id is not None:
-            query += " AND parent_id = ?"
-            count_query += " AND parent_id = ?"
-            params.append(parent_id)
-        elif not include_children:
-            query += " AND parent_id IS NULL"
-            count_query += " AND parent_id IS NULL"
-
-        if tag:
-            query = (
-                "SELECT items.* FROM items "
-                "JOIN item_tags ON items.id = item_tags.item_id "
-                "JOIN tags ON item_tags.tag_id = tags.id "
-                "WHERE tags.name = ?"
-            )
-            count_query = (
-                "SELECT COUNT(*) FROM items "
-                "JOIN item_tags ON items.id = item_tags.item_id "
-                "JOIN tags ON item_tags.tag_id = tags.id "
-                "WHERE tags.name = ?"
-            )
-            params.append(tag.strip().lower())
-
-        if parent_id is None:
-            # Stubs are known by their address only; their detail view shows them
-            query += " AND items.held = 1"
-            count_query += " AND items.held = 1"
-
-        if source:
-            query += " AND source_type = ?"
-            count_query += " AND source_type = ?"
-            params.append(source)
-
-        if own is not None:
-            query += " AND is_own_content = ?"
-            count_query += " AND is_own_content = ?"
-            params.append(own)
-
-        if since:
-            query += " AND datetime(fetched_at) >= datetime(?)"
-            count_query += " AND datetime(fetched_at) >= datetime(?)"
-            params.append(since)
-
-        total = conn.execute(count_query, params).fetchone()[0]
-
-        # Sort by fetched_at when filtering recent, otherwise by created_at
-        sort_col = "fetched_at" if since else "created_at"
+        total = conn.execute(f"SELECT COUNT(*) {body}", params).fetchone()[0]
         # Ties go to insertion order: a chat's reply, stored after its prompt with the
         # same time, sorts after it
-        query += f" ORDER BY datetime({sort_col}) DESC, id DESC"
-
-        excludes = set()
-        if exclude_subtype:
-            excludes = {s.strip() for s in exclude_subtype.split(",") if s.strip()}
-
-        if excludes:
-            # Fetch extra rows to account for filtered-out items
-            fetch_limit = limit * 4
-            query += " LIMIT ? OFFSET ?"
-            params.extend([fetch_limit, offset])
-
-            rows = conn.execute(query, params).fetchall()
-            all_enriched = [_enrich_item(conn, Item.from_row(row)) for row in rows]
-            items = [i for i in all_enriched if not _matches_exclude(i.subtype, excludes)]
-
-            # Adjust total to reflect filtering (approximate)
-            if all_enriched:
-                filter_ratio = len(items) / len(all_enriched)
-                total = int(total * filter_ratio)
-
-            items = items[:limit]
-        else:
-            query += " LIMIT ? OFFSET ?"
-            params.extend([limit, offset])
-            rows = conn.execute(query, params).fetchall()
-            items = [_enrich_item(conn, Item.from_row(row)) for row in rows]
+        rows = conn.execute(
+            f"SELECT items.* {body} ORDER BY datetime(items.{sort_col}) DESC, items.id DESC"
+            " LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()
+        items = [_enrich_item(conn, Item.from_row(row)) for row in rows]
 
     return ItemListResponse(items=items, total=total, limit=limit, offset=offset)
 
