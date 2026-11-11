@@ -1,6 +1,6 @@
 # UX Object Model — an ORCA pass over the ontology
 
-Status: decisions taken 11 Nov 2026 (see "Decided"). Refs #257, #222.
+Status: decisions taken 11 Nov 2026 (see "Decided"). Tracked in #268 (waypoints U1–U7). Refs #257, #222.
 
 ## Why
 

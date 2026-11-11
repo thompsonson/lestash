@@ -10,7 +10,7 @@ Personal knowledge base CLI + web UI. UV workspace monorepo (Python 3.12+). Aggr
 packages/lestash/          # Core: CLI (Typer), database, config, plugin loader
 packages/lestash-server/   # FastAPI server (port 8444, Tailscale TLS)
 packages/lestash-{source}/ # Source plugins (linkedin, bluesky, youtube, arxiv, microblog)
-app/                       # Tauri v2 app (single-file HTML frontend)
+app/                       # Tauri v2 app; web frontend in app/src (ES modules, see below)
 deploy/                    # Systemd services + sync timer
 ```
 
@@ -34,11 +34,17 @@ cd app && npx tauri dev    # Run desktop app
 - SQLite WAL mode for concurrent access
 - `datetime(created_at)` in ORDER BY for timezone-safe sorting
 - Default item listings filter `parent_id IS NULL`; children shown in detail view
-- Single `index.html` frontend — no framework, dual Tauri/browser mode
+- Frontend: plain ES modules, no framework, no build step; one codebase for Tauri and the browser
+  - `app/src/index.html` is the shell; `js/router.js` maps each address to exactly one page
+  - Organised by object, as in `docs/ux-object-model-design.md`: `js/objects/<object>/` holds its `card.js` and `page.js`; `js/places/` holds Timeline, Library, Search, People, Settings
+  - Code still in the old single file moves out one waypoint at a time (#268); new screens go in modules, never back into it
+  - Screens use the object names from the design doc (Item, Person, Channel, Activity, File, Topic, Collection)
 
 ## Documentation
 
 - [`docs/api.md`](docs/api.md) — REST API reference (all endpoints)
+- [`docs/content-and-activity-ontology-design.md`](docs/content-and-activity-ontology-design.md) — the ontology: items, links, people, activities
+- [`docs/ux-object-model-design.md`](docs/ux-object-model-design.md) — the app's objects, navigation and wireframes; roadmap #268
 - [`extensions/chrome/README.md`](extensions/chrome/README.md) — Chrome extension usage and architecture
 
 ## Android Build
