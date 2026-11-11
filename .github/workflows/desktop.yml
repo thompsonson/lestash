@@ -42,7 +42,9 @@ jobs:
         include:
           - os: macos-latest
             artifact: lestash-macos
-          - os: ubuntu-latest
+          # ubuntu-latest is 26.04 since Nov 2026; its libclang 21 makes whisper-rs-sys
+          # 0.13 generate broken bindings. Move on once whisper-rs is upgraded.
+          - os: ubuntu-24.04
             artifact: lestash-linux
     runs-on: ${{ matrix.os }}
     steps:
