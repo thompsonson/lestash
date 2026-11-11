@@ -316,7 +316,7 @@
         <label for="capture-search">Search items</label>
         <input type="text" id="capture-search" placeholder="Search by title..." oninput="attachPickerSearch('capture', this.value)">
         <div id="capture-results" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
-        <div id="capture-selected" style="display:none;font-size:0.8rem;color:var(--accent);margin-top:0.25rem"></div>
+        <div id="capture-selected" style="display:none;font-size:0.8rem;color:var(--accent-text);margin-top:0.25rem"></div>
       </div>
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeCaptureDialog()">Cancel</button>
@@ -372,7 +372,7 @@
         <label for="image-capture-search">Search items</label>
         <input type="text" id="image-capture-search" placeholder="Search by title..." oninput="attachPickerSearch('image-capture', this.value)">
         <div id="image-capture-results" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
-        <div id="image-capture-selected" style="display:none;font-size:0.8rem;color:var(--accent);margin-top:0.25rem"></div>
+        <div id="image-capture-selected" style="display:none;font-size:0.8rem;color:var(--accent-text);margin-top:0.25rem"></div>
       </div>
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeImageCaptureDialog()">Cancel</button>
@@ -405,7 +405,7 @@
         <label for="multi-image-search">Search items</label>
         <input type="text" id="multi-image-search" placeholder="Search by title..." oninput="attachPickerSearch('multi-image', this.value)">
         <div id="multi-image-results" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
-        <div id="multi-image-selected" style="display:none;font-size:0.8rem;color:var(--accent);margin-top:0.25rem"></div>
+        <div id="multi-image-selected" style="display:none;font-size:0.8rem;color:var(--accent-text);margin-top:0.25rem"></div>
       </div>
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeMultiImageCaptureDialog()">Cancel</button>
@@ -424,7 +424,7 @@
       <label for="link-search">Search items</label>
       <input type="text" id="link-search" placeholder="Search by title or content..." oninput="attachPickerSearch('link', this.value)">
       <div id="link-results" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
-      <div id="link-selected" style="display:none;font-size:0.8rem;color:var(--accent);margin-top:0.25rem"></div>
+      <div id="link-selected" style="display:none;font-size:0.8rem;color:var(--accent-text);margin-top:0.25rem"></div>
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeLinkDialog()">Cancel</button>
         <button class="btn-save" id="link-save-btn" onclick="saveLink()">Link</button>
@@ -514,7 +514,7 @@
           Tag source as "published-to-microblog"
         </label>
       </div>
-      <div id="mb-error" style="display:none;font-size:0.8rem;color:var(--accent);margin-bottom:0.4rem"></div>
+      <div id="mb-error" style="display:none;font-size:0.8rem;color:var(--accent-text);margin-bottom:0.4rem"></div>
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeMicroblogCompose()">Cancel</button>
         <button class="btn-save" id="mb-publish-btn" onclick="submitMicroblogPublish()">Publish</button>

@@ -2,6 +2,12 @@ import {
   IS_TAURI, tauriInvoke, tauriListen, DEFAULT_SETTINGS, settings, saveSettings, getApiBase,
   debugLog, addDebugLog, api,
 } from './api.js';
+import { escHtml, relTime, sourceClass, sourceName } from './util.js';
+import { renderCard } from './objects/item/card.js';
+import {
+  itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
+  renderParts, PARTS_QUERY,
+} from './objects/item/page.js';
 import {
   route, navigate, back, render, setAddress, startRouter, routerReady, cacheItem, cachedItem,
 } from './router.js';
@@ -193,78 +199,9 @@ document.getElementById('tabs').addEventListener('click', e => {
 });
 
 /* ── Relative time ── */
-function relTime(dateStr) {
-  if (!dateStr) return '-';
-  const d = new Date(dateStr);
-  const now = new Date();
-  const diff = (now - d) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
-  if (diff < 604800) return `${Math.floor(diff/86400)}d ago`;
-  return d.toLocaleDateString();
-}
 
 /* ── Source badge ── */
-function sourceClass(source) {
-  const s = (source || '').split('/')[0];
-  if (['linkedin','bluesky','youtube','arxiv','microblog'].includes(s)) return s;
-  return '';
-}
 
-function sourceName(subtype) {
-  return (subtype || '').split('/')[0];
-}
-
-/* ── Render item card ── */
-function renderCard(item) {
-  const card = document.createElement('a');
-  card.className = 'item-card';
-  card.href = `/items/${item.id}`;
-  cacheItem(item);
-  const emoji = item.metadata && item.metadata.emoji ? item.metadata.emoji + ' ' : '';
-  // For engagement items (likes, reactions, comments), the post body lives
-  // in item.preview and item.title is null. Synthesise an "actor → author"
-  // header so the preview can render in its own block below.
-  const isEngagement = item.subtype && (
-    item.subtype.includes('reaction') || item.subtype === 'linkedin/comment'
-  );
-  const hasAuthor = item.author_display && item.author_display !== '-';
-  const hasActor = item.actor_display && item.actor_display !== '-';
-  const engagementHeader = (isEngagement && hasAuthor && hasActor)
-    ? `${item.actor_display} → ${item.author_display}`
-    : null;
-  const displayTitle = item.title || engagementHeader || item.preview || '(untitled)';
-  const showPreviewBlock = item.preview && item.preview !== displayTitle;
-  const firstImg = (item.media || []).find(m => (m.media_type === 'image' || m.media_type === 'thumbnail') && m.available && !m.superseded_at);
-  const thumbHtml = firstImg ? `<img src="${getApiBase()}${escHtml(firstImg.serve_url)}" alt="${escHtml(firstImg.alt_text || '')}" class="item-card-thumb" loading="lazy">` : '';
-  card.innerHTML = `
-    <div class="item-card-header">
-      <span class="source-dot ${sourceClass(item.subtype)}"></span>
-      <span class="item-title">${emoji}${escHtml(displayTitle)}</span>
-      <span class="item-date">${relTime(item.created_at)}</span>
-    </div>
-    ${thumbHtml}
-    ${showPreviewBlock ? `<div class="item-preview">${escHtml(item.preview)}</div>` : ''}
-    <div class="item-footer">
-      <span>${sourceName(item.subtype)}</span>
-      ${item.child_count ? `<span class="child-count">${item.child_count} children</span>` : ''}
-    </div>
-    <div class="debug-only">
-      <div style="margin-top:0.3rem">
-        <span class="source-badge ${sourceClass(item.subtype)}">${sourceName(item.subtype)}</span>
-        <span class="item-subtype">${item.subtype}</span>
-      </div>
-      <div class="item-meta">
-        ${item.author_display !== '-' ? `<span>by ${escHtml(item.author_display)}</span>` : ''}
-        ${item.actor_display !== '-' ? `<span>actor: ${escHtml(item.actor_display)}</span>` : ''}
-        ${item.is_own_content ? '<span style="color:var(--ok)">own</span>' : ''}
-        <span>id:${item.id}</span>
-      </div>
-    </div>
-  `;
-  return card;
-}
 
 const CHAT_ROLES = new Set(['user', 'model', 'assistant', 'system', 'human']);
 function getChatRole(item) {
@@ -363,20 +300,27 @@ async function loadItemHistory(itemId) {
   }
 }
 
+// "Replies (9)" on a post, "Parts (10)" elsewhere; reactions are counted apart
+function partsTitle(item) {
+  const n = (item.child_count || 0) - (item.reaction_count || 0);
+  if (n <= 0) return 'Notes';
+  return `${item.kind === 'post' ? 'Replies' : 'Parts'} (${n})`;
+}
+
 function renderItemView(item) {
   const container = document.getElementById('item-view-content');
   const emoji = item.metadata && item.metadata.emoji ? item.metadata.emoji + ' ' : '';
-  const dateFmt = item.created_at
-    ? new Date(item.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-    : '';
 
-  let html = `<div class="item-view-title" id="item-title-display">${emoji}${escHtml(item.title || item.preview || (item.held === false && item.url) || '(untitled)')}</div>`;
-  html += `<div class="item-view-meta">${sourceName(item.subtype)}${dateFmt ? ' &middot; ' + dateFmt : ''}${item.url ? ' &middot; <a href="' + escHtml(item.url) + '" target="_blank" rel="noopener" style="color:var(--accent)">link</a>' : ''}</div>`;
+  const title = `${emoji}${item.title || item.preview || (item.held === false && item.url) || '(untitled)'}`;
+  let html = itemHeader(item, title);
+  const player = itemPlayer(item);
+  html += player.html;
+  html += reactionsLine(item);
   if (item.held === false) {
     // A stub: known by its address only, so it has no content to show
     html += `<div class="item-view-content" id="item-content-display" style="color:var(--muted)">LeStash doesn't hold this; it knows it only by its address. Its links and activity are below.</div>`;
   } else {
-    html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(item.content)}</div>`;
+    html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(cleanContent(item, title))}</div>`;
   }
 
   // People: who made, voiced, published or received it. Under the content, as a
@@ -400,7 +344,7 @@ function renderItemView(item) {
   // Media gallery
   const shownMedia = (item.media || []).filter(m => m.available || m.media_type === 'link' || m.media_type === 'pdf');
   // Older versions of a file are kept; they are listed under the current ones
-  const visibleMedia = shownMedia.filter(m => !m.superseded_at);
+  const visibleMedia = shownMedia.filter(m => !m.superseded_at && !player.ids.has(m.id));
   // Newest first, by when each was replaced: a version found later can be older
   const olderMedia = shownMedia.filter(m => m.superseded_at && m.available)
     .sort((a, b) => String(b.superseded_at).localeCompare(String(a.superseded_at)));
@@ -539,8 +483,8 @@ function renderItemView(item) {
 
   // Children section (always shown so new notes appear immediately)
   html += `<div class="item-view-children">
-    <div class="item-view-children-title">${item.child_count > 0 ? item.child_count + ' items' : 'Notes'}</div>
-    <div class="item-list" id="children-list" data-item-id="${item.id}">${item.child_count > 0
+    <div class="item-view-children-title" id="parts-title">${partsTitle(item)}</div>
+    <div class="item-list" id="children-list" data-item-id="${item.id}">${item.child_count - (item.reaction_count || 0) > 0
       ? '<span style="color:var(--muted);font-size:0.8rem">Loading...</span>'
       : '<span style="color:var(--muted);font-size:0.8rem">No notes yet</span>'
     }</div>
@@ -580,6 +524,8 @@ function renderItemView(item) {
   </div>`;
 
   container.innerHTML = html;
+  wireTranscript(container);
+  wireReactions(container, item);
 
   // Wire up image paste + file-input upload on the edit textarea
   const editTextarea = container.querySelector('#item-edit-content');
@@ -945,8 +891,8 @@ function renderItemView(item) {
           list.appendChild(renderCard(note));
         }
         item.child_count = (item.child_count || 0) + 1;
-        const title = container.querySelector('.item-view-children-title');
-        if (title) title.textContent = item.child_count + ' items';
+        const title = container.querySelector('#parts-title');
+        if (title) title.textContent = partsTitle(item);
         showToast('Note added');
       } catch (err) {
         showToast('Failed to save note', 'error');
@@ -1003,8 +949,8 @@ function renderItemView(item) {
   }
 
   // Load children
-  if (item.child_count > 0) {
-    loadAllChildren(item.id).then(children => {
+  if (item.child_count - (item.reaction_count || 0) > 0) {
+    loadAllChildren(item.id, PARTS_QUERY).then(children => {
       const list = document.getElementById('children-list');
       // The user may have opened another item while the pages loaded
       if (!list || list.dataset.itemId !== String(item.id)) return;
@@ -1016,7 +962,7 @@ function renderItemView(item) {
         children.slice().reverse().forEach(child => thread.appendChild(renderChatBubble(child)));
         list.appendChild(thread);
       } else {
-        children.forEach(child => list.appendChild(renderCard(child)));
+        renderParts(item, children, list);
       }
     }).catch(() => {
       const list = document.getElementById('children-list');
@@ -1131,12 +1077,12 @@ const LINK_LABELS = {
 // Children come newest first, a page at a time: load every page, so a long chat
 // shows every turn
 const CHILDREN_PAGE = 100;
-async function loadAllChildren(parentId) {
+async function loadAllChildren(parentId, query = '') {
   const children = [];
   const seen = new Set();
   for (let offset = 0; ; offset += CHILDREN_PAGE) {
     const data = await api(`/api/items?parent_id=${parentId}&include_children=true`
-      + `&limit=${CHILDREN_PAGE}&offset=${offset}`);
+      + `&limit=${CHILDREN_PAGE}&offset=${offset}${query}`);
     // A child added while the pages load shifts the next page by one: skip repeats
     data.items.forEach(child => { if (!seen.has(child.id)) { seen.add(child.id); children.push(child); } });
     if (data.items.length < CHILDREN_PAGE || offset + CHILDREN_PAGE >= data.total) return children;
@@ -1176,10 +1122,6 @@ async function loadLinks(itemId) {
   section.style.display = '';
 }
 
-function escHtml(s) {
-  if (!s) return '';
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
 
 marked.use({
   renderer: {
@@ -2310,6 +2252,7 @@ async function saveLink() {
   if (!childId) { showToast('Select an item to link', 'error'); return; }
   if (!_linkParentId) { showToast('No parent item', 'error'); return; }
   if (childId === _linkParentId) { showToast('Cannot link item to itself', 'error'); return; }
+  const parentId = _linkParentId;  // closeLinkDialog clears it
   const btn = document.getElementById('link-save-btn');
   btn.disabled = true;
   btn.textContent = 'Linking...';
@@ -2317,7 +2260,7 @@ async function saveLink() {
     await api(`/api/items/${childId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ parent_id: _linkParentId }),
+      body: JSON.stringify({ parent_id: parentId }),
     });
     const linked = await api(`/api/items/${childId}`);
     showToast('Item linked', 'ok');
@@ -2329,11 +2272,11 @@ async function saveLink() {
       const placeholder = list.querySelector('span');
       if (placeholder) list.innerHTML = '';
       list.appendChild(renderCard(linked));
-      const titleEl = container.querySelector('.item-view-children-title');
-      if (titleEl) {
-        const match = titleEl.textContent.match(/^(\d+)/);
-        const next = match ? parseInt(match[1]) + 1 : 1;
-        titleEl.textContent = next + ' items';
+      const shown = cachedItem(parentId);
+      const titleEl = container.querySelector('#parts-title');
+      if (shown && titleEl) {
+        shown.child_count = (shown.child_count || 0) + 1;
+        titleEl.textContent = partsTitle(shown);
       }
     }
   } catch (e) {
