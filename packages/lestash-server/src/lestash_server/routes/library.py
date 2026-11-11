@@ -85,7 +85,8 @@ def shelves():
 
 @router.get("/{shelf}/facets", response_model=ShelfFacets)
 def facets(shelf: str):
-    """A shelf's items counted by person (who made them), topic and year."""
+    """A shelf's items counted by person (in any role), topic and year: the counts
+    match the shelf's list under the same filter."""
     kinds = _kinds(shelf)
     where = _on_shelf(kinds)
     with get_db() as conn:
@@ -94,7 +95,7 @@ def facets(shelf: str):
             for r in conn.execute(
                 f"""SELECT p.id, p.name, count(DISTINCT i.id) n FROM items i
                 JOIN item_agents a ON a.item_id = i.id JOIN people p ON p.id = a.person_id
-                WHERE {where} AND a.role IN ('author', 'creator')
+                WHERE {where}
                 GROUP BY p.id ORDER BY n DESC, p.name LIMIT ?""",
                 [*kinds, FACET_SIZE],
             )

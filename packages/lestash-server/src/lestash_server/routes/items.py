@@ -63,6 +63,7 @@ def list_items(
     person: int | None = Query(None, description="Items this person made, voiced or received"),
     role: str | None = Query(None, description="With person: only this role (author, creator...)"),
     year: str | None = Query(None, pattern=r"^\d{4}$", description="Made in this year"),
+    top_level: bool = Query(False, description="Only items not part of another, whatever else"),
     sort: Literal["recent", "oldest", "title"] = Query("recent", description="Order of the list"),
     parent_id: int | None = Query(None, description="Filter to children of this parent item"),
     include_children: bool = Query(False, description="Include items that have a parent"),
@@ -83,7 +84,7 @@ def list_items(
     else:
         # A tag lists whatever carries it, and a person whatever they made, children
         # (a reply, a highlight) included
-        if not include_children and not tag and person is None:
+        if top_level or (not include_children and not tag and person is None):
             where.append("items.parent_id IS NULL")
         # Stubs are known by their address only; their detail view shows them
         where.append("items.held = 1")

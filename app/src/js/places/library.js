@@ -32,12 +32,13 @@ function shell() {
     <div class="item-list library-list"></div>
     <button class="load-more library-more" style="display:none">Load more</button>`;
   openFiltersWhenWide(tab);
+  // A change sets only its own filter: the others stay as the address has them,
+  // even when their lists haven't loaded
   tab.querySelectorAll('[data-facet]').forEach(sel => sel.addEventListener('change', () => {
     const params = new URLSearchParams(location.search);
-    for (const s of tab.querySelectorAll('[data-facet]')) {
-      if (s.value && !(s.dataset.facet === 'sort' && s.value === 'recent')) params.set(s.dataset.facet, s.value);
-      else params.delete(s.dataset.facet);
-    }
+    const name = sel.dataset.facet;
+    if (sel.value && !(name === 'sort' && sel.value === 'recent')) params.set(name, sel.value);
+    else params.delete(name);
     navigate(`/library?${params}`);
   }));
   return tab;
@@ -94,7 +95,8 @@ async function drawShelf(url) {
   let offset = 0;
   const load = async () => {
     more.disabled = true;
-    const q = new URLSearchParams({ kind: current.kinds.join(','), limit: PAGE, offset });
+    // Top-level items only, as the shelf counts them, whatever the filters
+    const q = new URLSearchParams({ kind: current.kinds.join(','), top_level: 'true', limit: PAGE, offset });
     for (const k of ['person', 'tag', 'year', 'sort']) if (params.get(k)) q.set(k, params.get(k));
     try {
       const data = await api(`/api/items?${q}`);

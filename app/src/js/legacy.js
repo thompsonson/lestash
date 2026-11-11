@@ -2453,7 +2453,7 @@ async function handlePendingShare() {
       addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
 
       // Switch to Notes tab and show transcription UI
-      document.querySelector('[data-tab="notes"]')?.click();
+      navigate('/notes');
       const uploadBtn = document.getElementById('upload-btn');
       const recordStatus = document.getElementById('record-status');
       if (uploadBtn) { uploadBtn.style.pointerEvents = 'none'; uploadBtn.style.opacity = '0.5'; uploadBtn.innerText = 'Transcribing...'; }
@@ -2525,7 +2525,7 @@ async function handlePendingShare() {
       for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
       const file = new File([bytes], fileData.fileName, { type: 'application/pdf' });
       addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
-      document.querySelector('[data-tab="sources"]')?.click();
+      navigate('/settings/sources');
       await uploadImport(file);
     } else if (share.text) {
       openCaptureDialog(share);
