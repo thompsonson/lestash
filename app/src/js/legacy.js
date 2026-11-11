@@ -3,7 +3,7 @@ import {
   debugLog, addDebugLog, api,
 } from './api.js';
 import {
-  route, navigate, back, setAddress, startRouter, routerReady, cacheItem, cachedItem,
+  route, navigate, back, render, setAddress, startRouter, routerReady, cacheItem, cachedItem,
 } from './router.js';
 
 /* ── Error visibility (Android WebView debugging) ── */
@@ -635,7 +635,7 @@ function renderItemView(item) {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
     if (btn.dataset.action === 'copy') copyToClipboard(item.content, 'Copied to clipboard');
-    if (btn.dataset.action === 'copy-link') copyToClipboard(`${getApiBase()}/items/${item.id}`, 'Link copied');
+    if (btn.dataset.action === 'copy-link') copyToClipboard(`${getApiBase() || location.origin}/items/${item.id}`, 'Link copied');
     if (btn.dataset.action === 'edit-item') {
       document.getElementById('item-title-display').style.display = 'none';
       document.getElementById('item-content-display').style.display = 'none';
@@ -1182,7 +1182,10 @@ function escHtml(s) {
 marked.use({
   renderer: {
     link(token) {
-      return `<a href="${token.href}" target="_blank" rel="noopener">${token.text}</a>`;
+      // Links to this app's own pages (/items/1, #heading) open here; others in a new tab
+      const own = /^(\/(?!\/)|#)/.test(token.href || '');
+      return own ? `<a href="${token.href}">${token.text}</a>`
+        : `<a href="${token.href}" target="_blank" rel="noopener">${token.text}</a>`;
     },
     image(token) {
       let href = token.href || '';
@@ -1282,8 +1285,20 @@ route(/^\/$/, async (m, url) => {
   await filtersReady;
   if (location.pathname !== '/' || location.search !== url.search) return;
   const p = url.searchParams;
-  document.getElementById('feed-source').value = p.get('source') || '';
-  document.getElementById('feed-tag').value = p.get('tag') || '';
+  // A value the list lacks (offline at start, or a name no longer counted) still
+  // filters, so the feed always shows what its address says
+  const pick = (id, value) => {
+    const sel = document.getElementById(id);
+    if (value && ![...sel.options].some(o => o.value === value)) {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = value;
+      sel.appendChild(opt);
+    }
+    sel.value = value || '';
+  };
+  pick('feed-source', p.get('source'));
+  pick('feed-tag', p.get('tag'));
   document.getElementById('feed-own').checked = p.get('own') === '1';
   if (feedKeyNow() !== feedKey) return loadFeed();
 });
@@ -1401,14 +1416,13 @@ route(/^\/search$/, (m, url) => {
   document.getElementById('search-mode').value = modes.includes(mode) ? mode : 'hybrid';
   if (input.value.trim() !== q) input.value = q;
   const key = q + '|' + document.getElementById('search-mode').value;
-  if (focusSearch || !q) { focusSearch = false; input.focus(); }
+  if (focusSearch) { focusSearch = false; input.focus(); }
   if (key === searchShown) return;
   searchShown = key;
   if (!q) {
     searchSeq++;
     document.getElementById('search-list').innerHTML = '';
     document.getElementById('search-status').textContent = 'Tip: use "quotes" for exact phrases, -"quotes" to exclude one, word* for prefix, AND/OR/NOT for boolean';
-    input.focus();
     return;
   }
   return doSearch(q);
@@ -2873,6 +2887,8 @@ async function populateSourceFilter() {
     const sel = document.getElementById('feed-source');
     // Use stats endpoint to get all source types with counts
     const stats = await api('/api/stats');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All sources</option>';
     if (stats.sources) {
       Object.entries(stats.sources).sort().forEach(([src, count]) => {
         const opt = document.createElement('option');
@@ -2881,6 +2897,7 @@ async function populateSourceFilter() {
         sel.appendChild(opt);
       });
     }
+    sel.value = current;
   } catch {}
 }
 
@@ -3359,9 +3376,9 @@ async function confirmAddToCollection(selectEl) {
 async function reconnect() {
   showToast('Reconnecting...', '');
   await checkHealth();
-  populateSourceFilter();
-  populateTagFilter();
-  loadFeed();
+  await Promise.all([populateSourceFilter(), populateTagFilter()]);
+  feedKey = null;
+  render();  // redraw this page: a feed, item or collection that failed loads now
 }
 
 /* ── Clipboard ── */
