@@ -5,6 +5,7 @@ and preview text. Used by both the CLI and the API server.
 """
 
 import sqlite3
+from typing import NamedTuple
 
 from lestash.core.database import get_person_profile, get_post_cache
 from lestash.models.item import Item
@@ -18,6 +19,82 @@ def resolve_author(conn: sqlite3.Connection, author: str | None) -> str:
     if profile and profile.get("display_name"):
         return profile["display_name"]
     return author
+
+
+class Byline(NamedTuple):
+    """Who an item is by, as the app shows it: "by Matt" links to their person."""
+
+    person_id: int
+    name: str
+    is_self: bool
+
+
+# Kinds whose byline is their author. A reaction's is the post's author, which
+# get_author_actor finds; a video's is its channel, shown in its own place.
+BYLINE_KINDS = frozenset(
+    {
+        "post",
+        "comment",
+        "note",
+        "chat",
+        "turn",
+        "message",
+        "email",
+        "document",
+        "paper",
+        "book",
+        "notebook",
+        "project",
+        "image",
+        "other",
+    }
+)
+# Kinds you made when they are your own content, even with no author linked
+SELF_MADE_KINDS = frozenset(
+    {
+        "post",
+        "comment",
+        "note",
+        "chat",
+        "message",
+        "email",
+        "document",
+        "notebook",
+        "project",
+        "image",
+    }
+)
+
+
+def short_name(name: str, short: str | None) -> str:
+    """What a byline calls a person: their short name, else their name's first word."""
+    if short and short.strip():
+        return short.strip()
+    return (name or "").split()[0] if (name or "").split() else name
+
+
+def get_byline(conn: sqlite3.Connection, item: Item, kind: str) -> Byline | None:
+    """The person an item is by: its linked author, else you for your own content.
+
+    You are named by your short name; anyone else by their full name.
+    """
+    if kind not in BYLINE_KINDS or item.id is None:
+        return None
+    row = conn.execute(
+        "SELECT p.id, p.name, p.short_name, p.is_self FROM item_agents a"
+        " JOIN people p ON p.id = a.person_id"
+        " WHERE a.item_id = ? AND a.role IN ('author', 'creator')"
+        " ORDER BY a.role = 'author' DESC, a.position IS NULL, a.position, p.id LIMIT 1",
+        (item.id,),
+    ).fetchone()
+    if row is None and item.is_own_content and kind in SELF_MADE_KINDS:
+        row = conn.execute(
+            "SELECT id, name, short_name, is_self FROM people WHERE is_self = 1"
+        ).fetchone()
+    if row is None:
+        return None
+    is_self = bool(row[3])
+    return Byline(row[0], short_name(row[1], row[2]) if is_self else row[1], is_self)
 
 
 def get_author_actor(conn: sqlite3.Connection, item: Item) -> tuple[str, str]:

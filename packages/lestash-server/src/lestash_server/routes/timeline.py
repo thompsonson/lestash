@@ -21,6 +21,21 @@ router = APIRouter(prefix="/api/timeline", tags=["timeline"])
 # their activities instead
 MADE_KINDS = ("post", "comment", "note", "notebook", "chat", "artifact", "project", "email")
 MAX_ENTRIES = 5000
+PROMPT_CHARS = 280
+
+# A prompt is the chat's turn by you at the activity's time (within a second: the
+# two are stored in different forms)
+_PROMPT = """
+    CASE WHEN a.verb = 'prompted' THEN (
+        SELECT substr(t.content, 1, ?) FROM items t
+        WHERE t.parent_id = a.item_id
+          AND abs(julianday(t.created_at) - julianday(a.occurred_at)) < 1.0 / 86400
+          AND json_valid(t.metadata)
+          AND coalesce(json_extract(t.metadata, '$.role'), json_extract(t.metadata, '$.sender'))
+              IN ('user', 'human')
+        ORDER BY t.id LIMIT 1
+    ) END AS prompt
+"""
 
 
 class ItemSummary(BaseModel):
@@ -41,6 +56,7 @@ class TimelineEntry(BaseModel):
     item: ItemSummary | None = None
     context: ItemSummary | None = None  # e.g. the notebook a prompt used
     details: dict | None = None
+    prompt: str | None = None  # for "prompted": the start of what you asked
 
 
 class TimelineResponse(BaseModel):
@@ -135,14 +151,15 @@ def timeline(
                 f"""SELECT a.occurred_at, a.verb, a.details, {_SUMMARY},
                        c.id AS c_id, c.title AS c_title, c.kind AS c_kind,
                        c.source_type AS c_source_type, c.parent_id AS c_parent_id,
-                       NULL AS c_parent_title, NULL AS c_channel, NULL AS c_artifact_type
+                       NULL AS c_parent_title, NULL AS c_channel, NULL AS c_artifact_type,
+                       {_PROMPT}
                 FROM activities a
                 LEFT JOIN items i ON i.id = a.item_id
                 LEFT JOIN items p ON p.id = i.parent_id
                 LEFT JOIN items c ON c.id = a.context_id
                 WHERE {" AND ".join(act_where)} AND a.actor_id IS NULL
                 ORDER BY a.occurred_at DESC LIMIT ?""",
-                [*act_params, MAX_ENTRIES + 1],
+                [PROMPT_CHARS, *act_params, MAX_ENTRIES + 1],
             ).fetchall()
             for r in rows:
                 details = None
@@ -158,6 +175,7 @@ def timeline(
                         item=_summary(r),
                         context=_summary(r, "c_"),
                         details=details if isinstance(details, dict) else None,
+                        prompt=(r["prompt"] or "").strip() or None,
                     )
                 )
         if want_made and made_kinds:

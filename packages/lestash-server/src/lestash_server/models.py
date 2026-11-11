@@ -53,6 +53,10 @@ class ItemResponse(BaseModel):
     # The item this one is part of, for "up" links and "on <title>" lines
     parent_title: str | None = None
     parent_kind: str | None = None
+    # Who it is by, as a person: "by Matt" for you, linking to /people/<by_id>
+    by_id: int | None = None
+    by_name: str | None = None
+    by_self: bool = False
     media: list[MediaResponse] = []
 
 

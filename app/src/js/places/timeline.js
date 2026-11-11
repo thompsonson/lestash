@@ -114,28 +114,46 @@ function line(e) {
   if (item && item.kind_detail) extra.push(escHtml(item.kind_detail));
   if (e.context) extra.push(`with <a href="/items/${e.context.id}">${escHtml(e.context.title)}</a>`);
   const landmark = e.verb === 'made' ? ' landmark' : '';
-  return `<li class="timeline-entry${landmark}">
+  const asked = e.prompt ? `<span class="t-prompt">“${escHtml(e.prompt)}”</span>` : '';
+  return `<li class="timeline-entry${landmark} kind-${item ? item.kind : 'other'}">
     <span class="t-time">${time}</span>
     <span class="t-verb">${escHtml(verb)}</span>
     <span class="t-icon" aria-hidden="true">${icon}</span>
-    <span class="t-what">${what}${extra.length ? ` <span class="muted">· ${extra.join(' · ')}</span>` : ''}</span>
+    <span class="t-what">${what}${extra.length ? ` <span class="muted">· ${extra.join(' · ')}</span>` : ''}${asked}</span>
   </li>`;
 }
 
-// Entries newest first, with busy verbs folded into one line at their latest time
+// One prompt under its chat: the time and what you asked
+function promptLine(e) {
+  const time = new Date(e.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return `<li class="timeline-entry prompt-entry">
+    <span class="t-time">${time}</span>
+    <span class="t-what">${e.prompt ? escHtml(e.prompt) : '<span class="muted">(what you asked is not held)</span>'}</span>
+  </li>`;
+}
+
+// What an entry folds under: busy verbs by kind; prompts by their chat
+function foldKey(e) {
+  if (e.verb === 'prompted' && e.item) return `prompted|${e.item.id}`;
+  return FOLDING.has(e.verb) ? `${e.verb}|${e.item ? e.item.kind : ''}` : null;
+}
+
+// Entries newest first, with busy verbs folded into one line at their latest time,
+// and a chat's prompts under one line for the chat
 function fold(entries) {
   const groups = new Map();
   for (const e of entries) {
-    if (!FOLDING.has(e.verb)) continue;
-    const key = `${e.verb}|${e.item ? e.item.kind : ''}`;
+    const key = foldKey(e);
+    if (!key) continue;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(e);
   }
-  const folded = new Set([...groups].filter(([, list]) => list.length > FOLD_AT).map(([k]) => k));
+  const folded = new Set([...groups]
+    .filter(([k, list]) => list.length > (k.startsWith('prompted|') ? 1 : FOLD_AT)).map(([k]) => k));
   const out = [];
   const placed = new Set();
   for (const e of entries) {
-    const key = `${e.verb}|${e.item ? e.item.kind : ''}`;
+    const key = foldKey(e);
     if (!folded.has(key)) { out.push({ entry: e }); continue; }
     if (placed.has(key)) continue;
     placed.add(key);
@@ -146,8 +164,22 @@ function fold(entries) {
 
 const SHOWN_IN_GROUP = 200;
 
+// "prompted Planning my return to France · 13 prompts", opening to what you asked
+function promptGroupHtml(list) {
+  const first = list[0];
+  const from = new Date(list[list.length - 1].at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const to = new Date(first.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return `<li class="timeline-group kind-${first.item.kind}"><details>
+    <summary><span class="t-time">${to}</span> <span class="t-verb">prompted</span>
+      <a href="/items/${first.item.id}">${escHtml(first.item.title)}</a>
+      <b>${list.length} prompts</b> <span class="muted">${from}–${to}</span></summary>
+    <ul class="timeline-sub">${list.slice(0, SHOWN_IN_GROUP).map(promptLine).join('')}</ul>
+  </details></li>`;
+}
+
 function groupHtml(list) {
   const first = list[0];
+  if (first.verb === 'prompted') return promptGroupHtml(list);
   const kind = first.item ? first.item.kind : '';
   const n = list.length;
   // "searched 9 times", not "searched for 9 searches"

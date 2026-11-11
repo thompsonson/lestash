@@ -5,8 +5,9 @@ items come from ``GET /api/items?person=<id>`` (and ``&role=``).
 """
 
 from fastapi import APIRouter, HTTPException, Query
+from lestash.core.enrichment import short_name
 from lestash.core.kinds import KINDS
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from lestash_server.deps import get_db
 
@@ -26,6 +27,7 @@ class Account(BaseModel):
 class PersonSummary(BaseModel):
     id: int
     name: str
+    short_name: str  # what a byline calls them: "Matt"; their name's first word if unset
     kind: str
     is_self: bool = False
     items: int = 0  # items they made, voiced, published or received
@@ -48,8 +50,14 @@ class RoleCount(BaseModel):
 
 class VerbCount(BaseModel):
     verb: str
-    count: int
+    count: int  # times, rewatches included
+    items: int = 0  # different items
+    first_at: str | None = None
     last_at: str | None = None
+
+
+class PersonUpdate(BaseModel):
+    short_name: str | None = Field(None, max_length=40, description="Empty to clear")
 
 
 class PersonDetail(PersonSummary):
@@ -63,6 +71,7 @@ def _summary(row) -> PersonSummary:
     return PersonSummary(
         id=row["id"],
         name=row["name"],
+        short_name=short_name(row["name"], row["short_name"]),
         kind=row["kind"],
         is_self=bool(row["is_self"]),
         items=row["items"] or 0,
@@ -98,7 +107,7 @@ def list_people(
     with get_db() as conn:
         total = conn.execute(f"SELECT count(*) {body}", params).fetchone()[0]
         rows = conn.execute(
-            f"SELECT p.id, p.name, p.kind, p.is_self, {_COUNTS} {body}"
+            f"SELECT p.id, p.name, p.short_name, p.kind, p.is_self, {_COUNTS} {body}"
             " ORDER BY p.is_self DESC, items DESC, p.name LIMIT ? OFFSET ?",
             [*params, limit, offset],
         ).fetchall()
@@ -122,7 +131,8 @@ def person(person_id: int):
     """One person, channel or AI: accounts, what they made, your activity with them."""
     with get_db() as conn:
         row = conn.execute(
-            f"SELECT p.id, p.name, p.kind, p.is_self, {_COUNTS} FROM people p WHERE p.id = ?",
+            f"SELECT p.id, p.name, p.short_name, p.kind, p.is_self, {_COUNTS}"
+            " FROM people p WHERE p.id = ?",
             (person_id,),
         ).fetchone()
         if not row:
@@ -161,10 +171,17 @@ def person(person_id: int):
         activity = []
         if not row["is_self"]:
             activity = [
-                VerbCount(verb=r["verb"], count=r["n"], last_at=r["last_at"])
+                VerbCount(
+                    verb=r["verb"],
+                    count=r["n"],
+                    items=r["items"],
+                    first_at=r["first_at"],
+                    last_at=r["last_at"],
+                )
                 for r in conn.execute(
                     # IN, not a join: a person with two roles on an item counts once
-                    "SELECT act.verb, count(*) n, max(act.occurred_at) last_at"
+                    "SELECT act.verb, count(*) n, count(DISTINCT act.item_id) items,"
+                    " min(act.occurred_at) first_at, max(act.occurred_at) last_at"
                     " FROM activities act WHERE act.actor_id IS NULL AND act.item_id IN"
                     " (SELECT item_id FROM item_agents WHERE person_id = ?)"
                     " GROUP BY act.verb ORDER BY n DESC",
@@ -179,3 +196,17 @@ def person(person_id: int):
         mentioned_in=mentioned,
         your_activity=activity,
     )
+
+
+@router.patch("/{person_id}", response_model=PersonDetail)
+def update_person(person_id: int, body: PersonUpdate):
+    """Set what a byline calls a person; an empty short name goes back to the default."""
+    short = (body.short_name or "").strip() or None
+    with get_db() as conn:
+        found = conn.execute(
+            "UPDATE people SET short_name = ? WHERE id = ?", (short, person_id)
+        ).rowcount
+        conn.commit()
+    if not found:
+        raise HTTPException(status_code=404, detail="Person not found")
+    return person(person_id)

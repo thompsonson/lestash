@@ -124,6 +124,8 @@ On conflict, updates: `content`, `title`, `author`, `metadata`, `parent_id`.
 
 Get a single item by ID. Returns 404 if not found.
 
+Every item, here and in lists, carries its byline: `by_id`, `by_name` and `by_self`. It is the item's linked author (or creator), else you for your own posts, replies, notes, chats, messages, emails, documents, notebooks and projects. You are named by your short name ("Matt"); anyone else in full. Reactions, videos, searches, highlights and generated items have no byline: a reaction's author is the post's, a video's is its channel.
+
 ---
 
 ### `GET /api/items/{item_id}/activities`
@@ -271,7 +273,7 @@ What you did and what you made between two times, newest first (#262).
 | `verb` | string | — | Comma-separated verbs to keep (`watched`, `liked`, ...); `made` for items you made |
 | `kind` | string | — | Comma-separated item kinds to keep |
 
-Each entry has `at` (UTC), `verb` (an activity's verb, or `made`), `item` (id, title, kind, kind_label, kind_detail, source_type, parent, channel), `context` (e.g. the notebook a prompt used) and `details`. `made` entries are posts, replies, notes, notebooks, chats, generated items, projects and email threads, on the day they were made. `previous` and `next` are the nearest times outside the span with entries. Up to 5,000 entries; `truncated` says when there were more.
+Each entry has `at` (UTC), `verb` (an activity's verb, or `made`), `item` (id, title, kind, kind_label, kind_detail, source_type, parent, channel), `context` (e.g. the notebook a prompt used), `details`, and for `prompted` entries `prompt`: the start of what you asked (up to 280 characters), from your turn in the chat at that time. `made` entries are posts, replies, notes, notebooks, chats, generated items, projects and email threads, on the day they were made. `previous` and `next` are the nearest times outside the span with entries. Up to 5,000 entries; `truncated` says when there were more.
 
 ## Library
 
@@ -298,7 +300,13 @@ People, channels or AIs, those with the most items first (#263).
 
 ### `GET /api/people/{person_id}`
 
-One person: `accounts`, `made` (their items by role and kind), `mentioned_in`, and `your_activity` (what you did to their items, by verb, with the last time). `GET /api/people/me` is you.
+One person: `accounts`, `made` (their items by role and kind), `mentioned_in`, and `your_activity` (what you did to their items, by verb). Each verb has `count` (times, rewatches included), `items` (different items), `first_at` and `last_at`. `GET /api/people/me` is you.
+
+Every person has `short_name`: what a byline calls them. It is the name's first word until set.
+
+### `PATCH /api/people/{person_id}`
+
+Set what bylines call a person: `{ "short_name": "Matt" }`, up to 40 characters. An empty `short_name` goes back to the first word of the name. Returns the person; `404` if there is none.
 
 ## Collections
 

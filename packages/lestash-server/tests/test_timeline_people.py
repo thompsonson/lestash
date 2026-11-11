@@ -159,3 +159,96 @@ def test_two_roles_on_one_item_count_once(client, test_config):
     page = client.get(f"/api/people/{person}").json()
     assert page["items"] == 1
     assert {a["verb"]: a["count"] for a in page["your_activity"]} == {"watched": 3, "liked": 1}
+
+
+class TestBylines:
+    """Items say who they are by; you by your short name (#268 themes PR)."""
+
+    def _own_note(self, conn):
+        return conn.execute(
+            "INSERT INTO items (source_type, source_id, content, is_own_content)"
+            " VALUES ('voice', 'v-1', 'a voice note', 1)"
+        ).lastrowid
+
+    def test_your_own_note_is_by_you_with_your_short_name(self, client, test_config):
+        with get_connection(test_config) as conn:
+            me = _person(conn, "Matthew Thompson", "person", is_self=1)
+            note = self._own_note(conn)
+            conn.commit()
+        item = client.get(f"/api/items/{note}").json()
+        assert (item["by_id"], item["by_name"], item["by_self"]) == (me, "Matthew", True)
+        page = client.patch(f"/api/people/{me}", json={"short_name": " Matt "}).json()
+        assert page["short_name"] == "Matt"
+        assert client.get(f"/api/items/{note}").json()["by_name"] == "Matt"
+        # Empty goes back to the first word of the name
+        assert (
+            client.patch(f"/api/people/{me}", json={"short_name": ""}).json()["short_name"]
+            == "Matthew"
+        )
+        assert client.patch("/api/people/999999", json={"short_name": "x"}).status_code == 404
+
+    def test_a_linked_author_is_named_in_full(self, client, test_config):
+        with get_connection(test_config) as conn:
+            _person(conn, "Matthew Thompson", "person", is_self=1)
+            ada = _person(conn, "Ada Lovelace", "person")
+            note = self._own_note(conn)
+            conn.execute(
+                "INSERT INTO item_agents (item_id, person_id, role, origin)"
+                " VALUES (?, ?, 'author', 'test')",
+                (note, ada),
+            )
+            conn.commit()
+        item = client.get(f"/api/items/{note}").json()
+        assert (item["by_id"], item["by_name"], item["by_self"]) == (ada, "Ada Lovelace", False)
+
+    def test_a_video_has_no_byline(self, client, test_config):
+        video = _seed_day(test_config)
+        with get_connection(test_config) as conn:
+            _person(conn, "Matthew Thompson", "person", is_self=1)
+            conn.commit()
+        assert client.get(f"/api/items/{video}").json()["by_id"] is None
+
+
+def test_watches_count_items_and_times(client, test_config):
+    """A channel page says how many of their videos you watched, and how often."""
+    video = _seed_day(test_config)  # three watches of one video, 9 and 10 Mar
+    with get_connection(test_config) as conn:
+        channel = _person(conn, "TechChannel", "organization")
+        conn.execute(
+            "INSERT INTO item_agents (item_id, person_id, role, origin)"
+            " VALUES (?, ?, 'creator', 'test')",
+            (video, channel),
+        )
+        conn.commit()
+    watched = next(
+        a
+        for a in client.get(f"/api/people/{channel}").json()["your_activity"]
+        if a["verb"] == "watched"
+    )
+    assert (watched["count"], watched["items"]) == (3, 1)
+    assert watched["first_at"] == "2026-03-09T08:00:00.000Z"
+
+
+def test_a_prompt_shows_what_you_asked(client, test_config):
+    """A prompted entry carries the start of your turn at that time."""
+    with get_connection(test_config) as conn:
+        chat = conn.execute(
+            "INSERT INTO items (source_type, source_id, content) VALUES ('gemini', 'c', 'chat')"
+        ).lastrowid
+        for role, text in (("user", "How far is France?"), ("model", "Quite far.")):
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content, parent_id, created_at,"
+                " metadata) VALUES ('gemini', ?, ?, ?, '2026-03-10 09:00:00.500000+00:00', ?)",
+                (f"t-{role}", text, chat, f'{{"role": "{role}"}}'),
+            )
+        conn.execute(
+            "INSERT INTO activities (verb, item_id, occurred_at, source)"
+            " VALUES ('prompted', ?, '2026-03-10T09:00:00.500Z', 'test')",
+            (chat,),
+        )
+        conn.commit()
+    day = client.get(
+        "/api/timeline", params={"start": "2026-03-10T00:00:00Z", "end": "2026-03-11T00:00:00Z"}
+    ).json()
+    prompted = [e for e in day["entries"] if e["verb"] == "prompted"]
+    assert [e["prompt"] for e in prompted] == ["How far is France?"]
