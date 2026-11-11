@@ -167,7 +167,10 @@ function showOnly(id, tab) {
 // Each tab's last address, so a tab returns to its filters or query
 const tabAddress = {};
 
+let focusSearch = false;
+
 function switchTab(tab) {
+  if (tab === 'search') focusSearch = true;
   navigate(tabAddress[tab] || TAB_PATHS[tab] || '/');
 }
 
@@ -1274,8 +1277,10 @@ function feedAddress() {
 ['feed-source', 'feed-tag', 'feed-own'].forEach(id =>
   document.getElementById(id).addEventListener('change', () => navigate(feedAddress())));
 
-route(/^\/$/, (m, url) => {
+route(/^\/$/, async (m, url) => {
   showOnly('tab-feed', 'feed');
+  await filtersReady;
+  if (location.pathname !== '/' || location.search !== url.search) return;
   const p = url.searchParams;
   document.getElementById('feed-source').value = p.get('source') || '';
   document.getElementById('feed-tag').value = p.get('tag') || '';
@@ -1393,6 +1398,7 @@ route(/^\/search$/, (m, url) => {
   document.getElementById('search-mode').value = modes.includes(mode) ? mode : 'hybrid';
   if (input.value.trim() !== q) input.value = q;
   const key = q + '|' + document.getElementById('search-mode').value;
+  if (focusSearch || !q) { focusSearch = false; input.focus(); }
   if (key === searchShown) return;
   searchShown = key;
   if (!q) {
@@ -3388,11 +3394,10 @@ document.getElementById('settings-btn').addEventListener('click', openSettings);
 loadAppVersion().then(renderDebugInfo);
 renderDebugInfo();
 
-// Filters need their options before the router sets them from the address
-checkHealth().then(async () => {
-  await Promise.all([populateSourceFilter(), populateTagFilter()]);
-  await startRouter();
-});
+// The feed's filters need their options before the address can set them
+const filtersReady = checkHealth().then(() =>
+  Promise.all([populateSourceFilter(), populateTagFilter()]));
+startRouter();
 setInterval(checkHealth, 30000);
 
 // Inline handlers (onclick="…") in the markup and in rendered HTML call these by name.

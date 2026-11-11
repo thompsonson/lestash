@@ -4,15 +4,16 @@
 // and every page is drawn by render() from the address alone. The web app and the
 // Tauri app share this: Android's back button moves through the same history.
 //
-// An open dialog gets its own history entry at the same address, so Back (the
-// browser's or Android's) closes the dialog before it leaves the page.
+// Back (the browser's or Android's) with a dialog open closes the dialog and puts
+// the page's address back, so the page stays.
 
 const routes = [];
 const items = new Map();
 const ITEM_CACHE_SIZE = 500;
 let rendering = null;
 let drawnPath = null;
-let skipPops = 0;
+// The entry on screen, to put back when Back only closes a dialog
+let current = null;
 let ready;
 // Settles once the first page is drawn
 export const routerReady = new Promise((resolve) => { ready = resolve; });
@@ -60,20 +61,23 @@ function saveScroll() {
   history.replaceState(state, '', location.href);
 }
 
+function remember() {
+  current = { href: location.href, state: history.state };
+}
+
 export function navigate(href, { replace = false } = {}) {
   const url = new URL(href, location.href);
   const target = url.pathname + url.search + url.hash;
   const here = location.pathname + location.search + location.hash;
-  // A dialog's entry is replaced, never kept under the next page
-  if (replace || (history.state && history.state.dialog)) {
-    const keep = replace ? depth() : depth() - 1;
-    history.replaceState({ depth: keep + (replace ? 0 : 1), scrollY: 0 }, '', target);
+  if (replace) {
+    history.replaceState({ ...(history.state || {}), depth: depth(), scrollY: 0 }, '', target);
   } else if (target !== here) {
     saveScroll();
     history.pushState({ depth: depth() + 1, scrollY: 0 }, '', target);
   } else {
     saveScroll();  // same page again: keep its place
   }
+  remember();
   return render();
 }
 
@@ -105,10 +109,11 @@ function restoreScroll(y, token) {
   if (!el) return;
   el.scrollTop = y;
   if (!y || el.scrollTop >= y - 1) return;
+  const events = ['wheel', 'touchstart', 'keydown', 'pointerdown'];
   const stop = () => {
     observer.disconnect();
     clearTimeout(timer);
-    ['wheel', 'touchstart', 'keydown'].forEach((t) => el.removeEventListener(t, stop));
+    events.forEach((t) => el.removeEventListener(t, stop));
   };
   const observer = new MutationObserver(() => {
     if (rendering !== token) return stop();
@@ -117,7 +122,7 @@ function restoreScroll(y, token) {
   });
   observer.observe(el, { childList: true, subtree: true });
   const timer = setTimeout(stop, 3000);
-  ['wheel', 'touchstart', 'keydown'].forEach((t) => el.addEventListener(t, stop, { passive: true }));
+  events.forEach((t) => el.addEventListener(t, stop, { passive: true }));
 }
 
 export async function render() {
@@ -155,45 +160,40 @@ function onClick(e) {
   if (!a || a.target || a.hasAttribute('download') || a.dataset.external !== undefined) return;
   const url = new URL(a.href, location.href);
   if (url.origin !== location.origin || !routeFor(url.pathname)) return;
+  // A link within the page (#section) keeps the browser's own jump
+  if (url.hash && url.pathname === location.pathname && url.search === location.search) return;
   e.preventDefault();
   navigate(url.pathname + url.search + url.hash);
 }
 
-// A dialog that opens gets a history entry; one closed from the page drops it
-function watchDialogs() {
-  const observer = new MutationObserver(() => {
-    const open = openDialogs().length > 0;
-    const onEntry = !!(history.state && history.state.dialog);
-    if (open && !onEntry) {
-      history.pushState({ ...history.state, depth: depth() + 1, dialog: true }, '', location.href);
-    } else if (!open && onEntry) {
-      skipPops++;
-      history.back();
-    }
-  });
-  document.querySelectorAll('.modal-overlay').forEach((m) =>
-    observer.observe(m, { attributes: true, attributeFilter: ['class'] }));
-}
-
 function onPop() {
-  if (skipPops > 0) { skipPops--; return; }
-  // Back with a dialog open closes the dialog and stays on the page
-  if (openDialogs().length > 0) {
+  if (openDialogs().length > 0 && current) {
     openDialogs().forEach((m) => m.classList.remove('open'));
-    if (location.pathname === drawnPath) return;
+    const state = { ...(current.state || {}), scrollY: main()?.scrollTop || 0 };
+    history.pushState(state, '', current.href);
+    return;
   }
+  const was = current && new URL(current.href);
+  if (!history.state) {
+    // A #section link made this entry: one step on from the page it belongs to
+    const below = (current && current.state && current.state.depth) || 0;
+    history.replaceState({ depth: below + 1, scrollY: main()?.scrollTop || 0 }, '', location.href);
+  }
+  remember();
+  // Only the #section changed: the browser already jumped, the page stays
+  if (was && was.pathname === location.pathname && was.search === location.search) return;
   render();
 }
+
+// Listen from the start, so a dialog opened before the first page is drawn
+// (the server slow to answer) is still closed by Back
+document.addEventListener('click', onClick);
+window.addEventListener('popstate', onPop);
 
 export function startRouter() {
   if (!history.state || history.state.depth === undefined) {
     history.replaceState({ depth: 0, scrollY: 0 }, '', location.href);
-  } else if (history.state.dialog) {
-    // Reloaded with a dialog's entry on top: the dialog is gone
-    history.replaceState({ ...history.state, dialog: false }, '', location.href);
   }
-  document.addEventListener('click', onClick);
-  window.addEventListener('popstate', onPop);
-  watchDialogs();
+  remember();
   return render().finally(ready);
 }
