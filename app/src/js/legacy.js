@@ -3,7 +3,7 @@ import {
   debugLog, addDebugLog, api,
 } from './api.js';
 import {
-  route, navigate, back, startRouter, routerReady, cacheItem, cachedItem,
+  route, navigate, back, setAddress, startRouter, routerReady, cacheItem, cachedItem,
 } from './router.js';
 
 /* ── Error visibility (Android WebView debugging) ── */
@@ -1256,7 +1256,7 @@ async function loadFeed(append) {
     btn.style.display = feedOffset < data.total ? '' : 'none';
   } catch (e) {
     if (seq !== feedSeq) return;
-    if (!append) list.innerHTML = '';
+    if (!append) { list.innerHTML = ''; feedKey = null; }  // returning to the feed retries
     showToast(`Failed to load items: ${e.message}`, 'error');
   }
 }
@@ -1378,6 +1378,8 @@ function searchAddress() {
 }
 
 document.getElementById('search-input').addEventListener('input', () => {
+  // The address follows every keystroke, so nothing typed is lost; the search waits
+  setAddress(searchAddress());
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     if (location.pathname === '/search') navigate(searchAddress(), { replace: true });

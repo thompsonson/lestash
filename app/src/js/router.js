@@ -65,6 +65,12 @@ function remember() {
   current = { href: location.href, state: history.state };
 }
 
+// Change the address without drawing: the page already shows it (typing a search)
+export function setAddress(href) {
+  history.replaceState(history.state, '', href);
+  remember();
+}
+
 export function navigate(href, { replace = false } = {}) {
   const url = new URL(href, location.href);
   const target = url.pathname + url.search + url.hash;
@@ -130,6 +136,7 @@ export async function render() {
   const upgraded = upgrade(url);
   if (upgraded) {
     history.replaceState({ depth: depth(), scrollY: 0 }, '', upgraded);
+    remember();
     return render();
   }
   // Leaving a page closes its dialogs; drawing the same page again keeps them
@@ -142,6 +149,7 @@ export async function render() {
   if (!found) return navigate('/', { replace: true });
   const token = {};
   rendering = token;
+  ready();  // the page is chosen; its content may still be loading
   try {
     await found.page(url.pathname.match(found.pattern), url);
   } finally {
@@ -167,21 +175,26 @@ function onClick(e) {
 }
 
 function onPop() {
+  const was = current && new URL(current.href);
+  const samePage = was && was.pathname === location.pathname && was.search === location.search;
+  if (!history.state && samePage) {
+    // A #section link made this entry: one step on from the page it belongs to
+    const below = (current.state && current.state.depth) || 0;
+    history.replaceState({ depth: below + 1, scrollY: main()?.scrollTop || 0 }, '', location.href);
+    remember();
+    if (!upgrade(new URL(location.href))) return;  // the browser already jumped
+    return render();
+  }
   if (openDialogs().length > 0 && current) {
     openDialogs().forEach((m) => m.classList.remove('open'));
-    const state = { ...(current.state || {}), scrollY: main()?.scrollTop || 0 };
-    history.pushState(state, '', current.href);
+    const from = (current.state && current.state.depth) || 0;
+    // Forward only closes the dialog and steps back to the page; Back puts it back
+    if (depth() > from) history.back();
+    else history.pushState({ ...(current.state || {}), scrollY: main()?.scrollTop || 0 }, '', current.href);
     return;
   }
-  const was = current && new URL(current.href);
-  if (!history.state) {
-    // A #section link made this entry: one step on from the page it belongs to
-    const below = (current && current.state && current.state.depth) || 0;
-    history.replaceState({ depth: below + 1, scrollY: main()?.scrollTop || 0 }, '', location.href);
-  }
   remember();
-  // Only the #section changed: the browser already jumped, the page stays
-  if (was && was.pathname === location.pathname && was.search === location.search) return;
+  if (samePage && !upgrade(new URL(location.href))) return;  // only the #section changed
   render();
 }
 
@@ -195,5 +208,5 @@ export function startRouter() {
     history.replaceState({ depth: 0, scrollY: 0 }, '', location.href);
   }
   remember();
-  return render().finally(ready);
+  return render();
 }
