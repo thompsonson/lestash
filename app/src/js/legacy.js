@@ -299,6 +299,7 @@ function closeItemView() {
 
 route(/^\/items\/(\d+)$/, async ([, id]) => {
   showOnly('item-view', null);
+  pageFailed = false;
   let item = cachedItem(id);
   if (!item) {
     const container = document.getElementById('item-view-content');
@@ -308,6 +309,7 @@ route(/^\/items\/(\d+)$/, async ([, id]) => {
     } catch (e) {
       if (location.pathname === `/items/${id}`) {
         container.innerHTML = `<div class="empty-state" style="padding:2rem">Item not found: ${escHtml(e.message)}</div>`;
+        pageFailed = true;
       }
       return;
     }
@@ -1182,10 +1184,17 @@ function escHtml(s) {
 marked.use({
   renderer: {
     link(token) {
-      // Links to this app's own pages (/items/1, #heading) open here; others in a new tab
-      const own = /^(\/(?!\/)|#)/.test(token.href || '');
-      return own ? `<a href="${token.href}">${token.text}</a>`
-        : `<a href="${token.href}" target="_blank" rel="noopener">${token.text}</a>`;
+      // Links to this app's own pages (/items/1, #heading) open here, judged by where
+      // the address resolves (so "/\\host" is not ours); files and others in a new tab
+      let href = token.href || '';
+      let own = false;
+      try {
+        const u = new URL(href, location.href);
+        own = u.origin === location.origin && !u.pathname.startsWith('/api/');
+      } catch { /* not an address: leave as written */ }
+      if (href.startsWith('/api/')) href = getApiBase() + href;
+      return own ? `<a href="${href}">${token.text}</a>`
+        : `<a href="${href}" target="_blank" rel="noopener">${token.text}</a>`;
     },
     image(token) {
       let href = token.href || '';
@@ -1216,6 +1225,8 @@ function feedKeyNow() {
   ].join('|');
 }
 let feedKey = null;
+// Set when an item or collection page could not load, so Reconnect redraws it
+let pageFailed = false;
 let feedSeq = 0;
 
 async function loadFeed(append) {
@@ -1289,8 +1300,10 @@ route(/^\/$/, async (m, url) => {
   // filters, so the feed always shows what its address says
   const pick = (id, value) => {
     const sel = document.getElementById(id);
+    sel.querySelectorAll('option[data-adhoc]').forEach(o => { if (o.value !== value) o.remove(); });
     if (value && ![...sel.options].some(o => o.value === value)) {
       const opt = document.createElement('option');
+      opt.dataset.adhoc = '1';
       opt.value = value;
       opt.textContent = value;
       sel.appendChild(opt);
@@ -3002,6 +3015,7 @@ async function loadCollections() {
 route(/^\/collections$/, () => showTab('collections'));
 route(/^\/collections\/(\d+)$/, async ([, id]) => {
   showOnly('item-view', 'collections');
+  pageFailed = false;
   const container = document.getElementById('item-view-content');
   container.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
   try {
@@ -3021,6 +3035,7 @@ route(/^\/collections\/(\d+)$/, async ([, id]) => {
   } catch (e) {
     if (location.pathname !== `/collections/${id}`) return;
     container.innerHTML = `<div class="empty-state" style="padding:2rem">Collection not found: ${escHtml(e.message)}</div>`;
+    pageFailed = true;
   }
 });
 
@@ -3377,8 +3392,8 @@ async function reconnect() {
   showToast('Reconnecting...', '');
   await checkHealth();
   await Promise.all([populateSourceFilter(), populateTagFilter()]);
-  feedKey = null;
-  render();  // redraw this page: a feed, item or collection that failed loads now
+  // Redraw only a page whose load failed, so an edit in progress and the scroll stay
+  if (pageFailed || (location.pathname === '/' && feedKey === null)) render();
 }
 
 /* ── Clipboard ── */
