@@ -209,6 +209,12 @@ def test_static_files_are_served(web_client):
     assert web_client.get("/app.js").text == "console.log(1)"
 
 
+def test_app_files_are_checked_on_every_load(web_client):
+    """After a deploy the browser must not run old modules beside new ones."""
+    assert web_client.get("/app.js").headers["cache-control"] == "no-cache"
+    assert web_client.get("/items/5").headers["cache-control"] == "no-cache"
+
+
 @pytest.mark.parametrize(
     "path",
     ["/..%2fsecret.txt", "/%2e%2e/secret.txt", "/..%2F..%2Fsecret.txt", "/a/..%2f..%2fsecret.txt"],
@@ -302,3 +308,26 @@ def test_cli_reports_the_installed_release():
     from lestash import __version__
 
     assert __version__ == version("lestash")
+
+
+def test_hybrid_ranks_a_near_empty_item_below_a_full_one(client, monkeypatch):
+    """A session named after the query, with no text, used to top hybrid results (#267)."""
+    import lestash.core.embeddings as emb
+
+    with deps.get_db() as conn:
+        thin = conn.execute(
+            "INSERT INTO items (source_type, source_id, title, content)"
+            " VALUES ('claude-code', 'thin', 'zebracorn', 'zebracorn (2026-03-13)')"
+        ).lastrowid
+        full = conn.execute(
+            "INSERT INTO items (source_type, source_id, title, content)"
+            " VALUES ('notebooklm', 'full', 'A notebook', ?)",
+            ("A long notebook about many things. " * 20,),
+        ).lastrowid
+        conn.commit()
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    # The thin item is the nearest vector, the full one second
+    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: [(thin, 0.1), (full, 0.2)])
+    resp = client.get("/api/items/search", params={"q": "qqqnothing", "mode": "hybrid"})
+    assert resp.status_code == 200
+    assert [i["id"] for i in resp.json()["items"]][:2] == [full, thin]

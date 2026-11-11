@@ -40,6 +40,8 @@ List items with filters and pagination.
 | `exclude_subtype` | string | — | Comma-separated terms; drops items whose subtype contains any (e.g. `reaction,invitation`). Applied before paging, so pages are full and `total` is exact |
 | `kind` | string | — | Comma-separated kinds to keep (e.g. `book,paper`); see `core/kinds.py` |
 | `exclude_kind` | string | — | Comma-separated kinds to leave out (e.g. `reaction`) |
+| `person` | int | — | Items this person made, voiced, published or received (children included) |
+| `role` | string | — | With `person`: only this role (`author`, `creator`, `narrator`, `publisher`, `recipient`) |
 | `since` | datetime | — | Only items fetched since this time |
 | `tag` | string | — | Filter by tag |
 | `parent_id` | int | — | Show children of this item |
@@ -252,6 +254,38 @@ Add a tag to an item.
 Remove a tag from an item.
 
 ---
+
+## Timeline
+
+### `GET /api/timeline`
+
+What you did and what you made between two times, newest first (#262).
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `start` | ISO time | required | From this time; a day's start in your zone, e.g. `2026-03-10T00:00:00+01:00` |
+| `end` | ISO time | required | Up to this time, not included |
+| `verb` | string | — | Comma-separated verbs to keep (`watched`, `liked`, ...); `made` for items you made |
+| `kind` | string | — | Comma-separated item kinds to keep |
+
+Each entry has `at` (UTC), `verb` (an activity's verb, or `made`), `item` (id, title, kind, kind_label, kind_detail, source_type, parent, channel), `context` (e.g. the notebook a prompt used) and `details`. `made` entries are posts, replies, notes, notebooks, chats, generated items, projects and email threads, on the day they were made. `previous` and `next` are the nearest times outside the span with entries. Up to 5,000 entries; `truncated` says when there were more.
+
+## People
+
+### `GET /api/people`
+
+People, channels or AIs, those with the most items first (#263).
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `switch` | string | `people` | `people` (person, group), `channels` (organization) or `ai` (software) |
+| `q` | string | — | Names containing this |
+| `limit` | int | 50 | 1–200 |
+| `offset` | int | 0 | |
+
+### `GET /api/people/{person_id}`
+
+One person: `accounts`, `made` (their items by role and kind), `mentioned_in`, and `your_activity` (what you did to their items, by verb, with the last time). `GET /api/people/me` is you.
 
 ## Collections
 

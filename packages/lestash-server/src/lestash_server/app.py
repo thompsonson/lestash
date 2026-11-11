@@ -16,9 +16,11 @@ from lestash_server.routes import (
     imports,
     items,
     media,
+    people,
     profiles,
     sources,
     stats,
+    timeline,
     voice,
 )
 
@@ -63,6 +65,8 @@ def create_app(static_dir: str | None = None) -> FastAPI:
     app.include_router(sources.router)
     app.include_router(profiles.router)
     app.include_router(stats.router)
+    app.include_router(timeline.router)
+    app.include_router(people.router)
     app.include_router(imports.router)
     app.include_router(voice.router)
     app.include_router(collections.router)
@@ -140,8 +144,11 @@ def create_app(static_dir: str | None = None) -> FastAPI:
                 is_asset = file_path.is_relative_to(static_root) and file_path.is_file()
             except (ValueError, OSError):  # a decoded NUL byte, a name too long, ...
                 is_asset = False
+            # The app's files change on every deploy: the browser must ask each time
+            # (a cheap 304 when unchanged), or it can run old modules beside new ones
+            fresh = {"Cache-Control": "no-cache"}
             if is_asset:
-                return FileResponse(file_path)
-            return FileResponse(index_path, media_type="text/html")
+                return FileResponse(file_path, headers=fresh)
+            return FileResponse(index_path, media_type="text/html", headers=fresh)
 
     return app
