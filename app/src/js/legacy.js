@@ -2,7 +2,9 @@ import {
   IS_TAURI, tauriInvoke, tauriListen, DEFAULT_SETTINGS, settings, saveSettings, getApiBase,
   debugLog, addDebugLog, api,
 } from './api.js';
-import { route, navigate, back, startRouter, cacheItem, cachedItem } from './router.js';
+import {
+  route, navigate, back, startRouter, routerReady, cacheItem, cachedItem,
+} from './router.js';
 
 /* ── Error visibility (Android WebView debugging) ── */
 window.onerror = function(msg, url, line) {
@@ -148,6 +150,8 @@ const TAB_PATHS = {
 
 // Show one page and hide every other; `tab` is the tab to mark, if any
 function showOnly(id, tab) {
+  if (id !== 'tab-search') clearTimeout(searchTimer);
+  if (tab && id === `tab-${tab}`) tabAddress[tab] = location.pathname + location.search;
   document.querySelectorAll('.tab-content').forEach(t => {
     t.classList.toggle('active', t.id === id);
     t.style.display = '';
@@ -160,18 +164,24 @@ function showOnly(id, tab) {
   });
 }
 
+// Each tab's last address, so a tab returns to its filters or query
+const tabAddress = {};
+
 function switchTab(tab) {
-  navigate(TAB_PATHS[tab] || '/');
+  navigate(tabAddress[tab] || TAB_PATHS[tab] || '/');
 }
 
 function showTab(tab) {
   showOnly(`tab-${tab}`, tab);
-  if (tab === 'recent') loadRecent();
-  if (tab === 'notes') { loadSavedNotes(); checkSttModel(); }
-  if (tab === 'sources') { loadSources(); loadGoogleAuth(); loadAudibleAuth(); loadLinkedInAuth(); }
-  if (tab === 'stats') loadStats();
-  if (tab === 'collections') loadCollections();
-  if (tab === 'debug') { renderDebugInfo(); renderDebugLog(); }
+  const loads = {
+    recent: () => [loadRecent()],
+    notes: () => [loadSavedNotes(), checkSttModel()],
+    sources: () => [loadSources(), loadGoogleAuth(), loadAudibleAuth(), loadLinkedInAuth()],
+    stats: () => [loadStats()],
+    collections: () => [loadCollections()],
+    debug: () => [renderDebugInfo(), renderDebugLog()],
+  };
+  return Promise.allSettled((loads[tab] || (() => []))());
 }
 
 document.getElementById('tabs').addEventListener('click', e => {
@@ -732,11 +742,7 @@ function renderItemView(item) {
         btn.textContent = 'Restore';
       }
     }
-    if (btn.dataset.action === 'open-linked') {
-      e.preventDefault();
-      navigate(`/items/${btn.dataset.id}`);
-      return;
-    }
+    if (btn.dataset.action === 'open-linked') return;
     if (btn.dataset.action === 'remove-link') {
       const q = new URLSearchParams({ other_id: btn.dataset.other, kind: btn.dataset.kind, direction: btn.dataset.direction });
       try {
@@ -982,12 +988,12 @@ function renderItemView(item) {
   if (item.parent_id && document.getElementById('parent-post')) {
     api(`/api/items/${item.parent_id}`).then(parent => {
       const list = document.getElementById('parent-post');
-      if (!list) return;
+      if (!list || location.pathname !== `/items/${item.id}`) return;
       list.innerHTML = '';
       list.appendChild(renderCard(parent));
     }).catch(() => {
       const list = document.getElementById('parent-post');
-      if (list) list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Could not load parent</span>';
+      if (list && location.pathname === `/items/${item.id}`) list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Could not load parent</span>';
     });
   }
 
@@ -1023,7 +1029,7 @@ function renderItemView(item) {
   if (!item.parent_id && item.held !== false) {
     api(`/api/embeddings/similar/${item.id}?limit=5`).then(data => {
       const list = document.getElementById('similar-list');
-      if (!list) return;
+      if (!list || location.pathname !== `/items/${item.id}`) return;
       if (!data.length) {
         list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">No embeddings yet — run rebuild</span>';
         return;
@@ -1035,7 +1041,7 @@ function renderItemView(item) {
       });
     }).catch(() => {
       const list = document.getElementById('similar-list');
-      if (list) list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Unavailable</span>';
+      if (list && location.pathname === `/items/${item.id}`) list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Unavailable</span>';
     });
   }
 }
@@ -1361,14 +1367,16 @@ function searchAddress() {
   const mode = document.getElementById('search-mode').value;
   const params = new URLSearchParams();
   if (q) params.set('q', q);
-  if (q && mode !== 'hybrid') params.set('mode', mode);
+  if (mode !== 'hybrid') params.set('mode', mode);
   const qs = params.toString();
   return qs ? '/search?' + qs : '/search';
 }
 
 document.getElementById('search-input').addEventListener('input', () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => navigate(searchAddress(), { replace: true }), 300);
+  searchTimer = setTimeout(() => {
+    if (location.pathname === '/search') navigate(searchAddress(), { replace: true });
+  }, 300);
 });
 document.getElementById('search-mode').addEventListener('change', () => {
   clearTimeout(searchTimer);
@@ -1380,7 +1388,9 @@ route(/^\/search$/, (m, url) => {
   showOnly('tab-search', 'search');
   const input = document.getElementById('search-input');
   const q = (url.searchParams.get('q') || '').trim();
-  document.getElementById('search-mode').value = url.searchParams.get('mode') || 'hybrid';
+  const modes = ['hybrid', 'keyword', 'semantic'];
+  const mode = url.searchParams.get('mode');
+  document.getElementById('search-mode').value = modes.includes(mode) ? mode : 'hybrid';
   if (input.value.trim() !== q) input.value = q;
   const key = q + '|' + document.getElementById('search-mode').value;
   if (key === searchShown) return;
@@ -2673,7 +2683,7 @@ async function handlePendingShare() {
 }
 
 if (IS_TAURI && tauriInvoke) {
-  setTimeout(handlePendingShare, 500);
+  routerReady.then(() => setTimeout(handlePendingShare, 500));
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') handlePendingShare();
   });
@@ -2918,9 +2928,12 @@ async function checkHealth() {
 
 /* ── Keyboard shortcuts ── */
 document.addEventListener('keydown', e => {
-  if (e.key === '/' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT') {
+  const el = document.activeElement;
+  const typing = el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable);
+  const inDialog = document.querySelector('.modal-overlay.open');
+  if (e.key === '/' && !e.ctrlKey && !e.metaKey && !typing && !inDialog) {
     e.preventDefault();
-    document.querySelectorAll('#tabs button')[1].click();
+    switchTab('search');
   }
   if (e.key === 'Escape') {
     closeSettings();
