@@ -293,6 +293,17 @@ Left for separate work: search ranking of near-empty sessions; speaker splits in
 - Underneath it stays a `people` row of kind `organization`; no new table.
 - They share one page, **People**, with a switch: People · Channels · AI. Each has its own card and page sections, such as "videos" and "you watched" for a channel.
 
+### A channel is anything that publishes a series
+- Not only YouTube: a blog, a podcast, a newsletter or a mailing list is a channel too.
+- A channel is two things at once:
+  - an agent that publishes (`schema:Organization`, ActivityStreams `Service` or `Group`);
+  - a series of works (`schema:CreativeWorkSeries`, with `Blog` and `PodcastSeries` under it).
+- So a channel page shows who it is, and its works newest first.
+- **Following** is a relationship from you to a channel, with a date: YouTube subscriptions today; blog, podcast or newsletter feeds later.
+- Gaps:
+  - subscriptions aren't stored as relationships yet; the YouTube plugin names them, but no `subscribed` activity or link exists;
+  - blogs need a feed source (RSS or Atom) when you start following any.
+
 ### Home is the Timeline
 - `/` opens today on the Timeline, with the search box at its top.
 
