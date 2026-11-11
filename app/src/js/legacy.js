@@ -1,51 +1,14 @@
+import {
+  IS_TAURI, tauriInvoke, tauriListen, DEFAULT_SETTINGS, settings, saveSettings, getApiBase,
+  debugLog, addDebugLog, api,
+} from './api.js';
+import { route, navigate, back, startRouter, cacheItem, cachedItem } from './router.js';
+
 /* ── Error visibility (Android WebView debugging) ── */
 window.onerror = function(msg, url, line) {
   document.title = 'ERR: ' + msg;
   console.error('JS Error:', msg, 'at', url, ':', line);
 };
-
-/* ── Tauri interop ── */
-const IS_TAURI = window.__TAURI_INTERNALS__ !== undefined;
-let tauriInvoke = null;
-let tauriListen = null;
-
-if (IS_TAURI) {
-  tauriInvoke = window.__TAURI_INTERNALS__.invoke;
-  tauriListen = async function(event, handler) {
-    return window.__TAURI_INTERNALS__.invoke('plugin:event|listen', {
-      event: event,
-      target: { kind: 'Any' },
-      handler: window.__TAURI_INTERNALS__.transformCallback(handler),
-    });
-  };
-}
-
-/* ── Settings ── */
-const SETTINGS_KEY = 'lestash-settings';
-const DEFAULT_SETTINGS = {
-  host: 'pop-mini.monkey-ladon.ts.net', port: 8444,
-  llmUrl: '', llmModel: '', llmPrompt: '',
-};
-
-let settings = loadSettings();
-
-function loadSettings() {
-  try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
-  } catch {}
-  return { ...DEFAULT_SETTINGS };
-}
-
-function saveSettings(s) {
-  settings = s;
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
-}
-
-function getApiBase() {
-  if (IS_TAURI) return `https://${settings.host}:${settings.port}`;
-  return '';
-}
 
 function openSettings() {
   document.getElementById('s-host').value = settings.host;
@@ -73,13 +36,7 @@ function saveSettingsForm() {
   setTimeout(() => location.reload(), 500);
 }
 
-/* ── Debug logging ── */
-const debugLog = [];
-function addDebugLog(method, url, status, time, error) {
-  debugLog.unshift({ ts: new Date().toISOString(), method, url, status, time, error });
-  if (debugLog.length > 50) debugLog.pop();
-  renderDebugLog();
-}
+window.addEventListener('lestash:debuglog', () => renderDebugLog());
 
 function renderDebugLog() {
   const el = document.getElementById('debug-log');
@@ -171,30 +128,6 @@ async function debugTestConnection() {
   }
 }
 
-/* ── API helper ── */
-async function api(path, opts) {
-  const fullUrl = `${getApiBase()}${path}`;
-  const start = performance.now();
-  try {
-    const res = await fetch(fullUrl, opts);
-    const time = Math.round(performance.now() - start);
-    addDebugLog(opts?.method || 'GET', fullUrl, res.status, time);
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`${res.status}: ${body}`);
-    }
-    return res.json();
-  } catch (e) {
-    const time = Math.round(performance.now() - start);
-    let detail = `${e.name}: ${e.message}`;
-    if (e.message === 'Failed to fetch' || e.message === 'NetworkError when attempting to fetch resource.') {
-      detail += ' [network-level failure — possible causes: DNS resolution failed, TLS certificate not trusted by Android WebView, CORS blocked, or device not connected to Tailscale]';
-    }
-    addDebugLog(opts?.method || 'GET', fullUrl, 'ERR', time, detail);
-    throw e;
-  }
-}
-
 /* ── Toasts ── */
 function showToast(message, level) {
   const el = document.createElement('div');
@@ -206,27 +139,39 @@ function showToast(message, level) {
   el.addEventListener('animationend', () => el.remove());
 }
 
-/* ── Tabs ── */
-function switchTab(tab, skipHistory) {
-  // If an item/collection view is open, close it first before switching tabs
-  if (viewStack.length > 0) { viewStack.length = 0; _restoreListView(); }
-  document.querySelectorAll('#tabs button').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  const btn = document.querySelector(`#tabs [data-tab="${tab}"]`);
-  if (btn) btn.classList.add('active');
-  const content = document.getElementById(`tab-${tab}`);
-  if (content) content.classList.add('active');
-  if (tab === 'feed' && feedItems.length === 0) loadFeed();
+/* ── Pages (#260): the router draws exactly one; see js/router.js ── */
+const TAB_PATHS = {
+  feed: '/', recent: '/recent', notes: '/notes', search: '/search',
+  collections: '/collections', sources: '/settings/sources',
+  stats: '/settings/stats', debug: '/settings/debug',
+};
+
+// Show one page and hide every other; `tab` is the tab to mark, if any
+function showOnly(id, tab) {
+  document.querySelectorAll('.tab-content').forEach(t => {
+    t.classList.toggle('active', t.id === id);
+    t.style.display = '';
+  });
+  document.getElementById('item-view').style.display = id === 'item-view' ? 'block' : 'none';
+  document.querySelectorAll('#tabs button').forEach(b => {
+    const on = b.dataset.tab === tab;
+    b.classList.toggle('active', on);
+    if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
+}
+
+function switchTab(tab) {
+  navigate(TAB_PATHS[tab] || '/');
+}
+
+function showTab(tab) {
+  showOnly(`tab-${tab}`, tab);
   if (tab === 'recent') loadRecent();
-  if (tab === 'search') document.getElementById('search-input').focus();
   if (tab === 'notes') { loadSavedNotes(); checkSttModel(); }
   if (tab === 'sources') { loadSources(); loadGoogleAuth(); loadAudibleAuth(); loadLinkedInAuth(); }
   if (tab === 'stats') loadStats();
   if (tab === 'collections') loadCollections();
   if (tab === 'debug') { renderDebugInfo(); renderDebugLog(); }
-  if (!IS_TAURI && !skipHistory) {
-    history.pushState({ tab }, '', '#' + tab);
-  }
 }
 
 document.getElementById('tabs').addEventListener('click', e => {
@@ -260,8 +205,10 @@ function sourceName(subtype) {
 
 /* ── Render item card ── */
 function renderCard(item) {
-  const card = document.createElement('div');
+  const card = document.createElement('a');
   card.className = 'item-card';
+  card.href = `/items/${item.id}`;
+  cacheItem(item);
   const emoji = item.metadata && item.metadata.emoji ? item.metadata.emoji + ' ' : '';
   // For engagement items (likes, reactions, comments), the post body lives
   // in item.preview and item.title is null. Synthesise an "actor → author"
@@ -303,7 +250,6 @@ function renderCard(item) {
       </div>
     </div>
   `;
-  card.addEventListener('click', () => openItemView(item));
   return card;
 }
 
@@ -321,70 +267,41 @@ function renderChatBubble(item) {
     <div class="chat-role ${roleClass}">${roleLabel}</div>
     <div class="chat-bubble ${roleClass}">${renderMarkdown(item.content)}</div>
   `;
-  wrapper.querySelector('.chat-bubble').addEventListener('click', () => openItemView(item));
+  wrapper.querySelector('.chat-bubble').addEventListener('click', e => {
+    if (e.target.closest('a')) return;
+    openItemView(item);
+  });
   return wrapper;
 }
 
-/* ── Master-detail navigation ── */
-const viewStack = [];
-
-function openItemView(item, skipHistory) {
-  const mainEl = document.querySelector('main');
-  viewStack.push({ scrollY: mainEl.scrollTop, item });
-
-  // Hide tabs and tab content
-  document.querySelector('nav').style.display = 'none';
-  document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
-
-  // Show item view
-  const view = document.getElementById('item-view');
-  view.style.display = 'block';
-  renderItemView(item);
-  mainEl.scrollTop = 0;
-
-  // Push browser history (web only)
-  if (!IS_TAURI && !skipHistory) {
-    history.pushState({ itemId: item.id }, '', '/items/' + item.id);
-  }
+/* ── Item and collection pages ── */
+function openItemView(item) {
+  navigate(`/items/${cacheItem(item).id}`);
 }
 
-function _restoreListView() {
-  document.getElementById('item-view').style.display = 'none';
-  document.querySelector('nav').style.display = '';
-  document.querySelectorAll('.tab-content').forEach(t => t.style.display = '');
-  const active = document.querySelector('.tab-content.active');
-  if (active) active.style.display = 'block';
-}
-
+// ← Back returns to the page before; a link opened directly falls back to its list
 function closeItemView() {
-  // In browser, let history.back() trigger popstate which handles the DOM update
-  if (!IS_TAURI && viewStack.length > 0) {
-    history.back();
-    return;
-  }
-  _doCloseItemView();
+  back(location.pathname.startsWith('/collections/') ? '/collections' : '/');
 }
 
-function _doCloseItemView() {
-  viewStack.pop();
-
-  if (viewStack.length > 0) {
-    const prev = viewStack[viewStack.length - 1];
-    if (prev.item) {
-      renderItemView(prev.item);
-    } else if (prev.collection) {
-      viewStack.pop(); // Remove it so openCollectionView can push it again
-      openCollectionView(prev.collection).catch(() => {
-        viewStack.length = 0;
-        _restoreListView();
-      });
+route(/^\/items\/(\d+)$/, async ([, id]) => {
+  showOnly('item-view', null);
+  let item = cachedItem(id);
+  if (!item) {
+    const container = document.getElementById('item-view-content');
+    container.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+    try {
+      item = cacheItem(await api(`/api/items/${id}?include_children=true`));
+    } catch (e) {
+      if (location.pathname === `/items/${id}`) {
+        container.innerHTML = `<div class="empty-state" style="padding:2rem">Item not found: ${escHtml(e.message)}</div>`;
+      }
       return;
     }
-    document.querySelector('main').scrollTop = 0;
-  } else {
-    _restoreListView();
   }
-}
+  if (location.pathname !== `/items/${id}`) return;  // the user moved on meanwhile
+  renderItemView(item);
+});
 
 async function loadItemHistory(itemId) {
   const list = document.getElementById('item-history-list');
@@ -817,11 +734,7 @@ function renderItemView(item) {
     }
     if (btn.dataset.action === 'open-linked') {
       e.preventDefault();
-      try {
-        openItemView(await api(`/api/items/${btn.dataset.id}`));
-      } catch {
-        showToast('Could not open the item', 'error');
-      }
+      navigate(`/items/${btn.dataset.id}`);
       return;
     }
     if (btn.dataset.action === 'remove-link') {
@@ -1240,7 +1153,7 @@ async function loadLinks(itemId) {
     const title = l.item.title || l.item.preview || l.item.url || `Item ${l.item.id}`;
     return `<div style="display:flex;gap:0.4rem;align-items:baseline;padding:0.1rem 0">
       <span style="color:var(--muted);white-space:nowrap">${escHtml(label)}</span>
-      <a href="#" data-action="open-linked" data-id="${l.item.id}"
+      <a href="/items/${l.item.id}" data-action="open-linked" data-id="${l.item.id}"
         style="color:var(--ok);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${escHtml(title)}</a>
       <span style="color:var(--muted)">${escHtml(l.item.source_type)}</span>
       <span class="tag-remove" title="Remove this link" data-action="remove-link" data-id="${itemId}"
@@ -1281,8 +1194,21 @@ let feedItems = [];
 let feedOffset = 0;
 const FEED_LIMIT = 20;
 
+// What the feed shows, so returning to it reloads only when that changed
+function feedKeyNow() {
+  return [
+    document.getElementById('feed-source').value,
+    document.getElementById('feed-tag').value,
+    document.getElementById('feed-own').checked,
+    getExcludedSubtypes(),
+  ].join('|');
+}
+let feedKey = null;
+let feedSeq = 0;
+
 async function loadFeed(append) {
-  if (!append) { feedOffset = 0; feedItems = []; }
+  if (!append) { feedOffset = 0; feedItems = []; feedKey = feedKeyNow(); }
+  const seq = ++feedSeq;
   const list = document.getElementById('feed-list');
   const btn = document.getElementById('feed-more');
 
@@ -1302,6 +1228,7 @@ async function loadFeed(append) {
     if (excluded) url += `&exclude_subtype=${encodeURIComponent(excluded)}`;
 
     const data = await api(url);
+    if (seq !== feedSeq) return;  // a newer load owns the list
 
     if (!append) list.innerHTML = '';
 
@@ -1319,6 +1246,7 @@ async function loadFeed(append) {
     feedOffset += data.items.length;
     btn.style.display = feedOffset < data.total ? '' : 'none';
   } catch (e) {
+    if (seq !== feedSeq) return;
     if (!append) list.innerHTML = '';
     showToast(`Failed to load items: ${e.message}`, 'error');
   }
@@ -1326,20 +1254,28 @@ async function loadFeed(append) {
 
 function loadMoreFeed() { loadFeed(true); }
 
-function pushFilterState() {
-  if (IS_TAURI) return;
+function feedAddress() {
+  const params = new URLSearchParams();
   const source = document.getElementById('feed-source').value;
   const tag = document.getElementById('feed-tag').value;
-  const params = new URLSearchParams();
   if (source) params.set('source', source);
   if (tag) params.set('tag', tag);
+  if (document.getElementById('feed-own').checked) params.set('own', '1');
   const qs = params.toString();
-  history.pushState({ filters: true }, '', qs ? '/?' + qs : '/');
+  return qs ? '/?' + qs : '/';
 }
 
-document.getElementById('feed-source').addEventListener('change', () => { pushFilterState(); loadFeed(); });
-document.getElementById('feed-own').addEventListener('change', () => loadFeed());
-document.getElementById('feed-tag').addEventListener('change', () => { pushFilterState(); loadFeed(); });
+['feed-source', 'feed-tag', 'feed-own'].forEach(id =>
+  document.getElementById(id).addEventListener('change', () => navigate(feedAddress())));
+
+route(/^\/$/, (m, url) => {
+  showOnly('tab-feed', 'feed');
+  const p = url.searchParams;
+  document.getElementById('feed-source').value = p.get('source') || '';
+  document.getElementById('feed-tag').value = p.get('tag') || '';
+  document.getElementById('feed-own').checked = p.get('own') === '1';
+  if (feedKeyNow() !== feedKey) return loadFeed();
+});
 
 /* ── Subtype filters ── */
 const SUBTYPE_STORAGE_KEY = 'lestash-subtype-filters';
@@ -1420,17 +1356,43 @@ let searchTimer = null;
 // request can't overwrite later results
 let searchSeq = 0;
 
-document.getElementById('search-input').addEventListener('input', e => {
+function searchAddress() {
+  const q = document.getElementById('search-input').value.trim();
+  const mode = document.getElementById('search-mode').value;
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (q && mode !== 'hybrid') params.set('mode', mode);
+  const qs = params.toString();
+  return qs ? '/search?' + qs : '/search';
+}
+
+document.getElementById('search-input').addEventListener('input', () => {
   clearTimeout(searchTimer);
-  const q = e.target.value.trim();
-  const status = document.getElementById('search-status');
+  searchTimer = setTimeout(() => navigate(searchAddress(), { replace: true }), 300);
+});
+document.getElementById('search-mode').addEventListener('change', () => {
+  clearTimeout(searchTimer);
+  navigate(searchAddress(), { replace: true });
+});
+
+let searchShown = null;
+route(/^\/search$/, (m, url) => {
+  showOnly('tab-search', 'search');
+  const input = document.getElementById('search-input');
+  const q = (url.searchParams.get('q') || '').trim();
+  document.getElementById('search-mode').value = url.searchParams.get('mode') || 'hybrid';
+  if (input.value.trim() !== q) input.value = q;
+  const key = q + '|' + document.getElementById('search-mode').value;
+  if (key === searchShown) return;
+  searchShown = key;
   if (!q) {
     searchSeq++;
     document.getElementById('search-list').innerHTML = '';
-    status.textContent = 'Tip: use "quotes" for exact phrases, -"quotes" to exclude one, word* for prefix, AND/OR/NOT for boolean';
+    document.getElementById('search-status').textContent = 'Tip: use "quotes" for exact phrases, -"quotes" to exclude one, word* for prefix, AND/OR/NOT for boolean';
+    input.focus();
     return;
   }
-  searchTimer = setTimeout(() => doSearch(q), 300);
+  return doSearch(q);
 });
 
 async function doSearch(q) {
@@ -2977,8 +2939,9 @@ async function loadCollections() {
     }
     list.innerHTML = '';
     colls.forEach(c => {
-      const card = document.createElement('div');
+      const card = document.createElement('a');
       card.className = 'item-card';
+      card.href = `/collections/${c.id}`;
       card.innerHTML = `
         <div class="item-card-header">
           <span class="item-title">${escHtml(c.name)}</span>
@@ -2989,7 +2952,6 @@ async function loadCollections() {
           <span>${c.item_count} item${c.item_count !== 1 ? 's' : ''}</span>
         </div>
       `;
-      card.addEventListener('click', () => openCollectionView(c));
       list.appendChild(card);
     });
   } catch (e) {
@@ -2997,18 +2959,14 @@ async function loadCollections() {
   }
 }
 
-async function openCollectionView(coll) {
+route(/^\/collections$/, () => showTab('collections'));
+route(/^\/collections\/(\d+)$/, async ([, id]) => {
+  showOnly('item-view', 'collections');
+  const container = document.getElementById('item-view-content');
+  container.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
   try {
-    const detail = await api(`/api/collections/${coll.id}`);
-    const mainEl = document.querySelector('main');
-    // Push a collection entry (not an item) onto the view stack
-    viewStack.push({ scrollY: mainEl.scrollTop, collection: coll });
-
-    document.querySelector('nav').style.display = 'none';
-    document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
-    document.getElementById('item-view').style.display = 'block';
-
-    const container = document.getElementById('item-view-content');
+    const detail = await api(`/api/collections/${id}`);
+    if (location.pathname !== `/collections/${id}`) return;  // the user moved on meanwhile
     let html = `<div class="item-view-title">${escHtml(detail.name)}</div>`;
     if (detail.description) html += `<div class="item-view-meta">${escHtml(detail.description)}</div>`;
     html += `<div class="item-view-children-title">${detail.items.length} items</div>`;
@@ -3020,13 +2978,14 @@ async function openCollectionView(coll) {
       const card = renderCard(item);
       itemList.appendChild(card);
     });
-
-    mainEl.scrollTop = 0;
-    if (!IS_TAURI) history.pushState({ collectionId: coll.id }, '', '#collection/' + coll.id);
   } catch (e) {
-    showToast('Failed to load collection: ' + e.message, 'error');
+    if (location.pathname !== `/collections/${id}`) return;
+    container.innerHTML = `<div class="empty-state" style="padding:2rem">Collection not found: ${escHtml(e.message)}</div>`;
   }
-}
+});
+
+route(/^\/(recent|notes)$/, ([, tab]) => showTab(tab));
+route(/^\/settings\/(sources|stats|debug)$/, ([, tab]) => showTab(tab));
 
 function openNewCollectionDialog() {
   document.getElementById('coll-name').value = '';
@@ -3405,23 +3364,6 @@ function copyFallback(text, message) {
   showToast(message || 'Copied', 'ok');
 }
 
-/* ── Single Item View (URL routing) ── */
-function checkSingleItemRoute() {
-  if (IS_TAURI) return false;
-  const match = window.location.pathname.match(/^\/items\/(\d+)$/);
-  if (!match) return false;
-  const itemId = match[1];
-  checkHealth().then(async () => {
-    try {
-      const item = await api(`/api/items/${itemId}?include_children=true`);
-      openItemView(item);
-    } catch (e) {
-      document.querySelector('main').innerHTML = `<div class="empty-state" style="padding:2rem">Item not found: ${escHtml(e.message)}</div>`;
-    }
-  });
-  return true;
-}
-
 /* ── Init ── */
 // Debug mode toggle
 if (localStorage.getItem('lestash-debug-mode') === 'true') document.body.classList.add('debug-mode');
@@ -3433,63 +3375,25 @@ document.getElementById('settings-btn').addEventListener('click', openSettings);
 loadAppVersion().then(renderDebugInfo);
 renderDebugInfo();
 
-// Browser back/forward button support
-if (!IS_TAURI) {
-  window.addEventListener('popstate', (e) => {
-    if (e.state && e.state.itemId) {
-      api(`/api/items/${e.state.itemId}`).then(item => openItemView(item, true)).catch(() => {});
-    } else if (e.state && e.state.tab) {
-      // Always clear any stale view stack before switching tabs
-      if (viewStack.length > 0) { viewStack.length = 0; _restoreListView(); }
-      switchTab(e.state.tab, true);
-    } else if (viewStack.length > 0) {
-      _doCloseItemView();
-    } else {
-      // Null state (hash change, manual URL edit, etc.) — always restore nav
-      viewStack.length = 0;
-      _restoreListView();
-      applyUrlFilters();
-      loadFeed();
-    }
-  });
-}
-
-// Android hardware back button support
-if (IS_TAURI && tauriListen) {
-  tauriListen('tauri://back', () => {
-    // Close modals first
-    const openModal = document.querySelector('.modal-overlay.open');
-    if (openModal) { openModal.classList.remove('open'); return; }
-    // Navigate back in view stack
-    if (viewStack.length > 0) { _doCloseItemView(); return; }
-    // Return to feed from other tabs
-    const activeTab = document.querySelector('#tabs button.active');
-    if (activeTab && activeTab.dataset.tab !== 'feed') { switchTab('feed'); return; }
-    // At feed root — let Tauri handle default (minimize/exit)
-  });
-}
-
-function applyUrlFilters() {
-  const params = new URLSearchParams(window.location.search);
-  const source = params.get('source') || '';
-  const tag = params.get('tag') || '';
-  document.getElementById('feed-source').value = source;
-  document.getElementById('feed-tag').value = tag;
-}
-
-if (!checkSingleItemRoute()) {
-  // Normal app flow
-  checkHealth().then(async () => {
-    await populateSourceFilter();
-    await populateTagFilter();
-    if (!IS_TAURI) applyUrlFilters();
-    // Apply tab from URL hash (e.g. /#notes)
-    const hashTab = window.location.hash.replace('#', '');
-    if (hashTab && document.getElementById(`tab-${hashTab}`)) {
-      switchTab(hashTab, true);
-    } else {
-      loadFeed();
-    }
-  });
-}
+// Filters need their options before the router sets them from the address
+checkHealth().then(async () => {
+  await Promise.all([populateSourceFilter(), populateTagFilter()]);
+  await startRouter();
+});
 setInterval(checkHealth, 30000);
+
+// Inline handlers (onclick="…") in the markup and in rendered HTML call these by name.
+// A module's functions are not global, so these are; new code uses addEventListener.
+Object.assign(window, {
+  _isYouTubeUrl, addToCollection, attachPickerSearch, attachPickerSelect,
+  closeCaptureDialog, closeHtmlImportDialog, closeImageCaptureDialog, closeItemView,
+  closeLinkDialog, closeLinkedInCompose, closeMicroblogCompose,
+  closeMultiImageCaptureDialog, closeProcessDialog, closeSettings, completeAudibleAuth,
+  completeGoogleAuth, confirmAddToCollection, debugTestConnection, escHtml, importDriveUrl,
+  loadMoreFeed, openLinkedInCompose, openMicroblogCompose, openNewCollectionDialog,
+  openProcessDialog, reconnect, runProcessDialog, saveCaptureItem, saveHtmlImport,
+  saveImageCapture, saveLink, saveMultiImageCapture, saveNewCollection, saveSettingsForm,
+  saveVoiceNote, startAudibleAuth, startGoogleAuth, startLinkedInAuth, submitLinkedInPost,
+  submitMicroblogPublish, toggleAttachMode, toggleRecording, transcribeRecordedAudio,
+  triggerSync,
+});
