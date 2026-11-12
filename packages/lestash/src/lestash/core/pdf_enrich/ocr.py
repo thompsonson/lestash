@@ -34,6 +34,9 @@ OCR_PROMPT = (
     "Return only the transcribed text, with no preamble, quotes, or commentary. "
     "If the image contains no legible handwriting, return the single word UNREADABLE."
 )
+# An annotation's content when OCR finds no legible writing and it had none (#206).
+# Its ocr_version is still recorded, so it isn't sent again on every run.
+UNREADABLE_CONTENT = "[Unreadable handwriting]"
 PNG_RENDER_PADDING_PT = 12.0
 PNG_RENDER_DPI = 200
 
@@ -73,7 +76,7 @@ def ocr_annotation(child_id: int, *, config: Config | None = None) -> OcrResult:
     config = config or Config.load()
     with get_connection(config) as conn:
         row = conn.execute(
-            "SELECT id, parent_id, metadata FROM items WHERE id = ?", (child_id,)
+            "SELECT id, parent_id, content, metadata FROM items WHERE id = ?", (child_id,)
         ).fetchone()
         if not row:
             return OcrResult(child_id=child_id, status="failed", message="not found")
@@ -106,7 +109,7 @@ def ocr_annotation(child_id: int, *, config: Config | None = None) -> OcrResult:
         pre_max = max_history_id(conn)
         conn.execute(
             "UPDATE items SET content = ?, metadata = ? WHERE id = ?",
-            (text or row["metadata"], json.dumps(meta), child_id),
+            (text or row["content"] or UNREADABLE_CONTENT, json.dumps(meta), child_id),
         )
         mark_recent_history(conn, pre_max, "enricher", item_ids=[child_id])
         conn.commit()
