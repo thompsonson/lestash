@@ -3,6 +3,7 @@ import {
   debugLog, addDebugLog, api,
 } from './api.js';
 import { escHtml, relTime, sourceClass, sourceName } from './util.js';
+import './external.js';
 import { renderCard } from './objects/item/card.js';
 import { startTimeline, redrawTimeline } from './places/timeline.js';
 import { startPeople, redrawPeople } from './places/people.js';
