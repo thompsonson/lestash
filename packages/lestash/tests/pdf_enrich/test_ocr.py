@@ -224,3 +224,31 @@ def test_ocr_unreadable_response_yields_empty_string(config, annotated_item):
         result = ocr_annotation(child_id, config=config)
     assert result.status == "transcribed"
     assert result.text == ""
+
+
+def test_an_unreadable_annotation_keeps_its_content_not_its_metadata(config, annotated_item):
+    """#206: no text from OCR must not put the metadata JSON in content."""
+    parent_id, child_id = annotated_item
+    with get_connection(config) as conn:
+        before = conn.execute("SELECT content FROM items WHERE id = ?", (child_id,)).fetchone()[0]
+    with patch.object(ocr_module, "_transcribe_with_claude", return_value=""):
+        ocr_annotation(child_id, config=config)
+    with get_connection(config) as conn:
+        row = conn.execute(
+            "SELECT content, metadata FROM items WHERE id = ?", (child_id,)
+        ).fetchone()
+    assert row["content"] == (before or ocr_module.UNREADABLE_CONTENT)
+    assert not row["content"].startswith("{")
+    assert json.loads(row["metadata"])["ocr_version"] == OCR_EXTRACTOR_VERSION
+
+
+def test_an_unreadable_annotation_without_content_says_so(config, annotated_item):
+    parent_id, child_id = annotated_item
+    with get_connection(config) as conn:
+        conn.execute("UPDATE items SET content = '' WHERE id = ?", (child_id,))
+        conn.commit()
+    with patch.object(ocr_module, "_transcribe_with_claude", return_value=""):
+        ocr_annotation(child_id, config=config)
+    with get_connection(config) as conn:
+        content = conn.execute("SELECT content FROM items WHERE id = ?", (child_id,)).fetchone()[0]
+    assert content == ocr_module.UNREADABLE_CONTENT
