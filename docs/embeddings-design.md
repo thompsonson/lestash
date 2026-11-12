@@ -107,7 +107,7 @@ Run on a copy of the database in a test environment, on a frozen test set, repor
 2. **E1, baseline:** keyword alone; today's vectors alone; both fused.
 3. **E2, coverage:** today's model and recipe, with every item and part embedded. This separates the coverage gap from the model gap.
 4. **E3, model:** `bge-small-en-v1.5`, `granite-embedding-small-english-r2`, EmbeddingGemma (256 and 768 dimensions), Qwen3-Embedding-0.6B; on computer also Qwen3-Embedding-4B and bge-m3. Time each per 1,000 items on both machines, and per query on pop-mini.
-5. **E4, units:** ontology units vs fixed 200- and 400-token passages vs first 512 tokens. Best passage vs mean vs first passage, for scoring.
+5. **E4, units:** a check on the agreed rule. Ontology units against fixed 200- and 400-token passages and the first 512 tokens, for the fallback size inside long sections; and best part vs mean vs first part, for scoring. If fixed passages clearly win for a kind, that kind's rule is revisited.
 6. **E5, chats:** round vs session vs both fused, with and without the chat title.
 7. **E6, ranking:** RRF vs a tuned weighted sum; with and without a small reranker (`ms-marco-MiniLM-L6-v2`) on the top 30, timing each.
 8. **E7, related items:** content alone vs adding keyword vs adding the graph, on the 30 seeds.
@@ -132,5 +132,5 @@ Run on a copy of the database in a test environment, on a frozen test set, repor
 
 ## Supersedes
 
-- `docs/content-and-activity-ontology-design.md`, "Decided": "No chunking for now… one vector per item (#221)". This doc replaces that decision once the experiments choose.
+- `docs/content-and-activity-ontology-design.md`, "Decided": "No chunking for now… one vector per item (#221)". Replaced on 12 Nov 2026 by the unit rule above; the experiments choose models, sizes and scoring, not whether to split.
 - `docs/vector-search-design.md`: title plus 500 characters, and embed-on-insert, which was never built.
