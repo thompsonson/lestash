@@ -958,3 +958,5 @@ body.sheet-open #item-view {
 .timeline-list.slide-next { animation: slide-from-right 0.2s ease-out; }
 .timeline-list.slide-previous { animation: slide-from-left 0.2s ease-out; }
 @media (prefers-reduced-motion: reduce) { .timeline-list.slide-next, .timeline-list.slide-previous { animation: none; } }
+/* Sideways swipes change the day, not the browser's history; pinch-zoom stays */
+.timeline-list { touch-action: pan-y pinch-zoom; }
