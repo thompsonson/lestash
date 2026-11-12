@@ -197,6 +197,15 @@ def _held_post_urns(conn: sqlite3.Connection) -> dict[str, int]:
     return found
 
 
+@dataclass
+class _CommentRow:
+    text: str
+    link: str
+    post: str
+    when: datetime
+    ms: int
+
+
 class _Import:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
@@ -205,6 +214,7 @@ class _Import:
         self.other_posts = _held_post_urns(conn)
         self.comments = _held_comments(conn)
         self.matched: set[int] = set()  # held comments an export row has matched
+        self.as_posts: dict[int, str] = {}  # snapshot posts to name as ugcPosts, by URN
         self.author = _your_urn(conn)
         self.fills: dict[int, str] = {}  # held item -> the export's text
         self.used: set[str] = set()  # comment source ids given this run
@@ -225,8 +235,9 @@ class _Import:
                 self.report.skipped += 1
                 continue
             held = self.posts.find(urn)
-            if held is None:
-                held = self.other_posts.get(urn)
+            if held is None and (held := self.other_posts.get(urn)) is not None:
+                # Named as the sync names a post, so its comments find it as their parent
+                self.as_posts[held] = urn
             if held is not None:
                 self.report.posts_held += 1
                 content, metadata = self._held_text(held)
@@ -253,12 +264,11 @@ class _Import:
                 },
             )
 
-    def _held_comment(self, post: str, text: str, ms: int | None) -> _HeldComment | None:
-        """The held comment this export row is, if any: on the same post (one URN, or a
-        share and its activity made within SAME_POST_MS), with the same text, else made
-        within SAME_COMMENT_MS. Each held comment matches one row only."""
+    def _on_post(self, post: str) -> list[_HeldComment]:
+        """Held comments on this post, not yet matched: one URN, or a share and its
+        activity made within SAME_POST_MS."""
         post_ms = snowflake_ms(post)
-        on_post = [
+        return [
             h
             for h in self.comments
             if h.item_id not in self.matched
@@ -271,54 +281,81 @@ class _Import:
                 )
             )
         ]
-        wanted = _norm(text)
-        found = next((h for h in on_post if not h.placeholder and _norm(h.text) == wanted), None)
-        if found is None and ms is not None:
-            near = [h for h in on_post if h.ms is not None and abs(h.ms - ms) < SAME_COMMENT_MS]
-            found = min(near, key=lambda h: abs((h.ms or 0) - ms), default=None)
-        if found is not None:
-            self.matched.add(found.item_id)
+
+    def _match_comments(self, rows: list[_CommentRow]) -> dict[int, _HeldComment]:
+        """Which export rows are held comments, by row index. Text matches first, over
+        every row; then the closest times within SAME_COMMENT_MS, closest pair first.
+        Each held comment matches one row."""
+        found: dict[int, _HeldComment] = {}
+        for i, row in enumerate(rows):
+            wanted = _norm(row.text)
+            held = next(
+                (
+                    h
+                    for h in self._on_post(row.post)
+                    if not h.placeholder and _norm(h.text) == wanted
+                ),
+                None,
+            )
+            if held is not None:
+                found[i] = held
+                self.matched.add(held.item_id)
+        pairs = sorted(
+            (abs(h.ms - row.ms), i, h.item_id, h)
+            for i, row in enumerate(rows)
+            if i not in found
+            for h in self._on_post(row.post)
+            if h.ms is not None and abs(h.ms - row.ms) < SAME_COMMENT_MS
+        )
+        for _, i, item_id, held in pairs:
+            if i in found or item_id in self.matched:
+                continue
+            found[i] = held
+            self.matched.add(item_id)
         return found
 
     def comments_from(self, zf: zipfile.ZipFile) -> Iterator[ItemCreate]:
+        rows: list[_CommentRow] = []
         # The export escapes quotes in comments with a backslash
-        for row in _rows(zf, "Comments.csv", escapechar="\\"):
-            text = (row.get("Message") or "").strip()
-            link = row.get("Link") or ""
+        for record in _rows(zf, "Comments.csv", escapechar="\\"):
+            text = (record.get("Message") or "").strip()
+            link = record.get("Link") or ""
             post = post_urn_of(link)
-            when = parse_export_time(row.get("Date", ""))
+            when = parse_export_time(record.get("Date", ""))
             if not text or not post or when is None:
                 self.report.skipped += 1
                 continue
-            ms = int(when.timestamp() * 1000)
-            held = self._held_comment(post, text, ms)
+            rows.append(_CommentRow(text, link, post, when, int(when.timestamp() * 1000)))
+        matched = self._match_comments(rows)
+        for i, row in enumerate(rows):
+            held = matched.get(i)
             if held is not None:
                 self.report.comments_held += 1
                 if held.placeholder:
-                    self.fills[held.item_id] = text
+                    self.fills[held.item_id] = row.text
                 continue
             self.report.comments_added += 1
             # The export gives no comment id: the post and the time name it, and a count
             # tells apart two comments on one post in the same second
-            source_id, n = f"export-comments-{post}-{ms}", 1
+            source_id, n = f"export-comments-{row.post}-{row.ms}", 1
             while source_id in self.used:
                 n += 1
-                source_id = f"export-comments-{post}-{ms}-{n}"
+                source_id = f"export-comments-{row.post}-{row.ms}-{n}"
             self.used.add(source_id)
             yield ItemCreate(
                 source_type=SOURCE,
                 source_id=source_id,
-                url=link or None,
-                content=text,
+                url=row.link or None,
+                content=row.text,
                 author=self.author,
-                created_at=when,
+                created_at=row.when,
                 is_own_content=True,
                 metadata={
                     "source": EXPORT,
                     "resource_name": "socialActions/comments",
-                    "commented_on": post,
+                    "commented_on": row.post,
                     "export_file": "Comments.csv",
-                    "export_ms": ms,
+                    "export_ms": row.ms,
                 },
             )
 
@@ -372,12 +409,21 @@ class _Import:
         return (row[0], _metadata(row[1])) if row else None
 
     def fill(self) -> None:
-        """Give held items the export's text where the changelog gave none."""
+        """Give held items the export's text where the changelog gave none, and name
+        posts from the snapshot fetch as the sync does."""
         since = max_history_id(self.conn)
         for item_id, text in self.fills.items():
             self.conn.execute("UPDATE items SET content = ? WHERE id = ?", (text, item_id))
+        for item_id, urn in self.as_posts.items():
+            self.conn.execute(
+                "UPDATE items SET metadata = json_set(metadata, '$.resource_name', 'ugcPosts', "
+                "'$.post_id', ?) WHERE id = ? AND json_valid(metadata)",
+                (urn, item_id),
+            )
         self.report.filled = len(self.fills)
-        mark_recent_history(self.conn, since, "linkedin export", item_ids=list(self.fills))
+        mark_recent_history(
+            self.conn, since, "linkedin export", item_ids=[*self.fills, *self.as_posts]
+        )
 
 
 @dataclass
@@ -411,10 +457,12 @@ def parse_article(html: str, filename: str) -> Article | None:
         return found.group(0) if found else None
 
     created_on, published_on = stamp("created"), stamp("published")
-    for tag in soup.find_all(["h1", "style", "title"]) + soup.find_all(
+    # The first heading is the title; later ones are the article's own sections
+    for tag in [heading, *soup.find_all(["style", "title"])] + soup.find_all(
         class_=["created", "published"]
     ):
-        tag.decompose()
+        if tag is not None:
+            tag.decompose()
     body = soup.body or soup
     text = markdownify(str(body), heading_style="ATX").strip()
     text = re.sub(r"\n{3,}", "\n\n", text)

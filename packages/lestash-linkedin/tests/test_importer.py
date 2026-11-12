@@ -307,3 +307,54 @@ def test_posts_and_comments_from_the_snapshot_fetch_are_held(
         )
         assert (report.posts_held, report.posts_added) == (1, 0)
         assert (report.comments_held, report.comments_added) == (1, 0)
+
+
+def test_a_later_text_match_is_not_taken_by_an_earlier_time_match(
+    config: Config, tmp_path: Path
+) -> None:
+    # Row 1 has no held copy, but is within 5 s of the held "Exact"; row 2 is "Exact"
+    comments = (
+        "Date,Link,Message\n"
+        f"2026-01-19 10:45:54,{FEED}urn:li:activity:7418912385886941184,New one\n"
+        f"2026-01-19 10:46:30,{FEED}urn:li:activity:7418912385886941184,Exact\n"
+    )
+    with get_connection(config) as conn:
+        _sync_comment(conn, 1, "Exact", "urn:li:activity:7418912385886941184", 1768819555000)
+        report = import_export(conn, _zip(tmp_path, comments=comments))
+        assert (report.comments_held, report.comments_added) == (1, 1)
+        added = _items(conn, "json_extract(metadata, '$.source') = 'export'")
+        assert [a["content"] for a in added] == ["New one"]
+
+
+def test_comments_on_a_snapshot_post_go_under_it(config: Config, tmp_path: Path) -> None:
+    link = f"{FEED}urn:li:share:7000000000000000000"
+    with get_connection(config) as conn:
+        post_id = upsert_item(
+            conn,
+            ItemCreate(
+                source_type="linkedin",
+                source_id=link,
+                url=link,
+                content="A post",
+                is_own_content=True,
+                metadata={"domain": "MEMBER_SHARE_INFO", "raw": {}},
+            ),
+        )
+        import_export(
+            conn,
+            _zip(
+                tmp_path,
+                shares=f"Date,ShareLink,ShareCommentary\n2024-01-01 10:00:00,{link},A post\n",
+                comments=f"Date,Link,Message\n2024-01-01 11:00:00,{link},On it\n",
+            ),
+        )
+        (comment,) = _items(conn, "kind = 'comment'")
+        assert comment["parent_id"] == post_id
+        assert _items(conn, f"id = {post_id}")[0]["kind"] == "post"
+
+
+def test_parse_article_keeps_its_own_headings() -> None:
+    page = ARTICLE.replace("<h2>Part</h2>", "<h1>Section one</h1>")
+    article = parse_article(page, "an-article-me-abc.html")
+    assert article is not None and article.title == "An article"
+    assert "# Section one" in article.text
