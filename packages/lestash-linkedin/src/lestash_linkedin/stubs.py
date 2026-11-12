@@ -91,7 +91,7 @@ def held_comment(comments: dict[str, int], urn: str) -> int | None:
     return comments.get(match.group(3)) if match else None
 
 
-class _HeldPosts:
+class HeldPosts:
     """The held LinkedIn posts, by their URNs and by when their URNs were made."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
@@ -206,7 +206,7 @@ def _is_created(metadata: dict[str, Any]) -> bool:
 
 
 def _merge_filled_stubs(
-    conn: sqlite3.Connection, held: _HeldPosts, comments: dict[str, int]
+    conn: sqlite3.Connection, held: HeldPosts, comments: dict[str, int]
 ) -> tuple[int, list[int]]:
     """Merge each stub whose post or comment is now held. Returns how many, and the ids
     of the children moved with them."""
@@ -233,7 +233,7 @@ class _Pass:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
-        self.held = _HeldPosts(conn)
+        self.held = HeldPosts(conn)
         self.comments = _held_comments(conn)
         self.links = 0
 

@@ -61,11 +61,24 @@ lestash linkedin fetch --all
 
 ### `lestash linkedin import`
 
-Import from a LinkedIn data export ZIP file.
+Import your posts, comments and articles from a LinkedIn data export ZIP, back to
+when you joined. Ask for the export at
+[Get a copy of your data](https://www.linkedin.com/mypreferences/d/download-my-data).
 
 ```bash
-lestash linkedin import ~/Downloads/linkedin-export.zip
+lestash linkedin import ~/Downloads/Basic_LinkedInDataExport_11-12-2026.zip
 ```
+
+- **Read:** `Shares.csv` (posts), `Comments.csv` (comments, with the post each is on)
+  and `Articles/Articles/*.html` (articles and unpublished drafts).
+- **Left out:** reactions, reposts and saved items. They are only a date and a link to
+  someone else's post; the post's text isn't in the export.
+- **No doubles:** a post the sync holds is matched by its URN; a comment by its post and
+  its text, or its time within 5 s. A held comment or post the changelog gave no text
+  gets the export's. An article added by hand gets the full text.
+- **Comments on posts not held** reply to a stub of the post, as synced comments do.
+- **Times** in the export are UTC, and are stored with their zone.
+- Safe to run again: a second run adds nothing.
 
 ## Understanding the APIs
 
