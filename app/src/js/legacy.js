@@ -408,7 +408,7 @@ function renderItemView(item) {
         html += `<img src="${getApiBase()}${escHtml(m.serve_url)}" alt="${escHtml(m.alt_text || '')}">`;
       } else if (m.media_type === 'pdf') {
         // A stored PDF is served here; an unstored one is at its source
-        const href = m.available && !m.url ? getApiBase() + m.serve_url : m.url;
+        const href = m.available ? getApiBase() + m.serve_url : m.url;
         html += `<a href="${escHtml(href)}" target="_blank" rel="noopener">📄 PDF</a>`;
       } else if (m.media_type === 'audio' && m.available) {
         html += `<audio controls preload="none" src="${getApiBase()}${escHtml(m.serve_url)}"></audio>`;

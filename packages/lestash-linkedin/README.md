@@ -71,6 +71,11 @@ lestash linkedin import ~/Downloads/Basic_LinkedInDataExport_11-12-2026.zip
 
 - **Read:** `Shares.csv` (posts), `Comments.csv` (comments, with the post each is on)
   and `Articles/Articles/*.html` (articles and unpublished drafts).
+- **Photos and documents:** `Rich_Media.csv` lists your uploads with signed links that
+  expire within weeks of the export, so each is fetched into the file store and put on
+  its post: by its description when that is the post's text, else the post made within
+  15 minutes after the upload (an article within 30). Profile and banner photos and
+  videos (streaming playlists) are left out.
 - **Left out:** reactions, reposts and saved items. They are only a date and a link to
   someone else's post; the post's text isn't in the export.
 - **No doubles:** a post the sync holds is matched by its URN; a comment by its post and
