@@ -92,10 +92,17 @@ export function splitFrontMatter(text) {
   };
 }
 
-// The front matter folded under the header; its title and date are there already
+// The front matter folded under the header, without a title or date the header
+// already shows the same
 function frontMatterHtml(item) {
   const { fields } = splitFrontMatter(item.content);
-  const shown = fields.filter(([k]) => !['title', 'date'].includes(k.toLowerCase()));
+  const same = ([k, v]) => {
+    const key = k.toLowerCase();
+    if (key === 'title') return v.trim() === (item.title || '').trim();
+    if (key === 'date') return dateText(v) && dateText(v) === dateText(item.created_at);
+    return false;
+  };
+  const shown = fields.filter(f => !same(f));
   if (!shown.length) return '';
   return `<details class="item-front"><summary>File details <span class="muted">· ${shown.map(([k]) => escHtml(k)).join(', ')}</span></summary>
     <dl>${shown.map(([k, v]) => `<dt>${escHtml(k)}</dt><dd>${escHtml(v).replace(/\n/g, '<br>')}</dd>`).join('')}</dl></details>`;
