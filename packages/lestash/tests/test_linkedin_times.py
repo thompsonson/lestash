@@ -20,7 +20,12 @@ def _row(conn, n: int, created_at: str, actor: str | None = ME, owner: str | Non
     ).fetchone()[0]
 
 
-def test_migration_26_makes_linkedin_times_utc_and_others_not_yours(test_db) -> None:
+def test_migration_26_makes_linkedin_times_utc_and_others_not_yours(test_db, monkeypatch) -> None:
+    # The rows were written on a machine in Paris, read here in the same zone
+    import time
+
+    monkeypatch.setenv("TZ", "Europe/Paris")
+    time.tzset()
     with get_connection(test_db) as conn:
         winter = _row(conn, 1, "2026-01-19 10:49:34.619000")  # CET, UTC+1
         summer = _row(conn, 2, "2026-07-22 07:20:50")  # CEST, UTC+2
@@ -66,6 +71,8 @@ def test_migration_26_makes_linkedin_times_utc_and_others_not_yours(test_db) -> 
         assert get(other)[0] == "2026-01-19 10:00:00"
         # Run again: nothing more to change
         assert apply_migrations(conn) == 0
+    monkeypatch.undo()
+    time.tzset()
 
 
 def test_a_time_without_a_zone_is_utc() -> None:

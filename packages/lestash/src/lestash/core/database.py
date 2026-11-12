@@ -722,23 +722,17 @@ def _migrate_16(conn: sqlite3.Connection) -> None:
         raise
 
 
-# The zone LinkedIn's changelog times were written in before #236: pop-mini's
-LINKEDIN_LOCAL_ZONE = "Europe/Paris"
-
-
 def _migrate_26(conn: sqlite3.Connection) -> None:
-    """LinkedIn rows written before #236 (#236):
+    """LinkedIn rows written before #236:
 
     - A created_at with no zone on a changelog row, or on a post made from LeStash, was
-      this machine's local time: it becomes UTC. The snapshot fetch and the export
+      the local time of the machine that wrote it: it becomes UTC, read in this
+      machine's zone, as the code before #236 read it. The snapshot fetch and the export
       import wrote UTC.
     - A changelog row whose actor is not its owner is someone else's comment, reaction,
       message or invitation: it is not your own content.
 
     One transaction, with the version; history rows are marked "migration 26"."""
-    from zoneinfo import ZoneInfo
-
-    local = ZoneInfo(LINKEDIN_LOCAL_ZONE)
     if conn.in_transaction:
         conn.commit()
     conn.execute("BEGIN IMMEDIATE")
@@ -759,7 +753,8 @@ def _migrate_26(conn: sqlite3.Connection) -> None:
                 continue
             if when.tzinfo is not None:
                 continue
-            utc = when.replace(tzinfo=local).astimezone(UTC)
+            # A naive time's astimezone() reads it in this machine's zone
+            utc = when.astimezone(UTC)
             conn.execute(
                 "UPDATE items SET created_at = ? WHERE id = ?",
                 (utc.isoformat(sep=" "), item_id),
