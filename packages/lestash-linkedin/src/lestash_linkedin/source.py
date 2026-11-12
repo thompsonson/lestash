@@ -10,7 +10,7 @@ import sqlite3
 import webbrowser
 import zipfile
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -1761,7 +1761,7 @@ class LinkedInSource(SourcePlugin):
                         None,
                         text,
                         None,
-                        datetime.now().isoformat(),
+                        datetime.now(UTC).isoformat(),
                         True,
                         json.dumps(metadata),
                     ),

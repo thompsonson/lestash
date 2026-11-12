@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -656,6 +656,12 @@ MIGRATIONS = [
         # the first word of the name.
         "",
     ),
+    (
+        26,
+        "LinkedIn: times in UTC, and others' actions not marked yours (#236)",
+        # Run in apply_migrations (_migrate_26): converting local time needs Python.
+        "",
+    ),
 ]
 
 
@@ -711,6 +717,58 @@ def _migrate_16(conn: sqlite3.Connection) -> None:
             (MIGRATION_16_REASON, history_before),
         )
         set_schema_version(conn, 16)
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _migrate_26(conn: sqlite3.Connection) -> None:
+    """LinkedIn rows written before #236:
+
+    - A created_at with no zone on a changelog row, or on a post made from LeStash, was
+      the local time of the machine that wrote it: it becomes UTC, read in this
+      machine's zone, as the code before #236 read it. The snapshot fetch and the export
+      import wrote UTC.
+    - A changelog row whose actor is not its owner is someone else's comment, reaction,
+      message or invitation: it is not your own content.
+
+    One transaction, with the version; history rows are marked "migration 26"."""
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        since = max_history_id(conn)
+        # The changelog's, and posts made from LeStash (they carry post_urn), were
+        # written in local time; the snapshot fetch and the export import wrote UTC
+        rows = conn.execute(
+            "SELECT id, created_at FROM items WHERE source_type = 'linkedin' "
+            "AND created_at IS NOT NULL AND json_valid(metadata) "
+            "AND (json_extract(metadata, '$.source') = 'changelog' "
+            "OR json_extract(metadata, '$.post_urn') IS NOT NULL)"
+        ).fetchall()
+        for item_id, created_at in rows:
+            try:
+                when = datetime.fromisoformat(str(created_at))
+            except ValueError:
+                continue
+            if when.tzinfo is not None:
+                continue
+            # A naive time's astimezone() reads it in this machine's zone
+            utc = when.astimezone(UTC)
+            conn.execute(
+                "UPDATE items SET created_at = ? WHERE id = ?",
+                (utc.isoformat(sep=" "), item_id),
+            )
+        conn.execute(
+            "UPDATE items SET is_own_content = 0 WHERE source_type = 'linkedin' "
+            "AND is_own_content = 1 AND json_valid(metadata) "
+            "AND json_extract(metadata, '$.raw.actor') IS NOT NULL "
+            "AND json_extract(metadata, '$.raw.owner') IS NOT NULL "
+            "AND json_extract(metadata, '$.raw.actor') != json_extract(metadata, '$.raw.owner')"
+        )
+        # The transaction holds the database: every history row since is this one's
+        mark_recent_history(conn, since, "migration 26")
+        set_schema_version(conn, 26)
     except BaseException:
         conn.rollback()
         raise
@@ -891,6 +949,8 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                 _migrate_20(conn)  # likewise
             elif version == 21:
                 _migrate_21(conn)  # likewise
+            elif version == 26:
+                _migrate_26(conn)  # likewise
             else:
                 conn.executescript(sql)
                 if version == 22:

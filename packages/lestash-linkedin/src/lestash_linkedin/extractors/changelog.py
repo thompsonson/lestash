@@ -6,7 +6,7 @@ Unknown resource types are preserved with generic content for discovery.
 
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 from lestash.models.item import ItemCreate, MediaCreate
 
@@ -142,7 +142,7 @@ def _extract_ugc_post(event: ChangelogEvent) -> ItemCreate:
     created_at = None
     created_at_ms = activity.get_created_at()
     if created_at_ms:
-        created_at = datetime.fromtimestamp(created_at_ms / 1000)
+        created_at = datetime.fromtimestamp(created_at_ms / 1000, tz=UTC)
 
     share_content = activity.specific_content.get("com.linkedin.ugc.ShareContent", {})
     media_category = share_content.get("shareMediaCategory")
@@ -196,7 +196,7 @@ def _extract_comment(event: ChangelogEvent) -> ItemCreate:
 
     created_at = None
     if activity.created and activity.created.get("time"):
-        created_at = datetime.fromtimestamp(activity.created["time"] / 1000)
+        created_at = datetime.fromtimestamp(activity.created["time"] / 1000, tz=UTC)
 
     parent_urn = activity.object or _parent_urn_from_resource_uri(event)
     url = _activity_urn_to_url(parent_urn)
@@ -236,7 +236,7 @@ def _extract_reaction(event: ChangelogEvent) -> ItemCreate:
 
     created_at = None
     if activity.created and activity.created.get("time"):
-        created_at = datetime.fromtimestamp(activity.created["time"] / 1000)
+        created_at = datetime.fromtimestamp(activity.created["time"] / 1000, tz=UTC)
 
     # Build reaction content with emoji
     emoji = REACTION_EMOJIS.get(activity.reaction_type, "👍")
@@ -301,9 +301,9 @@ def _extract_message(event: ChangelogEvent) -> ItemCreate:
 
     created_at = None
     if activity.created_at:
-        created_at = datetime.fromtimestamp(activity.created_at / 1000)
+        created_at = datetime.fromtimestamp(activity.created_at / 1000, tz=UTC)
     elif activity.delivered_at:
-        created_at = datetime.fromtimestamp(activity.delivered_at / 1000)
+        created_at = datetime.fromtimestamp(activity.delivered_at / 1000, tz=UTC)
 
     content = activity.get_text()
     if not content:
@@ -326,7 +326,7 @@ def _extract_profile_update(event: ChangelogEvent) -> ItemCreate:
 
     created_at = None
     if activity.last_modified:
-        created_at = datetime.fromtimestamp(activity.last_modified / 1000)
+        created_at = datetime.fromtimestamp(activity.last_modified / 1000, tz=UTC)
 
     # Build content from available fields
     parts = []
@@ -403,7 +403,7 @@ def _create_item(
     """
     # Fallback to processedAt if no created_at
     if not created_at and event.processed_at:
-        created_at = datetime.fromtimestamp(event.processed_at / 1000)
+        created_at = datetime.fromtimestamp(event.processed_at / 1000, tz=UTC)
 
     # Generate stable ID using resource_id (same across CREATE/PARTIAL_UPDATE)
     # Fall back to processedAt for events without a resource_id
@@ -417,7 +417,9 @@ def _create_item(
         content=content or f"{event.method} {event.resource_name}",  # Ensure non-empty
         author=author,
         created_at=created_at,
-        is_own_content=True,
+        # Your changelog logs others' actions on your things too: their comments and
+        # reactions on your posts, messages and invitations they sent you
+        is_own_content=not (event.actor and event.owner and event.actor != event.owner),
         metadata={
             "source": "changelog",
             "resource_name": event.resource_name,

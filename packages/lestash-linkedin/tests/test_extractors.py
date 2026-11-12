@@ -539,3 +539,21 @@ class TestSourceIdDedup:
         }
         item = extract_changelog_item(event)
         assert "5000" in item.source_id
+
+
+class TestTimesAndWhoseItIs:
+    """#236: times in UTC; others' actions on your things are not your own content."""
+
+    def test_times_are_utc(self, comment_event):
+        item = extract_changelog_item(comment_event)
+        assert item.created_at is not None
+        assert item.created_at.utcoffset() is not None
+        assert item.created_at.isoformat() == "2026-01-19T05:20:00+00:00"
+
+    def test_your_own_action_is_yours(self, comment_event):
+        event = {**comment_event, "actor": "urn:li:person:me", "owner": "urn:li:person:me"}
+        assert extract_changelog_item(event).is_own_content is True
+
+    def test_someone_elses_action_is_not_yours(self, comment_event):
+        event = {**comment_event, "actor": "urn:li:person:ann", "owner": "urn:li:person:me"}
+        assert extract_changelog_item(event).is_own_content is False
