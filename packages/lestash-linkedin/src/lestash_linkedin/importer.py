@@ -75,6 +75,20 @@ def parse_export_time(value: str) -> datetime | None:
     return None
 
 
+def share_text(value: str) -> str:
+    """A post's text from Shares.csv. The export wraps each line of a post in its own
+    quotes, so the CSV field reads: first line", "", "next line ... last line (the
+    first opening and last closing quotes are the field's own). Quotes inside a line
+    are left as written. A field not in that form is returned as it is."""
+    text = value.strip()
+    if '"\n"' not in text:
+        return text
+    lines = f'"{text}"'.split("\n")
+    if not all(len(line) >= 2 and line[0] == '"' and line[-1] == '"' for line in lines):
+        return text
+    return "\n".join(line[1:-1] for line in lines).strip()
+
+
 def post_urn_of(link: str) -> str | None:
     """The post a feed link names, decoded: .../feed/update/urn%3Ali%3Ashare%3A1/."""
     match = POST_URN.search(unquote(link or ""))
@@ -213,7 +227,8 @@ class _Import:
 
     def posts_from(self, zf: zipfile.ZipFile) -> Iterator[ItemCreate]:
         for row in _rows(zf, "Shares.csv"):
-            text = (row.get("ShareCommentary") or "").strip()
+            raw = row.get("ShareCommentary") or ""
+            text = share_text(raw)
             link = row.get("ShareLink") or ""
             urn = post_urn_of(link)
             when = parse_export_time(row.get("Date", ""))
@@ -224,7 +239,9 @@ class _Import:
             if held is not None:
                 self.report.posts_held += 1
                 content, metadata = self._held_text(held)
-                if _placeholder(content, metadata):
+                # A held post filled before #283 holds the text with its quotes
+                stale = content == raw.strip() and content != text
+                if _placeholder(content, metadata) or stale:
                     self.fills[held] = text
                 continue
             self.report.posts_added += 1
