@@ -724,28 +724,6 @@ button.seek:hover, button.seek:focus-visible { text-decoration: underline; }
 .day-label { position: relative; font-weight: bold; cursor: pointer; }
 .day-pick { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .day-today { margin-left: auto; color: var(--accent-text); font-size: 0.85rem; }
-.timeline, .timeline-sub { list-style: none; }
-.timeline-entry, .timeline-group > details > summary {
-  display: grid; grid-template-columns: 3.5rem 6.5rem 1.2rem 1fr; gap: 0.4rem; align-items: baseline;
-  padding: 0.35rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem;
-}
-.timeline-group > details > summary { display: block; cursor: pointer; }
-.timeline-group > details > summary .t-time { display: inline-block; width: 3.5rem; }
-.timeline-group > details > summary .t-verb { display: inline-block; width: 6.5rem; }
-.timeline-sub { margin-left: 1rem; }
-.timeline-entry.landmark { background: var(--surface); border-left: 3px solid var(--k, var(--accent)); padding-left: 0.4rem; border-radius: 0 var(--radius) var(--radius) 0; }
-.t-time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.t-verb { color: var(--muted); }
-.t-icon { color: var(--muted); text-align: center; }
-.t-what a { color: var(--text); }
-.t-what { overflow-wrap: anywhere; }
-@media (max-width: 600px) {
-  .timeline-entry { grid-template-columns: 4.4rem 1fr; }
-  .timeline-entry .t-verb, .timeline-entry .t-icon { display: none; }
-  /* "09:33 PM" on one line, and the verb close beside it rather than in a column */
-  .timeline-group > details > summary .t-time { width: 4.4rem; }
-  .timeline-group > details > summary .t-verb { width: auto; margin-right: 0.3rem; }
-}
 .timeline-search .search-input { width: 100%; }
 
 /* ── People (#263) ── */
@@ -857,16 +835,6 @@ nav#tabs { background: var(--bg); }
 .more-list a:hover { background: var(--surface-2); }
 
 /* Timeline: icons in their kind's colour; a prompt shows what you asked */
-.t-icon { color: var(--k, var(--muted)); }
-.timeline-entry, .timeline-group > details > summary { padding: var(--row-pad) 0; }
-.timeline-group > details > summary a { color: var(--text); }
-.t-prompt {
-  display: block; color: var(--muted); font-family: var(--font-read); font-size: 0.8rem;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.prompt-entry { grid-template-columns: 3.5rem 1fr; }
-.prompt-entry .t-what { font-family: var(--font-read); }
-
 /* Replies: an initial, the name once per run, the words */
 .thread-row { display: grid; grid-template-columns: 1.9rem minmax(0, 1fr); gap: 0.55rem; }
 .avatar {
@@ -954,3 +922,40 @@ body.sheet-open #item-view {
 .item-front dt { color: var(--muted); }
 .item-front dd { overflow-wrap: anywhere; }
 .item-view-meta { overflow-wrap: anywhere; }
+
+/* ── Timeline rows: one shape (#277) ──
+   Line 1: the service, what you did, the time at the right. Line 2: the title, one line. */
+.timeline, .t-subs { list-style: none; }
+.t-row { padding: var(--row-pad) 0.2rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+.t-row > details > summary { list-style: none; cursor: pointer; }
+.t-row > details > summary::-webkit-details-marker { display: none; }
+.t-head { display: flex; align-items: baseline; gap: 0.45rem; min-width: 0; }
+.t-src { display: inline-flex; gap: 0.3rem; align-items: baseline; font-weight: 600; white-space: nowrap; flex: none; }
+.t-icon { color: var(--k, var(--muted)); width: 1.1em; text-align: center; }
+.t-act { color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-group .t-act::after { content: ' ▸'; }
+.t-group details[open] .t-act::after { content: ' ▾'; }
+.t-time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
+.t-title { display: block; padding-left: 1.4em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-title a { color: var(--text); }
+.t-titles { color: var(--muted); }
+.t-prompt {
+  display: block; padding-left: 1.4em; color: var(--muted); font-family: var(--font-read); font-size: 0.8rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.t-row.landmark { background: var(--surface); border-left: 3px solid var(--k, var(--accent)); border-radius: 0 var(--radius) var(--radius) 0; padding-left: 0.5rem; margin: 2px 0; }
+.t-subs { margin: 0.3rem 0 0 1.4em; }
+.t-sub { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.2rem 0; border-top: 1px solid var(--border); }
+.t-sub .t-title, .t-sub .t-prompt { padding-left: 0; flex: 1; min-width: 0; }
+.t-asked { font-family: var(--font-read); white-space: normal; }
+/* The day by kind: counts that filter, with the kind colours */
+.t-summary { display: flex; flex-wrap: wrap; gap: 0.35rem 0.8rem; margin: 0.2rem 0 0.6rem; font-size: 0.85rem; }
+.t-chip { color: var(--text); text-decoration: none; white-space: nowrap; }
+.t-dot { display: inline-block; width: 0.55em; height: 0.55em; border-radius: 50%; background: var(--k, var(--muted)); margin-right: 0.3em; vertical-align: 0.05em; }
+/* A swipe to another day slides the list in from that side */
+@keyframes slide-from-right { from { transform: translateX(24px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+@keyframes slide-from-left { from { transform: translateX(-24px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+.timeline-list.slide-next { animation: slide-from-right 0.2s ease-out; }
+.timeline-list.slide-previous { animation: slide-from-left 0.2s ease-out; }
+@media (prefers-reduced-motion: reduce) { .timeline-list.slide-next, .timeline-list.slide-previous { animation: none; } }
+.timeline-list { touch-action: pan-y; }
