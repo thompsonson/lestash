@@ -182,3 +182,44 @@ def test_files_held_are_not_fetched_again(config: Config, tmp_path: Path, export
         import_media(conn, export, store, fetch)
         again = import_media(conn, export, store, expired)
         assert (again.held, again.failed) == (2, 0)
+
+
+def test_copies_give_way_when_the_post_gets_the_syncs_images(
+    config: Config, tmp_path: Path, export
+) -> None:
+    from lestash.core.database import add_item_media
+
+    store = BlobStore(tmp_path / "store")
+    with get_connection(config) as conn:
+        cannes = _post(conn, 1, "2024-02-12 07:37:54+00:00", "Back to a clean desk")
+        import_media(conn, export, store, fetch)
+        add_item_media(
+            conn, cannes, media_type="image", url="https://li/x.jpg", source_origin="sync"
+        )
+        report = import_media(conn, export, store, fetch)
+        assert report.superseded == 2
+        current = conn.execute(
+            "SELECT source_origin FROM item_media WHERE item_id = ? AND superseded_at IS NULL",
+            (cannes,),
+        ).fetchall()
+        assert [r[0] for r in current] == ["sync"]
+
+
+def test_a_file_is_known_by_its_link_without_the_signature(config: Config, tmp_path: Path) -> None:
+    store = BlobStore(tmp_path / "store")
+    with get_connection(config) as conn:
+        cannes = _post(conn, 1, "2024-02-12 07:37:54+00:00", "Back to a clean desk")
+        for n, signature in enumerate(("?e=1&t=a", "?e=2&t=b")):
+            path = tmp_path / f"export{n}.zip"
+            with zipfile.ZipFile(path, "w") as zf:
+                zf.writestr(
+                    "Rich_Media.csv",
+                    "Date/Time,Media Description,Media Link\n"
+                    '"You uploaded a feed photo on February 12, 2024 at 7:34 AM (GMT)", -,'
+                    f"https://cdn/a.jpg{signature}\n",
+                )
+            report = import_media(
+                conn, zipfile.ZipFile(path), store, lambda url: FILES[url.split("?")[0]]
+            )
+        assert (report.added, report.held) == (0, 1)
+        assert [m[0] for m in _media(conn, cannes)] == ["image"]

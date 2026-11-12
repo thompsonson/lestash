@@ -365,7 +365,8 @@ class LinkedInSource(SourcePlugin):
                     f"{m.unmatched} with no post, {m.no_link} without a link, "
                     f"{m.failed} failed to download.\n"
                     f"Left out: {m.not_post_media} profile or banner photos, "
-                    f"{m.videos} videos.[/green]"
+                    f"{m.videos} videos. Copies now shown as earlier versions: "
+                    f"{m.superseded}.[/green]"
                 )
 
         @app.command("auth")

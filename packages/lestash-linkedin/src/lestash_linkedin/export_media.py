@@ -55,6 +55,7 @@ class MediaReport:
     not_post_media: int = 0  # profile and banner photos
     videos: int = 0  # playlists, not files
     failed: int = 0  # the download failed; tried again next run
+    superseded: int = 0  # copies on posts that now have images from elsewhere
 
 
 @dataclass
@@ -197,10 +198,10 @@ def import_media(
 ) -> MediaReport:
     """Fetch each upload into the file store and attach it to its post or article.
 
-    A file's position on its post is its place among the post's uploads, oldest first,
-    so a rerun finds it at the same place: one held there is not fetched again (its
-    link may have expired). Each file is committed as it is stored, so no write is held
-    open while files download. Safe to run again."""
+    A file is known by its link without the signature, the same in every export: one
+    held is not fetched again (its link may have expired). Its position is its place
+    among the post's uploads, oldest first. Each file is committed as it is stored, so
+    no write is held open while files download. Safe to run again."""
     report = MediaReport()
     posts, articles = _targets(conn, "ugcPosts"), _targets(conn, "article")
     targets = {t.item_id: t for t in posts + articles}
@@ -225,9 +226,11 @@ def import_media(
     conn.commit()
 
     for upload, item_id, position in planned:
+        # The link without its signature names the file in every export
+        key = upload.link.split("?", 1)[0]
         held = conn.execute(
-            "SELECT 1 FROM item_media WHERE item_id = ? AND source_origin = ? AND position = ?",
-            (item_id, ORIGIN, position),
+            "SELECT 1 FROM item_media WHERE item_id = ? AND source_origin = ? AND url = ?",
+            (item_id, ORIGIN, key),
         ).fetchone()
         if held or _has_own_images(conn, item_id):
             report.held += 1
@@ -245,6 +248,7 @@ def import_media(
             conn,
             item_id,
             media_type=_media_type(content_type),
+            url=key,
             mime_type=mime,
             alt_text=_alt(upload, targets.get(item_id)),
             position=position,
@@ -255,4 +259,19 @@ def import_media(
         )
         conn.commit()
         report.added += 1
+    report.superseded = _supersede_copies(conn)
     return report
+
+
+def _supersede_copies(conn: sqlite3.Connection) -> int:
+    """Mark the export's files earlier versions on a post that has since got its images
+    from elsewhere, such as the sync, so the post doesn't show each photo twice. They are
+    kept, listed under the current ones."""
+    cursor = conn.execute(
+        "UPDATE item_media SET superseded_at = ? WHERE source_origin = ? "
+        "AND superseded_at IS NULL AND item_id IN (SELECT item_id FROM item_media "
+        "WHERE source_origin != ? AND media_type IN ('image', 'pdf') AND superseded_at IS NULL)",
+        (datetime.now(UTC).isoformat(timespec="seconds"), ORIGIN, ORIGIN),
+    )
+    conn.commit()
+    return cursor.rowcount
