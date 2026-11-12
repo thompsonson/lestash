@@ -4,7 +4,7 @@ import json
 import logging
 import secrets
 import tempfile
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, Query, UploadFile
@@ -205,7 +205,7 @@ def _save_item(
                 None,
                 text,
                 None,
-                datetime.now().isoformat(),
+                datetime.now(UTC).isoformat(),
                 True,
                 json.dumps(metadata),
             ),
