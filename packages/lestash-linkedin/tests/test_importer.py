@@ -10,7 +10,7 @@ import pytest
 from lestash.core.config import Config, GeneralConfig
 from lestash.core.database import get_connection, init_database, upsert_item
 from lestash.models.item import ItemCreate
-from lestash_linkedin.importer import import_export, parse_article, post_urn_of
+from lestash_linkedin.importer import import_export, parse_article, post_urn_of, share_text
 from lestash_linkedin.stubs import snowflake_ms
 
 ME = "urn:li:person:me"
@@ -401,3 +401,41 @@ def test_an_emoji_comment_from_the_snapshot_fetch_is_held(config: Config, tmp_pa
         )
         report = import_export(conn, _zip(tmp_path, comments=comments))
         assert (report.comments_held, report.comments_added) == (1, 1)
+
+
+# As Shares.csv writes a post of several lines: each line in its own quotes
+QUOTED_LINES = 'Testing out Bluesky 🤓"\n""\n"It started on the "Eurostar". "\n""\n"#Bayesian '
+
+
+def test_share_text_takes_off_the_quotes_round_each_line() -> None:
+    assert (
+        share_text(QUOTED_LINES)
+        == 'Testing out Bluesky 🤓\n\nIt started on the "Eurostar". \n\n#Bayesian'
+    )
+    assert share_text('One line with a "quote"') == 'One line with a "quote"'
+    # Not in the export's form: left as it is
+    assert share_text('Line one\n"Quoted line"') == 'Line one\n"Quoted line"'
+
+
+def test_a_post_imported_with_quotes_is_put_right(config: Config, tmp_path: Path) -> None:
+    link = f"{FEED}urn:li:share:7000000000000000000"
+    field = QUOTED_LINES.replace('"', '""')
+    shares = f'Date,ShareLink,ShareCommentary\n2024-12-04 10:00:00,{link},"{field}"\n'
+    with get_connection(config) as conn:
+        # As the import before this fix stored it
+        upsert_item(
+            conn,
+            ItemCreate(
+                source_type="linkedin",
+                source_id="export-ugcPosts-urn:li:share:7000000000000000000",
+                content=QUOTED_LINES.strip(),
+                metadata={
+                    "source": "export",
+                    "resource_name": "ugcPosts",
+                    "post_id": "urn:li:share:7000000000000000000",
+                },
+            ),
+        )
+        import_export(conn, _zip(tmp_path, shares=shares))
+        (post,) = _items(conn, "kind = 'post'")
+        assert post["content"].startswith("Testing out Bluesky 🤓\n\nIt started")
