@@ -13,6 +13,8 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
+from lestash.core.config import write_secret
+
 # Default scopes — callers can request additional scopes
 DEFAULT_SCOPES = [
     "https://www.googleapis.com/auth/youtube.readonly",
@@ -26,7 +28,7 @@ CLIENT_SECRETS_FILE = "google_client_secrets.json"
 def get_config_dir() -> Path:
     """Get lestash config directory."""
     config_dir = Path.home() / ".config" / "lestash"
-    config_dir.mkdir(parents=True, exist_ok=True)
+    config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     return config_dir
 
 
@@ -83,9 +85,7 @@ def save_credentials(credentials: Credentials, scopes: list[str] | None = None) 
         "scopes": list(credentials.scopes) if credentials.scopes else (scopes or DEFAULT_SCOPES),
         "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
     }
-    path = get_credentials_path()
-    path.write_text(json.dumps(creds_data, indent=2))
-    path.chmod(0o600)
+    write_secret(get_credentials_path(), json.dumps(creds_data, indent=2))
 
 
 def load_credentials() -> Credentials | None:

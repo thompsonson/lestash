@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from lestash.core.config import write_secret
+
 if TYPE_CHECKING:
     from atproto import Client, models
 
@@ -11,7 +13,7 @@ if TYPE_CHECKING:
 def get_config_dir() -> Path:
     """Get lestash config directory."""
     config_dir = Path.home() / ".config" / "lestash"
-    config_dir.mkdir(parents=True, exist_ok=True)
+    config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     return config_dir
 
 
@@ -32,9 +34,7 @@ def save_credentials(handle: str, password: str) -> None:
         "password": password,
     }
 
-    path = get_credentials_path()
-    path.write_text(json.dumps(credentials, indent=2))
-    path.chmod(0o600)  # Make file readable only by owner
+    write_secret(get_credentials_path(), json.dumps(credentials, indent=2))
 
 
 def load_credentials() -> dict[str, str] | None:
@@ -51,9 +51,7 @@ def load_credentials() -> dict[str, str] | None:
 
 def save_session(session_string: str) -> None:
     """Save AT Protocol session string for reuse."""
-    path = get_session_path()
-    path.write_text(session_string)
-    path.chmod(0o600)
+    write_secret(get_session_path(), session_string)
 
 
 def load_session() -> str | None:

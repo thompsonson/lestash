@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
+from lestash.core.config import write_secret
 
 MICROPUB_ENDPOINT = "https://micro.blog/micropub"
 MICROBLOG_API_BASE = "https://micro.blog"
@@ -14,7 +15,7 @@ MICROBLOG_API_BASE = "https://micro.blog"
 def get_config_dir() -> Path:
     """Get lestash config directory."""
     config_dir = Path.home() / ".config" / "lestash"
-    config_dir.mkdir(parents=True, exist_ok=True)
+    config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     return config_dir
 
 
@@ -27,9 +28,7 @@ def save_token(token: str) -> None:
     """Save Micro.blog API token to config file."""
     token_data = {"token": token}
 
-    path = get_token_path()
-    path.write_text(json.dumps(token_data, indent=2))
-    path.chmod(0o600)  # Make file readable only by owner
+    write_secret(get_token_path(), json.dumps(token_data, indent=2))
 
 
 def load_token() -> str | None:

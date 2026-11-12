@@ -107,6 +107,26 @@ def _replace_file(path: Path, text: str) -> None:
         raise
 
 
+def write_secret(path: Path, text: str) -> None:
+    """Write a credential or token file readable only by you (mode 600), all at once.
+
+    The file is made at 600 by mkstemp, so the secret is never in a readable file, and
+    swapped in whole, so a crash can't leave it empty. Its folder, if made here, is 700.
+    """
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def as_list(value: object) -> list[Any]:
     """Read a list setting. One value given as text is a one-item list, not its letters."""
     if value is None:
