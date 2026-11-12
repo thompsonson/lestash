@@ -527,6 +527,16 @@ flowchart LR
 - Agent links answer "who made this, and what else did they make".
 - Activities answer "when did I touch this, and what else then".
 
+## Sections and representations (12 Nov 2026, #221)
+
+- **Section:** a part of an item that isn't an item: a heading, chapter, page range or slide.
+  - Its own table, tied to the item, with heading path, pages and offsets.
+  - Highlights point to their section.
+- **Rounds:** a chat's prompt-and-reply pairs, grouped from its turns. Not a new object.
+- **Files** (by SHA-256) can carry an image vector.
+- **Vectors are an index, not an object.** Each records what it represents (item, section, round or file), its model, its text recipe and a hash of the text.
+- Details and the experiments that choose models and sizes: [`embeddings-design.md`](embeddings-design.md).
+
 ## Topics
 
 `tags` maps to SKOS concepts and stays as it is. An item's subject is `schema:about`.
@@ -589,7 +599,7 @@ Open from the data: #245, rows that point at deleted items.
 - Item links from exact identifiers count at once and can be removed; name matches wait for you.
 - Gemini turns keep `user` and `model` as their author until the people tables exist.
 - Imports never guess which item something belongs to; unmatched data stays separate.
-- No chunking for now: keyword search covers full text, and semantic search keeps one vector per item (#221).
+- ~~No chunking for now: keyword search covers full text, and semantic search keeps one vector per item (#221).~~ Replaced on 12 Nov 2026: embed the ontology's own parts (rounds, highlights, artifacts, sections, files), not fixed-size chunks. See [`embeddings-design.md`](embeddings-design.md).
 - Extracted text goes into item `content`; `item_history` keeps the text a re-extraction replaces.
 - NotebookLM slide decks keep the PDF, the PPTX and every per-slide image.
 
