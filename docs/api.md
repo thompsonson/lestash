@@ -447,13 +447,14 @@ Knowledge base statistics.
 
 ### `GET /api/embeddings/status`
 
-Embedding coverage stats.
+Embedding coverage stats. `out_of_date` counts held top-level items with no vector of today's model and recipe; a refresh also finds those whose text has changed.
 
 ```json
 {
   "model": "all-MiniLM-L6-v2",
+  "recipe": "title+content500",
   "dimensions": 384,
-  "embedded": 18000, "total_parents": 20000,
+  "embedded": 18000, "out_of_date": 2000, "total_parents": 20000,
   "coverage": "90%",
   "rebuilding": false
 }
@@ -463,7 +464,7 @@ Embedding coverage stats.
 
 ### `POST /api/embeddings/rebuild`
 
-Trigger embedding rebuild in background. Prevents concurrent rebuilds.
+Embed, in the background, every item that is new or changed, and drop vectors of items gone (the same as `lestash embeddings refresh`, with no time limit). Prevents concurrent rebuilds.
 
 ```json
 { "status": "started", "message": "Rebuild started in background" }
