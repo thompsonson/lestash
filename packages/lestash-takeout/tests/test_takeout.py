@@ -108,6 +108,21 @@ def _last_sync(test_db) -> tuple[str, str | None]:
         )
 
 
+def test_sync_uses_the_callers_database_not_the_default(test_db, drive, monkeypatch) -> None:
+    """The done-zip state and the file store come from the CLI's config (#231)."""
+    from lestash.testing import forbid_default_config
+
+    forbid_default_config(monkeypatch, test_db, allowed=1)  # the CLI's own load
+    _sync()
+    assert _items(test_db) == [NB, f"{NB}/Notes/Plan A.html"]
+    # The second sync reads the state the first stored: nothing is downloaded again
+    drive.downloaded.clear()
+    forbid_default_config(monkeypatch, test_db, allowed=1)
+    _sync()
+    assert drive.downloaded == []
+    assert not (Path.home() / ".config" / "lestash").exists()
+
+
 def test_sync_imports_new_zips_once_and_deletes_downloads(test_db, drive) -> None:
     _sync()
     assert _items(test_db) == [NB, f"{NB}/Notes/Plan A.html"]

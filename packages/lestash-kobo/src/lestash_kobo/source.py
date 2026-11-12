@@ -53,19 +53,19 @@ def _raise_on_sigterm(signum: int, frame: object) -> None:
     raise SystemExit(128 + signum)
 
 
-def _store(config: dict) -> KoboStore:
+def _store(config: dict, app_config: Config | None = None) -> KoboStore:
     """By default, snapshots in ``kobo`` in the file store and their files in its blob
     folder (#217). A ``store_dir`` of its own keeps both there, as before: the file
     store follows the database, so a test environment's would otherwise take the files
-    of the store_dir it names."""
+    of the store_dir it names. ``app_config``: the database's config, else the default."""
     if config.get("store_dir"):
         return KoboStore(config["store_dir"])
-    shared = store_root(Config.load())
+    shared = store_root(app_config or Config.load())
     return KoboStore(shared / "kobo", blobs=shared / "blobs")
 
 
-def _files() -> BlobStore:
-    return BlobStore(store_root(Config.load()))
+def _files(app_config: Config | None = None) -> BlobStore:
+    return BlobStore(store_root(app_config or Config.load()))
 
 
 def _report(result: SnapshotResult) -> None:
@@ -146,7 +146,8 @@ class KoboSource(SourcePlugin):
         return app
 
     def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:
-        store = _store(config)
+        app_config = self.app_config
+        store = _store(config, app_config)
         include_store = as_bool(config.get("include_store_titles"))
         if not store.root.is_dir():
             logger.info("No Kobo snapshots yet in %s; nothing to import", store.root)
@@ -186,14 +187,14 @@ class KoboSource(SourcePlugin):
                     "reader_version": READER_VERSION,
                     "include_store_titles": include_store,
                 }
-                with get_connection(Config.load()) as conn:
+                with get_connection(app_config) as conn:
                     if get_checkpoints(conn, self.name).get(STATE_KEY) == state:
                         logger.info("Kobo snapshot %s is already imported", snapshot.name)
                         return
                 logger.info("Reading Kobo snapshot %s", snapshot.name)
                 store.move_own_blobs()
                 reader = KoboReader(
-                    store, snapshot, include_store_titles=include_store, files=_files()
+                    store, snapshot, include_store_titles=include_store, files=_files(app_config)
                 )
                 yield from reader.items()
                 yield SyncCheckpoint(key=STATE_KEY, value=state)

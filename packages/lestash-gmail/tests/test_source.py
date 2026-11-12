@@ -548,13 +548,20 @@ def _cli_sync(tmp_path, monkeypatch, queries, runner):
     monkeypatch.setattr(gmail_source, "GwsGmail", lambda path: GwsGmail(path, runner=runner))
 
     def sync() -> int:
-        """The CLI's exit code: 1 when the sync failed (#209)."""
-        import typer
+        """The CLI's exit code: 1 when the sync failed (#209).
 
+        The CLI loads its config once; the plugin's own reads (state, sync log, stored
+        threads) must use that config, not load the default again (#231)."""
+        import typer
+        from lestash.testing import forbid_default_config
+
+        forbid_default_config(monkeypatch, config, allowed=1)
         try:
             sources_cli.sync_source(source_name="gmail", all_sources=False)
         except typer.Exit as e:
             return e.exit_code
+        finally:
+            monkeypatch.setattr(Config, "load", classmethod(lambda cls: config))
         return 0
 
     return sync, lambda: get_connection(config)

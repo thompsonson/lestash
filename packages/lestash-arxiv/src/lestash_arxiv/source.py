@@ -421,11 +421,9 @@ class ArxivSource(SourcePlugin):
 
         # Phase 2+3: Tracked queries and papers from DB config
         try:
-            from lestash.core.config import Config
             from lestash.core.database import get_connection
 
-            app_config = Config.load()
-            with get_connection(app_config) as conn:
+            with get_connection(self.app_config) as conn:
                 tracking = _get_tracking_config(conn)
 
                 # Get all saved arxiv paper IDs for update detection

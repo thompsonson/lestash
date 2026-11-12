@@ -19,8 +19,12 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from lestash.core.config import Config
 
 
 @pytest.fixture(autouse=True)
@@ -40,3 +44,26 @@ def _lestash_test_environment(
             "the default config (Config.load()) instead of the one it was given",
             pytrace=False,
         )
+
+
+def forbid_default_config(
+    monkeypatch: pytest.MonkeyPatch, config: Config, allowed: int = 0
+) -> None:
+    """``Config.load()`` gives ``config`` the first ``allowed`` times, then fails the test.
+
+    ``allowed=1`` lets the CLI load its own config. A sync after that must use the
+    config it was handed (``plugin.app_config``): a plugin loading the default would
+    read and write the default database, not the caller's (#231).
+    """
+    from lestash.core.config import Config as _Config
+
+    calls = 0
+
+    def load(cls: type[_Config]) -> _Config:
+        nonlocal calls
+        calls += 1
+        if calls > allowed:
+            raise AssertionError("Config.load() in a sync: it ignored the caller's config")
+        return config
+
+    monkeypatch.setattr(_Config, "load", classmethod(load))

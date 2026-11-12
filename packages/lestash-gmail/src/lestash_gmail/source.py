@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from functools import partial
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 from lestash.core.logging import get_plugin_logger
@@ -22,6 +22,9 @@ from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 
 from lestash_gmail.client import GwsError, GwsGmail, find_gws, load_config, save_config
+
+if TYPE_CHECKING:
+    from lestash.core.config import Config
 
 console = Console()
 logger = get_plugin_logger("gmail")
@@ -443,12 +446,15 @@ def stored_threads(conn: Any, thread_ids: Sequence[str]) -> dict[str, dict[str, 
     return found
 
 
-def load_stored_threads(thread_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
-    """stored_threads, on a connection of its own (for a sync run by the CLI or server)."""
+def load_stored_threads(
+    thread_ids: Sequence[str], app_config: "Config | None" = None
+) -> dict[str, dict[str, Any]]:
+    """stored_threads, on a connection of its own (for a sync run by the CLI or server),
+    to ``app_config``'s database (else the default's)."""
     from lestash.core.config import Config
     from lestash.core.database import get_connection
 
-    with get_connection(Config.load()) as conn:
+    with get_connection(app_config or Config.load()) as conn:
         return stored_threads(conn, thread_ids)
 
 
@@ -552,21 +558,22 @@ def sync_queries(
         raise GwsError("; ".join(problems))
 
 
-def load_state() -> dict[str, Any] | None:
+def load_state(app_config: "Config | None" = None) -> dict[str, Any] | None:
     """The state saved by the last sync, or None before the first one that saved it."""
     from lestash.core.config import Config
     from lestash.core.database import get_checkpoints, get_connection
 
-    with get_connection(Config.load()) as conn:
+    with get_connection(app_config or Config.load()) as conn:
         return get_checkpoints(conn, "gmail").get(STATE_KEY)
 
 
 def current_windows(
-    queries: list[str],
+    queries: list[str], app_config: "Config | None" = None
 ) -> tuple[dict[str, Any] | None, dict[str, datetime | None]]:
-    """The saved sync state, and where each search's window starts now."""
-    state = load_state()
-    fallback = last_successful_sync() if state is None else None
+    """The saved sync state, and where each search's window starts now, read from
+    ``app_config``'s database (else the default's)."""
+    state = load_state(app_config)
+    fallback = last_successful_sync(app_config) if state is None else None
     return state, search_windows(queries, state, fallback)
 
 
@@ -584,12 +591,12 @@ def search_windows(
     return {q: datetime.fromisoformat(windows[q]) if q in windows else None for q in queries}
 
 
-def last_successful_sync() -> datetime | None:
+def last_successful_sync(app_config: "Config | None" = None) -> datetime | None:
     """Start time of the last completed Gmail sync, from the sync log."""
     from lestash.core.config import Config
     from lestash.core.database import get_connection
 
-    with get_connection(Config.load()) as conn:
+    with get_connection(app_config or Config.load()) as conn:
         row = conn.execute(
             "SELECT MAX(started_at) FROM sync_log WHERE source_type = 'gmail' "
             "AND status = 'completed'"
@@ -758,9 +765,14 @@ class GmailSource(SourcePlugin):
         if not gws:
             raise GwsError("gws not found; install it or set gws_path in gmail.json")
         queries = settings["queries"]
-        state, since = current_windows(queries)
+        app_config = self.app_config
+        state, since = current_windows(queries, app_config)
         yield from sync_queries(
-            GwsGmail(gws), queries, since=since, state=state, stored=load_stored_threads
+            GwsGmail(gws),
+            queries,
+            since=since,
+            state=state,
+            stored=partial(load_stored_threads, app_config=app_config),
         )
 
     def configure(self) -> dict:

@@ -514,3 +514,23 @@ def test_a_lost_snapshot_renumbers_nothing(device: Path, tmp_path: Path, test_db
     for lost in (snaps[0], snaps[1]):  # the oldest, then the middle one too
         (lost.path / "manifest.json").write_text("{")
         assert rows() == before
+
+
+def test_sync_uses_the_callers_database_not_the_default(
+    device: Path, tmp_path: Path, test_db, monkeypatch
+) -> None:
+    """Snapshots, files and the import checkpoint all come from app_config (#231)."""
+    from lestash.testing import forbid_default_config
+
+    shared = store_root(test_db)
+    KoboStore(shared / "kobo", blobs=shared / "blobs").take(device, T1)
+    forbid_default_config(monkeypatch, test_db)
+    plugin = KoboSource()
+    plugin.app_config = test_db
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "kobo").run(plugin.sync({}))
+        shas = [r[0] for r in conn.execute("SELECT sha256 FROM item_media")]
+    assert len(shas) == 3 and all(BlobStore(shared).has(s) for s in shas)
+    # The checkpoint is read from the same database: a second sync imports nothing
+    assert list(plugin.sync({})) == []
+    assert not (Path.home() / ".config" / "lestash").exists()

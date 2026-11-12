@@ -103,6 +103,7 @@ jobs:
           uv run pytest packages/lestash-takeout/tests
           uv run pytest packages/lestash-jelu/tests
           uv run pytest packages/lestash-kobo/tests
+          uv run pytest packages/lestash-arxiv/tests
           uv run pytest packages/lestash-server/tests
 
   build:

@@ -31,7 +31,7 @@ import zlib
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 from lestash.core.logging import get_plugin_logger
@@ -43,6 +43,9 @@ from rich.console import Console
 from rich.table import Table
 
 from lestash_takeout.drive import download, list_takeout_zips
+
+if TYPE_CHECKING:
+    from lestash.core.config import Config
 
 console = Console()
 logger = get_plugin_logger("takeout")
@@ -61,12 +64,13 @@ def _drive_service() -> Any:
     return get_drive_service()
 
 
-def load_state() -> dict[str, dict[str, Any]]:
-    """Zips already handled, by Drive file id."""
+def load_state(app_config: "Config | None" = None) -> dict[str, dict[str, Any]]:
+    """Zips already handled, by Drive file id, in ``app_config``'s database (else the
+    default's)."""
     from lestash.core.config import Config
     from lestash.core.database import get_checkpoints, get_connection
 
-    with get_connection(Config.load()) as conn:
+    with get_connection(app_config or Config.load()) as conn:
         return get_checkpoints(conn, SOURCE)
 
 
@@ -195,17 +199,18 @@ def export_key(file: dict[str, Any]) -> str:
 
 
 def _artifacts(
-    path: Path, kept: dict[str, Any] | None, final: bool
+    path: Path, kept: dict[str, Any] | None, final: bool, app_config: "Config | None" = None
 ) -> tuple[list[ItemCreate], Any]:
     """The export's NotebookLM artifacts with this part read, and its index to keep; no
     items and None if the part holds no artifact files. ``final``: no other part of the
-    export is still to be read. A file store that can't be written stops the sync."""
+    export is still to be read. A file store that can't be written stops the sync.
+    ``app_config``: the database whose file store takes the files (else the default)."""
     from lestash.core.blobs import BlobStore, store_root
     from lestash.core.config import Config
     from lestash.importers.notebooklm_artifacts import Index, index_zip
 
     try:
-        fresh = index_zip(path, BlobStore(store_root(Config.load())))
+        fresh = index_zip(path, BlobStore(store_root(app_config or Config.load())))
     except (
         zipfile.BadZipFile,
         KeyError,
@@ -273,12 +278,14 @@ def import_zip(
     previous: dict[str, Any] | None = None,
     kept_index: dict[str, Any] | None = None,
     final: bool = True,
+    app_config: "Config | None" = None,
 ) -> Iterator[ItemCreate | SyncCheckpoint]:
     """Download one Takeout zip and yield its items, then its checkpoint.
 
     Its export's NotebookLM artifacts come after its items, with every file the export's
     parts held so far, then the export's index (``kept_index`` is the stored one).
     ``final``: no other part of the export is still to be read (see collect).
+    ``app_config``: the database being synced into, for its file store (else the default).
 
     The download is deleted before the items are yielded. A corrupt (e.g. truncated) zip, a
     parse error, or a file Drive says is gone yields a ``failed`` checkpoint counting the
@@ -312,7 +319,7 @@ def import_zip(
                 try:
                     # Also for a part with nothing else: as the export's last, it completes
                     # the artifacts the other parts left waiting
-                    artifact_items, index = _artifacts(path, kept_index, final)
+                    artifact_items, index = _artifacts(path, kept_index, final, app_config)
                 except CorruptZip as e:
                     error = e
     if error is not None:
@@ -413,7 +420,8 @@ class TakeoutSource(SourcePlugin):
         except ValueError as e:
             logger.warning(f"Google Drive not available: {e}")
             return
-        state = load_state()
+        app_config = self.app_config
+        state = load_state(app_config)
         problems: list[str] = []
         try:
             listed = list_takeout_zips(service)
@@ -437,6 +445,7 @@ class TakeoutSource(SourcePlugin):
                     previous=state.get(file["id"]),
                     kept_index=state.get(export),
                     final=final,
+                    app_config=app_config,
                 )
                 for obj in parts:
                     if isinstance(obj, SyncCheckpoint) and obj.key in (export, file["id"]):
