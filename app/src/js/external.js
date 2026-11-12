@@ -4,6 +4,14 @@
 
 import { IS_TAURI, tauriInvoke } from './api.js';
 
+// Open a URL outside the app: the system browser under Tauri, a new tab on the web
+export function openExternal(href) {
+  if (!IS_TAURI) { window.open(href, '_blank'); return; }
+  tauriInvoke('plugin:shell|open', { path: href }).catch(err => {
+    console.error('Could not open link', href, err);
+  });
+}
+
 function onClick(e) {
   if (e.defaultPrevented || e.button !== 0) return;
   const a = e.target.closest('a[href]');
@@ -13,9 +21,7 @@ function onClick(e) {
   // Pages of the app itself stay with the router
   if (url.origin === location.origin && a.target !== '_blank') return;
   e.preventDefault();
-  tauriInvoke('plugin:shell|open', { path: url.href }).catch(err => {
-    console.error('Could not open link', url.href, err);
-  });
+  openExternal(url.href);
 }
 
 if (IS_TAURI) document.addEventListener('click', onClick);
