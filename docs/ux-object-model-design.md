@@ -358,3 +358,14 @@ The layout held up in the walk-through; the look did not. These are the choices,
 - **Where an item comes from:** the item page names the service; a file from a repository shows "GitHub · owner/repo · file", linked.
 - **Timeline:** rows and folded groups name the service ("23 posts on YouTube"); busy verbs fold per service.
 - **Front matter:** a Markdown file's header block folds under "File details" instead of opening the text.
+
+## Timeline rows (12 Nov 2026, #277)
+
+From the phone walkthrough: rows had four shapes, hid the verb on a phone, put the service last, showed a chat twice, and wrapped long titles.
+Google My Activity bundles a day by product; activity-feed guidance keys groups on verb and day. The Timeline now follows both.
+
+- **One row shape:** line 1 is the service with its kind icon, what you did, and the time at the right; line 2 is the title, cut to one line.
+- **One entry per chat:** a chat's start and its prompts fold together ("new chat · 2 prompts"); it opens to what you asked.
+- **Groups by service:** busy verbs, and more than three things you made of one kind, fold per service ("GitHub · AtomicGuard wrote 4 notes").
+- **Day summary:** counts by kind under the date, each a filter; their dots carry the kind colours the landmark edges use.
+- **Swipe:** left for the next day with activity, right for the one before. Swipes from the screen edge (system Back), mostly upright swipes and swipes over an open item are ignored.
