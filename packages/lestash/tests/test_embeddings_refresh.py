@@ -213,3 +213,22 @@ def test_stats_count_items_without_a_current_vector(conn):
 
     stats = emb.get_embedding_stats(conn)
     assert (stats["embedded"], stats["out_of_date"], stats["recipe"]) == (2, 0, emb.RECIPE)
+
+
+def test_an_item_deleted_during_a_refresh_is_skipped(conn, monkeypatch):
+    # The list is read first; an item can go while its batch is embedded (r1.2)
+    first = _add(conn, "a", "First", "text")
+    second = _add(conn, "b", "Second", "text")
+    real = emb.embed_batch
+
+    def batch_then_delete(texts):
+        conn.execute("DELETE FROM items WHERE id = ?", (first,))
+        conn.commit()
+        return real(texts)
+
+    monkeypatch.setattr(emb, "embed_batch", batch_then_delete)
+
+    counts = emb.refresh_embeddings(conn)
+
+    assert (counts.embedded, counts.pending) == (1, 0)
+    assert _vector_ids(conn) == {second}

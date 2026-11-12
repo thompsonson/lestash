@@ -259,20 +259,37 @@ def refresh_embeddings(
         counts.removed += 1
     conn.commit()
 
+    done = 0
     for start in range(0, len(todo), BATCH_SIZE):
         if budget_s is not None and time.monotonic() - started > budget_s:
             counts.stopped = True
             break
         batch = todo[start : start + BATCH_SIZE]
         vectors = embed_batch([text for _, text in batch])
-        for (item_id, text), vector in zip(batch, vectors, strict=True):
-            upsert_embedding(conn, item_id, vector, text)
-        conn.commit()
-        counts.embedded += len(batch)
+        # Take the write lock before looking: an item deleted after the list was read
+        # would break embedding_meta's foreign key. Its vector is dropped next time.
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            ids = [item_id for item_id, _ in batch]
+            marks = ",".join("?" * len(ids))
+            present = {
+                row[0] for row in conn.execute(f"SELECT id FROM items WHERE id IN ({marks})", ids)
+            }
+            for (item_id, text), vector in zip(batch, vectors, strict=True):
+                if item_id in present:
+                    upsert_embedding(conn, item_id, vector, text)
+                    counts.embedded += 1
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        done += len(batch)
         if progress_callback:
-            progress_callback(counts.embedded, len(todo))
+            progress_callback(done, len(todo))
 
-    counts.pending = len(todo) - counts.embedded
+    counts.pending = len(todo) - done
     return counts
 
 
