@@ -303,7 +303,13 @@ async function drawDay(day, url) {
     { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
   tab.querySelector('.day-pick').value = isoDay(day);
   tab.querySelector('.verb-filter').value = params.get('verb') || '';
-  tab.querySelector('.kind-filter').value = params.get('kind') || '';
+  // A kind from the day's summary may have no option yet; add it, so it shows and stays
+  const kindSelect = tab.querySelector('.kind-filter');
+  const kindWanted = params.get('kind') || '';
+  if (kindWanted && ![...kindSelect.options].some(o => o.value === kindWanted)) {
+    kindSelect.add(new Option(PLURALS[kindWanted] ? PLURALS[kindWanted][0].toUpperCase() + PLURALS[kindWanted].slice(1) : kindWanted, kindWanted));
+  }
+  kindSelect.value = kindWanted;
   const active = ['verb', 'kind'].filter(k => params.get(k)).length;
   tab.querySelector('.fold-filters summary').textContent = active ? `Filters (${active})` : 'Filters';
   tab.querySelector('.day-today').hidden = isoDay(day) === isoDay(new Date());
