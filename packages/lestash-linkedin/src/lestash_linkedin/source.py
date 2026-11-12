@@ -8,6 +8,7 @@ import re
 import shutil
 import sqlite3
 import webbrowser
+import zipfile
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -39,7 +40,7 @@ from lestash_linkedin.api import (
     save_credentials,
     save_write_credentials,
 )
-from lestash_linkedin.importer import import_from_zip
+from lestash_linkedin.importer import import_export
 from lestash_linkedin.stubs import link_linkedin_targets
 
 console = Console()
@@ -325,10 +326,13 @@ class LinkedInSource(SourcePlugin):
         app = typer.Typer(help="LinkedIn source commands.")
 
         @app.command("import")
-        def import_export(
+        def import_export_zip(
             zip_path: Annotated[Path, typer.Argument(help="Path to LinkedIn export ZIP file")],
         ) -> None:
-            """Import posts from LinkedIn data export ZIP."""
+            """Import your posts, comments and articles from a LinkedIn data export ZIP.
+
+            Items the sync already holds are not stored twice. Safe to run again.
+            """
             from lestash.core.config import Config
             from lestash.core.database import get_connection
 
@@ -337,42 +341,21 @@ class LinkedInSource(SourcePlugin):
                 raise typer.Exit(1)
 
             logger.info(f"Importing from ZIP: {zip_path}")
-            config = Config.load()
-            items_added = 0
+            with get_connection(Config.load()) as conn:
+                try:
+                    report = import_export(conn, zip_path)
+                except (ValueError, zipfile.BadZipFile) as e:
+                    console.print(f"[red]{e}[/red]")
+                    raise typer.Exit(1) from e
 
-            with get_connection(config) as conn:
-                for item in import_from_zip(zip_path):
-                    metadata_json = json.dumps(item.metadata) if item.metadata else None
-                    cursor = conn.execute(
-                        """
-                        INSERT INTO items (
-                            source_type, source_id, url, title, content,
-                            author, created_at, is_own_content, metadata
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(source_type, source_id) DO UPDATE SET
-                            content = excluded.content,
-                            author = excluded.author,
-                            metadata = excluded.metadata
-                        """,
-                        (
-                            item.source_type,
-                            item.source_id,
-                            item.url,
-                            item.title,
-                            item.content,
-                            item.author,
-                            item.created_at,
-                            item.is_own_content,
-                            metadata_json,
-                        ),
-                    )
-                    if cursor.rowcount > 0:
-                        items_added += 1
-
-                conn.commit()
-
-            logger.info(f"Import completed: {items_added} items added")
-            console.print(f"[green]Imported {items_added} posts from LinkedIn export[/green]")
+            logger.info(f"Import completed: {report}")
+            console.print(
+                f"[green]Posts: {report.posts_added} added, {report.posts_held} held already.\n"
+                f"Comments: {report.comments_added} added, {report.comments_held} held already.\n"
+                f"Articles: {report.articles_added} added, {report.articles_updated} updated.\n"
+                f"Held items given their text: {report.filled}. "
+                f"Rows without text or a post: {report.skipped}.[/green]"
+            )
 
         @app.command("auth")
         def auth_cmd(
