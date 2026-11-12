@@ -73,22 +73,14 @@ class _Target(NamedTuple):
     created_at: datetime | None
 
 
-# Sources that store created_at in this machine's local time, without a zone
-LOCAL_TIME_SOURCES = frozenset({"linkedin"})
-
-
 def aware_time(value: Any, source_type: str) -> datetime | None:
-    """A stored created_at as an aware datetime, or None if it isn't a time.
-
-    One with no zone is UTC, except from LinkedIn, whose extractor writes local time.
-    """
+    """A stored created_at as an aware datetime, or None if it isn't a time. One with no
+    zone is UTC: since migration 26 LinkedIn's are too (#236)."""
     try:
         when = datetime.fromisoformat(str(value))
     except ValueError:
         return None
-    if when.tzinfo:
-        return when
-    return when.astimezone() if source_type in LOCAL_TIME_SOURCES else when.replace(tzinfo=UTC)
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
 
 
 def _targets(conn: sqlite3.Connection) -> dict[str, _Target]:
