@@ -11,6 +11,7 @@ from lestash.core.config import Config, GeneralConfig
 from lestash.core.database import get_connection, init_database, upsert_item
 from lestash.models.item import ItemCreate
 from lestash_linkedin.importer import import_export, parse_article, post_urn_of
+from lestash_linkedin.stubs import snowflake_ms
 
 ME = "urn:li:person:me"
 # Made at 2026-01-19T07:09:09.522Z
@@ -205,3 +206,104 @@ def test_not_an_export(config: Config, tmp_path: Path) -> None:
         zf.writestr("readme.txt", "hi")
     with get_connection(config) as conn, pytest.raises(ValueError, match="Not a LinkedIn"):
         import_export(conn, path)
+
+
+def _zip(tmp_path: Path, shares: str = "", comments: str = "") -> Path:
+    path = tmp_path / "export.zip"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("Shares.csv", shares or "Date,ShareLink,ShareCommentary\n")
+        zf.writestr("Comments.csv", comments or "Date,Link,Message\n")
+    return path
+
+
+def _sync_comment(conn, n: int, text: str, on: str, captured: int, actor: str = ME) -> None:
+    upsert_item(
+        conn,
+        ItemCreate(
+            source_type="linkedin",
+            source_id=f"changelog-socialActions/comments-{n}",
+            content=text,
+            is_own_content=True,
+            metadata={
+                "source": "changelog",
+                "resource_name": "socialActions/comments",
+                "commented_on": on,
+                "raw": {"capturedAt": captured, "actor": actor, "owner": ME},
+            },
+        ),
+    )
+
+
+def test_a_held_comment_matches_one_export_row_and_text_wins(
+    config: Config, tmp_path: Path
+) -> None:
+    # Two of your comments on one post, a second apart: each matches its own held
+    # copy by text, though both are within 5 s of the first
+    comments = (
+        "Date,Link,Message\n"
+        f"2026-01-19 10:45:54,{FEED}urn:li:activity:7418912385886941184,First\n"
+        f"2026-01-19 10:45:55,{FEED}urn:li:activity:7418912385886941184,Second\n"
+        f"2026-01-19 10:45:56,{FEED}urn:li:activity:7418912385886941184,Third\n"
+    )
+    with get_connection(config) as conn:
+        on = "urn:li:activity:7418912385886941184"
+        _sync_comment(conn, 1, "Second", on, 1768819554000)
+        _sync_comment(conn, 2, "First", on, 1768819555000)
+        report = import_export(conn, _zip(tmp_path, comments=comments))
+        # Third is new: the held comments near its time are taken
+        assert (report.comments_held, report.comments_added) == (2, 1)
+
+
+def test_others_comments_on_your_posts_are_not_yours(config: Config, tmp_path: Path) -> None:
+    comments = (
+        f"Date,Link,Message\n2026-01-19 10:45:54,{FEED}urn:li:activity:7418912385886941184,Mine\n"
+    )
+    with get_connection(config) as conn:
+        on = "urn:li:activity:7418912385886941184"
+        _sync_comment(
+            conn, 1, "CREATE socialActions/comments", on, 1768819554000, "urn:li:person:x"
+        )
+        report = import_export(conn, _zip(tmp_path, comments=comments))
+        assert (report.comments_held, report.comments_added, report.filled) == (0, 1, 0)
+
+
+def test_a_comment_held_on_the_share_matches_one_on_its_activity(
+    config: Config, tmp_path: Path
+) -> None:
+    # A share and its activity are one post, made within 2 s of each other
+    share = "urn:li:share:7418912385886941184"
+    activity_id = (snowflake_ms(share) + 500) << 22
+    comments = f"Date,Link,Message\n2026-01-19 10:45:54,{FEED}urn:li:activity:{activity_id},Same\n"
+    with get_connection(config) as conn:
+        _sync_comment(conn, 1, "Same", share, 1768819554000)
+        report = import_export(conn, _zip(tmp_path, comments=comments))
+        assert (report.comments_held, report.comments_added) == (1, 0)
+
+
+def test_posts_and_comments_from_the_snapshot_fetch_are_held(
+    config: Config, tmp_path: Path
+) -> None:
+    link = f"{FEED}urn:li:share:7000000000000000000"
+    with get_connection(config) as conn:
+        for domain, text in (("MEMBER_SHARE_INFO", "A post"), ("ALL_COMMENTS", "A comment")):
+            upsert_item(
+                conn,
+                ItemCreate(
+                    source_type="linkedin",
+                    source_id=f"{link}#{domain}",
+                    url=link,
+                    content=text,
+                    is_own_content=True,
+                    metadata={"domain": domain, "raw": {}},
+                ),
+            )
+        report = import_export(
+            conn,
+            _zip(
+                tmp_path,
+                shares=f"Date,ShareLink,ShareCommentary\n2024-01-01 10:00:00,{link},A post\n",
+                comments=f"Date,Link,Message\n2024-01-01 11:00:00,{link},A comment\n",
+            ),
+        )
+        assert (report.posts_held, report.posts_added) == (1, 0)
+        assert (report.comments_held, report.comments_added) == (1, 0)

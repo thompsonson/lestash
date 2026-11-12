@@ -40,7 +40,7 @@ from lestash.core.database import mark_recent_history, max_history_id
 from lestash.core.sync import SyncStore
 from lestash.models.item import ItemCreate
 
-from lestash_linkedin.stubs import COMMENT_URN, HeldPosts
+from lestash_linkedin.stubs import COMMENT_URN, SAME_POST_MS, HeldPosts, snowflake_ms
 
 SOURCE = "linkedin"
 EXPORT = "export"
@@ -129,41 +129,72 @@ def _your_urn(conn: sqlite3.Connection) -> str | None:
 @dataclass
 class _HeldComment:
     item_id: int
+    post: str  # the post it is on
+    post_ms: int | None  # when that post's URN was made
     text: str
-    ms: int | None
+    ms: int | None  # when it was made; None for an edit, which is later
     placeholder: bool
 
 
-def _held_comments(conn: sqlite3.Connection) -> dict[str, list[_HeldComment]]:
-    """Held LinkedIn comments, from the sync or an earlier import, by the post each is on."""
-    held: dict[str, list[_HeldComment]] = {}
+def _post_of(target: str) -> str:
+    match = COMMENT_URN.match(target)
+    return f"urn:li:{match.group(1)}:{match.group(2)}" if match else target
+
+
+def _held_comments(conn: sqlite3.Connection) -> list[_HeldComment]:
+    """Your held LinkedIn comments: from the sync, an earlier import, or the snapshot
+    fetch (``ALL_COMMENTS``). Not others' comments that the changelog logged on your
+    posts: their actor is not the owner."""
+    held: list[_HeldComment] = []
     rows = conn.execute(
-        "SELECT id, content, metadata FROM items WHERE source_type = 'linkedin' AND held = 1 "
-        "AND json_extract(metadata, '$.resource_name') = 'socialActions/comments'"
+        "SELECT id, content, url, source_id, metadata FROM items "
+        "WHERE source_type = 'linkedin' AND held = 1 "
+        "AND (json_extract(metadata, '$.resource_name') = 'socialActions/comments' "
+        "OR json_extract(metadata, '$.domain') = 'ALL_COMMENTS')"
     )
-    for item_id, content, metadata_json in rows:
+    for item_id, content, url, source_id, metadata_json in rows:
         metadata = _metadata(metadata_json)
-        target = metadata.get("commented_on")
-        if not isinstance(target, str):
-            continue
-        match = COMMENT_URN.match(target)
-        post = f"urn:li:{match.group(1)}:{match.group(2)}" if match else target
         raw = _dict(metadata.get("raw"))
+        actor, owner = raw.get("actor"), raw.get("owner")
+        if actor and owner and actor != owner:
+            continue
+        target = metadata.get("commented_on")
+        if metadata.get("domain") == "ALL_COMMENTS":
+            target = post_urn_of(url or source_id or "")
+        if not isinstance(target, str) or not target:
+            continue
+        post = _post_of(target)
         ms = _dict(_dict(raw.get("activity")).get("created")).get("time")
         # capturedAt is within a second of the comment; processedAt can be 30 s later
         ms = ms or raw.get("capturedAt") or raw.get("processedAt") or metadata.get("export_ms")
-        held.setdefault(post, []).append(
+        created = isinstance(ms, int | float) and metadata.get("method", "CREATE") == "CREATE"
+        held.append(
             _HeldComment(
                 item_id,
+                post,
+                snowflake_ms(post),
                 content or "",
-                # An edit is made later than its comment: only its text can match
-                int(ms)
-                if isinstance(ms, int | float) and metadata.get("method", "CREATE") == "CREATE"
-                else None,
+                int(ms) if created and ms is not None else None,
                 _placeholder(content, metadata),
             )
         )
     return held
+
+
+def _held_post_urns(conn: sqlite3.Connection) -> dict[str, int]:
+    """Posts held from the snapshot fetch (``MEMBER_SHARE_INFO``) or the import before
+    this one, by the URN in their link. HeldPosts knows only ugcPosts items."""
+    found: dict[str, int] = {}
+    rows = conn.execute(
+        "SELECT id, url, source_id FROM items WHERE source_type = 'linkedin' AND held = 1 "
+        "AND (json_extract(metadata, '$.domain') = 'MEMBER_SHARE_INFO' "
+        "OR json_extract(metadata, '$.raw_row') IS NOT NULL) ORDER BY id DESC"
+    )
+    for item_id, url, source_id in rows:
+        urn = post_urn_of(url or source_id or "")
+        if urn:
+            found[urn] = item_id
+    return found
 
 
 class _Import:
@@ -171,7 +202,9 @@ class _Import:
         self.conn = conn
         self.report = ImportReport()
         self.posts = HeldPosts(conn)
+        self.other_posts = _held_post_urns(conn)
         self.comments = _held_comments(conn)
+        self.matched: set[int] = set()  # held comments an export row has matched
         self.author = _your_urn(conn)
         self.fills: dict[int, str] = {}  # held item -> the export's text
         self.used: set[str] = set()  # comment source ids given this run
@@ -192,6 +225,8 @@ class _Import:
                 self.report.skipped += 1
                 continue
             held = self.posts.find(urn)
+            if held is None:
+                held = self.other_posts.get(urn)
             if held is not None:
                 self.report.posts_held += 1
                 content, metadata = self._held_text(held)
@@ -219,12 +254,31 @@ class _Import:
             )
 
     def _held_comment(self, post: str, text: str, ms: int | None) -> _HeldComment | None:
-        for held in self.comments.get(post, []):
-            if not held.placeholder and _norm(held.text) == _norm(text):
-                return held
-            if ms is not None and held.ms is not None and abs(held.ms - ms) < SAME_COMMENT_MS:
-                return held
-        return None
+        """The held comment this export row is, if any: on the same post (one URN, or a
+        share and its activity made within SAME_POST_MS), with the same text, else made
+        within SAME_COMMENT_MS. Each held comment matches one row only."""
+        post_ms = snowflake_ms(post)
+        on_post = [
+            h
+            for h in self.comments
+            if h.item_id not in self.matched
+            and (
+                h.post == post
+                or (
+                    post_ms is not None
+                    and h.post_ms is not None
+                    and abs(h.post_ms - post_ms) <= SAME_POST_MS
+                )
+            )
+        ]
+        wanted = _norm(text)
+        found = next((h for h in on_post if not h.placeholder and _norm(h.text) == wanted), None)
+        if found is None and ms is not None:
+            near = [h for h in on_post if h.ms is not None and abs(h.ms - ms) < SAME_COMMENT_MS]
+            found = min(near, key=lambda h: abs((h.ms or 0) - ms), default=None)
+        if found is not None:
+            self.matched.add(found.item_id)
+        return found
 
     def comments_from(self, zf: zipfile.ZipFile) -> Iterator[ItemCreate]:
         # The export escapes quotes in comments with a backslash
