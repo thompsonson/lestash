@@ -124,17 +124,21 @@ const MADE_GROUP = {
 // arrows do. A swipe from the screen's edge is the system's Back, and a mostly
 // upright one is a scroll, so both are left alone; so is anything over an open item.
 const EDGE = 24, MIN_DX = 70;
+// Listens on <main>, not the tab, so a swipe in the empty space below a short day
+// counts too; it acts only while the Timeline is the page shown.
 function swipeDays(tab) {
+  const area = tab.closest('main') || tab;
   let start = null;
-  tab.addEventListener('touchstart', e => {
+  area.addEventListener('touchstart', e => {
+    if (!tab.classList.contains('active')) { start = null; return; }
     const t = e.touches[0];
     const edge = t.clientX < EDGE || t.clientX > window.innerWidth - EDGE;
     const typing = e.target.closest('input, select, textarea');
     start = e.touches.length === 1 && !edge && !typing && !document.body.classList.contains('sheet-open')
       ? { x: t.clientX, y: t.clientY, at: Date.now() } : null;
   }, { passive: true });
-  tab.addEventListener('touchend', e => {
-    if (!start) return;
+  area.addEventListener('touchend', e => {
+    if (!start || !tab.classList.contains('active')) { start = null; return; }
     const t = e.changedTouches[0];
     const dx = t.clientX - start.x, dy = t.clientY - start.y;
     const quick = Date.now() - start.at < 800;
@@ -149,7 +153,7 @@ function swipeDays(tab) {
     list.classList.add(dx < 0 ? 'slide-next' : 'slide-previous');
     navigate(href);
   }, { passive: true });
-  tab.addEventListener('touchcancel', () => { start = null; }, { passive: true });
+  area.addEventListener('touchcancel', () => { start = null; }, { passive: true });
 }
 
 function entryTitle(e) {

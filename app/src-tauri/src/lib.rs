@@ -41,6 +41,20 @@ async fn download_model(app: tauri::AppHandle) -> Result<String, String> {
     stt::download_model(app).await.map_err(|e| e.to_string())
 }
 
+// Opens a web or mail link in the system browser or mail app. The shell plugin's own
+// JS command uses the desktop opener even on Android, where nothing happens; its Rust
+// call reaches Android's ACTION_VIEW intent. Only http, https and mailto pass.
+#[tauri::command]
+#[allow(deprecated)]
+fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt;
+    let lower = url.to_ascii_lowercase();
+    if !["https://", "http://", "mailto:"].iter().any(|p| lower.starts_with(p)) {
+        return Err(format!("not a web or mail link: {url}"));
+    }
+    app.shell().open(url, None).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_app_version(app: tauri::AppHandle) -> String {
     app.config().version.clone().unwrap_or_else(|| "unknown".into())
@@ -61,6 +75,7 @@ pub fn run() {
             get_stt_status,
             download_model,
             get_app_version,
+            open_external,
             share::check_pending_share,
             share::read_shared_file,
         ])
