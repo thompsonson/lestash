@@ -4,7 +4,7 @@
 
 import { api } from '../api.js';
 import { route, navigate } from '../router.js';
-import { escHtml } from '../util.js';
+import { escHtml, sourceLabel } from '../util.js';
 import { kindIcon } from '../objects/item/kinds.js';
 import { openFiltersWhenWide } from '../util.js';
 
@@ -102,7 +102,7 @@ function entryTitle(e) {
   return item.title;
 }
 
-function line(e) {
+function line(e, inGroup = false) {
   const time = new Date(e.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   const item = e.item;
   const verb = e.verb === 'made' ? (MADE_WORDS[item && item.kind] || 'made') : (VERB_WORDS[e.verb] || e.verb);
@@ -110,6 +110,8 @@ function line(e) {
   const title = escHtml(entryTitle(e));
   const what = item ? `<a href="/items/${item.id}">${title}</a>` : title;
   const extra = [];
+  // The service, unless the group above already names it
+  if (item && !inGroup) extra.push(escHtml(sourceLabel(item.source_type)));
   if (item && item.channel) extra.push(escHtml(item.channel));
   if (item && item.kind_detail) extra.push(escHtml(item.kind_detail));
   if (e.context) extra.push(`with <a href="/items/${e.context.id}">${escHtml(e.context.title)}</a>`);
@@ -135,7 +137,7 @@ function promptLine(e) {
 // What an entry folds under: busy verbs by kind; prompts by their chat
 function foldKey(e) {
   if (e.verb === 'prompted' && e.item) return `prompted|${e.item.id}`;
-  return FOLDING.has(e.verb) ? `${e.verb}|${e.item ? e.item.kind : ''}` : null;
+  return FOLDING.has(e.verb) ? `${e.verb}|${e.item ? e.item.kind : ''}|${e.item ? e.item.source_type : ''}` : null;
 }
 
 // Entries newest first, with busy verbs folded into one line at their latest time,
@@ -172,7 +174,7 @@ function promptGroupHtml(list) {
   return `<li class="timeline-group kind-${first.item.kind}"><details>
     <summary><span class="t-time">${to}</span> <span class="t-verb">prompted</span>
       <a href="/items/${first.item.id}">${escHtml(first.item.title)}</a>
-      <b>${list.length} prompts</b> <span class="muted">${from}–${to}</span></summary>
+      <b>${list.length} prompts</b> <span class="muted">· ${escHtml(sourceLabel(first.item.source_type))} · ${from}–${to}</span></summary>
     <ul class="timeline-sub">${list.slice(0, SHOWN_IN_GROUP).map(promptLine).join('')}</ul>
   </details></li>`;
 }
@@ -187,11 +189,12 @@ function groupHtml(list) {
   const verb = first.verb === 'searched' ? 'searched' : (VERB_WORDS[first.verb] || first.verb);
   const from = new Date(list[list.length - 1].at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   const to = new Date(first.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  const rows = list.slice(0, SHOWN_IN_GROUP).map(line).join('');
+  const rows = list.slice(0, SHOWN_IN_GROUP).map(e => line(e, true)).join('');
+  const where = first.item ? sourceLabel(first.item.source_type) : '';
   const more = n > SHOWN_IN_GROUP ? `<li class="muted">and ${n - SHOWN_IN_GROUP} more</li>` : '';
   return `<li class="timeline-group"><details>
     <summary><span class="t-time">${to}</span> <span class="t-verb">${escHtml(verb)}</span>
-      <b>${n} ${escHtml(what)}</b> <span class="muted">${from}–${to}</span></summary>
+      <b>${n} ${escHtml(what)}</b> <span class="muted">${where ? `on ${escHtml(where)} · ` : ''}${from}–${to}</span></summary>
     <ul class="timeline-sub">${rows}${more}</ul>
   </details></li>`;
 }

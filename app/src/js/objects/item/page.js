@@ -32,16 +32,18 @@ export function itemHeader(item, title) {
     html += `<a class="item-up" href="/items/${item.parent_id}">↑ ${escHtml(label)}: ${escHtml(item.parent_title || 'the item this is part of')}</a>`;
   }
   html += `<div class="item-view-title" id="item-title-display"><span class="kind-icon" aria-hidden="true">${kindIcon(item)}</span> ${escHtml(title)}</div>`;
-  const parts = [kindText(item), sourceLabel(item.source_type)];
+  const parts = [kindText(item)];
   const when = dateText(item.created_at || (item.metadata && item.metadata.last_at));
   if (when) parts.push(when);
   if (item.kind === 'video' && item.metadata && item.metadata.channel_title) parts.push(item.metadata.channel_title);
   const meta = parts.filter(Boolean).map(escHtml);
+  meta.splice(1, 0, whereFrom(item));
   // "by Matt", linked to the person it is by
   const by = item.kind === 'video' ? '' : byName(item);
   if (by) meta.push(item.by_id ? `by <a href="/people/${item.by_id}">${escHtml(by)}</a>` : `by ${escHtml(by)}`);
   if (item.url) meta.push(`<a href="${escHtml(item.url)}" target="_blank" rel="noopener">open original</a>`);
-  html += `<div class="item-view-meta">${meta.join(' · ')}</div>`;
+  html += `<div class="item-view-meta">${meta.filter(Boolean).join(' · ')}</div>`;
+  html += frontMatterHtml(item);
   const gen = generationSettings(item);
   if (gen.settings.length) {
     html += `<div class="item-settings">${gen.settings.map(([k, v]) => `<span><b>${escHtml(k)}</b> ${escHtml(v)}</span>`).join('')}</div>`;
@@ -53,6 +55,59 @@ export function itemHeader(item, title) {
   return html;
 }
 
+// Where the item comes from: the service, and for a file in a repository, the
+// repository and the file, linked: "GitHub · thompsonson/atomicguard · x.md"
+export function whereFrom(item) {
+  const m = item.metadata || {};
+  if (typeof m.repo === 'string' && typeof m.path === 'string') {
+    const ref = typeof m.commit === 'string' && m.commit ? m.commit : 'HEAD';
+    const repo = `https://github.com/${m.repo}`;
+    return `GitHub · <a href="${escHtml(repo)}" target="_blank" rel="noopener">${escHtml(m.repo)}</a>`
+      + ` · <a href="${escHtml(`${repo}/blob/${ref}/${m.path}`)}" target="_blank" rel="noopener" title="${escHtml(m.path)}">${escHtml(m.path.split('/').pop())}</a>`;
+  }
+  return escHtml(sourceLabel(item.source_type));
+}
+
+// A Markdown file's front matter: the block between "---" lines at the top.
+// Returns its fields, [key, value] with a list's lines joined, and the text after it.
+export function splitFrontMatter(text) {
+  const match = /^\s*---\r?\n([\s\S]*?)\r?\n---[ \t]*(\r?\n|$)/.exec(text || '');
+  if (!match) return { fields: [], body: text || '' };
+  const fields = [];
+  for (const line of match[1].split(/\r?\n/)) {
+    const field = /^([A-Za-z_][\w -]*):\s*(.*)$/.exec(line);
+    if (field) { fields.push([field[1].trim(), field[2]]); continue; }
+    if (!line.trim()) continue;
+    // Anything but "key: value" and its indented or "- " lines: not front matter
+    if (!fields.length || !/^(\s|- )/.test(line)) return { fields: [], body: text };
+    {
+      const last = fields[fields.length - 1];
+      last[1] = [last[1], line.trim().replace(/^- /, '')].filter(Boolean).join('\n');
+    }
+  }
+  const unquote = v => v.trim().replace(/^(["'])(.*)\1$/, '$2');
+  return {
+    fields: fields.map(([k, v]) => [k, v.split('\n').map(unquote).join('\n')]).filter(([, v]) => v),
+    body: text.slice(match[0].length),
+  };
+}
+
+// The front matter folded under the header, without a title or date the header
+// already shows the same
+function frontMatterHtml(item) {
+  const { fields } = splitFrontMatter(item.content);
+  const same = ([k, v]) => {
+    const key = k.toLowerCase();
+    if (key === 'title') return v.trim() === (item.title || '').trim();
+    if (key === 'date') return dateText(v) && dateText(v) === dateText(item.created_at);
+    return false;
+  };
+  const shown = fields.filter(f => !same(f));
+  if (!shown.length) return '';
+  return `<details class="item-front"><summary>File details <span class="muted">· ${shown.map(([k]) => escHtml(k)).join(', ')}</span></summary>
+    <dl>${shown.map(([k, v]) => `<dt>${escHtml(k)}</dt><dd>${escHtml(v).replace(/\n/g, '<br>')}</dd>`).join('')}</dl></details>`;
+}
+
 const KIND_WORDS = {
   post: 'Reply to the post', notebook: 'In the notebook', book: 'In the book', chat: 'In the chat',
   project: 'In the project', email: 'In the thread', video: 'Of the video', note: 'On the note',
@@ -61,7 +116,7 @@ const KIND_WORDS = {
 // The content without what the header already shows: a heading repeating the title,
 // and an artifact's "NotebookLM audio overview" line and raw **option:** lines
 export function cleanContent(item, title, { dropFirstLine = false } = {}) {
-  let text = item.content || '';
+  let text = splitFrontMatter(item.content || '').body;
   const lines = text.trim().split('\n');
   if (dropFirstLine) lines.shift();
   const first = lines.findIndex(l => l.trim());

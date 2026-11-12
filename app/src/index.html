@@ -20,7 +20,7 @@
     <h1>LeStash</h1>
     <div class="dot" id="dot" title="Server connection"></div>
     <span class="spacer"></span>
-    <button class="gear-btn" id="debug-toggle" title="Toggle debug mode">&#128295;</button>
+    <a class="gear-btn" id="record-shortcut" href="/notes" title="Record a note" aria-label="Record a note"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></a>
     <button class="gear-btn" id="settings-btn" title="Settings">&#9881;</button>
   </header>
 
@@ -49,9 +49,13 @@
         <li><a href="/recent">⏱ Recently added<span class="muted">What the last syncs brought in</span></a></li>
         <li><a href="/settings/sources">⇄ Sources<span class="muted">Connect and sync</span></a></li>
         <li><a href="/settings/stats">◩ Stats</a></li>
+        <li><a href="/help">? Help<span class="muted">Where each source's export comes from</span></a></li>
         <li><a href="/settings/debug">⚙ Debug</a></li>
       </ul>
     </div>
+
+    <!-- Help: built by js/places/help.js -->
+    <div class="tab-content" id="tab-help"></div>
 
     <!-- People tab: built by js/places/people.js -->
     <div class="tab-content" id="tab-people"></div>
@@ -212,6 +216,7 @@
 
     <!-- Debug tab -->
     <div class="tab-content" id="tab-debug">
+      <label class="debug-switch"><input type="checkbox" id="debug-toggle"> Show raw fields on cards and items (debug mode)</label>
       <div id="debug-info" style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.75rem;margin-bottom:1rem;font-size:0.8rem;line-height:1.6"></div>
       <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
         <button class="sync-btn" onclick="debugTestConnection()">Test Connection</button>

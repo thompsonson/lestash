@@ -42,7 +42,7 @@ const SOURCE_LABELS = {
   'claude-memory': 'Claude', mistral: 'Mistral', kobo: 'Kobo', audible: 'Audible',
   jelu: 'Jelu', 'google-drive': 'Google Drive', gmail: 'Gmail', email: 'Email',
   voice: 'Voice note', note: 'Note', web: 'Web', share: 'Shared', pdf: 'PDF', image: 'Image',
-  atomicguard: 'AtomicGuard',
+  atomicguard: 'GitHub · AtomicGuard',
 };
 
 // The source in words: "Claude Code", not "claude-code"
