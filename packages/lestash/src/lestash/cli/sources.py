@@ -141,6 +141,7 @@ def sync_source(
         # source only, so the others still sync and the summary still prints
         try:
             plugin = plugins[name]
+            plugin.app_config = config  # the plugin's own reads use this database too
             plugin_config = config.get_plugin_config(name)
 
             console.print(f"[bold]Syncing {name}...[/bold]")
@@ -200,7 +201,7 @@ def sync_source(
                                 token = load_token()
                                 if token and token.get("access_token"):
                                     downloaded = download_linkedin_media(
-                                        conn, token["access_token"]
+                                        conn, token["access_token"], config
                                     )
                                     if downloaded:
                                         console.print(

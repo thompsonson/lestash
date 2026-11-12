@@ -131,3 +131,26 @@ def test_run_sync_reads_plugin_settings_saved_after_startup(test_config, monkeyp
 
     sources_route._run_sync("audible")
     assert seen == [{"locale": "uk"}]
+
+
+def test_run_sync_hands_the_plugin_the_servers_config(test_config, monkeypatch) -> None:
+    """A plugin's own reads use the server's database, not the default one (#231)."""
+    from lestash.testing import forbid_default_config
+
+    class _Reader:
+        app_config = None
+
+        def sync(self, config: dict):
+            with get_connection(self.app_config) as conn:
+                conn.execute("SELECT count(*) FROM items").fetchone()
+            yield BOOK.model_copy(deep=True)
+
+    monkeypatch.setattr(deps, "_config", test_config)
+    monkeypatch.setattr(sources_route, "load_plugins", lambda: {"audible": _Reader()})
+    forbid_default_config(monkeypatch, test_config, allowed=1)  # the settings re-read
+    sources_route._run_sync("audible")
+    with get_connection(test_config) as conn:
+        status, added = conn.execute(
+            "SELECT status, items_added FROM sync_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert (status, added) == ("completed", 1)

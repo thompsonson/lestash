@@ -76,6 +76,7 @@ def _run_sync(source_name: str) -> None:
         logger.warning("Could not read the config file (%s); using the one loaded at startup", e)
         plugin_config = config.get_plugin_config(source_name)
 
+    plugin.app_config = config  # the plugin's own reads use this database too
     with get_connection(config) as conn:
         store = SyncStore(conn, source_name)
         try:

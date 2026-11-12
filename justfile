@@ -33,6 +33,8 @@ test-all:
     uv run pytest packages/lestash-jelu/tests
     @echo "\nRunning lestash-kobo tests..."
     uv run pytest packages/lestash-kobo/tests
+    @echo "\nRunning lestash-arxiv tests..."
+    uv run pytest packages/lestash-arxiv/tests
     @echo "\nRunning lestash-server tests..."
     uv run pytest packages/lestash-server/tests
 
