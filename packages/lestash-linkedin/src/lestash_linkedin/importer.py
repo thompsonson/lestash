@@ -40,13 +40,10 @@ from lestash.core.database import mark_recent_history, max_history_id
 from lestash.core.sync import SyncStore
 from lestash.models.item import ItemCreate
 
-from lestash_linkedin.stubs import COMMENT_URN, SAME_POST_MS, HeldPosts, snowflake_ms
+from lestash_linkedin.stubs import COMMENT_URN, POST_URN, SAME_POST_MS, HeldPosts, snowflake_ms
 
 SOURCE = "linkedin"
 EXPORT = "export"
-# The post a link names: urn:li:share:1, urn:li:ugcPost:1, urn:li:activity:1, or
-# urn:li:groupPost:<group>-<id>
-POST_URN = re.compile(r"urn:li:(?:share|ugcPost|activity|groupPost):[\d-]+")
 PULSE = "https://www.linkedin.com/pulse/"
 # A comment the changelog made within this of the export's time is the same comment
 SAME_COMMENT_MS = 5000
@@ -181,22 +178,6 @@ def _held_comments(conn: sqlite3.Connection) -> list[_HeldComment]:
     return held
 
 
-def _held_post_urns(conn: sqlite3.Connection) -> dict[str, int]:
-    """Posts held from the snapshot fetch (``MEMBER_SHARE_INFO``) or the import before
-    this one, by the URN in their link. HeldPosts knows only ugcPosts items."""
-    found: dict[str, int] = {}
-    rows = conn.execute(
-        "SELECT id, url, source_id FROM items WHERE source_type = 'linkedin' AND held = 1 "
-        "AND (json_extract(metadata, '$.domain') = 'MEMBER_SHARE_INFO' "
-        "OR json_extract(metadata, '$.raw_row') IS NOT NULL) ORDER BY id DESC"
-    )
-    for item_id, url, source_id in rows:
-        urn = post_urn_of(url or source_id or "")
-        if urn:
-            found[urn] = item_id
-    return found
-
-
 @dataclass
 class _CommentRow:
     text: str
@@ -211,10 +192,8 @@ class _Import:
         self.conn = conn
         self.report = ImportReport()
         self.posts = HeldPosts(conn)
-        self.other_posts = _held_post_urns(conn)
         self.comments = _held_comments(conn)
         self.matched: set[int] = set()  # held comments an export row has matched
-        self.as_posts: dict[int, str] = {}  # snapshot posts to name as ugcPosts, by URN
         self.author = _your_urn(conn)
         self.fills: dict[int, str] = {}  # held item -> the export's text
         self.used: set[str] = set()  # comment source ids given this run
@@ -235,9 +214,6 @@ class _Import:
                 self.report.skipped += 1
                 continue
             held = self.posts.find(urn)
-            if held is None and (held := self.other_posts.get(urn)) is not None:
-                # Named as the sync names a post, so its comments find it as their parent
-                self.as_posts[held] = urn
             if held is not None:
                 self.report.posts_held += 1
                 content, metadata = self._held_text(held)
@@ -283,23 +259,24 @@ class _Import:
         ]
 
     def _match_comments(self, rows: list[_CommentRow]) -> dict[int, _HeldComment]:
-        """Which export rows are held comments, by row index. Text matches first, over
-        every row; then the closest times within SAME_COMMENT_MS, closest pair first.
-        Each held comment matches one row."""
+        """Which export rows are held comments, by row index. Same text first, closest in
+        time first, over every row; then the closest times within SAME_COMMENT_MS. Each
+        held comment matches one row."""
         found: dict[int, _HeldComment] = {}
-        for i, row in enumerate(rows):
-            wanted = _norm(row.text)
-            held = next(
-                (
-                    h
-                    for h in self._on_post(row.post)
-                    if not h.placeholder and _norm(h.text) == wanted
-                ),
-                None,
-            )
-            if held is not None:
-                found[i] = held
-                self.matched.add(held.item_id)
+        # Same text, closest time first. Text that is only emoji or punctuation is no
+        # evidence, so it matches by time only.
+        same_text = sorted(
+            (abs((h.ms if h.ms is not None else row.ms) - row.ms), i, h.item_id, h)
+            for i, row in enumerate(rows)
+            if (wanted := _norm(row.text))
+            for h in self._on_post(row.post)
+            if not h.placeholder and _norm(h.text) == wanted
+        )
+        for _, i, item_id, held in same_text:
+            if i in found or item_id in self.matched:
+                continue
+            found[i] = held
+            self.matched.add(item_id)
         pairs = sorted(
             (abs(h.ms - row.ms), i, h.item_id, h)
             for i, row in enumerate(rows)
@@ -409,21 +386,12 @@ class _Import:
         return (row[0], _metadata(row[1])) if row else None
 
     def fill(self) -> None:
-        """Give held items the export's text where the changelog gave none, and name
-        posts from the snapshot fetch as the sync does."""
+        """Give held items the export's text where the changelog gave none."""
         since = max_history_id(self.conn)
         for item_id, text in self.fills.items():
             self.conn.execute("UPDATE items SET content = ? WHERE id = ?", (text, item_id))
-        for item_id, urn in self.as_posts.items():
-            self.conn.execute(
-                "UPDATE items SET metadata = json_set(metadata, '$.resource_name', 'ugcPosts', "
-                "'$.post_id', ?) WHERE id = ? AND json_valid(metadata)",
-                (urn, item_id),
-            )
         self.report.filled = len(self.fills)
-        mark_recent_history(
-            self.conn, since, "linkedin export", item_ids=[*self.fills, *self.as_posts]
-        )
+        mark_recent_history(self.conn, since, "linkedin export", item_ids=list(self.fills))
 
 
 @dataclass

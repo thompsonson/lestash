@@ -350,7 +350,6 @@ def test_comments_on_a_snapshot_post_go_under_it(config: Config, tmp_path: Path)
         )
         (comment,) = _items(conn, "kind = 'comment'")
         assert comment["parent_id"] == post_id
-        assert _items(conn, f"id = {post_id}")[0]["kind"] == "post"
 
 
 def test_parse_article_keeps_its_own_headings() -> None:
@@ -358,3 +357,26 @@ def test_parse_article_keeps_its_own_headings() -> None:
     article = parse_article(page, "an-article-me-abc.html")
     assert article is not None and article.title == "An article"
     assert "# Section one" in article.text
+
+
+def test_repeated_and_emoji_replies_match_by_time(config: Config, tmp_path: Path) -> None:
+    on = "urn:li:activity:7418912385886941184"
+    comments = (
+        "Date,Link,Message\n"
+        f"2026-01-19 10:00:00,{FEED}{on},Thanks!\n"
+        f"2026-01-19 11:00:00,{FEED}{on},Thanks!\n"
+        f"2026-01-19 12:00:00,{FEED}{on},👍\n"
+        f"2026-01-19 13:00:00,{FEED}{on},🙏\n"
+    )
+    hour = 3600 * 1000
+    t0 = 1768816800000  # 2026-01-19 10:00:00 UTC
+    with get_connection(config) as conn:
+        # Held in the other order: each must match the row made at its time
+        _sync_comment(conn, 1, "Thanks!", on, t0 + hour + 400)
+        _sync_comment(conn, 2, "Thanks!", on, t0 + 400)
+        _sync_comment(conn, 3, "🙏", on, t0 + 3 * hour + 400)
+        report = import_export(conn, _zip(tmp_path, comments=comments))
+        # The 👍 at 12:00 isn't held; the 🙏 isn't taken for it by its empty text
+        assert (report.comments_held, report.comments_added) == (3, 1)
+        (added,) = _items(conn, "json_extract(metadata, '$.source') = 'export'")
+        assert added["content"] == "👍"

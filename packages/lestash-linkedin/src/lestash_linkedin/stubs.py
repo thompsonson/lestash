@@ -27,7 +27,7 @@ import re
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from lestash.core.activities import record_activities
 from lestash.core.database import linkedin_person, mark_recent_history, max_history_id
@@ -39,6 +39,9 @@ SOURCE = "linkedin"
 FEED_URL = "https://www.linkedin.com/feed/update/"
 # urn:li:comment:(activity:123,456) is comment 456 on post urn:li:activity:123
 COMMENT_URN = re.compile(r"^urn:li:comment:\((\w+):([^,]+),([^)]+)\)$")
+# The post a link names: urn:li:share:1, urn:li:ugcPost:1, urn:li:activity:1, or
+# urn:li:groupPost:<group>-<id>
+POST_URN = re.compile(r"urn:li:(?:share|ugcPost|activity|groupPost):[\d-]+")
 # A share and its activity are made within a second of each other; distinct posts
 # rarely are. Wider than that, a post is not taken for another.
 SAME_POST_MS = 2000
@@ -97,14 +100,19 @@ class HeldPosts:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.by_urn: dict[str, int] = {}
         times: dict[int, set[int]] = {}
+        # Posts from the sync and the export (ugcPosts), and from the snapshot fetch or
+        # the import before #282, which name their post only in their link
         rows = conn.execute(
-            "SELECT id, source_id, json_extract(metadata, '$.post_id') FROM items "
+            "SELECT id, source_id, json_extract(metadata, '$.post_id'), url FROM items "
             "WHERE source_type = 'linkedin' AND held = 1 "
-            "AND json_extract(metadata, '$.resource_name') = 'ugcPosts' ORDER BY id DESC"
+            "AND (json_extract(metadata, '$.resource_name') = 'ugcPosts' "
+            "OR json_extract(metadata, '$.domain') = 'MEMBER_SHARE_INFO' "
+            "OR json_extract(metadata, '$.raw_row') IS NOT NULL) ORDER BY id DESC"
         )
         # Newest first, so the oldest post is written last and wins a shared URN
-        for item_id, source_id, post_id in rows:
-            for urn in (source_id, post_id):
+        for item_id, source_id, post_id, url in rows:
+            in_link = POST_URN.search(unquote(url or source_id or ""))
+            for urn in (source_id, post_id, in_link.group(0) if in_link else None):
                 if not urn:
                     continue
                 self.by_urn[urn] = item_id
