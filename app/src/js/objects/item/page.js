@@ -6,7 +6,7 @@
 import { api, getApiBase } from '../../api.js';
 import { escHtml, dateText, sourceLabel } from '../../util.js';
 import { renderCard, byName } from './card.js';
-import { kindIcon, kindText, personName, generationSettings } from './kinds.js';
+import { kindText, personName, generationSettings } from './kinds.js';
 import { selfName, selfFullName } from '../person/self.js';
 
 // ── Header ──────────────────────────────────────────────────────────────────────
@@ -31,7 +31,7 @@ export function itemHeader(item, title) {
     const label = item.parent_kind ? (KIND_WORDS[item.parent_kind] || 'Part of') : 'Part of';
     html += `<a class="item-up" href="/items/${item.parent_id}">↑ ${escHtml(label)}: ${escHtml(item.parent_title || 'the item this is part of')}</a>`;
   }
-  html += `<div class="item-view-title" id="item-title-display"><span class="kind-icon" aria-hidden="true">${kindIcon(item)}</span> ${escHtml(title)}</div>`;
+  html += `<div class="item-view-title" id="item-title-display">${escHtml(title)}</div>`;
   const parts = [kindText(item)];
   const when = dateText(item.created_at || (item.metadata && item.metadata.last_at));
   if (when) parts.push(when);

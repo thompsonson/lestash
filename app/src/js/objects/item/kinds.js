@@ -2,7 +2,7 @@
 // Kinds come from the server (core/kinds.py): item.kind, item.kind_label, item.kind_detail.
 
 const ICONS = {
-  post: '▭', comment: '↳', reaction: '♥', message: '✉', video: '▶', search: '⌕',
+  post: '¶', comment: '↳', reaction: '♥', message: '✉', video: '▶', search: '⌕',
   transcript: '≡', paper: '▤', book: '▥', highlight: '❝', chat: '✦', turn: '·',
   notebook: '▣', artifact: '◇', project: '▣', document: '▤', note: '✎', email: '✉',
   image: '▨', stub: '◌', other: '·',

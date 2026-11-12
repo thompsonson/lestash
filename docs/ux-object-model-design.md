@@ -146,7 +146,7 @@ Illustrative: the layout is the proposal; titles, dates and counts are examples.
 │ Chats (1) · Notes (0)                │  it · 3 Feb 2026       │
 │                                      │                        │
 │ Referenced by (4)                    │ Topics  atomicguard    │
-│  ▭ Post  "Own your decisions…"       │ In  Formal Agents      │
+│  ¶ Post  "Own your decisions…"       │ In  Formal Agents      │
 └──────────────────────────────────────┴────────────────────────┘
 ```
 
@@ -171,7 +171,7 @@ Illustrative: the layout is the proposal; titles, dates and counts are examples.
 ### Item page — a post with its thread
 
 ```
-│ ▭ Own your decisions. I don't mean accountability…            │
+│ ¶ Own your decisions. I don't mean accountability…            │
 │   Post · LinkedIn · 20 Jan 2026 · by You                      │
 │   ♥ 14 people reacted  ▸ (opens the list, each a person link) │
 │                                                                │
@@ -208,7 +208,7 @@ Illustrative: the layout is the proposal; titles, dates and counts are examples.
 │ ‹ Mon 10 Nov 2026 ›                         [verbs ▾] [kinds ▾]│
 │ 09:12  watched   ▶ Video   Anthropic Replaced Git…             │
 │ 09:40  prompted  ✦ Chat    Gemini · used notebook "Reliable…"  │
-│ 11:05  new       ▭ Post    You on LinkedIn                      │
+│ 11:05  new       ¶ Post    You on LinkedIn                      │
 │ 14:30  liked     ▶ Video   …                                   │
 │ … 74 watches folded: "watched 61 videos" ▸                     │
 ```
@@ -369,3 +369,8 @@ Google My Activity bundles a day by product; activity-feed guidance keys groups 
 - **Groups by service:** busy verbs, and more than three things you made of one kind, fold per service ("GitHub · AtomicGuard wrote 4 notes").
 - **Day summary:** counts by kind under the date, each a filter; their dots carry the kind colours the landmark edges use.
 - **Swipe:** left for the next day with activity, right for the one before. Swipes from the screen edge (system Back), mostly upright swipes and swipes over an open item are ignored.
+
+## Post icon (12 Nov 2026)
+
+- ▭ read as a character that failed to load, so posts take ¶ in lists and on the Timeline.
+- The item page title has no kind icon: the line under it names the kind ("Post · LinkedIn").
