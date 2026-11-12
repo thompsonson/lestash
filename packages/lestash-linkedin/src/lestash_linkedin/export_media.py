@@ -70,12 +70,13 @@ def _norm(text: str) -> str:
 
 
 def _time(value: str) -> datetime | None:
-    """A stored created_at, as UTC. One without a zone is taken as UTC."""
+    """A stored created_at, as UTC. One without a zone is this machine's local time, as
+    the sync writes it (#236)."""
     try:
         parsed = datetime.fromisoformat(str(value).replace(" ", "T"))
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def read_uploads(zf: zipfile.ZipFile) -> list[Upload]:
@@ -166,15 +167,45 @@ def _media_type(content_type: str) -> str:
     return "file"
 
 
+def _has_own_images(conn: sqlite3.Connection, item_id: int) -> bool:
+    """Whether the post holds images from elsewhere, such as the sync: the export's
+    copies would show them twice."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM item_media WHERE item_id = ? AND source_origin != ? "
+            "AND media_type IN ('image', 'pdf') LIMIT 1",
+            (item_id, ORIGIN),
+        ).fetchone()
+        is not None
+    )
+
+
+def _alt(upload: Upload, target: _Target | None) -> str | None:
+    """The upload's description as the file's alt text, unless it is the post's own text
+    (it says nothing more about the photo) or empty."""
+    description = upload.description
+    wanted = _norm(description)[:60]
+    if not wanted or description == "-" or len(description) > 500:
+        return None
+    if target is not None and target.text.startswith(wanted):
+        return None
+    return description
+
+
 def import_media(
     conn: sqlite3.Connection, zf: zipfile.ZipFile, store: BlobStore, fetch: Fetch = fetch_url
 ) -> MediaReport:
     """Fetch each upload into the file store and attach it to its post or article.
-    Safe to run again. Commits."""
+
+    A file's position on its post is its place among the post's uploads, oldest first,
+    so a rerun finds it at the same place: one held there is not fetched again (its
+    link may have expired). Each file is committed as it is stored, so no write is held
+    open while files download. Safe to run again."""
     report = MediaReport()
     posts, articles = _targets(conn, "ugcPosts"), _targets(conn, "article")
-    position: dict[int, int] = {}
-    # Oldest first, so a post's photos keep the order they were uploaded in
+    targets = {t.item_id: t for t in posts + articles}
+    planned: list[tuple[Upload, int, int]] = []  # upload, item, position
+    count: dict[int, int] = {}
     for upload in sorted(read_uploads(zf), key=lambda u: u.when):
         if upload.kind == "video":
             report.videos += 1
@@ -189,6 +220,18 @@ def import_media(
         if item_id is None:
             report.unmatched += 1
             continue
+        planned.append((upload, item_id, count.get(item_id, 0)))
+        count[item_id] = count.get(item_id, 0) + 1
+    conn.commit()
+
+    for upload, item_id, position in planned:
+        held = conn.execute(
+            "SELECT 1 FROM item_media WHERE item_id = ? AND source_origin = ? AND position = ?",
+            (item_id, ORIGIN, position),
+        ).fetchone()
+        if held or _has_own_images(conn, item_id):
+            report.held += 1
+            continue
         try:
             data, content_type = fetch(upload.link)
             blob = store.put_stream(io.BytesIO(data))
@@ -196,36 +239,20 @@ def import_media(
             logger.warning("Could not fetch or store the %s of %s: %s", upload.kind, upload.when, e)
             report.failed += 1
             continue
-        held = conn.execute(
-            "SELECT 1 FROM item_media WHERE item_id = ? AND sha256 = ?", (item_id, blob.sha256)
-        ).fetchone()
-        position[item_id] = position.get(item_id, 0) + 1
-        if held:
-            report.held += 1
-            continue
         mime = content_type.split(";")[0].strip() or None
         record_blob(conn, blob, mime)
-        # A description that is the post's text says nothing more about the photo
-        description = upload.description
-        is_text = any(
-            p.item_id == item_id
-            and _norm(description)[:60]
-            and p.text.startswith(_norm(description)[:60])
-            for p in posts
-        )
-        alt = None if is_text or description in ("", "-") or len(description) > 500 else description
         add_item_media(
             conn,
             item_id,
             media_type=_media_type(content_type),
             mime_type=mime,
-            alt_text=alt,
-            position=position[item_id] - 1,
+            alt_text=_alt(upload, targets.get(item_id)),
+            position=position,
             source_origin=ORIGIN,
             sha256=blob.sha256,
             size=blob.size,
             _commit=False,
         )
+        conn.commit()
         report.added += 1
-    conn.commit()
     return report

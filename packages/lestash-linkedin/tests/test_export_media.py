@@ -137,3 +137,48 @@ def test_a_failed_download_is_counted_and_tried_next_time(
         report = import_media(conn, export, BlobStore(tmp_path / "store"), broken)
         assert (report.added, report.failed) == (0, 2)
         assert conn.execute("SELECT count(*) FROM item_media").fetchone()[0] == 0
+
+
+def test_a_post_with_the_syncs_images_gets_no_copies(
+    config: Config, tmp_path: Path, export
+) -> None:
+    from lestash.core.database import add_item_media
+
+    with get_connection(config) as conn:
+        cannes = _post(conn, 1, "2024-02-12 07:37:54+00:00", "Back to a clean desk")
+        add_item_media(conn, cannes, media_type="image", url="https://li/x.jpg")
+        report = import_media(conn, export, BlobStore(tmp_path / "store"), fetch)
+        assert (report.added, report.held) == (0, 2)
+        assert len(_media(conn, cannes)) == 1
+
+
+def test_positions_follow_upload_order_whatever_downloads(
+    config: Config, tmp_path: Path, export
+) -> None:
+    store = BlobStore(tmp_path / "store")
+
+    def first_fails(url: str) -> tuple[bytes, str]:
+        if url.endswith("a.jpg"):
+            raise OSError("timeout")
+        return fetch(url)
+
+    with get_connection(config) as conn:
+        cannes = _post(conn, 1, "2024-02-12 07:37:54+00:00", "Back to a clean desk")
+        assert import_media(conn, export, store, first_fails).failed == 1
+        assert [m[2] for m in _media(conn, cannes)] == [1]
+        # The retry takes the first place, not the second's
+        assert import_media(conn, export, store, fetch).added == 1
+        assert [m[2] for m in _media(conn, cannes)] == [0, 1]
+
+
+def test_files_held_are_not_fetched_again(config: Config, tmp_path: Path, export) -> None:
+    store = BlobStore(tmp_path / "store")
+
+    def expired(url: str) -> tuple[bytes, str]:
+        raise OSError("403: link expired")
+
+    with get_connection(config) as conn:
+        _post(conn, 1, "2024-02-12 07:37:54+00:00", "Back to a clean desk")
+        import_media(conn, export, store, fetch)
+        again = import_media(conn, export, store, expired)
+        assert (again.held, again.failed) == (2, 0)
