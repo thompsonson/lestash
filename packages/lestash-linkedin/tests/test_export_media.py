@@ -103,15 +103,15 @@ def test_uploads_go_to_their_posts(config: Config, tmp_path: Path, export) -> No
 
         assert (report.added, report.unmatched, report.no_link) == (5, 1, 1)
         assert (report.not_post_media, report.videos, report.failed) == (1, 1, 0)
-        assert _media(conn, cannes) == [
-            ("image", "image/jpeg", 0, None),
-            ("image", "image/jpeg", 1, None),
+        assert [m[:2] + m[3:] for m in _media(conn, cannes)] == [
+            ("image", "image/jpeg", None),
+            ("image", "image/jpeg", None),
         ]
         assert _media(conn, other) == []
-        assert _media(conn, talk) == [("pdf", "application/pdf", 0, None)]
-        assert _media(conn, article) == [("image", "image/png", 0, None)]
+        assert [(m[0], m[1]) for m in _media(conn, talk)] == [("pdf", "application/pdf")]
+        assert [(m[0], m[1]) for m in _media(conn, article)] == [("image", "image/png")]
         # The description is the post's text: not repeated as the photo's alt text
-        assert _media(conn, gemini) == [("image", "image/jpeg", 0, None)]
+        assert [(m[0], m[3]) for m in _media(conn, gemini)] == [("image", None)]
         sha = conn.execute("SELECT sha256 FROM item_media WHERE item_id = ?", (talk,)).fetchone()[0]
         assert store.path(sha).read_bytes() == b"%PDF"
 
@@ -146,7 +146,9 @@ def test_a_post_with_the_syncs_images_gets_no_copies(
 
     with get_connection(config) as conn:
         cannes = _post(conn, 1, "2024-02-12 07:37:54+00:00", "Back to a clean desk")
-        add_item_media(conn, cannes, media_type="image", url="https://li/x.jpg")
+        add_item_media(
+            conn, cannes, media_type="image", url="https://li/x.jpg", source_origin="sync"
+        )
         report = import_media(conn, export, BlobStore(tmp_path / "store"), fetch)
         assert (report.added, report.held) == (0, 2)
         assert len(_media(conn, cannes)) == 1
@@ -165,10 +167,11 @@ def test_positions_follow_upload_order_whatever_downloads(
     with get_connection(config) as conn:
         cannes = _post(conn, 1, "2024-02-12 07:37:54+00:00", "Back to a clean desk")
         assert import_media(conn, export, store, first_fails).failed == 1
-        assert [m[2] for m in _media(conn, cannes)] == [1]
-        # The retry takes the first place, not the second's
+        (second,) = [m[2] for m in _media(conn, cannes)]
+        # The retry goes before the second, which kept its place
         assert import_media(conn, export, store, fetch).added == 1
-        assert [m[2] for m in _media(conn, cannes)] == [0, 1]
+        first, kept = [m[2] for m in _media(conn, cannes)]
+        assert first < kept == second
 
 
 def test_files_held_are_not_fetched_again(config: Config, tmp_path: Path, export) -> None:
@@ -223,3 +226,17 @@ def test_a_file_is_known_by_its_link_without_the_signature(config: Config, tmp_p
             )
         assert (report.added, report.held) == (0, 1)
         assert [m[0] for m in _media(conn, cannes)] == ["image"]
+
+
+def test_your_own_attachment_does_not_hide_the_photos(
+    config: Config, tmp_path: Path, export
+) -> None:
+    from lestash.core.database import add_item_media
+
+    with get_connection(config) as conn:
+        cannes = _post(conn, 1, "2024-02-12 07:37:54+00:00", "Back to a clean desk")
+        add_item_media(
+            conn, cannes, media_type="image", local_path="/x.jpg", source_origin="upload"
+        )
+        report = import_media(conn, export, BlobStore(tmp_path / "store"), fetch)
+        assert (report.added, report.superseded) == (2, 0)

@@ -34,6 +34,9 @@ from lestash.core.database import add_item_media
 
 logger = logging.getLogger(__name__)
 ORIGIN = "linkedin export"
+# LinkedIn's own copies of a post's files: the sync's, and the API backfill's. A file
+# you attach yourself ("upload") is not a copy.
+LINKEDIN_COPIES = ("sync", "backfill")
 UPLOADED = re.compile(r"^You uploaded an? (?P<kind>.+?) on (?P<when>.+?) \(GMT\)\s*$")
 # Uploads come before their post: the gap seen is 0 to 10 minutes
 FEED_WINDOW = (timedelta(minutes=-2), timedelta(minutes=15))
@@ -169,13 +172,13 @@ def _media_type(content_type: str) -> str:
 
 
 def _has_own_images(conn: sqlite3.Connection, item_id: int) -> bool:
-    """Whether the post holds images from elsewhere, such as the sync: the export's
-    copies would show them twice."""
+    """Whether the post holds LinkedIn's own copies of its files, from the sync or the
+    backfill: the export's would show them twice."""
     return (
         conn.execute(
-            "SELECT 1 FROM item_media WHERE item_id = ? AND source_origin != ? "
-            "AND media_type IN ('image', 'pdf') LIMIT 1",
-            (item_id, ORIGIN),
+            "SELECT 1 FROM item_media WHERE item_id = ? AND source_origin IN (?, ?) "
+            "AND media_type IN ('image', 'pdf') AND superseded_at IS NULL LIMIT 1",
+            (item_id, *LINKEDIN_COPIES),
         ).fetchone()
         is not None
     )
@@ -199,14 +202,14 @@ def import_media(
     """Fetch each upload into the file store and attach it to its post or article.
 
     A file is known by its link without the signature, the same in every export: one
-    held is not fetched again (its link may have expired). Its position is its place
-    among the post's uploads, oldest first. Each file is committed as it is stored, so
+    held is not fetched again (its link may have expired). Its position orders it by
+    when it was uploaded. Each file is committed as it is stored, so
     no write is held open while files download. Safe to run again."""
     report = MediaReport()
     posts, articles = _targets(conn, "ugcPosts"), _targets(conn, "article")
     targets = {t.item_id: t for t in posts + articles}
     planned: list[tuple[Upload, int, int]] = []  # upload, item, position
-    count: dict[int, int] = {}
+    same_minute: dict[tuple[int, datetime], int] = {}
     for upload in sorted(read_uploads(zf), key=lambda u: u.when):
         if upload.kind == "video":
             report.videos += 1
@@ -221,8 +224,11 @@ def import_media(
         if item_id is None:
             report.unmatched += 1
             continue
-        planned.append((upload, item_id, count.get(item_id, 0)))
-        count[item_id] = count.get(item_id, 0) + 1
+        # Placed by when it was uploaded, so another export can't shift it; photos
+        # uploaded in one minute keep the export's order
+        n = same_minute.get((item_id, upload.when), 0)
+        same_minute[(item_id, upload.when)] = n + 1
+        planned.append((upload, item_id, int(upload.when.timestamp()) // 60 * 100 + n))
     conn.commit()
 
     for upload, item_id, position in planned:
@@ -264,14 +270,15 @@ def import_media(
 
 
 def _supersede_copies(conn: sqlite3.Connection) -> int:
-    """Mark the export's files earlier versions on a post that has since got its images
-    from elsewhere, such as the sync, so the post doesn't show each photo twice. They are
+    """Mark the export's files earlier versions on a post that has since got LinkedIn's
+    own copies of its images (sync, backfill), so the post doesn't show each photo twice. They are
     kept, listed under the current ones."""
     cursor = conn.execute(
         "UPDATE item_media SET superseded_at = ? WHERE source_origin = ? "
         "AND superseded_at IS NULL AND item_id IN (SELECT item_id FROM item_media "
-        "WHERE source_origin != ? AND media_type IN ('image', 'pdf') AND superseded_at IS NULL)",
-        (datetime.now(UTC).isoformat(timespec="seconds"), ORIGIN, ORIGIN),
+        "WHERE source_origin IN (?, ?) AND media_type IN ('image', 'pdf') "
+        "AND superseded_at IS NULL)",
+        (datetime.now(UTC).isoformat(timespec="seconds"), ORIGIN, *LINKEDIN_COPIES),
     )
     conn.commit()
     return cursor.rowcount
