@@ -380,3 +380,24 @@ def test_repeated_and_emoji_replies_match_by_time(config: Config, tmp_path: Path
         assert (report.comments_held, report.comments_added) == (3, 1)
         (added,) = _items(conn, "json_extract(metadata, '$.source') = 'export'")
         assert added["content"] == "👍"
+
+
+def test_an_emoji_comment_from_the_snapshot_fetch_is_held(config: Config, tmp_path: Path) -> None:
+    link = f"{FEED}urn:li:activity:7100000000000000000"
+    with get_connection(config) as conn:
+        upsert_item(
+            conn,
+            ItemCreate(
+                source_type="linkedin",
+                source_id=link,
+                url=link,
+                content="👍",
+                is_own_content=True,
+                metadata={"domain": "ALL_COMMENTS", "raw": {}},
+            ),
+        )
+        comments = (
+            f"Date,Link,Message\n2024-01-01 11:00:00,{link},👍\n2024-01-01 12:00:00,{link},🙏\n"
+        )
+        report = import_export(conn, _zip(tmp_path, comments=comments))
+        assert (report.comments_held, report.comments_added) == (1, 1)

@@ -178,6 +178,13 @@ def _held_comments(conn: sqlite3.Connection) -> list[_HeldComment]:
     return held
 
 
+def _same_text(held: _HeldComment, text: str) -> bool:
+    wanted = _norm(text)
+    if wanted:
+        return _norm(held.text) == wanted
+    return held.ms is None and held.text.strip() == text.strip()
+
+
 @dataclass
 class _CommentRow:
     text: str
@@ -263,14 +270,14 @@ class _Import:
         time first, over every row; then the closest times within SAME_COMMENT_MS. Each
         held comment matches one row."""
         found: dict[int, _HeldComment] = {}
-        # Same text, closest time first. Text that is only emoji or punctuation is no
-        # evidence, so it matches by time only.
+        # Same text, closest time first. Text that is only emoji or punctuation is weak
+        # evidence: it matches by time, or, for a held comment without a time (from the
+        # snapshot fetch), by the very same text.
         same_text = sorted(
             (abs((h.ms if h.ms is not None else row.ms) - row.ms), i, h.item_id, h)
             for i, row in enumerate(rows)
-            if (wanted := _norm(row.text))
             for h in self._on_post(row.post)
-            if not h.placeholder and _norm(h.text) == wanted
+            if not h.placeholder and _same_text(h, row.text)
         )
         for _, i, item_id, held in same_text:
             if i in found or item_id in self.matched:
