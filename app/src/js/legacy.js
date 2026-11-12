@@ -3,6 +3,7 @@ import {
   debugLog, addDebugLog, api,
 } from './api.js';
 import { escHtml, relTime, sourceClass, sourceName } from './util.js';
+import { openExternal } from './external.js';
 import { renderCard } from './objects/item/card.js';
 import { startTimeline, redrawTimeline } from './places/timeline.js';
 import { startPeople, redrawPeople } from './places/people.js';
@@ -1444,7 +1445,7 @@ async function startAudibleAuth() {
     const locale = document.getElementById('audible-locale')?.value || 'uk';
     const data = await api(`/api/audible/auth-url?locale=${locale}`);
     _audibleStateToken = data.state_token;
-    window.open(data.url, '_blank');
+    openExternal(data.url);
     statusEl.innerHTML = '<span style="color:var(--muted)">Waiting for login...</span>';
     flowEl.style.display = 'block';
     document.getElementById('audible-redirect-url').focus();
@@ -1514,7 +1515,7 @@ async function startGoogleAuth() {
   try {
     const data = await api('/api/google/auth-url');
     _googleAuthState = data.state;
-    window.open(data.url, '_blank');
+    openExternal(data.url);
     statusEl.innerHTML = '<span style="color:var(--muted)">Waiting for authorization...</span>';
     flowEl.style.display = 'block';
     document.getElementById('google-auth-code').focus();
@@ -2926,7 +2927,7 @@ async function startLinkedInAuth() {
   try {
     const callbackUrl = `${window.location.origin}/api/linkedin/auth-callback`;
     const data = await api(`/api/linkedin/auth-url?redirect_uri=${encodeURIComponent(callbackUrl)}`);
-    window.open(data.url, '_blank');
+    openExternal(data.url);
     showToast('Complete authorization in the new tab, then refresh', 'ok');
   } catch (e) {
     showToast(`Failed to start auth: ${e.message}`, 'error');
