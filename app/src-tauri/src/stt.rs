@@ -172,11 +172,8 @@ fn run_stt_loop(
     listening: Arc<AtomicBool>,
 ) -> Result<()> {
     info!("Loading whisper model from {}", model_path.display());
-    let ctx = WhisperContext::new_with_params(
-        model_path.to_str().unwrap(),
-        WhisperContextParameters::default(),
-    )
-    .context("Failed to load whisper model")?;
+    let ctx = WhisperContext::new_with_params(&model_path, WhisperContextParameters::default())
+        .context("Failed to load whisper model")?;
 
     info!("Whisper model loaded, starting audio capture");
     let _ = app.emit("stt-status", "model_loaded");
@@ -300,11 +297,10 @@ fn run_stt_loop(
             continue;
         }
 
-        let num_segments = state.full_n_segments().unwrap_or(0);
         let mut text = String::new();
-        for i in 0..num_segments {
-            if let Ok(segment) = state.full_get_segment_text(i) {
-                text.push_str(&segment);
+        for i in 0..state.full_n_segments() {
+            if let Some(Ok(segment)) = state.get_segment(i).as_ref().map(|s| s.to_str()) {
+                text.push_str(segment);
             }
         }
 
