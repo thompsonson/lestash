@@ -960,3 +960,5 @@ body.sheet-open #item-view {
 @media (prefers-reduced-motion: reduce) { .timeline-list.slide-next, .timeline-list.slide-previous { animation: none; } }
 /* Sideways swipes change the day, not the browser's history; pinch-zoom stays */
 .timeline-list { touch-action: pan-y pinch-zoom; }
+/* The empty space below a short day takes swipes too */
+body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
