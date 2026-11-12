@@ -350,3 +350,11 @@ The layout held up in the walk-through; the look did not. These are the choices,
 - Chen and Jones, timeline landmarks for lifelogs: https://doras.dcu.ie/15978
 - Teraoka, calendar and timeline views of personal logs: https://link.springer.com/doi/10.1186/2192-1962-2-1
 - LifeLens 2.0, search with a timeline: https://doras.dcu.ie/30674/1/3643489.3661119.pdf
+
+## Phone feedback (12 Nov 2026, #277)
+
+- **Header:** the microphone opens Record a note. Debug mode is a switch on the Debug page.
+- **Help** (`/help`, under More): each source, how to ask for its export, and how LeStash takes it in.
+- **Where an item comes from:** the item page names the service; a file from a repository shows "GitHub · owner/repo · file", linked.
+- **Timeline:** rows and folded groups name the service ("23 posts on YouTube"); busy verbs fold per service.
+- **Front matter:** a Markdown file's header block folds under "File details" instead of opening the text.

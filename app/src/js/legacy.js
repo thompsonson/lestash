@@ -7,6 +7,7 @@ import { renderCard } from './objects/item/card.js';
 import { startTimeline, redrawTimeline } from './places/timeline.js';
 import { startPeople, redrawPeople } from './places/people.js';
 import { startLibrary, redrawLibrary } from './places/library.js';
+import { startHelp } from './places/help.js';
 import {
   itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
   renderParts, PARTS_QUERY, titleOnce,
@@ -3270,10 +3271,13 @@ function copyFallback(text, message) {
 
 /* ── Init ── */
 // Debug mode toggle
-if (localStorage.getItem('lestash-debug-mode') === 'true') document.body.classList.add('debug-mode');
-document.getElementById('debug-toggle').addEventListener('click', () => {
-  document.body.classList.toggle('debug-mode');
-  localStorage.setItem('lestash-debug-mode', document.body.classList.contains('debug-mode'));
+// Debug mode: a switch on the Debug page (the header's place is the record button)
+const debugToggle = document.getElementById('debug-toggle');
+debugToggle.checked = localStorage.getItem('lestash-debug-mode') === 'true';
+document.body.classList.toggle('debug-mode', debugToggle.checked);
+debugToggle.addEventListener('change', () => {
+  document.body.classList.toggle('debug-mode', debugToggle.checked);
+  localStorage.setItem('lestash-debug-mode', debugToggle.checked);
 });
 document.getElementById('settings-btn').addEventListener('click', openSettings);
 onSheetClose(closeItemView);
@@ -3285,6 +3289,7 @@ startTimeline(() => showOnly('tab-timeline', 'timeline'));
 startPeople(showOnly);
 startLibrary(showOnly);
 route(/^\/more$/, () => showOnly('tab-more', 'more'));
+startHelp(showOnly);
 // Draw once your name is known ("Matt" in bylines), waiting no more than 1.5 s
 Promise.race([selfReady, new Promise(r => setTimeout(r, 1500))]).finally(startRouter);
 setInterval(checkHealth, 30000);
