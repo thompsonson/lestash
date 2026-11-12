@@ -729,8 +729,9 @@ LINKEDIN_LOCAL_ZONE = "Europe/Paris"
 def _migrate_26(conn: sqlite3.Connection) -> None:
     """LinkedIn rows written before #236 (#236):
 
-    - A changelog row's created_at with no zone was this machine's local time: it
-      becomes UTC. Other LinkedIn rows (snapshot fetch, export) were written in UTC.
+    - A created_at with no zone on a changelog row, or on a post made from LeStash, was
+      this machine's local time: it becomes UTC. The snapshot fetch and the export
+      import wrote UTC.
     - A changelog row whose actor is not its owner is someone else's comment, reaction,
       message or invitation: it is not your own content.
 
@@ -743,11 +744,13 @@ def _migrate_26(conn: sqlite3.Connection) -> None:
     conn.execute("BEGIN IMMEDIATE")
     try:
         since = max_history_id(conn)
-        # Only the changelog's: the snapshot fetch and the export import wrote UTC
+        # The changelog's, and posts made from LeStash (they carry post_urn), were
+        # written in local time; the snapshot fetch and the export import wrote UTC
         rows = conn.execute(
             "SELECT id, created_at FROM items WHERE source_type = 'linkedin' "
             "AND created_at IS NOT NULL AND json_valid(metadata) "
-            "AND json_extract(metadata, '$.source') = 'changelog'"
+            "AND (json_extract(metadata, '$.source') = 'changelog' "
+            "OR json_extract(metadata, '$.post_urn') IS NOT NULL)"
         ).fetchall()
         for item_id, created_at in rows:
             try:

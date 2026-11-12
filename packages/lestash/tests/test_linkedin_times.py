@@ -27,6 +27,12 @@ def test_migration_26_makes_linkedin_times_utc_and_others_not_yours(test_db) -> 
         utc = _row(conn, 3, "2025-04-06 12:15:25+00:00")  # the export's, already UTC
         theirs = _row(conn, 4, "2026-11-11 18:18:16", actor=ANN)
         no_actor = _row(conn, 5, "2026-03-01 10:00:00", actor=None)
+        posted = conn.execute(
+            "INSERT INTO items (source_type, source_id, content, created_at, metadata) "
+            "VALUES ('linkedin', 'urn:li:share:1', 'x', '2026-04-03T14:22:10.245590', ?) "
+            "RETURNING id",
+            (json.dumps({"post_urn": "urn:li:share:1", "resource_name": "ugcPosts"}),),
+        ).fetchone()[0]
         snapshot = conn.execute(
             "INSERT INTO items (source_type, source_id, content, created_at, metadata) "
             "VALUES ('linkedin', 's', 'x', '2024-01-01 10:00:00', ?) RETURNING id",
@@ -53,6 +59,8 @@ def test_migration_26_makes_linkedin_times_utc_and_others_not_yours(test_db) -> 
         assert get(utc) == ("2025-04-06 12:15:25+00:00", 1)
         assert get(theirs) == ("2026-11-11 17:18:16+00:00", 0)
         assert get(no_actor)[1] == 1
+        # A post made from LeStash wrote local time too: CEST, UTC+2
+        assert get(posted)[0] == "2026-04-03 12:22:10.245590+00:00"
         # The snapshot fetch wrote UTC; other sources' times are left as they are
         assert get(snapshot)[0] == "2024-01-01 10:00:00"
         assert get(other)[0] == "2026-01-19 10:00:00"
