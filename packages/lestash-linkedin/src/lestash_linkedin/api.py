@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-from lestash.core.config import get_config_dir
+from lestash.core.config import get_config_dir, write_secret
 from lestash.core.logging import get_plugin_logger
 from rich.console import Console
 
@@ -44,10 +44,8 @@ def _load_json(path: Path) -> dict[str, Any] | None:
 
 
 def _save_json(path: Path, data: dict[str, Any]) -> None:
-    """Save data to a JSON file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(data, f)
+    """Save credentials or a token, readable only by you (#189)."""
+    write_secret(path, json.dumps(data))
 
 
 # --- DMA (read) credentials and token ---

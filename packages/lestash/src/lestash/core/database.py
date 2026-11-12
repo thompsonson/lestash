@@ -982,7 +982,8 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
 def init_database(config: Config | None = None) -> None:
     """Initialize the database with schema and apply migrations."""
     db_path = get_db_path(config)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    # The config folder holds credentials: readable only by you when made here (#189)
+    db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     with sqlite3.connect(db_path) as conn:
         # Apply base schema

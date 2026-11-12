@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlencode
 
 import audible
 import httpx
-from lestash.core.config import get_config_dir
+from lestash.core.config import get_config_dir, write_secret
 from lestash.core.logging import get_plugin_logger
 
 logger = get_plugin_logger("audible")
@@ -56,10 +56,8 @@ def load_config() -> dict[str, Any]:
 
 def save_config(config: dict[str, Any]) -> None:
     """Save plugin config."""
-    path = get_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(config, f, indent=2)
+    # Readable only by you (#189): it can hold the account's settings
+    write_secret(get_config_path(), json.dumps(config, indent=2))
 
 
 def is_authenticated() -> bool:
@@ -225,8 +223,9 @@ def complete_auth(redirect_url: str, state: dict[str, Any]) -> audible.Authentic
 
     # Save credentials
     auth_path = get_auth_path()
-    auth_path.parent.mkdir(parents=True, exist_ok=True)
+    auth_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     auth.to_file(str(auth_path))
+    auth_path.chmod(0o600)  # the sign-in's tokens: readable only by you (#189)
     save_config({"locale": locale})
     logger.info("Authentication successful, credentials saved")
     return auth
