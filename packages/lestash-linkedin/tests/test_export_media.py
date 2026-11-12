@@ -228,15 +228,40 @@ def test_a_file_is_known_by_its_link_without_the_signature(config: Config, tmp_p
         assert [m[0] for m in _media(conn, cannes)] == ["image"]
 
 
-def test_your_own_attachment_does_not_hide_the_photos(
+def test_a_post_made_from_lestash_with_its_image_gets_no_copy(
     config: Config, tmp_path: Path, export
 ) -> None:
     from lestash.core.database import add_item_media
 
     with get_connection(config) as conn:
         cannes = _post(conn, 1, "2024-02-12 07:37:54+00:00", "Back to a clean desk")
+        # As routes/linkedin.py's post-with-image stores the photo it posted
         add_item_media(
             conn, cannes, media_type="image", local_path="/x.jpg", source_origin="upload"
         )
         report = import_media(conn, export, BlobStore(tmp_path / "store"), fetch)
-        assert (report.added, report.superseded) == (2, 0)
+        assert (report.added, report.held) == (0, 2)
+        assert len(_media(conn, cannes)) == 1
+
+
+def test_a_photo_given_a_link_later_takes_its_own_place(config: Config, tmp_path: Path) -> None:
+    store = BlobStore(tmp_path / "store")
+    rows = (
+        '"You uploaded a feed photo on February 12, 2024 at 7:34 AM (GMT)", -,{first}\n'
+        '"You uploaded a feed photo on February 12, 2024 at 7:34 AM (GMT)", -,https://cdn/b.jpg\n'
+    )
+    with get_connection(config) as conn:
+        cannes = _post(conn, 1, "2024-02-12 07:37:54+00:00", "Back to a clean desk")
+        for n, first in enumerate(("", "https://cdn/a.jpg")):
+            path = tmp_path / f"export{n}.zip"
+            with zipfile.ZipFile(path, "w") as zf:
+                zf.writestr(
+                    "Rich_Media.csv",
+                    "Date/Time,Media Description,Media Link\n" + rows.format(first=first),
+                )
+            import_media(conn, zipfile.ZipFile(path), store, fetch)
+        # b kept its place; a, first in the file, goes before it
+        placed = conn.execute(
+            "SELECT url FROM item_media WHERE item_id = ? ORDER BY position", (cannes,)
+        ).fetchall()
+        assert [r[0] for r in placed] == ["https://cdn/a.jpg", "https://cdn/b.jpg"]

@@ -34,9 +34,6 @@ from lestash.core.database import add_item_media
 
 logger = logging.getLogger(__name__)
 ORIGIN = "linkedin export"
-# LinkedIn's own copies of a post's files: the sync's, and the API backfill's. A file
-# you attach yourself ("upload") is not a copy.
-LINKEDIN_COPIES = ("sync", "backfill")
 UPLOADED = re.compile(r"^You uploaded an? (?P<kind>.+?) on (?P<when>.+?) \(GMT\)\s*$")
 # Uploads come before their post: the gap seen is 0 to 10 minutes
 FEED_WINDOW = (timedelta(minutes=-2), timedelta(minutes=15))
@@ -67,6 +64,7 @@ class Upload:
     when: datetime
     description: str
     link: str
+    n: int = 0  # its row among every upload the file lists in the same minute
 
 
 def _norm(text: str) -> str:
@@ -90,6 +88,7 @@ def read_uploads(zf: zipfile.ZipFile) -> list[Upload]:
         return []
     text = zf.read(found[0]).decode("utf-8-sig")
     uploads = []
+    in_minute: dict[datetime, int] = {}
     for row in csv.DictReader(io.StringIO(text)):
         match = UPLOADED.match(row.get("Date/Time") or "")
         if not match:
@@ -98,12 +97,15 @@ def read_uploads(zf: zipfile.ZipFile) -> list[Upload]:
             when = datetime.strptime(match["when"], "%B %d, %Y at %I:%M %p").replace(tzinfo=UTC)
         except ValueError:
             continue
+        n = in_minute.get(when, 0)
+        in_minute[when] = n + 1
         uploads.append(
             Upload(
                 match["kind"],
                 when,
                 (row.get("Media Description") or "").strip(),
                 (row.get("Media Link") or "").strip(),
+                n,
             )
         )
     return uploads
@@ -172,13 +174,15 @@ def _media_type(content_type: str) -> str:
 
 
 def _has_own_images(conn: sqlite3.Connection, item_id: int) -> bool:
-    """Whether the post holds LinkedIn's own copies of its files, from the sync or the
-    backfill: the export's would show them twice."""
+    """Whether the post holds images from anywhere else: the sync, the backfill, or a
+    post made from LeStash with its image ("upload"). The export's would likely show
+    them twice. A file you attached by hand counts too: the export's photos are then
+    left out, which is the lesser harm."""
     return (
         conn.execute(
-            "SELECT 1 FROM item_media WHERE item_id = ? AND source_origin IN (?, ?) "
+            "SELECT 1 FROM item_media WHERE item_id = ? AND source_origin != ? "
             "AND media_type IN ('image', 'pdf') AND superseded_at IS NULL LIMIT 1",
-            (item_id, *LINKEDIN_COPIES),
+            (item_id, ORIGIN),
         ).fetchone()
         is not None
     )
@@ -209,7 +213,6 @@ def import_media(
     posts, articles = _targets(conn, "ugcPosts"), _targets(conn, "article")
     targets = {t.item_id: t for t in posts + articles}
     planned: list[tuple[Upload, int, int]] = []  # upload, item, position
-    same_minute: dict[tuple[int, datetime], int] = {}
     for upload in sorted(read_uploads(zf), key=lambda u: u.when):
         if upload.kind == "video":
             report.videos += 1
@@ -224,11 +227,9 @@ def import_media(
         if item_id is None:
             report.unmatched += 1
             continue
-        # Placed by when it was uploaded, so another export can't shift it; photos
-        # uploaded in one minute keep the export's order
-        n = same_minute.get((item_id, upload.when), 0)
-        same_minute[(item_id, upload.when)] = n + 1
-        planned.append((upload, item_id, int(upload.when.timestamp()) // 60 * 100 + n))
+        # Placed by when it was uploaded, then its row among the export's uploads in that
+        # minute: fixed by the file, so another export or run can't shift it
+        planned.append((upload, item_id, int(upload.when.timestamp()) // 60 * 100 + upload.n))
     conn.commit()
 
     for upload, item_id, position in planned:
@@ -270,15 +271,15 @@ def import_media(
 
 
 def _supersede_copies(conn: sqlite3.Connection) -> int:
-    """Mark the export's files earlier versions on a post that has since got LinkedIn's
-    own copies of its images (sync, backfill), so the post doesn't show each photo twice. They are
+    """Mark the export's files earlier versions on a post that has since got images
+    from anywhere else (see _has_own_images), so the post doesn't show each photo twice. They are
     kept, listed under the current ones."""
     cursor = conn.execute(
         "UPDATE item_media SET superseded_at = ? WHERE source_origin = ? "
         "AND superseded_at IS NULL AND item_id IN (SELECT item_id FROM item_media "
-        "WHERE source_origin IN (?, ?) AND media_type IN ('image', 'pdf') "
+        "WHERE source_origin != ? AND media_type IN ('image', 'pdf') "
         "AND superseded_at IS NULL)",
-        (datetime.now(UTC).isoformat(timespec="seconds"), ORIGIN, *LINKEDIN_COPIES),
+        (datetime.now(UTC).isoformat(timespec="seconds"), ORIGIN, ORIGIN),
     )
     conn.commit()
     return cursor.rowcount
