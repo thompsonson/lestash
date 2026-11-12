@@ -333,6 +333,7 @@ class LinkedInSource(SourcePlugin):
 
             Items the sync already holds are not stored twice. Safe to run again.
             """
+            from lestash.core.blobs import BlobStore, store_root
             from lestash.core.config import Config
             from lestash.core.database import get_connection
 
@@ -341,9 +342,10 @@ class LinkedInSource(SourcePlugin):
                 raise typer.Exit(1)
 
             logger.info(f"Importing from ZIP: {zip_path}")
-            with get_connection(Config.load()) as conn:
+            config = Config.load()
+            with get_connection(config) as conn:
                 try:
-                    report = import_export(conn, zip_path)
+                    report = import_export(conn, zip_path, BlobStore(store_root(config)))
                 except (ValueError, zipfile.BadZipFile) as e:
                     console.print(f"[red]{e}[/red]")
                     raise typer.Exit(1) from e
@@ -356,6 +358,15 @@ class LinkedInSource(SourcePlugin):
                 f"Held items given their text: {report.filled}. "
                 f"Rows without text or a post: {report.skipped}.[/green]"
             )
+            if report.media:
+                m = report.media
+                console.print(
+                    f"[green]Photos and documents: {m.added} added, {m.held} held already, "
+                    f"{m.unmatched} with no post, {m.no_link} without a link, "
+                    f"{m.failed} failed to download.\n"
+                    f"Left out: {m.not_post_media} profile or banner photos, "
+                    f"{m.videos} videos.[/green]"
+                )
 
         @app.command("auth")
         def auth_cmd(

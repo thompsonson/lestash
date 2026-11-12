@@ -36,10 +36,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import unquote
 
+from lestash.core.blobs import BlobStore
 from lestash.core.database import mark_recent_history, max_history_id
 from lestash.core.sync import SyncStore
 from lestash.models.item import ItemCreate
 
+from lestash_linkedin.export_media import Fetch, MediaReport, fetch_url, import_media
 from lestash_linkedin.stubs import COMMENT_URN, POST_URN, SAME_POST_MS, HeldPosts, snowflake_ms
 
 SOURCE = "linkedin"
@@ -61,6 +63,7 @@ class ImportReport:
     articles_updated: int = 0  # held, now with the export's full text
     filled: int = 0  # held items whose missing text the export gave
     skipped: int = 0  # rows without text or a post link
+    media: MediaReport | None = None  # photos and documents, when a file store is given
     files: list[str] = field(default_factory=list)
 
 
@@ -471,9 +474,15 @@ def parse_article(html: str, filename: str) -> Article | None:
     )
 
 
-def import_export(conn: sqlite3.Connection, zip_path: Path) -> ImportReport:
+def import_export(
+    conn: sqlite3.Connection,
+    zip_path: Path,
+    store: BlobStore | None = None,
+    fetch: Fetch | None = None,
+) -> ImportReport:
     """Import your posts, comments and articles from a LinkedIn export ZIP, then link
-    comments to their posts. Safe to run again. Commits."""
+    comments to their posts. With a file store, also fetch the photos and documents
+    you uploaded onto their posts (export_media). Safe to run again. Commits."""
     from lestash_linkedin.source import resolve_linkedin_parents
 
     run = _Import(conn)
@@ -482,9 +491,12 @@ def import_export(conn: sqlite3.Connection, zip_path: Path) -> ImportReport:
         if "Shares.csv" not in names and "Comments.csv" not in names:
             raise ValueError("Not a LinkedIn export: no Shares.csv or Comments.csv in it")
         items = [*run.posts_from(zf), *run.comments_from(zf), *run.articles_from(zf)]
-    store = SyncStore(conn, SOURCE)
-    store.run(items)
+    writer = SyncStore(conn, SOURCE)
+    writer.run(items)
     run.fill()
     conn.commit()
     resolve_linkedin_parents(conn)  # comments to their posts; stubs for posts not held
+    if store is not None:
+        with zipfile.ZipFile(zip_path) as zf:
+            run.report.media = import_media(conn, zf, store, fetch or fetch_url)
     return run.report
