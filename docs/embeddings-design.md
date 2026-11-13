@@ -137,6 +137,26 @@ Run on a copy of the database in a test environment, on a frozen test set, repor
   - No vector for reactions, or for a YouTube watch under the same video's like.
   - Search returns the round's first turn, as keyword search returns turns.
 
+## The switch to EmbeddingGemma (#305)
+
+Decided 13 Nov 2026 from the experiments (`search-experiments.md`, #303).
+
+- **Model:** `google/embeddinggemma-300m`, 768 dimensions, cut at 512 tokens.
+  - Queries use its query prompt and units its document prompt (`encode_query`, `encode_document`).
+  - It is gated on Hugging Face under Google's Gemma terms; the machine's token must have accepted them.
+- **Rounds** drop the chat title: `round:prompt400+replies600`.
+- **Videos with only their title** (watch history, about 61k) get no vector. Keyword search still finds them.
+- **The new index is built beside the old one.**
+  - `vec_items` stays the index search reads. Its width tells which model made it.
+  - While it is narrower than today's model, new vectors go into `vec_items_next`, and queries use the old model.
+  - A whole refresh or rebuild that finishes copies `vec_items_next` into a new `vec_items` in one transaction.
+  - `lestash embeddings status` says when a build is under way.
+- **A full rebuild can run on another machine:** `lestash embeddings rebuild --host computer`, or `[embeddings] host` in the config.
+  - Like transcripts: units go over ssh in batches of 4,000, `embed_worker.py` embeds them there at low priority, and the vectors come back.
+  - Only the units' text is sent. The host keeps the worker, its environment and a copy of the model, which needs no Hugging Face account there.
+  - If the host can't be reached, the rebuild runs here instead. `--host local` runs here anyway.
+- **Routine syncs** embed here, after each sync, as before. The refresh's line in the log gives the model, time and rate.
+
 ## Supersedes
 
 - `docs/content-and-activity-ontology-design.md`, "Decided": "No chunking for now… one vector per item (#221)". Replaced on 12 Nov 2026 by the unit rule above; the experiments choose models, sizes and scoring, not whether to split.

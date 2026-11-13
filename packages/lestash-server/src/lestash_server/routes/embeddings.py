@@ -5,7 +5,7 @@ import threading
 
 from fastapi import APIRouter, HTTPException
 from lestash.core.embeddings import (
-    embed_text,
+    embed_query,
     ensure_vec_table,
     get_embedding_stats,
     load_vec_extension,
@@ -32,6 +32,8 @@ class EmbeddingStatus(BaseModel):
     model: str
     recipe: str
     dimensions: int
+    query_model: str
+    building: bool
     embedded: int
     parts_embedded: int
     out_of_date: int
@@ -103,7 +105,7 @@ def find_similar(item_id: int, limit: int = 10):
         if not text:
             return []
 
-        query_emb = embed_text(text)
+        query_emb = embed_query(conn, text)
         # Parts have vectors too (#221): ask for more, then keep whole items outside
         # this item's own family, as related items compare whole items
         family = item.parent_id if item.parent_id is not None else item_id

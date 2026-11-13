@@ -2,6 +2,7 @@
 and a refresh that embeds what is new or changed and drops what should have none."""
 
 import hashlib
+import itertools
 
 import lestash.core.embeddings as emb
 import pytest
@@ -14,7 +15,7 @@ CALLS: list[list[str]] = []
 def _fake_vector(text: str) -> list[float]:
     """A unit vector that depends on the text, so a change of text changes the vector."""
     seed = hashlib.sha256(text.encode()).digest()
-    vector = [b / 255 for b in (seed * 12)[: emb.EMBEDDING_DIM]]
+    vector = [b / 255 for b in (seed * 24)[: emb.EMBEDDING_DIM]]
     norm = sum(v * v for v in vector) ** 0.5
     return [v / norm for v in vector]
 
@@ -161,7 +162,8 @@ def test_the_budget_stops_between_batches_and_the_next_run_goes_on(conn, monkeyp
     monkeypatch.setattr(emb, "BATCH_SIZE", 2)
     for n in range(5):
         _add(conn, f"s{n}", f"Item {n}", "text")
-    clock = iter([0.0, 0.0, 10.0])  # the start, then before each batch
+    # The start, then before each batch, and the end
+    clock = itertools.chain([0.0, 0.0, 10.0], itertools.repeat(10.0))
     monkeypatch.setattr(emb.time, "monotonic", lambda: next(clock))
 
     counts = emb.refresh_embeddings(conn, budget_s=5)
