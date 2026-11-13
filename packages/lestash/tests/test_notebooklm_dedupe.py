@@ -113,18 +113,41 @@ def conn_parent(test_db, item_id: int) -> int:
 def test_a_renamed_notebook_is_merged_by_its_id(test_db) -> None:
     renamed = "Takeout/NotebookLM/Continual Learning"
     with get_connection(test_db) as conn:
-        _sync(conn, _export(FULL, notebook_id=UUID, chat="Chat 1"))
+        _sync(conn, _export(FULL, notebook_id=UUID, chat="Chat 1", viewed="2026-10-01T00:00:00Z"))
         _sync(
             conn,
-            {
-                **_export(renamed, notebook_id=UUID, chat="Chat 1", title="Continual Learning"),
-            },
+            _export(
+                renamed,
+                notebook_id=UUID,
+                chat="Chat 1",
+                title="Continual Learning",
+                viewed="2026-11-01T00:00:00.5Z",
+            ),
         )
         ((current_id, source_id),) = _notebooks(conn)
-        (title,) = conn.execute("SELECT title FROM items WHERE id = ?", (current_id,)).fetchone()
+        (title, raw) = conn.execute(
+            "SELECT title, metadata FROM items WHERE id = ?", (current_id,)
+        ).fetchone()
         children = _children(conn, current_id)
     assert source_id == renamed and title == "Continual Learning"
     assert children == [f"{renamed}/Chat History/Chat 1.html", f"{renamed}/Notes/Plan A.html"]
+    assert json.loads(raw)["folders"] == [FULL]
+
+
+def test_copies_with_nothing_to_tell_them_apart_are_left_alone(test_db) -> None:
+    # Same id, no view times, neither folder cut: which is current is unknown
+    with get_connection(test_db) as conn:
+        _sync(conn, _export(FULL, notebook_id=UUID, chat="Chat 1"))
+        _sync(conn, _export("Takeout/NotebookLM/Other name", notebook_id=UUID, chat="Chat 1"))
+        assert len(_notebooks(conn)) == 2
+        assert find_duplicates(conn) == []
+
+
+def test_view_times_compare_as_times() -> None:
+    from lestash.importers.notebooklm_dedupe import _viewed
+
+    # As strings, "...00Z" sorts after "...00.5Z"; as times it is earlier
+    assert _viewed("2026-11-01T00:00:00Z") < _viewed("2026-11-01T00:00:00.5Z")
 
 
 def test_different_notebooks_are_left_alone(test_db) -> None:
