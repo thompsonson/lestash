@@ -31,7 +31,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import defaultdict
-from collections.abc import Collection
 from typing import Any, NamedTuple
 
 from lestash.core.database import mark_recent_history, max_history_id
@@ -56,6 +55,8 @@ class _Notebook(NamedTuple):
     title: str
     created_at: str | None
     notebook_id: str | None
+    last_viewed: str  # from its export's metadata: later in a later export; "" if none
+    has_metadata: bool  # stored from a part with the metadata JSON
 
     @property
     def cut(self) -> bool:
@@ -64,14 +65,23 @@ class _Notebook(NamedTuple):
         return self.source_id.startswith(FOLDERS) and len(folder) == CUT_FOLDER
 
     def cut_of(self, other: _Notebook) -> bool:
-        """Whether this folder is the cut form of ``other``'s. Two known, different
-        creation times are two notebooks, such as "<50 characters>" and "<them> (2)"."""
-        return (
+        """Whether this folder is the cut form of ``other``'s.
+
+        Two known, different creation times or notebook ids are two notebooks, such as
+        "<50 characters>" and "<them> (2)". Without a creation time, only a copy stored
+        with no metadata JSON (an old export's other part) counts.
+        """
+        if not (
             self.cut
             and len(other.source_id) > len(self.source_id)
             and other.source_id.startswith(self.source_id)
-            and not (self.created_at and other.created_at and self.created_at != other.created_at)
-        )
+        ):
+            return False
+        if self.notebook_id and other.notebook_id and self.notebook_id != other.notebook_id:
+            return False
+        if self.created_at and other.created_at:
+            return self.created_at == other.created_at
+        return not self.has_metadata
 
 
 def _metadata(raw: str | None) -> dict[str, Any]:
@@ -99,25 +109,27 @@ def _notebooks(conn: sqlite3.Connection) -> list[_Notebook]:
                 (title or "").strip(),
                 str(created_at) if created_at else None,
                 metadata.get("notebook_id") or None,
+                str(metadata.get("last_viewed") or ""),
+                bool(metadata.get("has_metadata", True)),
             )
         )
     return notebooks
 
 
-def _rank(nb: _Notebook, others: list[_Notebook], recent: Collection[str]) -> tuple:
-    """Higher is more current: not a cut folder of another copy; written by the import
-    just run; holding the notebook id; then the newer item."""
+def _rank(nb: _Notebook, others: list[_Notebook]) -> tuple:
+    """Higher is more current: viewed later (so from a later export); not a cut folder
+    of another copy; holding the notebook id; then the newer item."""
     return (
+        nb.last_viewed,
         not any(nb.cut_of(other) for other in others),
-        nb.source_id in recent,
         nb.notebook_id is not None,
         nb.id,
     )
 
 
-def find_duplicates(conn: sqlite3.Connection, recent: Collection[str] = ()) -> list[Duplicate]:
+def find_duplicates(conn: sqlite3.Connection) -> list[Duplicate]:
     """Pairs of notebook items that are one notebook, each older copy with the current
-    one of its group. ``recent``: the notebook keys the import just run wrote."""
+    one of its group."""
     notebooks = _notebooks(conn)
     groups: dict[tuple[str, ...], list[_Notebook]] = defaultdict(list)
     for nb in notebooks:
@@ -149,7 +161,7 @@ def find_duplicates(conn: sqlite3.Connection, recent: Collection[str] = ()) -> l
     for members in clusters.values():
         if len(members) < 2:
             continue
-        current = max(members, key=lambda nb: _rank(nb, members, recent))
+        current = max(members, key=lambda nb: _rank(nb, members))
         pairs += [
             Duplicate(nb.id, current.id, current.title) for nb in members if nb.id != current.id
         ]
@@ -224,14 +236,13 @@ def _child_pairs(old: list[_Child], current: list[_Child]) -> list[tuple[int, in
     return pairs
 
 
-def dedupe_notebooklm(conn: sqlite3.Connection, recent: Collection[str] = ()) -> list[Duplicate]:
+def dedupe_notebooklm(conn: sqlite3.Connection) -> list[Duplicate]:
     """Merge each older notebook copy, and its copied children, into the current one.
 
-    ``recent``: the notebook keys the import just run wrote, which win a tie. Returns
-    the notebook pairs merged; safe to run again. The caller commits.
+    Returns the notebook pairs merged; safe to run again. The caller commits.
     """
     since = max_history_id(conn)
-    pairs = find_duplicates(conn, recent)
+    pairs = find_duplicates(conn)
     moved: list[int] = []
     for pair in pairs:
         old_children = _children(conn, pair.old_id)

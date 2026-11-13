@@ -25,11 +25,15 @@ def _zip(files: dict[str, str]) -> bytes:
     return buf.getvalue()
 
 
-def _export(folder: str, *, notebook_id: str | None, chat: str, title: str = "") -> dict:
+def _export(
+    folder: str, *, notebook_id: str | None, chat: str, title: str = "", viewed: str = ""
+) -> dict:
     meta: dict = {
         "title": title or "Adaptive Intelligence: Frontiers in Continual Learning",
         "metadata": {"createTime": CREATED},
     }
+    if viewed:
+        meta["metadata"]["lastViewed"] = viewed
     if notebook_id:
         meta["id"] = notebook_id
     return {
@@ -195,12 +199,45 @@ def test_a_folder_beginning_another_is_not_cut_unless_50_characters(test_db) -> 
         assert len(_notebooks(conn)) == 2
 
 
-def test_a_rename_keeps_the_folder_just_imported(test_db) -> None:
+def test_a_rename_keeps_the_later_export(test_db) -> None:
     renamed = "Takeout/NotebookLM/Adaptive"  # the new name, also a prefix of the old one
     with get_connection(test_db) as conn:
-        _sync(conn, _export(FULL, notebook_id=UUID, chat="Chat 1"))
-        _sync(conn, _export(renamed, notebook_id=UUID, chat="Chat 1", title="Adaptive"))
+        _sync(conn, _export(FULL, notebook_id=UUID, chat="Chat 1", viewed="2026-10-01T00:00:00Z"))
+        _sync(
+            conn,
+            _export(
+                renamed,
+                notebook_id=UUID,
+                chat="Chat 1",
+                title="Adaptive",
+                viewed="2026-11-01T00:00:00Z",
+            ),
+        )
         assert [source_id for _, source_id in _notebooks(conn)] == [renamed]
+
+
+def test_an_older_export_imported_later_does_not_win(test_db) -> None:
+    renamed = "Takeout/NotebookLM/Adaptive"
+    with get_connection(test_db) as conn:
+        _sync(
+            conn,
+            _export(
+                renamed,
+                notebook_id=UUID,
+                chat="Chat 1",
+                title="Adaptive",
+                viewed="2026-11-01T00:00:00Z",
+            ),
+        )
+        _sync(conn, _export(FULL, notebook_id=UUID, chat="Chat 1", viewed="2026-10-01T00:00:00Z"))
+        assert [source_id for _, source_id in _notebooks(conn)] == [renamed]
+
+
+def test_a_50_character_name_with_another_id_is_another_notebook(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _sync(conn, _export(CUT, notebook_id="other", chat="Chat 1", title="Short"))
+        _sync(conn, _export(FULL, notebook_id=UUID, chat="Chat 1"))
+        assert len(_notebooks(conn)) == 2
 
 
 def test_an_old_part_without_metadata_after_the_merge_is_merged_too(test_db) -> None:

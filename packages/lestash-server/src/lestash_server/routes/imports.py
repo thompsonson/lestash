@@ -210,13 +210,12 @@ def _insert_items_with_parents(conn, items):
 
     # Also handle items without parent markers (flat items)
     conn.commit()
-    notebooks = {
-        item.source_id or ""
+    notebooks = any(
+        item.source_type == "notebooklm" and (item.metadata or {}).get("type") == "notebook"
         for item in items
-        if item.source_type == "notebooklm" and (item.metadata or {}).get("type") == "notebook"
-    }
+    )
     if items_added and notebooks:
-        dedupe_notebooks(conn, "an import", notebooks)
+        dedupe_notebooks(conn, "an import")
     if items_added:
         # Links are derived: a failure leaves the items stored; the next sync catches up
         try:
