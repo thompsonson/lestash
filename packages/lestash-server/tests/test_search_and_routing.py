@@ -496,3 +496,22 @@ def test_an_item_found_itself_and_by_a_part_takes_its_best_rank(client, seeded, 
     resp = client.get("/api/items/search", params={"q": "zzz", "mode": "semantic"})
 
     assert [i["id"] for i in resp.json()["items"]] == [chat, other]
+
+
+def test_a_keyword_hit_on_the_item_keeps_it_from_a_vector_part(client, seeded, monkeypatch):
+    """Review round 1 (r1.1): the card opens where its snippet came from."""
+    import lestash.core.embeddings as emb
+
+    with deps.get_db() as conn:
+        chat, turns = _chat_with_turns(conn)
+        conn.execute("UPDATE items SET content = 'PDDL overview' WHERE id = ?", (chat,))
+        conn.execute("UPDATE items SET content = 'unrelated' WHERE id IN (?, ?)", turns)
+        conn.commit()
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: [(turns[1], 0.1)])
+
+    resp = client.get("/api/items/search", params={"q": "PDDL", "mode": "hybrid"})
+    found = next(i for i in resp.json()["items"] if i["id"] == chat)
+
+    assert found["match_id"] is None
+    assert "<<PDDL>>" in found["preview"]

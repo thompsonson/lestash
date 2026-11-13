@@ -329,7 +329,9 @@ def search_items(
             if not hit:
                 continue
             enriched = enrich_item(conn, Item.from_row(hit))
-            part = found["part"] if found and found["part"] else vec_parts.get(item_id)
+            # The part that gave the preview: the keyword hit's, else the vector's. A
+            # keyword hit on the item itself opens the item, with its own snippet
+            part = found["part"] if found else vec_parts.get(item_id)
             if found and found["snippet"]:
                 enriched.preview = found["snippet"]
             if part is not None:
