@@ -419,6 +419,18 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
 - Copies of different events for one resource, such as profile edits or a changed reaction, are kept.
 - On a copy of the live database: 105 pairs merged (39 likes, 33 messages, 21 comments, 6 invitations, 6 posts); 48 pairs of different events kept.
 
+### NotebookLM notebooks held twice
+
+- A notebook's items are keyed by its Takeout folder, the one key every part of a multi-part export shares.
+- Exports before November 2026 cut folder and file names to about 50 characters; later ones give them in full. A rename also changes the folder.
+- The notebook's metadata JSON holds a stable id, now kept as `metadata.notebook_id`.
+- Two notebook items are one notebook when they share that id, or the same creation time (to the microsecond) and title.
+- The older copy is merged into the current one with `merge_item`. A cut folder loses to the full name it begins; otherwise the copy imported last wins.
+- Its children match the current ones by kind and by name, the current name beginning with the cut one. A name matching two is left alone.
+- This runs after every import that stores NotebookLM items. `lestash takeout dedupe-notebooks` lists the pairs; `--apply` merges them.
+- Each artifact and source has no id of its own, so children are still keyed by folder and file name.
+- On a copy of the live database: 16 notebooks merged; 84 of their 87 children merged into their copies; 3 notes only the old export held moved over; a second run finds none.
+
 ## The activity ontology
 
 An activity is something someone did, at a time, usually to an item.

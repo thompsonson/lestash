@@ -11,6 +11,7 @@ from lestash.core.activities import record_activities
 from lestash.core.agents import link_agents
 from lestash.core.database import resolve_parent_id
 from lestash.core.links import link_items
+from lestash.core.sync import dedupe_notebooks
 from lestash.importers import merge_with_stored, parse_json_items, parse_zip
 
 from lestash_server.deps import get_config, get_db
@@ -209,6 +210,8 @@ def _insert_items_with_parents(conn, items):
 
     # Also handle items without parent markers (flat items)
     conn.commit()
+    if items_added and any(item.source_type == "notebooklm" for item in items):
+        dedupe_notebooks(conn, "an import")
     if items_added:
         # Links are derived: a failure leaves the items stored; the next sync catches up
         try:

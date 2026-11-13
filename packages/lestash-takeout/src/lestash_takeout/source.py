@@ -412,6 +412,28 @@ class TakeoutSource(SourcePlugin):
             """Drop a zip's record (imported, failed, ...), so the next sync imports it again."""
             console.print("Forgotten." if forget(file_id) else "That id had no record.")
 
+        @app.command("dedupe-notebooks")
+        def dedupe_notebooks_cmd(
+            apply: Annotated[
+                bool, typer.Option("--apply", help="Merge them; without it, only list them")
+            ] = False,
+        ) -> None:
+            """Merge NotebookLM notebooks held twice under two folder names, with their
+            notes, chats and artifacts. Lists them unless --apply is given."""
+            from lestash.core.database import get_connection
+            from lestash.importers.notebooklm_dedupe import dedupe_notebooklm, find_duplicates
+
+            with get_connection(self.app_config) as conn:
+                if apply:
+                    pairs = dedupe_notebooklm(conn)
+                    conn.commit()
+                else:
+                    pairs = find_duplicates(conn)
+            for pair in pairs:
+                console.print(f"  {pair.old_id} → {pair.current_id}  {pair.title}")
+            verb = "Merged" if apply else "Would merge"
+            console.print(f"{verb} {len(pairs)} notebook copies into their current items.")
+
         return app
 
     def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:
