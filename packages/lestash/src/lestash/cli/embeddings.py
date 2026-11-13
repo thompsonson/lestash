@@ -25,6 +25,7 @@ def status() -> None:
     console.print(f"  Dimensions: {stats['dimensions']}")
     console.print(f"  Embedded: {stats['embedded']} / {stats['total_parents']} parents")
     console.print(f"  Coverage: {stats['coverage']}")
+    console.print(f"  Parts embedded: {stats['parts_embedded']} (rounds, comments, highlights...)")
     console.print(f"  Not from this model and recipe: {stats['out_of_date']}")
 
 

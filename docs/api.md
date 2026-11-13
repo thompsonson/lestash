@@ -447,14 +447,14 @@ Knowledge base statistics.
 
 ### `GET /api/embeddings/status`
 
-Embedding coverage stats. `out_of_date` counts held top-level items with no vector of today's model and recipe; a refresh also finds those whose text has changed.
+Embedding coverage stats. `embedded` counts top-level items with a vector; `parts_embedded` the children's (chat rounds, comments, highlights...). `out_of_date` counts held top-level items with no vector of today's model and recipe; a refresh also finds those whose text has changed.
 
 ```json
 {
   "model": "all-MiniLM-L6-v2",
   "recipe": "title+content500",
   "dimensions": 384,
-  "embedded": 18000, "out_of_date": 2000, "total_parents": 20000,
+  "embedded": 18000, "parts_embedded": 13000, "out_of_date": 2000, "total_parents": 20000,
   "coverage": "90%",
   "rebuilding": false
 }

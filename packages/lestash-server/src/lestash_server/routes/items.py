@@ -15,6 +15,7 @@ from lestash.core.database import (
     max_history_id,
     remove_tag,
 )
+from lestash.core.embed_units import ROUND_RECIPE
 from lestash.core.embeddings import re_embed_item
 from lestash.core.enrichment import (
     subtype_excludes_sql,
@@ -249,14 +250,17 @@ def search_items(
         # In hybrid mode such an item's score counts by how much text it has, in full
         # from FULL_TEXT characters, never below a tenth. An item with parts (a chat, a
         # notebook) keeps its weight: its text is in them. Keyword and semantic modes
-        # keep their own order.
+        # keep their own order. A turn that starts a round keeps its weight too: its
+        # vector is of the whole round, prompt and replies.
         weight: dict[int, float] = {}
         ids_found = list(set(fts_results) | set(vec_results))
         if ids_found and mode == "hybrid":
             marks = ",".join("?" * len(ids_found))
             for item_id, size, parts in conn.execute(
                 f"SELECT id, length(content), EXISTS (SELECT 1 FROM items c"
-                f" WHERE c.parent_id = items.id) FROM items WHERE id IN ({marks})",
+                f" WHERE c.parent_id = items.id) OR EXISTS (SELECT 1 FROM embedding_meta m"
+                f" WHERE m.item_id = items.id AND m.recipe = '{ROUND_RECIPE}')"
+                f" FROM items WHERE id IN ({marks})",
                 ids_found,
             ):
                 if not parts:

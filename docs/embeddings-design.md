@@ -130,6 +130,12 @@ Run on a copy of the database in a test environment, on a frozen test set, repor
   - one shared recipe instead of three.
   - Proposal: build this first, with today's model, as it's needed by every option.
   - Built: `lestash embeddings refresh`, run by `lestash-embed.service` after each sync's text from files. Each vector's model, recipe and text hash are in `embedding_meta`.
+- **Step 2, children (13 Nov 2026):** `core/embed_units.py` says what gets a vector and its text.
+  - Chats by round: your prompt and the replies to it, after the chat title. Rounds are derived from the turns' order and roles (Gemini replies name their prompt); the vector sits on the round's first turn. Not stored, so no ontology change.
+  - Comments after the start of their post; highlights after their book's title.
+  - Other children (artifacts, transcripts, documents, email messages) like a top-level item, until sections split them.
+  - No vector for reactions, or for a YouTube watch under the same video's like.
+  - Search returns the round's first turn, as keyword search returns turns.
 
 ## Supersedes
 

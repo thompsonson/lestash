@@ -33,6 +33,7 @@ class EmbeddingStatus(BaseModel):
     recipe: str
     dimensions: int
     embedded: int
+    parts_embedded: int
     out_of_date: int
     total_parents: int
     coverage: str
