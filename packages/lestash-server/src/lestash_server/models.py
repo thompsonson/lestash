@@ -58,6 +58,10 @@ class ItemResponse(BaseModel):
     by_name: str | None = None
     by_self: bool = False
     media: list[MediaResponse] = []
+    # Search only: the part that matched (a chat's round, a post's comment, a book's
+    # highlight), when the result is the item it is part of (#221)
+    match_id: int | None = None
+    match_label: str | None = None
 
 
 class ItemListResponse(BaseModel):

@@ -57,21 +57,44 @@ def load_queries(path: Path) -> list[dict[str, Any]]:
     return queries
 
 
+_part_keys: dict[int, str] = {}
+
+
+def _key(item: dict[str, Any]) -> str:
+    return f"{item['source_type']}:{item.get('source_id')}"
+
+
+def part_key(base_url: str, item_id: int, timeout: float) -> str:
+    """The source key of a part a result was found by (read-only, cached)."""
+    if item_id not in _part_keys:
+        url = f"{base_url.rstrip('/')}/api/items/{item_id}"
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 (a given URL)
+            _part_keys[item_id] = _key(json.load(resp))
+    return _part_keys[item_id]
+
+
 def search(base_url: str, q: str, mode: str, limit: int, timeout: float) -> list[dict[str, Any]]:
-    """The top results for one query and mode; raises for an HTTP or network error."""
+    """The top results for one query and mode; raises for an HTTP or network error.
+
+    Search groups parts under their item (#221): a chat found by one of its turns is
+    one result. Such a result records the part too, so an expected turn still counts.
+    """
     params = urllib.parse.urlencode({"q": q, "mode": mode, "limit": limit})
     url = f"{base_url.rstrip('/')}/api/items/search?{params}"
     with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 (a given URL)
         items = json.load(resp)["items"]
-    return [
-        {
+    hits = []
+    for rank, item in enumerate(items, start=1):
+        hit = {
             "rank": rank,
             "id": item["id"],
-            "key": f"{item['source_type']}:{item.get('source_id')}",
+            "key": _key(item),
             "title": (item.get("title") or "")[:120],
         }
-        for rank, item in enumerate(items, start=1)
-    ]
+        if item.get("match_id"):
+            hit["part"] = part_key(base_url, item["match_id"], timeout)
+        hits.append(hit)
+    return hits
 
 
 def run(base_url: str, queries: list[dict[str, Any]], limit: int, timeout: float) -> dict:
@@ -113,7 +136,11 @@ def expected_ranks(entry: dict[str, Any], mode: str) -> str:
     hits = entry[mode]
     if isinstance(hits, dict):
         return "error"
-    ranks = {hit["key"]: hit["rank"] for hit in hits}
+    ranks: dict[str, int] = {}
+    for hit in hits:  # best rank first; a grouped result counts for its part too
+        for key in (hit["key"], hit.get("part")):
+            if key:
+                ranks.setdefault(key, hit["rank"])
     return ", ".join(str(ranks.get(key, "-")) for key in entry["expect"]) or "(no expect)"
 
 
