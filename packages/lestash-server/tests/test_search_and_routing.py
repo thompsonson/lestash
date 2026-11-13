@@ -588,3 +588,24 @@ def test_a_kind_filter_applies_to_vector_hits_by_their_item(client, seeded, monk
 
     assert ids("chat") == [chat]
     assert ids("paper") == [paper]
+
+
+def test_a_chips_count_is_what_it_returns(client, seeded):
+    """Review round 1 (r1.1): counts come from the results, not the candidate lists."""
+    with deps.get_db() as conn:
+        _kinds_seed(conn)
+        for n in range(3):
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, title, content) "
+                "VALUES ('note', ?, 'PDDL more', 'x')",
+                (f"n-more-{n}",),
+            )
+        conn.commit()
+
+    body = client.get("/api/items/search", params={"q": "PDDL", "mode": "keyword"}).json()
+    for facet in body["facets"]:
+        chosen = client.get(
+            "/api/items/search", params={"q": "PDDL", "mode": "keyword", "kind": facet["kind"]}
+        ).json()
+        assert len(chosen["items"]) == facet["count"]
+        assert {i["kind"] for i in chosen["items"]} == {facet["kind"]}
