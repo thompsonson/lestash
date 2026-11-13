@@ -3,14 +3,16 @@
 The ontology's own parts, not fixed-size chunks (`docs/embeddings-design.md`):
 
 - a top-level item: its title, then the start of its content;
-- a chat: each round, your prompt and the replies to it, after the chat's title.
-  Rounds are derived from the turns, not stored; the vector sits on the round's
-  first turn;
+- a chat: each round, your prompt and the replies to it. Without the chat's title:
+  in the experiments it made every round of a chat alike (#305). Rounds are derived
+  from the turns, not stored; the vector sits on the round's first turn;
 - a comment: the start of the post it is on, then the comment;
 - a highlight: the book's title, then the highlight;
 - any other child (a NotebookLM artifact, a transcript, an email message): like a
   top-level item, for now; sections split the long ones later;
-- nothing for a reaction, or a YouTube watch under the same video's like.
+- nothing for a reaction, or a YouTube watch under the same video's like;
+- nothing for a video whose text is only its title (watch history, about 61k):
+  keyword search finds those, and their vectors crowded semantic search (#305).
 
 Each unit names its recipe, so a vector records which rule made it. Change a rule's
 text and give it a new name: the next refresh re-embeds what it touches.
@@ -30,8 +32,17 @@ REPLY_CHARS = 600
 ITEM_RECIPE = "title+content500"
 COMMENT_RECIPE = "comment:post200+content500"
 HIGHLIGHT_RECIPE = "highlight:book+content500"
-ROUND_RECIPE = "round:title+prompt400+replies600"
+ROUND_PREFIX = "round:"  # every round recipe starts so
+ROUND_RECIPE = f"{ROUND_PREFIX}prompt400+replies600"
+# A video with no more text than its title and this many characters gets no vector
+TITLE_ONLY_SLACK = 60
 RECIPES = (ITEM_RECIPE, COMMENT_RECIPE, HIGHLIGHT_RECIPE, ROUND_RECIPE)
+
+# A watch-history video: no text but its title
+TITLE_ONLY = (
+    "({t}.kind IS 'video' AND length(coalesce({t}.content, ''))"
+    " <= length(coalesce({t}.title, '')) + ?)"
+)
 
 # Children with no text of their own worth a vector
 _SKIP_KINDS = {"reaction"}
@@ -92,10 +103,10 @@ def rounds(turns: list[_Turn]) -> list[list[_Turn]]:
     return [r for r in found if r]
 
 
-def _round_unit(chat_title: str | None, turns: list[_Turn]) -> Unit | None:
+def _round_unit(turns: list[_Turn]) -> Unit | None:
     prompt = turns[0].text[:PROMPT_CHARS] if turns[0].is_prompt else ""
     replies = " ".join(t.text for t in turns if not t.is_prompt)[:REPLY_CHARS]
-    text = _join(chat_title, prompt, replies)
+    text = _join(prompt, replies)
     if not (prompt.strip() or replies.strip()):
         return None
     return Unit(turns[0].item_id, ROUND_RECIPE, text)
@@ -117,15 +128,15 @@ def embedding_units(conn: sqlite3.Connection, families: Iterable[int] | None = N
     where, args = _scope("id", fams)
     for item_id, title, content in conn.execute(
         "SELECT id, title, substr(content, 1, ?) FROM items "
-        f"WHERE parent_id IS NULL AND held = 1{where}",
-        [CONTENT_CHARS, *args],
+        f"WHERE parent_id IS NULL AND held = 1 AND NOT {TITLE_ONLY.format(t='items')}{where}",
+        [CONTENT_CHARS, TITLE_ONLY_SLACK, *args],
     ):
         text = embed_source(title, content)
         if text:
             units.append(Unit(item_id, ITEM_RECIPE, text))
 
     where, args = _scope("c.parent_id", fams)
-    chats: dict[int, tuple[str | None, list[_Turn]]] = {}
+    chats: dict[int, list[_Turn]] = {}
     # Rounds need the longest piece of a turn; the other recipes cut shorter
     longest = max(CONTENT_CHARS, PROMPT_CHARS, REPLY_CHARS)
     for row in conn.execute(
@@ -137,9 +148,9 @@ def embedding_units(conn: sqlite3.Connection, families: Iterable[int] | None = N
         "  json_extract(c.metadata, '$.prompt_source_id') END,"
         " p.kind, p.title, substr(p.content, 1, ?)"
         " FROM items c JOIN items p ON p.id = c.parent_id"
-        f" WHERE c.held = 1{where}"
+        f" WHERE c.held = 1 AND NOT {TITLE_ONLY.format(t='c')}{where}"
         " ORDER BY c.parent_id, datetime(c.created_at), c.id",
-        [longest, CONTEXT_CHARS, *args],
+        [longest, CONTEXT_CHARS, TITLE_ONLY_SLACK, *args],
     ):
         (item_id, parent_id, kind, title, content, source_id, role, prompt_of) = row[:8]
         parent_kind, parent_title, parent_start = row[8:]
@@ -147,8 +158,9 @@ def embedding_units(conn: sqlite3.Connection, families: Iterable[int] | None = N
         if kind in _SKIP_KINDS or (kind == "video" and parent_kind == "video"):
             continue
         if kind == "turn":
-            chat = chats.setdefault(parent_id, (parent_title, []))
-            chat[1].append(_Turn(item_id, source_id, content, role in ("human", "user"), prompt_of))
+            chats.setdefault(parent_id, []).append(
+                _Turn(item_id, source_id, content, role in ("human", "user"), prompt_of)
+            )
         elif kind == "comment":
             if content.strip():
                 context = parent_title or parent_start
@@ -163,9 +175,9 @@ def embedding_units(conn: sqlite3.Connection, families: Iterable[int] | None = N
             if text:
                 units.append(Unit(item_id, ITEM_RECIPE, text))
 
-    for chat_title, turns in chats.values():
+    for turns in chats.values():
         for found in rounds(turns):
-            unit = _round_unit(chat_title, found)
+            unit = _round_unit(found)
             if unit:
                 units.append(unit)
     return units

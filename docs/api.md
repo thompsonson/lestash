@@ -453,13 +453,20 @@ Knowledge base statistics.
 
 ### `GET /api/embeddings/status`
 
-Embedding coverage stats. `embedded` counts top-level items with a vector; `parts_embedded` the children's (chat rounds, comments, highlights...). `out_of_date` counts held top-level items with no vector of today's model and recipe; a refresh also finds those whose text has changed.
+Embedding coverage stats.
+
+- `embedded` counts top-level items with a vector of today's model; `parts_embedded` the children's (chat rounds, comments, highlights...).
+- `total_parents` counts held top-level items that should have a vector: not empty, and not a video with only its title.
+- `out_of_date` counts those with no vector of today's model and recipe; a refresh also finds those whose text has changed.
+- `building` is true after a change of model, while the new index is built beside the old one. Search then uses `query_model`, the model of the old index.
 
 ```json
 {
-  "model": "all-MiniLM-L6-v2",
+  "model": "google/embeddinggemma-300m",
   "recipe": "title+content500",
-  "dimensions": 384,
+  "dimensions": 768,
+  "query_model": "all-MiniLM-L6-v2",
+  "building": true,
   "embedded": 18000, "parts_embedded": 13000, "out_of_date": 2000, "total_parents": 20000,
   "coverage": "90%",
   "rebuilding": false

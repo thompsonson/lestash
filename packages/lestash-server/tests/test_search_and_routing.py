@@ -409,7 +409,7 @@ def test_similar_items_leave_out_the_items_own_parts(client, seeded, monkeypatch
         conn.commit()
     monkeypatch.setattr(route, "load_vec_extension", lambda conn: None)
     monkeypatch.setattr(route, "ensure_vec_table", lambda conn: None)
-    monkeypatch.setattr(route, "embed_text", lambda text: [0.0] * 384)
+    monkeypatch.setattr(route, "embed_query", lambda conn, text: [0.0] * 384)
     monkeypatch.setattr(
         route, "search_similar", lambda conn, e, limit: [(item, 0), (part, 0.1), (other, 0.2)]
     )

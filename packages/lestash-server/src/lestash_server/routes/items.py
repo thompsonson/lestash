@@ -16,7 +16,7 @@ from lestash.core.database import (
     max_history_id,
     remove_tag,
 )
-from lestash.core.embed_units import ROUND_RECIPE
+from lestash.core.embed_units import ROUND_PREFIX
 from lestash.core.embeddings import re_embed_item
 from lestash.core.enrichment import (
     subtype_excludes_sql,
@@ -263,7 +263,7 @@ def search_items(
         if mode in ("semantic", "hybrid"):
             try:
                 from lestash.core.embeddings import (
-                    embed_text,
+                    embed_query,
                     ensure_vec_table,
                     load_vec_extension,
                     search_similar,
@@ -271,7 +271,7 @@ def search_items(
 
                 load_vec_extension(conn)
                 ensure_vec_table(conn)
-                query_emb = embed_text(q)
+                query_emb = embed_query(conn, q)
                 # Grouped, a part's hit (a round, a comment) counts for its item, at
                 # the rank of its best part (#221). Ask for more, as several parts of
                 # one item fill one place. Ungrouped without children, parts are dropped.
@@ -313,7 +313,8 @@ def search_items(
         # from FULL_TEXT characters, never below a tenth. An item with parts (a chat, a
         # notebook) keeps its weight: its text is in them. Keyword and semantic modes
         # keep their own order. A turn that starts a round keeps its weight too: its
-        # vector is of the whole round, prompt and replies.
+        # vector is of the whole round, prompt and replies. Any round recipe: the
+        # old index's rounds count while a new one is built.
         weight: dict[int, float] = {}
         ids_found = list(set(fts_results) | set(vec_results))
         if ids_found and mode == "hybrid":
@@ -321,7 +322,7 @@ def search_items(
             for item_id, size, parts in conn.execute(
                 f"SELECT id, length(content), EXISTS (SELECT 1 FROM items c"
                 f" WHERE c.parent_id = items.id) OR EXISTS (SELECT 1 FROM embedding_meta m"
-                f" WHERE m.item_id = items.id AND m.recipe = '{ROUND_RECIPE}')"
+                f" WHERE m.item_id = items.id AND m.recipe LIKE '{ROUND_PREFIX}%')"
                 f" FROM items WHERE id IN ({marks})",
                 ids_found,
             ):

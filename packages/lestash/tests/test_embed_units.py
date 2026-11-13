@@ -12,7 +12,7 @@ from lestash.core.database import get_connection
 
 def _fake_vector(text: str) -> list[float]:
     seed = hashlib.sha256(text.encode()).digest()
-    vector = [b / 255 for b in (seed * 12)[: emb.EMBEDDING_DIM]]
+    vector = [b / 255 for b in (seed * 24)[: emb.EMBEDDING_DIM]]
     norm = sum(v * v for v in vector) ** 0.5
     return [v / norm for v in vector]
 
@@ -88,10 +88,8 @@ def test_a_chat_is_embedded_by_round(conn):
     found = _units(conn)
 
     assert found[ask].recipe == units.ROUND_RECIPE
-    assert found[ask].text == "Bayes for beginners\nWhat is a prior?\nA belief before data."
-    assert found[ask2].text == (
-        "Bayes for beginners\nAnd a posterior?\nAfter data. Bayes updates one to the other."
-    )
+    assert found[ask].text == "What is a prior?\nA belief before data."
+    assert found[ask2].text == ("And a posterior?\nAfter data. Bayes updates one to the other.")
     # A reply is part of its round, not a vector of its own
     assert reply not in found and more not in found and also not in found
     assert found[chat].recipe == units.ITEM_RECIPE
@@ -102,7 +100,7 @@ def test_turns_with_the_same_time_keep_their_import_order(conn):
     ask = _add(conn, "claude", None, "Question", parent=chat, at="2026-01-01 10:00", sender="human")
     _add(conn, "claude", None, "Answer", parent=chat, at="2026-01-01 10:00", sender="assistant")
 
-    assert _units(conn)[ask].text == "Chat\nQuestion\nAnswer"
+    assert _units(conn)[ask].text == "Question\nAnswer"
 
 
 def test_a_gemini_reply_goes_with_the_prompt_it_names(conn):
@@ -141,8 +139,8 @@ def test_a_gemini_reply_goes_with_the_prompt_it_names(conn):
 
     found = _units(conn)
 
-    assert found[first].text == "Trip\nTrains to Lyon?\nThe TGV, two hours."
-    assert found[second].text == "Trip\nHotels in Lyon?"
+    assert found[first].text == "Trains to Lyon?\nThe TGV, two hours."
+    assert found[second].text == "Hotels in Lyon?"
 
 
 def test_replies_before_any_prompt_make_a_round(conn):
@@ -157,7 +155,7 @@ def test_replies_before_any_prompt_make_a_round(conn):
         role="assistant",
     )
 
-    assert _units(conn)[greet].text == "Chat\nHello, how can I help?"
+    assert _units(conn)[greet].text == "Hello, how can I help?"
 
 
 def test_long_rounds_are_cut_per_side(conn):
@@ -167,7 +165,7 @@ def test_long_rounds_are_cut_per_side(conn):
 
     text = _units(conn)[ask].text
 
-    assert text == "T\n" + "p" * units.PROMPT_CHARS + "\n" + "r" * units.REPLY_CHARS
+    assert text == "p" * units.PROMPT_CHARS + "\n" + "r" * units.REPLY_CHARS
 
 
 def test_a_comment_carries_its_post_and_a_highlight_its_book(conn):
@@ -221,7 +219,7 @@ def test_editing_a_reply_re_embeds_its_round(conn):
     # The reply has no vector of its own; its round, on the prompt, is redone
     assert emb.re_embed_item(conn, reply) is False
     digest = conn.execute("SELECT text_hash FROM embedding_meta WHERE item_id = ?", (ask,))
-    assert digest.fetchone()[0] == emb.text_hash("Chat\nQuestion\nBetter answer")
+    assert digest.fetchone()[0] == emb.text_hash("Question\nBetter answer")
 
 
 def test_renaming_a_post_re_embeds_its_comments(conn):
@@ -288,5 +286,5 @@ def test_a_gemini_reply_sorted_before_its_prompt_still_joins_it(conn):
 
     found = _units(conn)
 
-    assert found[ask].text == "Trip\nTrains to Lyon?\nThe TGV."
+    assert found[ask].text == "Trains to Lyon?\nThe TGV."
     assert len(found) == 2  # the chat and its one round
