@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 import sqlite_vec
 
+from lestash.core.embed_units import ITEM_RECIPE, embed_source, embedding_units
+
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 
@@ -23,10 +25,10 @@ logger = logging.getLogger(__name__)
 MODEL_NAME = "all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384
 
-# The one recipe for an item's text (#221). Each vector records it, so changing it (or
-# the model) re-embeds every item at the next refresh. Give a new recipe a new name.
-RECIPE = "title+content500"
-CONTENT_CHARS = 500
+# A top-level item's recipe; the others, and what gets a vector, are in embed_units.
+# Each vector records its recipe, so changing one (or the model) re-embeds what it
+# touches at the next refresh. Give a changed recipe a new name.
+RECIPE = ITEM_RECIPE
 BATCH_SIZE = 64
 
 _model: SentenceTransformer | None = None
@@ -54,12 +56,6 @@ def embed_batch(texts: list[str]) -> list[list[float]]:
     model = get_model()
     embeddings = model.encode(texts, normalize_embeddings=True, batch_size=64)
     return [e.tolist() for e in embeddings]
-
-
-def embed_source(title: str | None, content: str | None) -> str:
-    """The text embedded for an item: its title, then the start of its content."""
-    parts = [part for part in (title, (content or "")[:CONTENT_CHARS]) if part]
-    return " ".join(parts).strip()
 
 
 def make_embed_text(item: Item) -> str:
@@ -95,7 +91,11 @@ def ensure_vec_table(conn: sqlite3.Connection) -> None:
 
 
 def upsert_embedding(
-    conn: sqlite3.Connection, item_id: int, embedding: list[float], text: str
+    conn: sqlite3.Connection,
+    item_id: int,
+    embedding: list[float],
+    text: str,
+    recipe: str = RECIPE,
 ) -> None:
     """Insert or replace an item's embedding, with the model, recipe and text behind it."""
     blob = _serialize_embedding(embedding)
@@ -108,7 +108,7 @@ def upsert_embedding(
         "ON CONFLICT(item_id) DO UPDATE SET model = excluded.model, "
         "recipe = excluded.recipe, text_hash = excluded.text_hash, "
         "embedded_at = excluded.embedded_at",
-        (item_id, MODEL_NAME, RECIPE, text_hash(text)),
+        (item_id, MODEL_NAME, recipe, text_hash(text)),
     )
 
 
@@ -136,39 +136,27 @@ def search_similar(
 
 
 def re_embed_item(conn: sqlite3.Connection, item_id: int) -> bool:
-    """Re-compute and upsert the embedding for a single item.
+    """Bring the vectors of an item's family up to date after it changed: the item,
+    its parent or its children, whose texts may include its own.
 
-    Returns True on success, False if the item has no embeddable text or if
-    the vector backend is unavailable. Errors are logged but never raised so
-    callers (PATCH, restore) can continue without surfacing infra failures.
+    Returns True if the item has a vector afterwards. Errors are logged but never
+    raised, so callers (PATCH, restore) can continue without surfacing infra failures.
     """
-    from lestash.models.item import Item
-
-    row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+    row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (item_id,)).fetchone()
     if not row:
         return False
-    item = Item.from_row(row)
-    text = make_embed_text(item)
+    family = row[0] if row[0] is not None else item_id
     try:
         load_vec_extension(conn)
         ensure_vec_table(conn)
-        if not text or not _eligible(item):
-            # Its text was cleared, or it is no longer a held top-level item
-            delete_embedding(conn, item_id)
-            conn.commit()
-            return False
-        embedding = embed_text(text)
-        upsert_embedding(conn, item_id, embedding, text)
-        conn.commit()
-        return True
+        refresh_embeddings(conn, families={family})
+        return (
+            conn.execute("SELECT 1 FROM embedding_meta WHERE item_id = ?", (item_id,)).fetchone()
+            is not None
+        )
     except Exception:
         logger.warning("Re-embed failed for item %d", item_id, exc_info=True)
         return False
-
-
-def _eligible(item: Item) -> bool:
-    """Whether an item gets a vector: a held top-level item. Its parts come later (#221)."""
-    return item.parent_id is None and item.held
 
 
 def get_embedding_stats(conn: sqlite3.Connection) -> dict:
@@ -177,10 +165,11 @@ def get_embedding_stats(conn: sqlite3.Connection) -> dict:
         "SELECT COUNT(*) FROM items WHERE parent_id IS NULL AND held = 1"
     ).fetchone()[0]
 
-    try:
-        embedded = conn.execute("SELECT COUNT(*) FROM vec_items").fetchone()[0]
-    except sqlite3.OperationalError:
-        embedded = 0
+    # Vectors of top-level items, and of their parts (rounds, comments, highlights...)
+    embedded, parts = conn.execute(
+        "SELECT COALESCE(SUM(i.parent_id IS NULL), 0), COALESCE(SUM(i.parent_id IS NOT NULL), 0)"
+        " FROM embedding_meta m JOIN items i ON i.id = m.item_id"
+    ).fetchone()
     # Without a vector of today's model and recipe; changed text is found by a refresh
     out_of_date = conn.execute(
         "SELECT COUNT(*) FROM items i WHERE i.parent_id IS NULL AND i.held = 1 "
@@ -194,6 +183,7 @@ def get_embedding_stats(conn: sqlite3.Connection) -> dict:
         "recipe": RECIPE,
         "dimensions": EMBEDDING_DIM,
         "embedded": embedded,
+        "parts_embedded": parts,
         "out_of_date": out_of_date,
         "total_parents": total_parents,
         "coverage": f"{embedded / total_parents * 100:.1f}%" if total_parents else "0%",
@@ -213,14 +203,17 @@ class RefreshCounts:
 def refresh_embeddings(
     conn: sqlite3.Connection,
     *,
+    families: set[int] | None = None,
     budget_s: float | None = None,
     progress_callback: typing.Callable[[int, int], None] | None = None,
 ) -> RefreshCounts:
     """Bring the vectors up to date with the items (#221).
 
-    - Embeds every held top-level item that has no vector, or whose vector came from
-      another model, recipe or text. Newest items first.
-    - Removes vectors of items that are gone, no longer held, now children, or empty.
+    - Embeds every unit (embed_units) with no vector, or whose vector came from another
+      model, recipe or text. Newest items first.
+    - Removes vectors that no unit stands for: items gone, stubbed, emptied, or no
+      longer the start of a round.
+    - With families, only those top-level items and their children.
     - Commits each batch. With a budget, stops after the batch that passes it; the
       next refresh goes on.
 
@@ -231,29 +224,51 @@ def refresh_embeddings(
     counts = RefreshCounts()
     started = time.monotonic()
 
-    have_vector = {row[0] for row in conn.execute("SELECT item_id FROM vec_items")}
-    recorded = {
-        row[0]: (row[1], row[2], row[3])
-        for row in conn.execute("SELECT item_id, model, recipe, text_hash FROM embedding_meta")
-    }
-    rows = conn.execute(
-        "SELECT id, title, substr(content, 1, ?) FROM items "
-        "WHERE parent_id IS NULL AND held = 1 ORDER BY id DESC",
-        (CONTENT_CHARS,),
-    ).fetchall()
+    if families is None:
+        have_vector = {row[0] for row in conn.execute("SELECT item_id FROM vec_items")}
+        recorded = {
+            row[0]: (row[1], row[2], row[3])
+            for row in conn.execute("SELECT item_id, model, recipe, text_hash FROM embedding_meta")
+        }
+    else:
+        fams = list(families)
+        marks = ",".join("?" * len(fams))
+        members = [
+            row[0]
+            for row in conn.execute(
+                f"SELECT id FROM items WHERE id IN ({marks}) OR parent_id IN ({marks})",
+                fams + fams,
+            )
+        ]
+        have_vector, recorded = set(), {}
+        for start in range(0, len(members), 500):
+            ids = members[start : start + 500]
+            marks = ",".join("?" * len(ids))
+            have_vector |= {
+                row[0]
+                for row in conn.execute(
+                    f"SELECT item_id FROM vec_items WHERE item_id IN ({marks})", ids
+                )
+            }
+            recorded.update(
+                (row[0], (row[1], row[2], row[3]))
+                for row in conn.execute(
+                    "SELECT item_id, model, recipe, text_hash FROM embedding_meta"
+                    f" WHERE item_id IN ({marks})",
+                    ids,
+                )
+            )
 
     keep: set[int] = set()
-    todo: list[tuple[int, str]] = []
-    for item_id, title, content in rows:
-        text = embed_source(title, content)
-        if not text:
-            continue
-        keep.add(item_id)
-        current = (MODEL_NAME, RECIPE, text_hash(text))
-        if item_id not in have_vector or recorded.get(item_id) != current:
-            todo.append((item_id, text))
+    todo: list[tuple[int, str, str]] = []
+    for unit in embedding_units(conn, families):
+        keep.add(unit.item_id)
+        current = (MODEL_NAME, unit.recipe, text_hash(unit.text))
+        if unit.item_id not in have_vector or recorded.get(unit.item_id) != current:
+            todo.append((unit.item_id, unit.recipe, unit.text))
+    todo.sort(key=lambda entry: entry[0], reverse=True)
 
-    # Vectors, and records, of items that should not have one
+    # Vectors, and records, that no unit stands for
     for item_id in (have_vector | set(recorded)) - keep:
         delete_embedding(conn, item_id)
         counts.removed += 1
@@ -265,21 +280,21 @@ def refresh_embeddings(
             counts.stopped = True
             break
         batch = todo[start : start + BATCH_SIZE]
-        vectors = embed_batch([text for _, text in batch])
+        vectors = embed_batch([text for _, _, text in batch])
         # Take the write lock before looking: an item deleted after the list was read
         # would break embedding_meta's foreign key. Its vector is dropped next time.
         if conn.in_transaction:
             conn.commit()
         conn.execute("BEGIN IMMEDIATE")
         try:
-            ids = [item_id for item_id, _ in batch]
+            ids = [item_id for item_id, _, _ in batch]
             marks = ",".join("?" * len(ids))
             present = {
                 row[0] for row in conn.execute(f"SELECT id FROM items WHERE id IN ({marks})", ids)
             }
-            for (item_id, text), vector in zip(batch, vectors, strict=True):
+            for (item_id, recipe, text), vector in zip(batch, vectors, strict=True):
                 if item_id in present:
-                    upsert_embedding(conn, item_id, vector, text)
+                    upsert_embedding(conn, item_id, vector, text, recipe)
                     counts.embedded += 1
             conn.commit()
         except BaseException:

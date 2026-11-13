@@ -5,6 +5,7 @@ import hashlib
 
 import lestash.core.embeddings as emb
 import pytest
+from lestash.core import embed_units as units
 from lestash.core.database import get_connection
 
 CALLS: list[list[str]] = []
@@ -56,21 +57,20 @@ def test_the_recipe_is_the_title_then_the_start_of_the_content():
     assert emb.embed_source(None, "body") == "body"
     assert emb.embed_source("Title", None) == "Title"
     assert emb.embed_source(None, None) == ""
-    assert emb.embed_source("T", "x" * 900) == "T " + "x" * emb.CONTENT_CHARS
+    assert emb.embed_source("T", "x" * 900) == "T " + "x" * units.CONTENT_CHARS
 
 
-def test_refresh_embeds_held_top_level_items_and_records_each(conn):
+def test_refresh_embeds_held_items_and_records_each(conn):
     post = _add(conn, "a", "A post", "Its text")
-    child = _add(conn, "b", "A reply", "text", parent_id=post)
+    child = _add(conn, "b", "A note on it", "text", parent_id=post)
     stub = _add(conn, "c", "A stub", "known by its address", held=0)
     empty = _add(conn, "d", None, "")
 
     counts = emb.refresh_embeddings(conn)
 
-    assert counts.embedded == 1
-    assert _vector_ids(conn) == {post}
-    assert child not in _vector_ids(conn) and stub not in _vector_ids(conn)
-    assert empty not in _vector_ids(conn)
+    assert counts.embedded == 2
+    assert _vector_ids(conn) == {post, child}
+    assert stub not in _vector_ids(conn) and empty not in _vector_ids(conn)
     model, recipe, digest = conn.execute(
         "SELECT model, recipe, text_hash FROM embedding_meta WHERE item_id = ?", (post,)
     ).fetchone()
@@ -102,7 +102,7 @@ def test_changed_text_is_embedded_again(conn):
 
 
 def test_a_change_past_the_recipe_cut_is_not_embedded_again(conn):
-    post = _add(conn, "a", "A post", "x" * emb.CONTENT_CHARS)
+    post = _add(conn, "a", "A post", "x" * units.CONTENT_CHARS)
     emb.refresh_embeddings(conn)
     conn.execute("UPDATE items SET content = content || 'more' WHERE id = ?", (post,))
     conn.commit()
@@ -114,7 +114,7 @@ def test_another_model_or_recipe_is_embedded_again(conn, monkeypatch):
     _add(conn, "a", "A post", "Its text")
     emb.refresh_embeddings(conn)
 
-    monkeypatch.setattr(emb, "RECIPE", "another-recipe")
+    monkeypatch.setattr(units, "ITEM_RECIPE", "another-recipe")
 
     assert emb.refresh_embeddings(conn).embedded == 1
 
@@ -134,7 +134,7 @@ def test_a_vector_without_a_record_is_embedded_again(conn):
 def test_vectors_of_items_that_should_have_none_are_removed(conn):
     gone = _add(conn, "a", "Deleted", "text")
     stubbed = _add(conn, "b", "Becomes a stub", "text")
-    moved = _add(conn, "c", "Becomes a child", "text")
+    moved = _add(conn, "c", "Becomes a reaction", "text")
     emptied = _add(conn, "d", "", "text")
     kept = _add(conn, "e", "Kept", "text")
     emb.refresh_embeddings(conn)
@@ -142,7 +142,11 @@ def test_vectors_of_items_that_should_have_none_are_removed(conn):
 
     conn.execute("DELETE FROM items WHERE id = ?", (gone,))
     conn.execute("UPDATE items SET held = 0 WHERE id = ?", (stubbed,))
-    conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (kept, moved))
+    conn.execute(
+        "UPDATE items SET source_type = 'linkedin', parent_id = ?,"
+        ' metadata = \'{"resource_name": "socialActions/likes"}\' WHERE id = ?',
+        (kept, moved),
+    )
     conn.execute("UPDATE items SET content = '' WHERE id = ?", (emptied,))
     conn.commit()
 

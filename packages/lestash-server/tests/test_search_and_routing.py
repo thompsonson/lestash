@@ -357,3 +357,53 @@ def test_hybrid_keeps_the_weight_of_an_item_with_parts(client, monkeypatch):
     monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: [(chat, 0.1), (full, 0.2)])
     resp = client.get("/api/items/search", params={"q": "qqqnothing", "mode": "hybrid"})
     assert [i["id"] for i in resp.json()["items"]][:2] == [chat, full]
+
+
+def test_a_part_hit_without_children_brings_its_item(client, seeded, monkeypatch):
+    """A round or comment that matches counts for its item, at its best part's rank (#221)."""
+    import lestash.core.embeddings as emb
+
+    with deps.get_db() as conn:
+        parent = conn.execute("SELECT id FROM items WHERE source_id = 'n-dual'").fetchone()[0]
+        other = conn.execute("SELECT id FROM items WHERE id != ? LIMIT 1", (parent,)).fetchone()[0]
+        child = conn.execute(
+            "INSERT INTO items (source_type, source_id, title, content, parent_id) "
+            "VALUES ('note', 'n-part', 'A part', 'x', ?)",
+            (parent,),
+        ).lastrowid
+        conn.commit()
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: [(child, 0.1), (other, 0.2)])
+
+    resp = client.get(
+        "/api/items/search",
+        params={"q": "zzz", "mode": "semantic", "include_children": False},
+    )
+
+    assert [i["id"] for i in resp.json()["items"]] == [parent, other]
+
+
+def test_similar_items_leave_out_the_items_own_parts(client, seeded, monkeypatch):
+    """Related items compare whole items: not its rounds, comments or siblings (#221)."""
+    from lestash_server.routes import embeddings as route
+
+    with deps.get_db() as conn:
+        item = conn.execute("SELECT id FROM items WHERE source_id = 'n-dual'").fetchone()[0]
+        other = conn.execute("SELECT id FROM items WHERE id != ? LIMIT 1", (item,)).fetchone()[0]
+        part = conn.execute(
+            "INSERT INTO items (source_type, source_id, title, content, parent_id) "
+            "VALUES ('note', 'n-own-part', 'Its part', 'x', ?)",
+            (item,),
+        ).lastrowid
+        conn.commit()
+    monkeypatch.setattr(route, "load_vec_extension", lambda conn: None)
+    monkeypatch.setattr(route, "ensure_vec_table", lambda conn: None)
+    monkeypatch.setattr(route, "embed_text", lambda text: [0.0] * 384)
+    monkeypatch.setattr(
+        route, "search_similar", lambda conn, e, limit: [(item, 0), (part, 0.1), (other, 0.2)]
+    )
+
+    resp = client.get(f"/api/embeddings/similar/{item}")
+    assert [i["id"] for i in resp.json()] == [other]
+    resp = client.get(f"/api/embeddings/similar/{part}")
+    assert [i["id"] for i in resp.json()] == [other]
