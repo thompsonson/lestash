@@ -1304,6 +1304,26 @@ route(/^\/search$/, (m, url) => {
   return doSearch(q);
 });
 
+// A result found by one of its parts (a chat's round, a post's reply, a book's
+// highlight): the card opens at that part, which links up to the whole, and says so.
+// Its preview is the part's text: the matched words, or its opening (#221).
+function foundInPart(card, item) {
+  card.href = `/items/${item.match_id}`;
+  const body = card.querySelector('.item-body');
+  if (!body) return;
+  let preview = card.querySelector('.item-preview');
+  if (!preview) {
+    preview = document.createElement('div');
+    preview.className = 'item-preview';
+    body.querySelector('.item-card-line')?.after(preview);
+  }
+  if (item.preview && !item.preview.includes('<<')) preview.textContent = item.preview;
+  const where = document.createElement('div');
+  where.className = 'item-card-counts';
+  where.textContent = `Found in a ${(item.match_label || 'part').toLowerCase()} · opens there`;
+  preview.after(where);
+}
+
 async function doSearch(q) {
   const list = document.getElementById('search-list');
   const status = document.getElementById('search-status');
@@ -1323,6 +1343,7 @@ async function doSearch(q) {
     status.textContent = `${data.total} result${data.total !== 1 ? 's' : ''}`;
     data.items.forEach(item => {
       const card = renderCard(item);
+      if (item.match_id) foundInPart(card, item);
       // Replace preview with highlighted snippet if it contains markers
       const preview = card.querySelector('.item-preview');
       if (preview && item.preview && item.preview.includes('<<')) {

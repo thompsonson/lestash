@@ -68,10 +68,13 @@ Search items using keyword (FTS5), semantic (vector), or hybrid mode.
 |---|---|---|---|
 | `q` | string | **required** | Search query; see the syntax below |
 | `limit` | int | 20 | Max results (1–100) |
-| `include_children` | bool | true | Include child items |
+| `group` | bool | true | One result per item: a part's match (a chat's round, a post's reply, a book's highlight) counts for its item, at its best part's rank |
+| `include_children` | bool | true | With `group=false`: list parts as results of their own (true) or drop them (false) |
 | `mode` | string | hybrid | `keyword`, `semantic`, or `hybrid` |
 
 Hybrid mode combines keyword + semantic results via Reciprocal Rank Fusion (k=60).
+
+A result found by a part carries `match_id` (the part) and `match_label` (its kind, such as "Turn"). Its `preview` is the part's matched words (keyword) or its opening (semantic). The app opens such a result at the part (#221).
 
 **Keyword syntax** (`lestash.core.search`, shared with `lestash items search`):
 

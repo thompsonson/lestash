@@ -20,6 +20,7 @@ from lestash.core.embeddings import re_embed_item
 from lestash.core.enrichment import (
     subtype_excludes_sql,
 )
+from lestash.core.kinds import KINDS
 from lestash.core.links import links_of, reject_link
 from lestash.core.search import keyword_search
 from lestash.models.item import Item
@@ -159,11 +160,31 @@ def list_items(
 FULL_TEXT = 150  # characters from which a hybrid search result counts in full
 
 
+def _owners(conn: sqlite3.Connection, ids: list[int]) -> dict[int, int]:
+    """For each id still held, the item it counts for: its parent if it is a part."""
+    if not ids:
+        return {}
+    marks = ",".join("?" * len(ids))
+    return {
+        r[0]: r[1] if r[1] is not None else r[0]
+        for r in conn.execute(
+            f"SELECT id, parent_id FROM items WHERE id IN ({marks}) AND held = 1", ids
+        )
+    }
+
+
 @router.get("/search", response_model=ItemListResponse)
 def search_items(
     q: str = Query(..., min_length=1, description="Search query"),
     limit: int = Query(20, ge=1, le=100),
-    include_children: bool = Query(True, description="Include child items in results"),
+    include_children: bool = Query(
+        True, description="With group off: list child items as results of their own"
+    ),
+    group: bool = Query(
+        True,
+        description="One result per item: a part's match (a chat round, a comment, a "
+        "highlight) counts for its item, at its best part's rank (#221)",
+    ),
     mode: Literal["keyword", "semantic", "hybrid"] = Query("hybrid", description="Search mode"),
 ):
     """Search items using keyword (FTS5), semantic (vector), or hybrid mode.
@@ -175,19 +196,30 @@ def search_items(
     with get_db() as conn:
         fts_results: dict[int, dict] = {}
         vec_results: dict[int, float] = {}
+        vec_parts: dict[int, int] = {}  # item id -> its best-matching part, by vector
         keyword_failed = False
 
         # FTS5 keyword search
         if mode in ("keyword", "hybrid"):
             try:
+                # Grouped, several parts of one item take one place: ask for more
                 rows = keyword_search(
-                    conn, q, limit * 2, top_level_only=not include_children, snippets=True
+                    conn,
+                    q,
+                    limit * (4 if group else 2),
+                    top_level_only=not group and not include_children,
+                    snippets=True,
                 )
-                for rank, row in enumerate(rows):
-                    fts_results[row["id"]] = {
-                        "row": row,
-                        "rank": rank,
+                owner = _owners(conn, [row["id"] for row in rows]) if group else {}
+                for row in rows:
+                    key = owner.get(row["id"], row["id"])
+                    if key in fts_results:
+                        continue  # the item's better part came first
+                    fts_results[key] = {
+                        "row": row if key == row["id"] else None,
+                        "rank": len(fts_results),
                         "snippet": row["search_snippet"],
+                        "part": row["id"] if key != row["id"] else None,
                     }
             except sqlite3.Error:
                 # keyword_search leaves no syntax errors, so this is the index or the
@@ -213,24 +245,27 @@ def search_items(
                 load_vec_extension(conn)
                 ensure_vec_table(conn)
                 query_emb = embed_text(q)
-                # Without children, a part's hit (a round, a comment) counts for its
-                # item, at the rank of its best part (#221). Ask for more, as several
-                # parts of one item fill one place.
+                # Grouped, a part's hit (a round, a comment) counts for its item, at
+                # the rank of its best part (#221). Ask for more, as several parts of
+                # one item fill one place. Ungrouped without children, parts are dropped.
                 want = limit * 2
-                fetch = want if include_children else want * 4
+                fetch = want if include_children and not group else want * 4
                 similar = search_similar(conn, query_emb, limit=fetch)
                 ids = [item_id for item_id, _distance in similar]
-                if not include_children and ids:
-                    marks = ",".join("?" * len(ids))
-                    owner = {
-                        r[0]: r[1] if r[1] is not None else r[0]
-                        for r in conn.execute(
-                            f"SELECT id, parent_id FROM items WHERE id IN ({marks})", ids
-                        )
-                    }
-                    ids = list(dict.fromkeys(owner[i] for i in ids if i in owner))
-                for rank, item_id in enumerate(ids[:want]):
-                    vec_results[item_id] = rank
+                owner = _owners(conn, ids)
+                for item_id in ids:
+                    if item_id not in owner:
+                        continue  # gone since it was embedded
+                    key = owner[item_id] if group else item_id
+                    if key in vec_results:
+                        continue
+                    if not group and not include_children and key != owner[item_id]:
+                        continue
+                    if key != item_id:
+                        vec_parts[key] = item_id
+                    vec_results[key] = len(vec_results)
+                    if len(vec_results) >= want:
+                        break
             except Exception:
                 logger.warning("Vector search failed for %r", q, exc_info=True)
                 # Semantic mode has nothing else to show; hybrid with a failed keyword
@@ -281,22 +316,34 @@ def search_items(
 
         ranked_ids = sorted(scores, key=lambda x: scores[x], reverse=True)[:limit]
 
-        # Build response
+        # Build response: each item, with the part that matched when it was a part,
+        # and the matched words (keyword) or the part's opening (vector) as its preview
         items = []
         for item_id in ranked_ids:
-            if item_id in fts_results:
-                row = fts_results[item_id]["row"]
-                item = Item.from_row(row)
-                enriched = enrich_item(conn, item)
-                snippet = fts_results[item_id]["snippet"]
-                if snippet:
-                    enriched.preview = snippet
-            else:
-                row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
-                if not row:
-                    continue
-                item = Item.from_row(row)
-                enriched = enrich_item(conn, item)
+            found = fts_results.get(item_id)
+            hit = found["row"] if found else None
+            if hit is None:
+                hit = conn.execute(
+                    "SELECT * FROM items WHERE id = ? AND held = 1", (item_id,)
+                ).fetchone()
+            if not hit:
+                continue
+            enriched = enrich_item(conn, Item.from_row(hit))
+            # The part that gave the preview: the keyword hit's, else the vector's. A
+            # keyword hit on the item itself opens the item, with its own snippet
+            part = found["part"] if found else vec_parts.get(item_id)
+            if found and found["snippet"]:
+                enriched.preview = found["snippet"]
+            if part is not None:
+                kind, text = conn.execute(
+                    "SELECT kind, substr(content, 1, 300) FROM items WHERE id = ?", (part,)
+                ).fetchone() or (None, None)
+                enriched.match_id = part
+                enriched.match_label = (
+                    KINDS[kind].label if isinstance(kind, str) and kind in KINDS else None
+                )
+                if not (found and found["snippet"]) and text:
+                    enriched.preview = " ".join(text.split())[:200]
             items.append(enriched)
 
     return ItemListResponse(items=items, total=len(items), limit=limit, offset=0)

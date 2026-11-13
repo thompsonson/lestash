@@ -76,10 +76,16 @@ def test_semantic_hits_respect_include_children(client, seeded, monkeypatch):
     def ids(include_children):
         resp = client.get(
             "/api/items/search",
-            params={"q": "zzz", "mode": "semantic", "include_children": include_children},
+            params={
+                "q": "zzz",
+                "mode": "semantic",
+                "include_children": include_children,
+                "group": False,
+            },
         )
         return [i["id"] for i in resp.json()["items"]]
 
+    # Ungrouped: parts are results of their own, or dropped
     assert ids(True) == [child, parent]
     assert ids(False) == [parent]
 
@@ -165,12 +171,17 @@ def test_semantic_without_children_asks_for_more_hits(client, monkeypatch):
     asked = []
     monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
     monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: asked.append(limit) or [])
-    client.get("/api/items/search", params={"q": "x", "mode": "semantic", "limit": 5})
+    client.get(
+        "/api/items/search",
+        params={"q": "x", "mode": "semantic", "limit": 5, "group": False},
+    )
     client.get(
         "/api/items/search",
         params={"q": "x", "mode": "semantic", "limit": 5, "include_children": False},
     )
-    assert asked == [10, 40]
+    # Grouped, the default: parts of one item take one place
+    client.get("/api/items/search", params={"q": "x", "mode": "semantic", "limit": 5})
+    assert asked == [10, 40, 40]
 
 
 @pytest.fixture
@@ -407,3 +418,100 @@ def test_similar_items_leave_out_the_items_own_parts(client, seeded, monkeypatch
     assert [i["id"] for i in resp.json()] == [other]
     resp = client.get(f"/api/embeddings/similar/{part}")
     assert [i["id"] for i in resp.json()] == [other]
+
+
+def _chat_with_turns(conn):
+    chat = conn.execute(
+        "INSERT INTO items (source_type, source_id, title, content) "
+        "VALUES ('claude', 'c-grp', 'Planning chat', 'Hello') RETURNING id"
+    ).fetchone()[0]
+    turns = [
+        conn.execute(
+            "INSERT INTO items (source_type, source_id, title, content, parent_id) "
+            "VALUES ('claude', ?, NULL, ?, ?) RETURNING id",
+            (f"t-grp-{n}", text, chat),
+        ).fetchone()[0]
+        for n, text in enumerate(
+            ["How do PDDL templates work?", "PDDL templates fill problem files from data."]
+        )
+    ]
+    conn.commit()
+    return chat, turns
+
+
+def test_keyword_hits_on_turns_give_one_result_for_their_chat(client, seeded):
+    """Grouped (the default): one card per item, at its best part (#221)."""
+    with deps.get_db() as conn:
+        chat, turns = _chat_with_turns(conn)
+
+    resp = client.get("/api/items/search", params={"q": "PDDL", "mode": "keyword"})
+    items = resp.json()["items"]
+
+    assert [i["id"] for i in items] == [chat]
+    assert items[0]["match_id"] in turns
+    assert items[0]["match_label"] == "Turn"
+    assert "<<PDDL>>" in items[0]["preview"]
+
+
+def test_ungrouped_keyword_search_lists_the_turns(client, seeded):
+    with deps.get_db() as conn:
+        chat, turns = _chat_with_turns(conn)
+
+    resp = client.get("/api/items/search", params={"q": "PDDL", "mode": "keyword", "group": False})
+
+    assert sorted(i["id"] for i in resp.json()["items"]) == sorted(turns)
+
+
+def test_a_vector_hit_on_a_round_shows_its_text(client, seeded, monkeypatch):
+    import lestash.core.embeddings as emb
+
+    with deps.get_db() as conn:
+        chat, turns = _chat_with_turns(conn)
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    monkeypatch.setattr(
+        emb, "search_similar", lambda conn, e, limit: [(turns[0], 0.1), (turns[1], 0.2)]
+    )
+
+    resp = client.get("/api/items/search", params={"q": "zzz", "mode": "semantic"})
+    items = resp.json()["items"]
+
+    assert [i["id"] for i in items] == [chat]
+    assert items[0]["match_id"] == turns[0]
+    assert items[0]["preview"] == "How do PDDL templates work?"
+
+
+def test_an_item_found_itself_and_by_a_part_takes_its_best_rank(client, seeded, monkeypatch):
+    import lestash.core.embeddings as emb
+
+    with deps.get_db() as conn:
+        chat, turns = _chat_with_turns(conn)
+        other = conn.execute("SELECT id FROM items WHERE source_id = 'n-dual'").fetchone()[0]
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    monkeypatch.setattr(
+        emb,
+        "search_similar",
+        lambda conn, e, limit: [(turns[1], 0.1), (other, 0.2), (chat, 0.3)],
+    )
+
+    resp = client.get("/api/items/search", params={"q": "zzz", "mode": "semantic"})
+
+    assert [i["id"] for i in resp.json()["items"]] == [chat, other]
+
+
+def test_a_keyword_hit_on_the_item_keeps_it_from_a_vector_part(client, seeded, monkeypatch):
+    """Review round 1 (r1.1): the card opens where its snippet came from."""
+    import lestash.core.embeddings as emb
+
+    with deps.get_db() as conn:
+        chat, turns = _chat_with_turns(conn)
+        conn.execute("UPDATE items SET content = 'PDDL overview' WHERE id = ?", (chat,))
+        conn.execute("UPDATE items SET content = 'unrelated' WHERE id IN (?, ?)", turns)
+        conn.commit()
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: [(turns[1], 0.1)])
+
+    resp = client.get("/api/items/search", params={"q": "PDDL", "mode": "hybrid"})
+    found = next(i for i in resp.json()["items"] if i["id"] == chat)
+
+    assert found["match_id"] is None
+    assert "<<PDDL>>" in found["preview"]
