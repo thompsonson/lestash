@@ -273,3 +273,24 @@ def test_an_old_part_without_metadata_after_the_merge_is_merged_too(test_db) -> 
         children = _children(conn, current_id)
     assert source_id == FULL
     assert f"{CUT}/Notes/Plan B.html" in children
+
+
+def test_a_folder_name_reused_by_another_notebook_is_not_merged(test_db) -> None:
+    renamed = "Takeout/NotebookLM/Continual Learning"
+    with get_connection(test_db) as conn:
+        _sync(conn, _export(FULL, notebook_id=UUID, chat="Chat 1", viewed="2026-10-01T00:00:00Z"))
+        _sync(
+            conn,
+            _export(
+                renamed, notebook_id=UUID, chat="Chat 1", title="C", viewed="2026-11-01T00:00:00Z"
+            ),
+        )
+        # A new notebook later takes the old name, which the merge remembered
+        _sync(
+            conn,
+            _export(
+                FULL, notebook_id="new", chat="Chat 1", title="N", viewed="2026-11-02T00:00:00Z"
+            ),
+        )
+        assert len(_notebooks(conn)) == 2
+        assert find_duplicates(conn) == []

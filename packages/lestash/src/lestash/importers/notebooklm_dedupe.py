@@ -159,6 +159,15 @@ def find_duplicates(conn: sqlite3.Connection) -> list[Duplicate]:
     for members in clusters.values():
         if len(members) < 2:
             continue
+        ids = {nb.notebook_id for nb in members if nb.notebook_id}
+        if len(ids) > 1:
+            # Two ids are two notebooks, whatever their folders, times or titles say
+            logger.warning(
+                "NotebookLM copies %s share a folder, or a time and title, but have "
+                "different notebook ids; left alone",
+                sorted(nb.id for nb in members),
+            )
+            continue
         shown = [c for c in members if all(c.beats(o) for o in members if o.id != c.id)]
         if len(shown) != 1:
             logger.warning(
