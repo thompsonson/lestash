@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -661,6 +661,22 @@ MIGRATIONS = [
         "LinkedIn: times in UTC, and others' actions not marked yours (#236)",
         # Run in apply_migrations (_migrate_26): converting local time needs Python.
         "",
+    ),
+    (
+        27,
+        "Add embedding_meta: the model, recipe and text behind each item's vector (#221)",
+        # vec_items is a sqlite-vec table, made when the extension is loaded; this plain
+        # table sits beside it. No row: the vector, if any, is re-embedded at the next
+        # refresh.
+        """
+        CREATE TABLE IF NOT EXISTS embedding_meta (
+            item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+            model TEXT NOT NULL,
+            recipe TEXT NOT NULL,
+            text_hash TEXT NOT NULL,
+            embedded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
     ),
 ]
 

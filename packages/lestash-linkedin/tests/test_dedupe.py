@@ -83,7 +83,7 @@ def test_a_merged_copy_takes_its_embedding_with_it(test_db) -> None:
         old2 = _item(conn, "changelog-ugcPosts-1774078762000", 2, resource_id="7442")
         current2 = _item(conn, "changelog-ugcPosts-7442", 2, resource_id="7442")
         for item in (old, current, old2, current2):
-            upsert_embedding(conn, item, [0.1] * EMBEDDING_DIM)
+            upsert_embedding(conn, item, [0.1] * EMBEDDING_DIM, "text")
         conn.commit()
     # A fresh connection, as the CLI's: sqlite-vec is not loaded
     with get_connection(test_db) as conn:

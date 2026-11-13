@@ -129,6 +129,7 @@ Run on a copy of the database in a test environment, on a frozen test set, repor
   - re-embed when text changes;
   - one shared recipe instead of three.
   - Proposal: build this first, with today's model, as it's needed by every option.
+  - Built: `lestash embeddings refresh`, run by `lestash-embed.service` after each sync's text from files. Each vector's model, recipe and text hash are in `embedding_meta`.
 
 ## Supersedes
 

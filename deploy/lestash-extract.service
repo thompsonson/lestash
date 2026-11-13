@@ -7,3 +7,5 @@ Nice=10
 # A slow first run stops after an hour; the next sync's run goes on
 ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash enrich text --budget 3600
 WorkingDirectory=%h/Projects/thompsonson/lestash
+# Then vectors, from the text just read, whether or not every file was read (#221)
+ExecStopPost=/usr/bin/systemctl --user start --no-block lestash-embed.service

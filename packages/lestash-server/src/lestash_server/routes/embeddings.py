@@ -9,6 +9,7 @@ from lestash.core.embeddings import (
     ensure_vec_table,
     get_embedding_stats,
     load_vec_extension,
+    make_embed_text,
     rebuild_embeddings,
     search_similar,
 )
@@ -29,8 +30,10 @@ _rebuild_running = False
 
 class EmbeddingStatus(BaseModel):
     model: str
+    recipe: str
     dimensions: int
     embedded: int
+    out_of_date: int
     total_parents: int
     coverage: str
     rebuilding: bool = False
@@ -95,7 +98,7 @@ def find_similar(item_id: int, limit: int = 10):
             raise HTTPException(status_code=404, detail="Item not found")
 
         item = Item.from_row(row)
-        text = f"{item.title or ''} {(item.content or '')[:500]}".strip()
+        text = make_embed_text(item)
         if not text:
             return []
 

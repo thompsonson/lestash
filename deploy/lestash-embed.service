@@ -1,0 +1,9 @@
+[Unit]
+Description=LeStash vectors for new and changed items, after text from files (#221)
+
+[Service]
+Type=oneshot
+Nice=10
+# The first run embeds everything and may stop at the budget; the next sync's run goes on
+ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash embeddings refresh --budget 1800
+WorkingDirectory=%h/Projects/thompsonson/lestash
