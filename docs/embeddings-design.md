@@ -152,6 +152,8 @@ What others reach is in [`embedding-research.md`](embedding-research.md), "Refer
 - Noise: with 30 queries a single score has a 95% margin of about ±18 points; across 150, about ±8. Paired, query-by-query comparison narrows it.
 - When a kind reaches its target, stop tuning it; past the reference scores, extra effort rarely pays.
 
+Results of the experiments so far: [`search-experiments.md`](search-experiments.md).
+
 ## Decisions for Matthew
 
 - **Watch-history videos:** 66k items that are just titles.
