@@ -293,6 +293,42 @@ def test_an_unreachable_host_raises_before_anything_changes(conn, monkeypatch, t
     assert not _exists(conn, emb.NEXT_TABLE)
 
 
+def test_a_batch_that_fails_keeps_the_batches_back_and_raises(conn, monkeypatch, tmp_path):
+    first = _add(conn, "a", "One", "text")
+    second = _add(conn, "b", "Two", "text")
+    _old_index(conn, first)
+    calls = []
+
+    def run_batch(remote, root, batch, threads):
+        calls.append(batch)
+        if len(calls) == 2:
+            raise RuntimeError("embedding on computer stopped: Killed")
+        return [_fake_vector(text) for _, text in batch]
+
+    monkeypatch.setattr(embed_remote, "_Host", _FakeHost)
+    monkeypatch.setattr(embed_remote, "_run_batch", run_batch)
+    monkeypatch.setattr(embed_remote, "model_folder", lambda: tmp_path)
+    monkeypatch.setattr(embed_remote, "CHUNK", 1)
+
+    with pytest.raises(embed_remote.HostUnavailable, match="stopped after 1 of 2"):
+        embed_remote.rebuild_on(conn, "computer")
+    assert _ids(conn, emb.NEXT_TABLE) == {second}  # newest first
+    # A refresh here goes on and swaps
+    assert emb.refresh_embeddings(conn).swapped == 2
+    assert first in _ids(conn, "vec_items")
+
+
+def test_a_model_that_cannot_be_fetched_counts_as_the_host_unavailable(conn, monkeypatch):
+    def no_model():
+        raise OSError("gated repo")
+
+    monkeypatch.setattr(embed_remote, "_Host", _FakeHost)
+    monkeypatch.setattr(embed_remote, "model_folder", no_model)
+
+    with pytest.raises(embed_remote.HostUnavailable, match="gated repo"):
+        embed_remote.rebuild_on(conn, "computer")
+
+
 def test_a_host_name_that_reads_as_an_option_is_refused():
     with pytest.raises(embed_remote.HostUnavailable):
         embed_remote._Host("-oProxyCommand=x")

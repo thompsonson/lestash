@@ -82,13 +82,13 @@ def rebuild_on(
     progress_callback: typing.Callable[[int, int], None] | None = None,
 ) -> emb.RefreshCounts:
     """A whole refresh, with the embedding done on ``host``. Raises HostUnavailable
-    before anything is embedded if the host can't be reached or set up; a batch that
-    fails later stops the run, keeping the batches already back."""
+    if the host can't be reached or set up, or a batch fails: the batches already
+    back are kept, and a refresh here goes on from them."""
     started = time.monotonic()
     remote = _Host(host)
     q = shlex.quote
-    model = model_folder()
     try:
+        model = model_folder()
         home = remote.ssh('printf %s "$HOME"').strip()
         root = f"{home}/{REMOTE_ROOT}"
         remote.ssh(f"mkdir -p {q(root)}/jobs {q(root)}/model")
@@ -97,7 +97,7 @@ def rebuild_on(
         remote.ssh(f"{lock} python3 -I {q(root)}/embed_worker.py setup {q(root)}", timeout=1800)
         # -L: the cache's files are links into its blob store
         remote.copy("-L", "--delete", f"{model}/", f"{host}:{root}/model/", timeout=3600)
-    except (OSError, subprocess.SubprocessError) as e:
+    except Exception as e:  # ssh, rsync, or the model's download
         raise HostUnavailable(f"{host}: {_tail(e)}") from e
 
     todo, removed = emb.plan_refresh(conn)
@@ -108,7 +108,11 @@ def rebuild_on(
             counts.stopped = True
             break
         batch = todo[start : start + CHUNK]
-        vectors = _run_batch(remote, root, [(i, text) for i, _, text in batch], threads)
+        try:
+            vectors = _run_batch(remote, root, [(i, text) for i, _, text in batch], threads)
+        except (RuntimeError, ValueError, OSError) as e:
+            logger.warning("Embedding on %s stopped after %d units: %s", host, done, e)
+            raise HostUnavailable(f"{host} stopped after {done} of {len(todo)}: {e}") from e
         counts.embedded += emb.store_vectors(conn, batch, vectors)
         done += len(batch)
         if progress_callback:

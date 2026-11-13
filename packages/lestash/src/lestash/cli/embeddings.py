@@ -111,7 +111,7 @@ def rebuild(
                 try:
                     counts = rebuild_on(conn, host, threads=threads, progress_callback=on_progress)
                 except HostUnavailable as e:
-                    console.print(f"[yellow]{e}; embedding here instead.[/yellow]")
+                    console.print(f"[yellow]{e}; embedding the rest here.[/yellow]")
             if counts is None:
                 counts = refresh_embeddings(conn, progress_callback=on_progress)
 
