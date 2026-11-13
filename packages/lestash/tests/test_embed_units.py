@@ -260,3 +260,33 @@ def test_stats_count_parts_apart(conn):
     stats = emb.get_embedding_stats(conn)
 
     assert (stats["embedded"], stats["parts_embedded"], stats["out_of_date"]) == (1, 1, 0)
+
+
+def test_a_gemini_reply_sorted_before_its_prompt_still_joins_it(conn):
+    # Review round 1 (r1.1): the prompt it names comes later in time order
+    chat = _add(conn, "gemini", "Trip", "x")
+    _add(
+        conn,
+        "gemini",
+        None,
+        "The TGV.",
+        parent=chat,
+        at="2026-01-01 09:59",
+        role="model",
+        prompt_source_id="g-9",
+    )
+    ask = _add(
+        conn,
+        "gemini",
+        None,
+        "Trains to Lyon?",
+        parent=chat,
+        at="2026-01-01 10:00",
+        role="user",
+        source_id="g-9",
+    )
+
+    found = _units(conn)
+
+    assert found[ask].text == "Trip\nTrains to Lyon?\nThe TGV."
+    assert len(found) == 2  # the chat and its one round

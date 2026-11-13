@@ -213,22 +213,22 @@ def search_items(
                 load_vec_extension(conn)
                 ensure_vec_table(conn)
                 query_emb = embed_text(q)
-                # Children are filtered out after the vector search, so ask for more
-                # to still fill the page with top-level items
+                # Without children, a part's hit (a round, a comment) counts for its
+                # item, at the rank of its best part (#221). Ask for more, as several
+                # parts of one item fill one place.
                 want = limit * 2
                 fetch = want if include_children else want * 4
                 similar = search_similar(conn, query_emb, limit=fetch)
                 ids = [item_id for item_id, _distance in similar]
                 if not include_children and ids:
                     marks = ",".join("?" * len(ids))
-                    top = {
-                        r[0]
+                    owner = {
+                        r[0]: r[1] if r[1] is not None else r[0]
                         for r in conn.execute(
-                            f"SELECT id FROM items WHERE id IN ({marks}) AND parent_id IS NULL",
-                            ids,
+                            f"SELECT id, parent_id FROM items WHERE id IN ({marks})", ids
                         )
                     }
-                    ids = [i for i in ids if i in top]
+                    ids = list(dict.fromkeys(owner[i] for i in ids if i in owner))
                 for rank, item_id in enumerate(ids[:want]):
                     vec_results[item_id] = rank
             except Exception:

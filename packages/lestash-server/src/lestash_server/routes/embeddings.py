@@ -104,13 +104,18 @@ def find_similar(item_id: int, limit: int = 10):
             return []
 
         query_emb = embed_text(text)
-        results = search_similar(conn, query_emb, limit=limit + 1)
+        # Parts have vectors too (#221): ask for more, then keep whole items outside
+        # this item's own family, as related items compare whole items
+        family = item.parent_id if item.parent_id is not None else item_id
+        results = search_similar(conn, query_emb, limit=limit * 8 + 1)
 
         items = []
         for rid, _distance in results:
-            if rid == item_id:
+            if rid == family:
                 continue
-            r = conn.execute("SELECT * FROM items WHERE id = ?", (rid,)).fetchone()
+            r = conn.execute(
+                "SELECT * FROM items WHERE id = ? AND parent_id IS NULL", (rid,)
+            ).fetchone()
             if r:
                 items.append(enrich_item(conn, Item.from_row(r)))
             if len(items) >= limit:

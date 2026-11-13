@@ -68,23 +68,27 @@ class _Turn:
 def rounds(turns: list[_Turn]) -> list[list[_Turn]]:
     """A chat's rounds: each prompt of yours, then the replies to it.
 
-    A reply goes with the prompt it names (Gemini's prompt_source_id), else with the
-    prompt before it. Replies before any prompt make a round of their own.
+    A reply goes with the prompt it names (Gemini's prompt_source_id), wherever that
+    prompt sorts; else with the prompt before it. Replies before any prompt make a
+    round of their own.
     """
-    found: list[list[_Turn]] = []
+    # First the prompts, so a reply can name one that sorts after it
+    round_of: dict[int, list[_Turn]] = {}
     by_source: dict[str, list[_Turn]] = {}
     for turn in turns:
         if turn.is_prompt:
-            found.append([turn])
+            round_of[turn.item_id] = [turn]
             if turn.source_id:
-                by_source[turn.source_id] = found[-1]
-            continue
-        target = by_source.get(turn.prompt_source_id or "")
-        if target is None:
-            if not found:
-                found.append([])
-            target = found[-1]
-        target.append(turn)
+                by_source.setdefault(turn.source_id, round_of[turn.item_id])
+    leading: list[_Turn] = []
+    found: list[list[_Turn]] = [leading]
+    current = leading
+    for turn in turns:
+        if turn.is_prompt:
+            current = round_of[turn.item_id]
+            found.append(current)
+        else:
+            by_source.get(turn.prompt_source_id or "", current).append(turn)
     return [r for r in found if r]
 
 
