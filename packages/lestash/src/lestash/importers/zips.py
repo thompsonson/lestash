@@ -422,6 +422,12 @@ def _parse_notebooklm_zip(zf, nlm_files, all_names):
                 parent_metadata["chats"] = chat_names
             if meta_data.get("emoji"):
                 parent_metadata["emoji"] = meta_data["emoji"]
+            # Stable across exports, unlike the folder name: see notebooklm_dedupe
+            if isinstance(meta_data.get("id"), str) and meta_data["id"]:
+                parent_metadata["notebook_id"] = meta_data["id"]
+            # Later in a later export: which of two copies is current
+            if isinstance(metadata_inner.get("lastViewed"), str):
+                parent_metadata["last_viewed"] = metadata_inner["lastViewed"]
             if source_titles:
                 parent_metadata["sources"] = source_titles
                 parent_metadata["source_count"] = len(source_titles)

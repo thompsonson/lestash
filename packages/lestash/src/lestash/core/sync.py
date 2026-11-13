@@ -74,6 +74,20 @@ _UPSERT = """
 """
 
 
+def dedupe_notebooks(conn: sqlite3.Connection, source: str) -> None:
+    """Merge NotebookLM notebooks held twice (see notebooklm_dedupe). A failure leaves
+    the items stored, and the next import tries again."""
+    from lestash.importers.notebooklm_dedupe import dedupe_notebooklm
+
+    try:
+        if pairs := dedupe_notebooklm(conn):
+            logger.info("Merged %d NotebookLM notebook copies after %s", len(pairs), source)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        logger.exception("Merging NotebookLM notebook copies failed after %s", source)
+
+
 class SyncStore:
     """Writes a sync's items and checkpoints, and counts what it wrote.
 
@@ -86,6 +100,7 @@ class SyncStore:
         self.committed = SyncCounts()  # counts as of the last commit
         self.source_types: set[str] = set()
         self.linked = 0
+        self.wrote_notebooks = False  # whether a NotebookLM notebook was stored
 
     @property
     def counts(self) -> SyncCounts:
@@ -132,6 +147,8 @@ class SyncStore:
             # A written item can link another, or be the item another links to. Links
             # are derived: a failure leaves the items stored, and the next sync catches up.
             self.conn.commit()  # keep the parents just linked if linking fails
+            if self.wrote_notebooks:
+                dedupe_notebooks(self.conn, self.source)
             try:
                 link_items(self.conn)
                 self.conn.commit()
@@ -155,6 +172,8 @@ class SyncStore:
         resolve_parent_id(self.conn, item)
         if not merge_with_stored(self.conn, item):
             return False
+        if item.source_type == "notebooklm" and (item.metadata or {}).get("type") == "notebook":
+            self.wrote_notebooks = True
         stored = self.conn.execute(
             "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
             (item.source_type, item.source_id),
