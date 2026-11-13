@@ -6,7 +6,7 @@ import logging
 import signal
 import sqlite3
 import threading
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Collection, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -74,13 +74,14 @@ _UPSERT = """
 """
 
 
-def dedupe_notebooks(conn: sqlite3.Connection, source: str) -> None:
-    """Merge NotebookLM notebooks held twice (see notebooklm_dedupe). A failure leaves
-    the items stored, and the next import tries again."""
+def dedupe_notebooks(conn: sqlite3.Connection, source: str, recent: Collection[str]) -> None:
+    """Merge NotebookLM notebooks held twice (see notebooklm_dedupe); ``recent``, the
+    notebook keys just written, win a tie. A failure leaves the items stored, and the
+    next import tries again."""
     from lestash.importers.notebooklm_dedupe import dedupe_notebooklm
 
     try:
-        if pairs := dedupe_notebooklm(conn):
+        if pairs := dedupe_notebooklm(conn, recent):
             logger.info("Merged %d NotebookLM notebook copies after %s", len(pairs), source)
         conn.commit()
     except Exception:
@@ -100,6 +101,7 @@ class SyncStore:
         self.committed = SyncCounts()  # counts as of the last commit
         self.source_types: set[str] = set()
         self.linked = 0
+        self.notebooks: set[str] = set()  # NotebookLM notebook keys written
 
     @property
     def counts(self) -> SyncCounts:
@@ -146,8 +148,8 @@ class SyncStore:
             # A written item can link another, or be the item another links to. Links
             # are derived: a failure leaves the items stored, and the next sync catches up.
             self.conn.commit()  # keep the parents just linked if linking fails
-            if "notebooklm" in self.source_types:
-                dedupe_notebooks(self.conn, self.source)
+            if self.notebooks:
+                dedupe_notebooks(self.conn, self.source, self.notebooks)
             try:
                 link_items(self.conn)
                 self.conn.commit()
@@ -171,6 +173,8 @@ class SyncStore:
         resolve_parent_id(self.conn, item)
         if not merge_with_stored(self.conn, item):
             return False
+        if item.source_type == "notebooklm" and (item.metadata or {}).get("type") == "notebook":
+            self.notebooks.add(item.source_id or "")
         stored = self.conn.execute(
             "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
             (item.source_type, item.source_id),

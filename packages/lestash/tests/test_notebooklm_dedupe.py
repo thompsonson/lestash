@@ -12,7 +12,9 @@ from lestash.importers.notebooklm_dedupe import dedupe_notebooklm, find_duplicat
 UUID = "f7591865-c06a-489a-b047-52b5ac69f9ea"
 CREATED = "2026-03-01T10:00:00.123456Z"
 FULL = "Takeout/NotebookLM/Adaptive Intelligence_ Frontiers in Continual Learning"
-CUT = FULL[:50]  # older exports cut folder and file names short
+CUT = FULL[: len("Takeout/NotebookLM/") + 50]  # older exports cut names to 50 characters
+CHAT = "Chat Session - cac7dc5e-5d2a-4cd5-8cde-2097ca25bcc0"
+CUT_CHAT = CHAT[:46]  # ... and file names to 51, ".html" included
 
 
 def _zip(files: dict[str, str]) -> bytes:
@@ -69,7 +71,7 @@ def test_the_notebook_id_is_kept(test_db) -> None:
 def test_a_cut_folder_name_is_merged_into_the_full_one_with_its_children(test_db) -> None:
     with get_connection(test_db) as conn:
         # The old export, stored before notebook ids were kept
-        _sync(conn, _export(CUT, notebook_id=None, chat="Chat Session - cac7dc5e-5d2a-4cd5"))
+        _sync(conn, _export(CUT, notebook_id=None, chat=CUT_CHAT))
         ((old_id, _),) = _notebooks(conn)
         note = conn.execute(
             "INSERT INTO items (source_type, content, parent_id) VALUES ('note', 'mine', ?) "
@@ -82,7 +84,7 @@ def test_a_cut_folder_name_is_merged_into_the_full_one_with_its_children(test_db
 
         _sync(
             conn,
-            _export(FULL, notebook_id=UUID, chat="Chat Session - cac7dc5e-5d2a-4cd5-8cde-2097"),
+            _export(FULL, notebook_id=UUID, chat=CHAT),
         )
 
         ((current_id, source_id),) = _notebooks(conn)
@@ -91,7 +93,7 @@ def test_a_cut_folder_name_is_merged_into_the_full_one_with_its_children(test_db
     assert source_id == FULL and current_id != old_id
     # One note and one chat: the chat's cut name matched the full one
     assert [c for c in children if c] == [
-        f"{FULL}/Chat History/Chat Session - cac7dc5e-5d2a-4cd5-8cde-2097.html",
+        f"{FULL}/Chat History/{CHAT}.html",
         f"{FULL}/Notes/Plan A.html",
     ]
     assert len(children) == 3  # and your own note, moved with them
@@ -153,14 +155,26 @@ def test_running_again_changes_nothing(test_db) -> None:
 
 
 def test_a_cut_name_matching_two_children_is_left_alone() -> None:
-    from lestash.importers.notebooklm_dedupe import _child_pairs
+    from lestash.importers.notebooklm_dedupe import _Child, _child_pairs
 
-    old = [(1, "chat", "Chat Session - ab")]
-    current = [(2, "chat", "Chat Session - abc"), (3, "chat", "Chat Session - abd")]
+    old = [_Child(1, "chat", "Chat Session - ab", True)]
+    current = [
+        _Child(2, "chat", "Chat Session - abc", False),
+        _Child(3, "chat", "Chat Session - abd", False),
+    ]
     assert _child_pairs(old, current) == []
     assert _child_pairs(old, current[:1]) == [(1, 2)]
     # Kinds must match
-    assert _child_pairs([(1, "note", "Chat Session - abc")], current) == []
+    assert _child_pairs([_Child(1, "note", "Chat Session - abc", False)], current) == []
+
+
+def test_a_name_that_was_not_cut_matches_only_itself() -> None:
+    from lestash.importers.notebooklm_dedupe import _Child, _child_pairs
+
+    # "Plan" and "Plan B" are two notes
+    old = [_Child(1, "note", "Plan", False)]
+    assert _child_pairs(old, [_Child(2, "note", "Plan B", False)]) == []
+    assert _child_pairs(old, [_Child(2, "note", "Plan", False)]) == [(1, 2)]
 
 
 def test_a_cut_artifact_name_loses_what_is_left_of_metadata() -> None:
@@ -172,3 +186,30 @@ def test_a_cut_artifact_name_loses_what_is_left_of_metadata() -> None:
     assert _child_name(full, "artifact") == "Training Private AI With Guardrail Traces"
     # Other kinds keep their names
     assert _child_name("Takeout/NotebookLM/X/Notes/Plan me.html", "note") == "Plan me"
+
+
+def test_a_folder_beginning_another_is_not_cut_unless_50_characters(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _sync(conn, _export("Takeout/NotebookLM/Plan", notebook_id="a", chat="Chat 1", title="P"))
+        _sync(conn, _export("Takeout/NotebookLM/Plan B", notebook_id="b", chat="1", title="B"))
+        assert len(_notebooks(conn)) == 2
+
+
+def test_a_rename_keeps_the_folder_just_imported(test_db) -> None:
+    renamed = "Takeout/NotebookLM/Adaptive"  # the new name, also a prefix of the old one
+    with get_connection(test_db) as conn:
+        _sync(conn, _export(FULL, notebook_id=UUID, chat="Chat 1"))
+        _sync(conn, _export(renamed, notebook_id=UUID, chat="Chat 1", title="Adaptive"))
+        assert [source_id for _, source_id in _notebooks(conn)] == [renamed]
+
+
+def test_an_old_part_without_metadata_after_the_merge_is_merged_too(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _sync(conn, _export(CUT, notebook_id=None, chat="Chat 1"))
+        _sync(conn, _export(FULL, notebook_id=UUID, chat="Chat 1"))
+        # Another part of the old export: notes only, no metadata JSON, no date
+        _sync(conn, {f"{CUT}/Notes/Plan B.html": "<p>second plan</p>"})
+        ((current_id, source_id),) = _notebooks(conn)
+        children = _children(conn, current_id)
+    assert source_id == FULL
+    assert f"{CUT}/Notes/Plan B.html" in children
