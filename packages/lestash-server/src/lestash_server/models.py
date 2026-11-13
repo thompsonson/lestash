@@ -64,6 +64,14 @@ class ItemResponse(BaseModel):
     match_label: str | None = None
 
 
+class KindFacet(BaseModel):
+    """How many results are of one kind, for search's kind chips."""
+
+    kind: str
+    label: str  # plural: "Chats"
+    count: int
+
+
 class ItemListResponse(BaseModel):
     """Paginated item list."""
 
@@ -71,6 +79,8 @@ class ItemListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    # Search only: the kinds among what it found before any kind filter
+    facets: list[KindFacet] | None = None
 
 
 class SourceResponse(BaseModel):

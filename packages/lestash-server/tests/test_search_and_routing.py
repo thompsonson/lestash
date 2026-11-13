@@ -515,3 +515,97 @@ def test_a_keyword_hit_on_the_item_keeps_it_from_a_vector_part(client, seeded, m
 
     assert found["match_id"] is None
     assert "<<PDDL>>" in found["preview"]
+
+
+def _kinds_seed(conn):
+    """A chat whose turn says PDDL, a paper and a note that say it too."""
+    chat = conn.execute(
+        "INSERT INTO items (source_type, source_id, title, content) "
+        "VALUES ('claude', 'c-kinds', 'A chat', 'Hello') RETURNING id"
+    ).fetchone()[0]
+    turn = conn.execute(
+        "INSERT INTO items (source_type, source_id, content, parent_id) "
+        "VALUES ('claude', 't-kinds', 'PDDL problem files', ?) RETURNING id",
+        (chat,),
+    ).fetchone()[0]
+    paper = conn.execute(
+        "INSERT INTO items (source_type, source_id, title, content) "
+        "VALUES ('arxiv', 'a-kinds', 'PDDL planning', 'Planning') RETURNING id"
+    ).fetchone()[0]
+    note = conn.execute(
+        "INSERT INTO items (source_type, source_id, title, content) "
+        "VALUES ('note', 'n-kinds', 'PDDL notes', 'Mine') RETURNING id"
+    ).fetchone()[0]
+    conn.commit()
+    return chat, turn, paper, note
+
+
+def test_search_counts_the_kinds_it_found(client, seeded):
+    """Facets for the kind chips (#268): grouped, a turn counts as its chat."""
+    with deps.get_db() as conn:
+        _kinds_seed(conn)
+
+    resp = client.get("/api/items/search", params={"q": "PDDL", "mode": "keyword"})
+    facets = {f["kind"]: (f["label"], f["count"]) for f in resp.json()["facets"]}
+
+    assert facets == {"chat": ("Chats", 1), "paper": ("Papers", 1), "note": ("Notes", 1)}
+
+
+def test_a_kind_filter_keeps_the_facets(client, seeded):
+    with deps.get_db() as conn:
+        chat, _turn, _paper, _note = _kinds_seed(conn)
+
+    resp = client.get("/api/items/search", params={"q": "PDDL", "mode": "keyword", "kind": "chat"})
+    body = resp.json()
+
+    assert [i["id"] for i in body["items"]] == [chat]
+    assert {f["kind"] for f in body["facets"]} == {"chat", "paper", "note"}
+
+
+def test_several_kinds_can_be_asked_for(client, seeded):
+    with deps.get_db() as conn:
+        _chat, _turn, paper, note = _kinds_seed(conn)
+
+    resp = client.get(
+        "/api/items/search",
+        params=[("q", "PDDL"), ("mode", "keyword"), ("kind", "paper"), ("kind", "note")],
+    )
+
+    assert sorted(i["id"] for i in resp.json()["items"]) == sorted([paper, note])
+
+
+def test_a_kind_filter_applies_to_vector_hits_by_their_item(client, seeded, monkeypatch):
+    import lestash.core.embeddings as emb
+
+    with deps.get_db() as conn:
+        chat, turn, paper, _note = _kinds_seed(conn)
+    monkeypatch.setattr(emb, "embed_text", lambda q: [0.0] * 384)
+    monkeypatch.setattr(emb, "search_similar", lambda conn, e, limit: [(turn, 0.1), (paper, 0.2)])
+
+    def ids(kind):
+        params = {"q": "zzz", "mode": "semantic", "kind": kind}
+        return [i["id"] for i in client.get("/api/items/search", params=params).json()["items"]]
+
+    assert ids("chat") == [chat]
+    assert ids("paper") == [paper]
+
+
+def test_a_chips_count_is_what_it_returns(client, seeded):
+    """Review round 1 (r1.1): counts come from the results, not the candidate lists."""
+    with deps.get_db() as conn:
+        _kinds_seed(conn)
+        for n in range(3):
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, title, content) "
+                "VALUES ('note', ?, 'PDDL more', 'x')",
+                (f"n-more-{n}",),
+            )
+        conn.commit()
+
+    body = client.get("/api/items/search", params={"q": "PDDL", "mode": "keyword"}).json()
+    for facet in body["facets"]:
+        chosen = client.get(
+            "/api/items/search", params={"q": "PDDL", "mode": "keyword", "kind": facet["kind"]}
+        ).json()
+        assert len(chosen["items"]) == facet["count"]
+        assert {i["kind"] for i in chosen["items"]} == {facet["kind"]}

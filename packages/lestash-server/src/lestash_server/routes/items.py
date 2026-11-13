@@ -3,6 +3,7 @@
 import json
 import logging
 import sqlite3
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -42,6 +43,7 @@ from lestash_server.models import (
     ItemListResponse,
     ItemPatchRequest,
     ItemResponse,
+    KindFacet,
     TagAddRequest,
     TagListResponse,
 )
@@ -160,6 +162,20 @@ def list_items(
 FULL_TEXT = 150  # characters from which a hybrid search result counts in full
 
 
+def _kinds(conn: sqlite3.Connection, ids: set[int]) -> dict[int, str]:
+    """Each item's kind (core/kinds.py)."""
+    found: dict[int, str] = {}
+    listed = list(ids)
+    for start in range(0, len(listed), 500):
+        chunk = listed[start : start + 500]
+        marks = ",".join("?" * len(chunk))
+        found.update(
+            (r[0], r[1])
+            for r in conn.execute(f"SELECT id, kind FROM items WHERE id IN ({marks})", chunk)
+        )
+    return found
+
+
 def _owners(conn: sqlite3.Connection, ids: list[int]) -> dict[int, int]:
     """For each id still held, the item it counts for: its parent if it is a part."""
     if not ids:
@@ -171,6 +187,12 @@ def _owners(conn: sqlite3.Connection, ids: list[int]) -> dict[int, int]:
             f"SELECT id, parent_id FROM items WHERE id IN ({marks}) AND held = 1", ids
         )
     }
+
+
+# A list parameter's Query, made once (ruff B008)
+_KIND_QUERY = Query(
+    None, description="Only results of these kinds (core/kinds.py), such as chat or paper"
+)
 
 
 @router.get("/search", response_model=ItemListResponse)
@@ -186,8 +208,12 @@ def search_items(
         "highlight) counts for its item, at its best part's rank (#221)",
     ),
     mode: Literal["keyword", "semantic", "hybrid"] = Query("hybrid", description="Search mode"),
+    kind: list[str] | None = _KIND_QUERY,
 ):
     """Search items using keyword (FTS5), semantic (vector), or hybrid mode.
+
+    The response's facets count the kinds among everything the search found, before
+    the kind filter; a kind's chip returns those same results, best first.
 
     Supports "phrase search", -"excluded phrase", prefix* and AND, OR, NOT; other
     punctuation is plain text
@@ -198,6 +224,7 @@ def search_items(
         vec_results: dict[int, float] = {}
         vec_parts: dict[int, int] = {}  # item id -> its best-matching part, by vector
         keyword_failed = False
+        kinds = set(kind or [])
 
         # FTS5 keyword search
         if mode in ("keyword", "hybrid"):
@@ -314,7 +341,14 @@ def search_items(
                 score += 1.0 / (k + vec_results[item_id])
             scores[item_id] = score * weight.get(item_id, 1.0)
 
-        ranked_ids = sorted(scores, key=lambda x: scores[x], reverse=True)[:limit]
+        # Every result found, best first; the facets count them by kind, and a kind
+        # filter keeps that kind's, so a chip's count is what it returns (up to limit)
+        ranked_all = sorted(scores, key=lambda x: scores[x], reverse=True)
+        kind_of = _kinds(conn, set(ranked_all))
+        counts = Counter(kind_of[i] for i in ranked_all if i in kind_of)
+        if kinds:
+            ranked_all = [i for i in ranked_all if kind_of.get(i) in kinds]
+        ranked_ids = ranked_all[:limit]
 
         # Build response: each item, with the part that matched when it was a part,
         # and the matched words (keyword) or the part's opening (vector) as its preview
@@ -346,7 +380,12 @@ def search_items(
                     enriched.preview = " ".join(text.split())[:200]
             items.append(enriched)
 
-    return ItemListResponse(items=items, total=len(items), limit=limit, offset=0)
+        facets = [
+            KindFacet(kind=k, label=KINDS[k].plural if k in KINDS else k, count=n)
+            for k, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        ]
+
+    return ItemListResponse(items=items, total=len(items), limit=limit, offset=0, facets=facets)
 
 
 @router.post("", response_model=ItemResponse, status_code=201)

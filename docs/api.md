@@ -71,6 +71,9 @@ Search items using keyword (FTS5), semantic (vector), or hybrid mode.
 | `group` | bool | true | One result per item: a part's match (a chat's round, a post's reply, a book's highlight) counts for its item, at its best part's rank |
 | `include_children` | bool | true | With `group=false`: list parts as results of their own (true) or drop them (false) |
 | `mode` | string | hybrid | `keyword`, `semantic`, or `hybrid` |
+| `kind` | string, repeatable | all | Only results of these kinds (`chat`, `paper`, `book`...; `core/kinds.py`). Grouped, a part is read as its item's kind |
+
+The response adds `facets`: `[{kind, label, count}]`, the kinds among everything the search found (the candidates it fuses, about four times `limit`), before any `kind` filter, most first. A `kind` filter keeps those same results of that kind, best first, so a chip's count is what it returns, up to `limit`. The app shows them as chips.
 
 Hybrid mode combines keyword + semantic results via Reciprocal Rank Fusion (k=60).
 
