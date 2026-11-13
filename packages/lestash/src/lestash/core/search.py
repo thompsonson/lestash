@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sqlite3
 import unicodedata
+from collections.abc import Collection
 from typing import NamedTuple
 
 OPERATORS = frozenset({"AND", "OR", "NOT"})
@@ -187,11 +188,15 @@ def keyword_search(
     *,
     top_level_only: bool = False,
     snippets: bool = False,
+    kinds: Collection[str] | None = None,
+    by_owner: bool = False,
 ) -> list[sqlite3.Row]:
     """Items matching search box input q, best first; [] when nothing is searchable.
 
     With snippets, each row also has search_snippet: the matching part of its content,
     with matches between << and >>. Raises sqlite3.Error if the index itself fails.
+    With kinds, only items of those kinds; by_owner reads a part's kind as its
+    parent's, as grouped search shows a part under the item it belongs to.
     """
     match = fts_match_query(q)
     if not match:
@@ -202,6 +207,19 @@ def keyword_search(
         " JOIN items_fts ON items.id = items_fts.rowid"
         " WHERE items_fts MATCH ? AND items.held = 1"
         f"{' AND items.parent_id IS NULL' if top_level_only else ''}"
+        f"{_kind_filter(kinds, by_owner)}"
         " ORDER BY rank LIMIT ?"
     )
-    return conn.execute(sql, (match, limit)).fetchall()
+    return conn.execute(sql, (match, *(sorted(kinds) if kinds else ()), limit)).fetchall()
+
+
+def _kind_filter(kinds: Collection[str] | None, by_owner: bool) -> str:
+    if not kinds:
+        return ""
+    marks = ",".join("?" * len(kinds))
+    kind = (
+        "COALESCE((SELECT p.kind FROM items p WHERE p.id = items.parent_id), items.kind)"
+        if by_owner
+        else "items.kind"
+    )
+    return f" AND {kind} IN ({marks})"

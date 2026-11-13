@@ -1258,17 +1258,22 @@ let searchTimer = null;
 // request can't overwrite later results
 let searchSeq = 0;
 
-function searchAddress() {
+// The kind chosen from the chips (#268); a new query starts over with every kind
+let searchKind = '';
+
+function searchAddress(kind = searchKind) {
   const q = document.getElementById('search-input').value.trim();
   const mode = document.getElementById('search-mode').value;
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (mode !== 'hybrid') params.set('mode', mode);
+  if (q && kind) params.set('kind', kind);
   const qs = params.toString();
   return qs ? '/search?' + qs : '/search';
 }
 
 document.getElementById('search-input').addEventListener('input', () => {
+  searchKind = '';
   // The address follows every keystroke, so nothing typed is lost; the search waits
   setAddress(searchAddress());
   tabAddress.search = location.pathname + location.search;
@@ -1291,13 +1296,15 @@ route(/^\/search$/, (m, url) => {
   const mode = url.searchParams.get('mode');
   document.getElementById('search-mode').value = modes.includes(mode) ? mode : 'hybrid';
   if (input.value.trim() !== q) input.value = q;
-  const key = q + '|' + document.getElementById('search-mode').value;
+  searchKind = url.searchParams.get('kind') || '';
+  const key = q + '|' + document.getElementById('search-mode').value + '|' + searchKind;
   if (focusSearch) { focusSearch = false; input.focus(); }
   if (key === searchShown) return;
   searchShown = key;
   if (!q) {
     searchSeq++;
     document.getElementById('search-list').innerHTML = '';
+    document.getElementById('search-kinds').innerHTML = '';
     document.getElementById('search-status').textContent = 'Tip: use "quotes" for exact phrases, -"quotes" to exclude one, word* for prefix, AND/OR/NOT for boolean';
     return;
   }
@@ -1324,6 +1331,19 @@ function foundInPart(card, item) {
   preview.after(where);
 }
 
+// Chips for the kinds among the results, with how many of each: "All", "Chats 12",
+// "Papers 3". Counts are of what the search found before a kind was chosen, so
+// every chip stays, whichever is on.
+function showKindChips(facets, kind) {
+  const nav = document.getElementById('search-kinds');
+  if (facets.length < 2 && !kind) { nav.innerHTML = ''; return; }
+  const chip = (k, text) => {
+    const on = k === kind;
+    return `<a class="chip${on ? ' on' : ''}" href="${escHtml(searchAddress(k))}"${on ? ' aria-current="true"' : ''}>${escHtml(text)}</a>`;
+  };
+  nav.innerHTML = chip('', 'All') + facets.map(f => chip(f.kind, `${f.label} ${f.count}`)).join('');
+}
+
 async function doSearch(q) {
   const list = document.getElementById('search-list');
   const status = document.getElementById('search-status');
@@ -1332,9 +1352,12 @@ async function doSearch(q) {
   list.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
   status.textContent = `Searching (${mode})...`;
   try {
-    const data = await api(`/api/items/search?q=${encodeURIComponent(q)}&limit=50&mode=${mode}`);
+    const kind = searchKind;
+    const data = await api(`/api/items/search?q=${encodeURIComponent(q)}&limit=50&mode=${mode}`
+      + (kind ? `&kind=${encodeURIComponent(kind)}` : ''));
     if (seq !== searchSeq) return;
     list.innerHTML = '';
+    showKindChips(data.facets || [], kind);
     if (data.items.length === 0) {
       status.textContent = `No results for "${q}"`;
       list.innerHTML = `<div class="empty-state">Try different keywords or use prefix matching (e.g. "learn*")</div>`;

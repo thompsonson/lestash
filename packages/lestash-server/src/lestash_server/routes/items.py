@@ -3,6 +3,7 @@
 import json
 import logging
 import sqlite3
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -42,6 +43,7 @@ from lestash_server.models import (
     ItemListResponse,
     ItemPatchRequest,
     ItemResponse,
+    KindFacet,
     TagAddRequest,
     TagListResponse,
 )
@@ -160,6 +162,20 @@ def list_items(
 FULL_TEXT = 150  # characters from which a hybrid search result counts in full
 
 
+def _kinds(conn: sqlite3.Connection, ids: set[int]) -> dict[int, str]:
+    """Each item's kind (core/kinds.py)."""
+    found: dict[int, str] = {}
+    listed = list(ids)
+    for start in range(0, len(listed), 500):
+        chunk = listed[start : start + 500]
+        marks = ",".join("?" * len(chunk))
+        found.update(
+            (r[0], r[1])
+            for r in conn.execute(f"SELECT id, kind FROM items WHERE id IN ({marks})", chunk)
+        )
+    return found
+
+
 def _owners(conn: sqlite3.Connection, ids: list[int]) -> dict[int, int]:
     """For each id still held, the item it counts for: its parent if it is a part."""
     if not ids:
@@ -171,6 +187,12 @@ def _owners(conn: sqlite3.Connection, ids: list[int]) -> dict[int, int]:
             f"SELECT id, parent_id FROM items WHERE id IN ({marks}) AND held = 1", ids
         )
     }
+
+
+# A list parameter's Query, made once (ruff B008)
+_KIND_QUERY = Query(
+    None, description="Only results of these kinds (core/kinds.py), such as chat or paper"
+)
 
 
 @router.get("/search", response_model=ItemListResponse)
@@ -186,8 +208,12 @@ def search_items(
         "highlight) counts for its item, at its best part's rank (#221)",
     ),
     mode: Literal["keyword", "semantic", "hybrid"] = Query("hybrid", description="Search mode"),
+    kind: list[str] | None = _KIND_QUERY,
 ):
     """Search items using keyword (FTS5), semantic (vector), or hybrid mode.
+
+    The response's facets count the kinds among the results found before the kind
+    filter, so each kind can be chosen, or chosen again, from the same list.
 
     Supports "phrase search", -"excluded phrase", prefix* and AND, OR, NOT; other
     punctuation is plain text
@@ -198,6 +224,8 @@ def search_items(
         vec_results: dict[int, float] = {}
         vec_parts: dict[int, int] = {}  # item id -> its best-matching part, by vector
         keyword_failed = False
+        kinds = set(kind or [])
+        pool: set[int] = set()  # what was found before the kind filter: the facets
 
         # FTS5 keyword search
         if mode in ("keyword", "hybrid"):
@@ -211,6 +239,18 @@ def search_items(
                     snippets=True,
                 )
                 owner = _owners(conn, [row["id"] for row in rows]) if group else {}
+                pool.update(owner.get(row["id"], row["id"]) for row in rows)
+                if kinds:
+                    rows = keyword_search(
+                        conn,
+                        q,
+                        limit * (4 if group else 2),
+                        top_level_only=not group and not include_children,
+                        snippets=True,
+                        kinds=kinds,
+                        by_owner=group,
+                    )
+                    owner = _owners(conn, [row["id"] for row in rows]) if group else {}
                 for row in rows:
                     key = owner.get(row["id"], row["id"])
                     if key in fts_results:
@@ -250,22 +290,28 @@ def search_items(
                 # one item fill one place. Ungrouped without children, parts are dropped.
                 want = limit * 2
                 fetch = want if include_children and not group else want * 4
-                similar = search_similar(conn, query_emb, limit=fetch)
+                # A kind filter drops most hits, so it looks further down the list
+                similar = search_similar(conn, query_emb, limit=fetch * (4 if kinds else 1))
                 ids = [item_id for item_id, _distance in similar]
                 owner = _owners(conn, ids)
+                kind_of = _kinds(conn, set(owner.values()) | set(owner)) if kinds else {}
+                seen: set[int] = set()
                 for item_id in ids:
                     if item_id not in owner:
                         continue  # gone since it was embedded
                     key = owner[item_id] if group else item_id
-                    if key in vec_results:
-                        continue
                     if not group and not include_children and key != owner[item_id]:
+                        continue
+                    if len(seen) < want:
+                        seen.add(key)  # the facets count what an unfiltered search finds
+                    if key in vec_results or (kinds and kind_of.get(key) not in kinds):
                         continue
                     if key != item_id:
                         vec_parts[key] = item_id
                     vec_results[key] = len(vec_results)
-                    if len(vec_results) >= want:
+                    if len(vec_results) >= want and len(seen) >= want:
                         break
+                pool |= seen
             except Exception:
                 logger.warning("Vector search failed for %r", q, exc_info=True)
                 # Semantic mode has nothing else to show; hybrid with a failed keyword
@@ -346,7 +392,13 @@ def search_items(
                     enriched.preview = " ".join(text.split())[:200]
             items.append(enriched)
 
-    return ItemListResponse(items=items, total=len(items), limit=limit, offset=0)
+        counts = Counter(_kinds(conn, pool).values())
+        facets = [
+            KindFacet(kind=k, label=KINDS[k].plural if k in KINDS else k, count=n)
+            for k, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        ]
+
+    return ItemListResponse(items=items, total=len(items), limit=limit, offset=0, facets=facets)
 
 
 @router.post("", response_model=ItemResponse, status_code=201)
