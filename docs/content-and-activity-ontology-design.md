@@ -617,6 +617,7 @@ Open from the data: #245, rows that point at deleted items.
 - NotebookLM slide decks keep the PDF, the PPTX and every per-slide image.
 - A collection shown on another device, such as the Kobo, is the same Collection, not a new object; where it is shown is bookkeeping (14 Nov 2026, #315). The Kobo's copy of a book held elsewhere is linked by `alternate_of`, not merged.
 - Data from the Kobo is read, never written back, except the collections you mark in LeStash. Highlights, notes, pen notes on PDFs and notebooks become items; opening, reading and finishing books become activities (`read`, #201).
+- A book that leaves the Kobo stays an item, marked `removed_from_device` with when it was first seen gone (#314). Its highlights stay with it.
 
 ## References
 
