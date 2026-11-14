@@ -178,8 +178,8 @@ def test_a_failed_write_puts_the_snapshot_back(device, kobo, test_db, monkeypatc
     before = _sha(device / DB)
     real = kobo_shelf.apply
 
-    def half_then_fail(conn, shelves, when, new_id):
-        real(conn, shelves, when, new_id)
+    def half_then_fail(conn, shelves, when):
+        real(conn, shelves, when)
         conn.commit()  # a write that lands, then a failure
         raise sqlite3.DatabaseError("disk I/O error")
 
@@ -239,3 +239,22 @@ def test_a_failed_mount_is_logged_not_a_traceback(device, kobo, test_db, monkeyp
         ).fetchone()
     assert st and st.error and "could not mount" in st.error
     assert status == "failed"
+
+
+def test_a_shelf_it_lost_track_of_is_still_its_own(device, kobo, test_db) -> None:
+    """A write that landed but was never recorded is not taken for one made on the Kobo."""
+    store, cid = kobo
+    _show(test_db, cid)
+    assert _write(device).exit_code == 0
+    with get_connection(test_db) as conn:
+        conn.execute(
+            "UPDATE collection_places SET external_id = NULL, external_name = NULL, written = NULL"
+        )
+        conn.commit()
+    store.take(device, _at(1))
+    result = _write(device)
+    assert result.exit_code == 0, result.output
+    assert "made there" not in result.output
+    with get_connection(test_db) as conn:
+        st = kobo_status(conn, cid)
+    assert st and not st.error and st.on == 2

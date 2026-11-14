@@ -17,7 +17,6 @@ import shutil
 import sqlite3
 import tempfile
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +27,9 @@ from lestash_kobo.store import DB_PATH, KoboStore, Snapshot
 
 WAL = DB_PATH + "-wal"
 SHM = DB_PATH + "-shm"
+# Shelf ids LeStash writes are worked out from the collection and its name, so a shelf it
+# wrote is always known as its own, even when a failed run lost the record of it
+SHELF_IDS = uuid.UUID("5d0c1c6e-9f4e-4c1b-9a51-1e57a5a0b0b0")
 
 
 class KoboChanged(RuntimeError):
@@ -83,16 +85,16 @@ def _forget(conn: sqlite3.Connection, shelf_id: str, name: str | None, when: str
     return n
 
 
-def apply(
-    conn: sqlite3.Connection,
-    shelves: list[Shelf],
-    when: str,
-    new_id: Callable[[], str] = lambda: str(uuid.uuid4()),
-) -> list[ShelfResult]:
+def shelf_id(shelf: Shelf, name: str) -> str:
+    """The ``Shelf.Id`` LeStash gives a collection under a name: a UUID, like the Kobo's."""
+    return str(uuid.uuid5(SHELF_IDS, f"{shelf.place_id}\0{name}"))
+
+
+def apply(conn: sqlite3.Connection, shelves: list[Shelf], when: str) -> list[ShelfResult]:
     """Make the Kobo database ``conn`` show ``shelves``; the caller commits.
 
-    Deterministic for a given ``when`` and ``new_id``, so a plan made on a copy is the
-    same write on the Kobo.
+    Deterministic for a given ``when``, so a plan made on a copy is the same write on
+    the Kobo.
     """
     books_here = {
         r[0] for r in conn.execute("SELECT ContentID FROM content WHERE ContentType = '6'")
@@ -109,6 +111,7 @@ def apply(
             if not shelf.shown:
                 continue
         name = shelf.name or ""
+        res.external_id = shelf_id(shelf, name)
         theirs = conn.execute(
             "SELECT Id FROM Shelf WHERE Name = ? AND _IsDeleted != 'true' AND Id IS NOT ?",
             (name, res.external_id),
@@ -116,10 +119,7 @@ def apply(
         if theirs:
             res.error = f"the Kobo already has a collection called {name!r}, made there"
             continue
-        if (
-            res.external_id
-            and conn.execute("SELECT 1 FROM Shelf WHERE Id = ?", (res.external_id,)).fetchone()
-        ):
+        if conn.execute("SELECT 1 FROM Shelf WHERE Id = ?", (res.external_id,)).fetchone():
             conn.execute(
                 "UPDATE Shelf SET _IsDeleted = 'false', _IsVisible = 'true',"
                 " _IsSynced = 'false', LastModified = ?"
@@ -127,7 +127,6 @@ def apply(
                 (when, res.external_id),
             )
         else:
-            res.external_id = new_id()
             conn.execute(
                 "INSERT INTO Shelf (CreationDate, Id, InternalName, LastModified, Name, Type,"
                 " _IsDeleted, _IsVisible, _IsSynced, LastAccessed)"
@@ -170,7 +169,6 @@ class Plan:
 
     snapshot: Snapshot
     when: str
-    ids: list[str]  # the new shelf ids, in the order apply() asks for them
     results: list[ShelfResult]
     changes: int  # rows the write changes on the Kobo; 0 means leave it alone
 
@@ -190,17 +188,12 @@ def _copy_db(store: KoboStore, snapshot: Snapshot, folder: Path) -> Path:
 def plan(store: KoboStore, snapshot: Snapshot, shelves: list[Shelf]) -> Plan:
     """Work out the write on a copy of the snapshot's database."""
     when = now_text()
-    ids: list[str] = []
-
-    def new_id() -> str:
-        ids.append(str(uuid.uuid4()))
-        return ids[-1]
 
     with tempfile.TemporaryDirectory(prefix="lestash-kobo-shelves-") as tmp:
         conn = sqlite3.connect(_copy_db(store, snapshot, Path(tmp)))
         try:
             before = conn.total_changes
-            results = apply(conn, shelves, when, new_id)
+            results = apply(conn, shelves, when)
             changes = conn.total_changes - before
             conn.commit()
             check = conn.execute("PRAGMA integrity_check").fetchone()[0]
@@ -208,7 +201,7 @@ def plan(store: KoboStore, snapshot: Snapshot, shelves: list[Shelf]) -> Plan:
             conn.close()
     if check != "ok":
         raise KoboDamaged(f"the planned write fails integrity_check on a copy: {check}")
-    return Plan(snapshot, when, ids, results, changes)
+    return Plan(snapshot, when, results, changes)
 
 
 def _same_as_snapshot(store: KoboStore, snapshot: Snapshot, root: Path) -> None:
@@ -244,10 +237,9 @@ def write(store: KoboStore, the_plan: Plan, shelves: list[Shelf], root: Path) ->
     """
     snapshot = the_plan.snapshot
     _same_as_snapshot(store, snapshot, root)
-    ids = iter(the_plan.ids)
     conn = sqlite3.connect(root / DB_PATH)
     try:
-        results = apply(conn, shelves, the_plan.when, lambda: next(ids))
+        results = apply(conn, shelves, the_plan.when)
         conn.commit()
         # Fold the write into the database file, so the Kobo reads one file
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
