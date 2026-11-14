@@ -444,12 +444,16 @@ def test_a_removed_book_keeps_its_first_removal_time_and_loses_it_when_back(
     # Back on the Kobo: the mark goes
     conn = sqlite3.connect(kobo_db)
     conn.execute(f"INSERT INTO content VALUES ({','.join('?' * len(saved))})", saved)
+    conn.execute("UPDATE content SET Title = 'Judge, renamed' WHERE ContentID = ?", (DRIVE_PDF,))
     conn.commit()
     conn.close()
     store.take(device, datetime(2026, 11, 7, 9, 59, tzinfo=UTC))
     with get_connection(test_db) as db:
         SyncStore(db, "kobo").run(KoboSource().sync(config))
         assert REMOVED_KEY not in _book_meta(db, DRIVE_PDF)
+        # What the import wrote stays: not undone by the stored row read before it
+        title = db.execute("SELECT title FROM items WHERE source_id = ?", (DRIVE_PDF,))
+        assert title.fetchone()[0] == "Judge, renamed"
 
 
 def test_removed_books_marks_only_what_left() -> None:
@@ -472,7 +476,10 @@ def test_removed_books_marks_only_what_left() -> None:
         row("gone-before", **{REMOVED_KEY: "2026-11-01 00:00:00"}),
         row("back-unimported", **{REMOVED_KEY: "2026-11-01 00:00:00"}),
     ]
-    out = {i.source_id: i for i in removed_books(stored, {"here", "back-unimported"}, T1)}
+    stored.append(row("back-imported", **{REMOVED_KEY: "2026-11-01 00:00:00"}))
+    on_device = {"here", "back-unimported", "back-imported"}
+    out = {i.source_id: i for i in removed_books(stored, on_device, {"back-imported"}, T1)}
+    # A book this import wrote is left to it, not rewritten from the stored row
     assert set(out) == {"gone", "back-unimported"}
     assert out["gone"].metadata == {"kind": "sideloaded", REMOVED_KEY: "2026-11-07 09:56:00"}
     assert out["back-unimported"].metadata == {"kind": "sideloaded"}

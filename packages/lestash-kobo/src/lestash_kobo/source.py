@@ -227,7 +227,10 @@ class KoboSource(SourcePlugin):
                 yield from reader.items()
                 # Books gone from the Kobo since an earlier import (#314)
                 yield from removed_books(
-                    _stored_books(app_config), reader.on_device, snapshot.taken_at
+                    _stored_books(app_config),
+                    reader.on_device,
+                    reader.imported,
+                    snapshot.taken_at,
                 )
                 yield SyncCheckpoint(key=STATE_KEY, value=state)
                 imported = digest
