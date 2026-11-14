@@ -615,6 +615,8 @@ Open from the data: #245, rows that point at deleted items.
 - ~~No chunking for now: keyword search covers full text, and semantic search keeps one vector per item (#221).~~ Replaced on 12 Nov 2026: embed the ontology's own parts (rounds, highlights, artifacts, sections, files), not fixed-size chunks. See [`embeddings-design.md`](embeddings-design.md).
 - Extracted text goes into item `content`; `item_history` keeps the text a re-extraction replaces.
 - NotebookLM slide decks keep the PDF, the PPTX and every per-slide image.
+- A collection shown on another device, such as the Kobo, is the same Collection, not a new object; where it is shown is bookkeeping (14 Nov 2026, #315). The Kobo's copy of a book held elsewhere is linked by `alternate_of`, not merged.
+- Data from the Kobo is read, never written back, except the collections you mark in LeStash. Highlights, notes, pen notes on PDFs and notebooks become items; opening, reading and finishing books become activities (`read`, #201).
 
 ## References
 
