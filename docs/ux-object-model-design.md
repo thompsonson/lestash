@@ -374,3 +374,14 @@ Google My Activity bundles a day by product; activity-feed guidance keys groups 
 
 - ▭ read as a character that failed to load, so posts take ¶ in lists and on the Timeline.
 - The item page title has no kind icon: the line under it names the kind ("Post · LinkedIn").
+
+## Collections on the Kobo (14 Nov 2026, #315)
+
+You manage collections in LeStash; the Kobo is a reader that shows the ones you mark.
+
+- **No new object.** A Kobo collection is a Collection shown on the Kobo, not a "Kobo Shelf". It has no relationships, actions or attributes a Collection lacks; the Kobo's id and write time are bookkeeping, held in an internal table of where each collection is shown. This is DCAT's split of a Dataset from its Distributions.
+- **Wording:** the Kobo's database says `Shelf`; screens say "collection", since Library shelves are the kind-based ones above.
+- **Relationships:** Collection *holds* Item, as now. On the Kobo it shows each item's Kobo book, found through `alternate_of` when the collection holds another copy (arXiv, Drive).
+- **Calls to action:** on a Collection, **Show on Kobo** and **see what's waiting for the next plug-in**; later, on an item, **Send to Kobo**.
+- **Attributes:** on a Collection, on the Kobo or not; status ("19 on the Kobo · 2 waiting · 2 not on the Kobo"); last written. Its card shows an "On Kobo" badge.
+- **Direction:** LeStash writes collections at each plug-in, after the snapshot. Collections made on the Kobo are never read or changed. From the Kobo come highlights, typed notes, dog-ears and pen marks (as now), pen notes on PDFs (#200), notebooks (#202) and reading activity (#201).

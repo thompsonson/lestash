@@ -11,7 +11,7 @@ from lestash.core.database import get_connection
 from lestash.core.sync import SyncStore
 from lestash.models.sync import SyncCheckpoint
 from lestash_kobo import KoboSource
-from lestash_kobo.reader import KoboReader, device_path, parse_date
+from lestash_kobo.reader import REMOVED_KEY, KoboReader, device_path, parse_date, removed_books
 from lestash_kobo.source import parse_taken_at
 from lestash_kobo.store import KoboStore
 
@@ -398,8 +398,92 @@ def test_a_book_removed_later_keeps_its_item_and_highlights(
             "SELECT p.source_id FROM items c JOIN items p ON p.id = c.parent_id"
             " WHERE c.source_id = 'bookmark:hl-1'"
         ).fetchone()
-    assert tuple(after) == tuple(before)  # not overwritten by a stand-in
+    assert tuple(after[:3]) == tuple(before[:3])  # not overwritten by a stand-in
+    # Marked as gone from the Kobo (#314), the rest of its metadata kept
+    meta = json.loads(after[3])
+    assert meta.pop(REMOVED_KEY) == "2026-11-07 09:57:00"
+    assert meta == json.loads(before[3])
     assert parent[0] == NN
+
+
+def _book_meta(db, source_id: str) -> dict:
+    row = db.execute("SELECT metadata FROM items WHERE source_id = ?", (source_id,)).fetchone()
+    return json.loads(row[0])
+
+
+def test_a_removed_book_keeps_its_first_removal_time_and_loses_it_when_back(
+    device: Path, tmp_path: Path, test_db
+) -> None:
+    import sqlite3
+
+    store = KoboStore(tmp_path / "store")
+    config = {"store_dir": str(store.root)}
+    kobo_db = device / ".kobo" / "KoboReader.sqlite"
+    store.take(device, T1)
+    with get_connection(test_db) as db:
+        SyncStore(db, "kobo").run(KoboSource().sync(config))
+    conn = sqlite3.connect(kobo_db)
+    saved = conn.execute("SELECT * FROM content WHERE ContentID = ?", (DRIVE_PDF,)).fetchone()
+    conn.execute("DELETE FROM content WHERE ContentID = ?", (DRIVE_PDF,))
+    conn.commit()
+    conn.close()
+    store.take(device, datetime(2026, 11, 7, 9, 57, tzinfo=UTC))
+    with get_connection(test_db) as db:
+        SyncStore(db, "kobo").run(KoboSource().sync(config))
+        assert _book_meta(db, DRIVE_PDF)[REMOVED_KEY] == "2026-11-07 09:57:00"
+        assert REMOVED_KEY not in _book_meta(db, NN)
+        files = db.execute("SELECT COUNT(*) FROM item_media").fetchone()[0]
+    # A later snapshot, still without it: the first time stays, nothing is rewritten
+    (device / ".kobo" / "markups" / "mk-1.svg").write_text("<svg>later</svg>")
+    store.take(device, datetime(2026, 11, 7, 9, 58, tzinfo=UTC))
+    with get_connection(test_db) as db:
+        run = SyncStore(db, "kobo")
+        run.run(KoboSource().sync(config))
+        assert _book_meta(db, DRIVE_PDF)[REMOVED_KEY] == "2026-11-07 09:57:00"
+        assert db.execute("SELECT COUNT(*) FROM item_media").fetchone()[0] >= files
+    # Back on the Kobo: the mark goes
+    conn = sqlite3.connect(kobo_db)
+    conn.execute(f"INSERT INTO content VALUES ({','.join('?' * len(saved))})", saved)
+    conn.execute("UPDATE content SET Title = 'Judge, renamed' WHERE ContentID = ?", (DRIVE_PDF,))
+    conn.commit()
+    conn.close()
+    store.take(device, datetime(2026, 11, 7, 9, 59, tzinfo=UTC))
+    with get_connection(test_db) as db:
+        SyncStore(db, "kobo").run(KoboSource().sync(config))
+        assert REMOVED_KEY not in _book_meta(db, DRIVE_PDF)
+        # What the import wrote stays: not undone by the stored row read before it
+        title = db.execute("SELECT title FROM items WHERE source_id = ?", (DRIVE_PDF,))
+        assert title.fetchone()[0] == "Judge, renamed"
+
+
+def test_removed_books_marks_only_what_left() -> None:
+    def row(source_id: str, **meta) -> dict:
+        return {
+            "source_id": source_id,
+            "url": None,
+            "title": source_id,
+            "content": "c",
+            "author": None,
+            "created_at": "2026-11-01 10:00:00",
+            "is_own_content": 0,
+            "metadata": {"kind": "sideloaded", **meta},
+            "parent_id": None,
+        }
+
+    stored = [
+        row("here"),
+        row("gone"),
+        row("gone-before", **{REMOVED_KEY: "2026-11-01 00:00:00"}),
+        row("back-unimported", **{REMOVED_KEY: "2026-11-01 00:00:00"}),
+    ]
+    stored.append(row("back-imported", **{REMOVED_KEY: "2026-11-01 00:00:00"}))
+    on_device = {"here", "back-unimported", "back-imported"}
+    out = {i.source_id: i for i in removed_books(stored, on_device, {"back-imported"}, T1)}
+    # A book this import wrote is left to it, not rewritten from the stored row
+    assert set(out) == {"gone", "back-unimported"}
+    assert out["gone"].metadata == {"kind": "sideloaded", REMOVED_KEY: "2026-11-07 09:56:00"}
+    assert out["back-unimported"].metadata == {"kind": "sideloaded"}
+    assert out["gone"].media is None  # stored files are kept, not replaced
 
 
 def test_a_saved_copy_needs_taken_at(device: Path, tmp_path: Path, monkeypatch) -> None:

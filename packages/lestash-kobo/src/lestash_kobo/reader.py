@@ -34,11 +34,13 @@ logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "kobo"
 # Bump when the items change shape, so the next sync re-imports an unchanged snapshot
-READER_VERSION = 2  # 2: book files and markups as stored, versioned media
+READER_VERSION = 3  # 2: book files and markups as stored, versioned media; 3: #314
 DEVICE_ROOT = "file:///mnt/onboard/"
 MARKUP_PLACEHOLDER = "[Handwritten markup]"
 BOOKMARK_PLACEHOLDER = "[Bookmark]"
 KINDS = {"highlight": "Highlight", "note": "Note", "dogear": "Bookmark", "markup": "Markup"}
+# On a book no longer on the Kobo: when the first snapshot imported without it was taken
+REMOVED_KEY = "removed_from_device"
 
 
 def parse_date(value: str | None) -> datetime | None:
@@ -134,6 +136,9 @@ class KoboReader:
         self.include_store_titles = include_store_titles
         self.files = files
         self._history: list[Snapshot] | None = None
+        # Set by items(): the ContentIDs of every title on the Kobo, and of those it wrote
+        self.on_device: set[str] = set()
+        self.imported: set[str] = set()
 
     def _read_db(self) -> tuple[list[dict], list[dict], dict[str, dict]]:
         db = self.snapshot.blob(self.store, DB_PATH)
@@ -169,6 +174,7 @@ class KoboReader:
 
     def items(self) -> Iterator[ItemCreate]:
         titles, marks, chapters = self._read_db()
+        self.on_device = {row["ContentID"] for row in titles}
 
         marks = [m for m in marks if str(m.get("Hidden")).lower() != "true"]
         marked = {m["VolumeID"] for m in marks}
@@ -176,15 +182,15 @@ class KoboReader:
         for row in titles:
             if self._keep(row, marked):
                 kept.add(row["ContentID"])
+                self.imported.add(row["ContentID"])
                 yield self.title_item(row)
         # Highlights can outlive their book on the device. Keep them: they still name
         # their book, so they attach to its item if an earlier import stored it, and
         # stay top-level otherwise. (A stand-in book item would overwrite that one.)
-        known = {row["ContentID"] for row in titles}
         kept |= {
             v
             for v in marked
-            if v and v not in known and not v.endswith(".nebo")  # #202
+            if v and v not in self.on_device and not v.endswith(".nebo")  # #202
         }
         for mark in sorted(marks, key=lambda m: self._order(m, chapters)):
             if mark["VolumeID"] in kept:
@@ -365,4 +371,47 @@ class KoboReader:
             _num(chapter.get("VolumeIndex")),
             _float(mark.get("ChapterProgress")),
             str(mark.get("DateCreated") or ""),
+        )
+
+
+def removed_books(
+    stored: list[dict[str, Any]],
+    on_device: set[str],
+    imported: set[str],
+    taken_at: datetime,
+) -> Iterator[ItemCreate]:
+    """Stored book items to write again, marking the ones the Kobo no longer holds (#314).
+
+    ``stored``: book items as read from LeStash, ``metadata`` parsed. A book not on the
+    Kobo gets ``removed_from_device``: when the first snapshot imported without it was
+    taken. One already marked keeps its time. The item, its highlights and its files are kept.
+
+    ``imported``: the books this import wrote. They are skipped: ``stored`` may be read
+    before those writes are committed, and would undo them. A book back on the Kobo is
+    written by ``items()``, which drops the mark; one back but not imported (a store
+    listing) has the mark dropped here.
+    """
+    for row in stored:
+        if row["source_id"] in imported:
+            continue
+        meta = dict(row["metadata"] or {})
+        if row["source_id"] in on_device:
+            if REMOVED_KEY not in meta:
+                continue
+            del meta[REMOVED_KEY]
+        elif REMOVED_KEY in meta:
+            continue
+        else:
+            meta[REMOVED_KEY] = _db_time(taken_at)
+        yield ItemCreate(
+            source_type=SOURCE_TYPE,
+            source_id=row["source_id"],
+            url=row["url"],
+            title=row["title"],
+            content=row["content"],
+            author=row["author"],
+            created_at=parse_date(row["created_at"]),
+            is_own_content=bool(row["is_own_content"]),
+            metadata=meta or None,
+            parent_id=row["parent_id"],
         )

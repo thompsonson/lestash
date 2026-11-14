@@ -10,6 +10,7 @@ deploy/install.sh).
 """
 
 import fcntl
+import json
 import signal
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -26,7 +27,7 @@ from lestash.models.sync import SyncCheckpoint
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 
-from lestash_kobo.reader import READER_VERSION, KoboReader
+from lestash_kobo.reader import READER_VERSION, SOURCE_TYPE, KoboReader, removed_books
 from lestash_kobo.store import KoboStore, SnapshotResult
 
 console = Console()
@@ -66,6 +67,33 @@ def _store(config: dict, app_config: Config | None = None) -> KoboStore:
 
 def _files(app_config: Config | None = None) -> BlobStore:
     return BlobStore(store_root(app_config or Config.load()))
+
+
+def _stored_books(app_config: Config | None) -> list[dict]:
+    """Every Kobo book item in LeStash: everything but its highlights and notes."""
+    with get_connection(app_config) as conn:
+        rows = conn.execute(
+            "SELECT source_id, url, title, content, author, created_at, is_own_content,"
+            " metadata, parent_id FROM items"
+            " WHERE source_type = ? AND source_id NOT LIKE 'bookmark:%'",
+            (SOURCE_TYPE,),
+        ).fetchall()
+    books = []
+    for r in rows:
+        try:
+            meta = json.loads(r[7]) if r[7] else None
+        except json.JSONDecodeError:
+            continue  # leave an item with damaged metadata alone
+        keys = ("source_id", "url", "title", "content", "author", "created_at")
+        books.append(
+            {
+                **dict(zip(keys, r[:6], strict=True)),
+                "is_own_content": r[6],
+                "metadata": meta if isinstance(meta, dict) else None,
+                "parent_id": r[8],
+            }
+        )
+    return books
 
 
 def _report(result: SnapshotResult) -> None:
@@ -197,5 +225,12 @@ class KoboSource(SourcePlugin):
                     store, snapshot, include_store_titles=include_store, files=_files(app_config)
                 )
                 yield from reader.items()
+                # Books gone from the Kobo since an earlier import (#314)
+                yield from removed_books(
+                    _stored_books(app_config),
+                    reader.on_device,
+                    reader.imported,
+                    snapshot.taken_at,
+                )
                 yield SyncCheckpoint(key=STATE_KEY, value=state)
                 imported = digest

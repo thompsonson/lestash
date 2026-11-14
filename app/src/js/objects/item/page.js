@@ -42,6 +42,7 @@ export function itemHeader(item, title) {
   const by = item.kind === 'video' ? '' : byName(item);
   if (by) meta.push(item.by_id ? `by <a href="/people/${item.by_id}">${escHtml(by)}</a>` : `by ${escHtml(by)}`);
   if (item.url) meta.push(`<a href="${escHtml(item.url)}" target="_blank" rel="noopener">open original</a>`);
+  meta.push(escHtml(goneFromKobo(item)));
   html += `<div class="item-view-meta">${meta.filter(Boolean).join(' · ')}</div>`;
   html += frontMatterHtml(item);
   const gen = generationSettings(item);
@@ -53,6 +54,15 @@ export function itemHeader(item, title) {
     html += `<details class="item-prompt"><summary><b>Prompt</b> <span class="clamp">${escHtml(gen.prompt)}</span></summary></details>`;
   }
   return html;
+}
+
+// A Kobo book no longer on the Kobo (#314): "not on the Kobo since 14 Nov 2026".
+// The time is UTC, written as SQLite writes it.
+export function goneFromKobo(item) {
+  const since = item.source_type === 'kobo' && item.metadata && item.metadata.removed_from_device;
+  if (typeof since !== 'string') return '';
+  const when = dateText(since.replace(' ', 'T') + 'Z');
+  return when ? `not on the Kobo since ${when}` : 'not on the Kobo';
 }
 
 // Where the item comes from: the service, and for a file in a repository, the

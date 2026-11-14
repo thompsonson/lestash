@@ -29,7 +29,12 @@ mounts the Kobo, takes a snapshot, unmounts it, and starts the import.
 - Each highlight, note, dog-ear and pen markup, as a child of its book.
   Markups carry the Kobo's JPG and SVG of the strokes.
 
-Notebooks (#202), PDF ink (#200) and reading activity (#201) come later.
+A book that leaves the Kobo keeps its item, highlights and files (#314). The import
+marks it `removed_from_device`: when the first snapshot imported without it was taken.
+Its page reads "not on the Kobo since …". The mark goes if the book comes back.
+
+Notebooks (#202), PDF ink (#200), reading activity (#201) and removed highlights
+(#207) come later.
 
 ## Commands
 
