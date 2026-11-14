@@ -52,3 +52,30 @@ def test_a_web_rebuild_while_the_cli_rebuilds_says_already_running(
 
     assert response.json()["status"] == "already_running"
     assert _log(test_config) == [("completed", 0)]  # only the CLI's run
+
+
+def test_a_second_web_rebuild_during_one_answers_at_once(client, test_config, monkeypatch):
+    import threading
+
+    release = threading.Event()
+    calls = []
+
+    def slow(conn):
+        calls.append(1)
+        release.wait(timeout=10)
+        return 1
+
+    monkeypatch.setattr(route, "rebuild_embeddings", slow)
+
+    first = client.post("/api/embeddings/rebuild")
+    started = time.monotonic()
+    second = client.post("/api/embeddings/rebuild")
+    waited = time.monotonic() - started
+    release.set()
+    _wait_until_done()
+
+    assert first.json()["status"] == "started"
+    assert second.json()["status"] == "already_running"
+    assert waited < 5
+    assert calls == [1]
+    assert _log(test_config) == [("completed", 1)]
