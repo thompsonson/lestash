@@ -70,16 +70,26 @@ def _file_sha(path: Path) -> str | None:
 
 
 def _forget(conn: sqlite3.Connection, shelf_id: str, when: str) -> int:
-    """Mark a shelf LeStash wrote, and its books, deleted, as the Kobo does."""
-    row = conn.execute("SELECT Name FROM Shelf WHERE Id = ?", (shelf_id,)).fetchone()
+    """Mark a shelf LeStash wrote, and its books, deleted, as the Kobo does.
+
+    Only a shelf still live: one already taken off is left alone. Its books are matched
+    by name, so they are left alone too when another live shelf has that name, such as
+    one made on the Kobo since.
+    """
+    row = conn.execute(
+        "SELECT Name FROM Shelf WHERE Id = ? AND _IsDeleted != 'true'", (shelf_id,)
+    ).fetchone()
     if row is None:
         return 0
     n = conn.execute(
-        "UPDATE Shelf SET _IsDeleted = 'true', _IsSynced = 'false', LastModified = ?"
-        " WHERE Id = ? AND _IsDeleted != 'true'",
+        "UPDATE Shelf SET _IsDeleted = 'true', _IsSynced = 'false', LastModified = ? WHERE Id = ?",
         (when, shelf_id),
     ).rowcount
-    if row[0]:
+    shared = conn.execute(
+        "SELECT 1 FROM Shelf WHERE Name = ? AND Id != ? AND _IsDeleted != 'true'",
+        (row[0], shelf_id),
+    ).fetchone()
+    if row[0] and not shared:
         n += conn.execute(
             "UPDATE ShelfContent SET _IsDeleted = 'true', _IsSynced = 'false',"
             " DateModified = ? WHERE ShelfName = ? AND _IsDeleted != 'true'",

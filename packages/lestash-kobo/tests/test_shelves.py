@@ -277,3 +277,29 @@ def test_a_shelf_it_lost_track_of_can_still_be_taken_off(device, kobo, test_db) 
     assert got["shelves"]["0 Intro"][1] == "true"
     assert ("0 Intro", NN, "true") in got["content"]
     assert got["shelves"]["Formal Stuff"][1] == "false"
+
+
+def test_a_kobo_collection_made_later_with_the_name_is_untouched(device, kobo, test_db) -> None:
+    store, cid = kobo
+    _show(test_db, cid)
+    assert _write(device).exit_code == 0
+    _show(test_db, cid, False)
+    store.take(device, _at(1))
+    assert _write(device).exit_code == 0  # taken off
+    # Then made again on the Kobo, by hand, with the same name
+    conn = sqlite3.connect(device / DB)
+    conn.execute(
+        "INSERT INTO Shelf VALUES ('t', 'kobo-made-2', '0 Intro', 't', '0 Intro', 'UserTag',"
+        " 'false', 'true', 'true', 't', 't')"
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO ShelfContent VALUES ('0 Intro', ?, 't', 'false', 'true')", (NN,)
+    )
+    conn.commit()
+    conn.close()
+    store.take(device, _at(2))
+    before = _sha(device / DB)
+    result = _write(device)
+    assert result.exit_code == 0, result.output
+    assert _sha(device / DB) == before
+    assert ("0 Intro", NN, "false") in _shelves(device)["content"]
