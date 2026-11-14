@@ -79,3 +79,45 @@ def test_a_second_web_rebuild_during_one_answers_at_once(client, test_config, mo
     assert waited < 5
     assert calls == [1]
     assert _log(test_config) == [("completed", 1)]
+
+
+def test_a_web_rebuild_that_fails_part_way_logs_the_count_kept(client, test_config, monkeypatch):
+    from lestash.core.embeddings import RefreshCounts, RefreshStopped
+
+    def stops(conn):
+        raise RefreshStopped("stopped after 2 of 5: disk full", RefreshCounts(embedded=2))
+
+    monkeypatch.setattr(route, "rebuild_embeddings", stops)
+
+    client.post("/api/embeddings/rebuild")
+    _wait_until_done()
+
+    with get_connection(test_config) as conn:
+        row = conn.execute(
+            "SELECT status, items_added, error_message FROM sync_log WHERE source_type = ?",
+            (LOG_SOURCE,),
+        ).fetchone()
+    assert tuple(row) == ("failed", 2, "stopped after 2 of 5: disk full")
+
+
+def test_a_thread_that_cannot_start_gives_the_lock_back(client, monkeypatch):
+    import pytest
+
+    class NoThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    import threading
+    from types import SimpleNamespace
+
+    # Only the route's view of threading: the test client needs real threads
+    monkeypatch.setattr(route, "threading", SimpleNamespace(Thread=NoThread, Event=threading.Event))
+    with pytest.raises(RuntimeError):
+        client.post("/api/embeddings/rebuild")
+
+    assert not route._rebuild_running
+    assert route._rebuild_lock.acquire(blocking=False)
+    route._rebuild_lock.release()

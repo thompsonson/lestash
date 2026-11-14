@@ -328,15 +328,16 @@ def test_a_batch_that_fails_keeps_the_batches_back_and_raises(conn, monkeypatch,
     assert first in _ids(conn, "vec_items")
 
 
-def test_a_model_that_cannot_be_fetched_counts_as_the_host_unavailable(conn, monkeypatch):
+def test_a_model_that_cannot_be_fetched_here_does_not_blame_the_host(conn, monkeypatch):
     def no_model():
         raise OSError("gated repo")
 
     monkeypatch.setattr(embed_remote, "_Host", _FakeHost)
     monkeypatch.setattr(embed_remote, "model_folder", no_model)
 
-    with pytest.raises(embed_remote.HostUnavailable, match="gated repo"):
+    with pytest.raises(emb.RefreshStopped, match="can't be fetched here: gated repo") as failed:
         embed_remote.rebuild_on(conn, "computer")
+    assert not isinstance(failed.value, embed_remote.HostUnavailable)
 
 
 def test_a_host_name_that_reads_as_an_option_is_refused():
@@ -352,8 +353,9 @@ def test_a_batch_that_cannot_be_stored_raises_with_the_counts(conn, monkeypatch,
     )
     monkeypatch.setattr(embed_remote, "model_folder", lambda: tmp_path)
 
-    with pytest.raises(embed_remote.HostUnavailable, match="stopped after 0 of 1") as failed:
+    with pytest.raises(emb.RefreshStopped, match="storing here stopped after 0 of 1") as failed:
         embed_remote.rebuild_on(conn, "computer")
+    assert not isinstance(failed.value, embed_remote.HostUnavailable)  # not the host's fault
     assert failed.value.counts.embedded == 0
 
 
@@ -432,3 +434,80 @@ def test_host_local_rebuilds_here_and_is_logged(test_db, monkeypatch, conn):
 
     assert result.exit_code == 0, result.output
     assert _log(test_db) == [("completed", 1, None)]
+
+
+# Similar items and the dashboard (#307, #308)
+
+
+def test_an_items_stored_vector_is_read_from_the_index_search_reads(conn):
+    post = _add(conn, "a", "One", "text")
+    bare = _add(conn, "b", "", "")
+    emb.refresh_embeddings(conn)
+
+    vector = emb.stored_vector(conn, post)
+    assert vector is not None and len(vector) == emb.EMBEDDING_DIM
+    expected = _fake_vector(units.embed_source("One", "text"))
+    assert [round(x, 5) for x in vector] == [round(x, 5) for x in expected]
+    assert emb.stored_vector(conn, bare) is None
+
+
+def test_coverage_by_source_leaves_out_title_only_videos(conn):
+    from lestash.core.db_admin import get_embedding_coverage_by_source
+
+    _add(conn, "v1", "A watched video", "", source="youtube")
+    _add(conn, "v2", "A described video", "A long description " * 10, source="youtube")
+    _add(conn, "n1", "A note", "text")
+    emb.refresh_embeddings(conn)
+
+    by_source = {r["source_type"]: r for r in get_embedding_coverage_by_source(conn)}
+    assert (by_source["youtube"]["total"], by_source["youtube"]["embedded"]) == (1, 1)
+    assert (by_source["note"]["total"], by_source["note"]["embedded"]) == (1, 1)
+
+
+# A run that fails part way logs what it kept (#311)
+
+
+def test_a_local_refresh_that_fails_part_way_says_what_it_kept(conn, monkeypatch):
+    _add(conn, "a", "One", "text")
+    _add(conn, "b", "Two", "text")
+    monkeypatch.setattr(emb, "BATCH_SIZE", 1)
+    calls = []
+
+    def embed(texts):
+        calls.append(texts)
+        if len(calls) == 2:
+            raise RuntimeError("out of memory")
+        return [_fake_vector(t) for t in texts]
+
+    monkeypatch.setattr(emb, "embed_batch", embed)
+
+    with pytest.raises(emb.RefreshStopped, match="stopped after 1 of 2: out of memory") as failed:
+        emb.refresh_embeddings(conn)
+    assert (failed.value.counts.embedded, failed.value.counts.pending) == (1, 1)
+    assert len(_ids(conn, "vec_items")) == 1
+
+
+def test_a_local_rebuild_that_fails_logs_the_count_kept(test_db, monkeypatch, conn):
+    def stops(conn, **kwargs):
+        raise emb.RefreshStopped("stopped after 5 of 9: disk full", emb.RefreshCounts(embedded=5))
+
+    monkeypatch.setattr(emb, "refresh_embeddings", stops)
+
+    result = _rebuild(test_db, monkeypatch, "--host", "local")
+
+    assert result.exit_code == 1
+    assert "5 item(s) embedded first are kept; run it again once fixed." in result.output
+    assert _log(test_db) == [("failed", 5, "stopped after 5 of 9: disk full")]
+
+
+def test_a_store_failure_on_a_host_rebuild_does_not_blame_the_host(test_db, monkeypatch, conn):
+    def stops(conn, host, **kwargs):
+        raise emb.RefreshStopped("storing here stopped after 0 of 3: disk I/O error")
+
+    monkeypatch.setattr(embed_remote, "rebuild_on", stops)
+
+    result = _rebuild(test_db, monkeypatch, "--host", "computer")
+
+    assert result.exit_code == 1
+    assert "when computer is back" not in result.output
+    assert "run it again once fixed" in result.output

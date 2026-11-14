@@ -298,19 +298,21 @@ def find_duplicate_source_ids(conn: sqlite3.Connection) -> list[dict]:
 
 
 def get_embedding_coverage_by_source(conn: sqlite3.Connection) -> list[dict] | None:
-    """Coverage by today's model, per source type. None if it can't be read."""
+    """Coverage by today's model, per source type, of the items that should have a
+    vector: the same rule as ``get_embedding_stats`` (#308). None if it can't be read."""
     try:
-        from lestash.core.embeddings import MODEL_NAME
+        from lestash.core.embed_units import TITLE_ONLY_SLACK
+        from lestash.core.embeddings import MODEL_NAME, WANTED
 
         rows = conn.execute(
-            """SELECT i.source_type,
-                      COUNT(*) as total,
-                      COUNT(m.item_id) as embedded
-               FROM items i
-               LEFT JOIN embedding_meta m ON m.item_id = i.id AND m.model = ?
-               WHERE i.parent_id IS NULL
-               GROUP BY i.source_type ORDER BY total DESC""",
-            (MODEL_NAME,),
+            f"""SELECT i.source_type,
+                       COUNT(*) as total,
+                       COUNT(m.item_id) as embedded
+                FROM items i
+                LEFT JOIN embedding_meta m ON m.item_id = i.id AND m.model = ?
+                WHERE {WANTED}
+                GROUP BY i.source_type ORDER BY total DESC""",
+            (MODEL_NAME, TITLE_ONLY_SLACK),
         ).fetchall()
         return [dict(r) for r in rows]
     except Exception:

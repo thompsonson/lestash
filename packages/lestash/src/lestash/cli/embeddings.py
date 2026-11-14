@@ -90,7 +90,12 @@ def rebuild(
     from lestash.core.config import Config
     from lestash.core.database import get_connection
     from lestash.core.embed_remote import HostUnavailable, rebuild_on
-    from lestash.core.embeddings import LOG_SOURCE, load_vec_extension, refresh_embeddings
+    from lestash.core.embeddings import (
+        LOG_SOURCE,
+        RefreshStopped,
+        load_vec_extension,
+        refresh_embeddings,
+    )
     from lestash.core.sync import SyncAlreadyRunning, SyncRun
 
     config = Config.load()
@@ -119,13 +124,13 @@ def rebuild(
                     counts = rebuild_on(conn, host, threads=threads, progress_callback=on_progress)
                 else:
                     counts = refresh_embeddings(conn, progress_callback=on_progress)
-            except HostUnavailable as e:
+            except RefreshStopped as e:
                 run.finish("failed", items_added=e.counts.embedded, items_updated=0, error=str(e))
                 progress.stop()
                 console.print(f"[red]Rebuild stopped: {e}[/red]")
+                again = f"when {host} is back" if isinstance(e, HostUnavailable) else "once fixed"
                 console.print(
-                    f"{e.counts.embedded} item(s) embedded first are kept;"
-                    f" run it again when {host} is back."
+                    f"{e.counts.embedded} item(s) embedded first are kept; run it again {again}."
                 )
                 raise typer.Exit(1) from None
             run.finish("completed", items_added=counts.embedded, items_updated=0)
