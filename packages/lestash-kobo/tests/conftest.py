@@ -197,8 +197,33 @@ def write_kobo_db(path: Path) -> None:
     # The real Bookmark.ExtraAnnotationData holds binary in a TEXT column
     conn.execute("ALTER TABLE Bookmark ADD COLUMN ExtraAnnotationData")
     conn.execute("UPDATE Bookmark SET ExtraAnnotationData = CAST(x'ff00fe' AS TEXT)")
+    # Collections, as on a real Kobo, with one made there (#315)
+    conn.executescript(SHELF_TABLES)
+    conn.execute(
+        "INSERT INTO Shelf VALUES ('2025-08-11T05:10:52Z', 'kobo-made-1', 'Formal Stuff',"
+        " '2025-08-11T05:10:52Z', 'Formal Stuff', 'UserTag', 'false', 'true', 'true',"
+        " '2026-10-29T23:12:26Z', '2025-08-11T05:10:52Z')"
+    )
+    conn.execute(
+        "INSERT INTO ShelfContent VALUES ('Formal Stuff', ?, '2026-08-22T14:11:48Z',"
+        " 'false', 'true')",
+        (DRIVE_PDF,),
+    )
     conn.commit()
     conn.close()
+
+
+SHELF_TABLES = """
+CREATE TABLE Shelf (
+    CreationDate TEXT, Id TEXT, InternalName TEXT, LastModified TEXT, Name TEXT, Type TEXT,
+    _IsDeleted BOOL, _IsVisible BOOL, _IsSynced BOOL, _SyncTime TEXT, LastAccessed TEXT,
+    PRIMARY KEY(Id)
+);
+CREATE TABLE ShelfContent (
+    ShelfName TEXT, ContentId TEXT, DateModified TEXT, _IsDeleted BOOL, _IsSynced BOOL,
+    PRIMARY KEY(ShelfName, ContentId)
+);
+"""
 
 
 @pytest.fixture

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -678,6 +678,28 @@ MIGRATIONS = [
         );
         """,
     ),
+    (
+        28,
+        "Collections: a reading order (#317), and where each is shown, such as the Kobo (#315)",
+        # collection_items.position is added in apply_migrations. collection_places is
+        # bookkeeping, not an object: a row per collection and place. A collection
+        # deleted in LeStash leaves its row (collection_id null), so the next write can
+        # remove what it put on the device.
+        """
+        CREATE TABLE IF NOT EXISTS collection_places (
+            id INTEGER PRIMARY KEY,
+            collection_id INTEGER REFERENCES collections(id) ON DELETE SET NULL,
+            place TEXT NOT NULL,
+            shown INTEGER NOT NULL DEFAULT 1,
+            external_id TEXT,
+            external_name TEXT,
+            written TEXT,
+            last_written DATETIME,
+            last_error TEXT,
+            UNIQUE (collection_id, place)
+        );
+        """,
+    ),
 ]
 
 
@@ -959,6 +981,9 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_items_kind ON items(kind, parent_id)")
             if version == 25 and not _column_exists(conn, "people", "short_name"):
                 conn.execute("ALTER TABLE people ADD COLUMN short_name TEXT")
+            if version == 28 and not _column_exists(conn, "collection_items", "position"):
+                # Null: no place yet; listed after placed items, newest first
+                conn.execute("ALTER TABLE collection_items ADD COLUMN position INTEGER")
             if version == 16:
                 _migrate_16(conn)  # sets the version in its own transaction
             elif version == 20:

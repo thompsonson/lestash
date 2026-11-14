@@ -5,6 +5,8 @@ import {
 import { escHtml, relTime, sourceClass, sourceName } from './util.js';
 import { openExternal } from './external.js';
 import { renderCard } from './objects/item/card.js';
+import { renderCollectionCard } from './objects/collection/card.js';
+import { renderCollectionPage } from './objects/collection/page.js';
 import { startTimeline, redrawTimeline } from './places/timeline.js';
 import { startPeople, redrawPeople } from './places/people.js';
 import { startLibrary, redrawLibrary } from './places/library.js';
@@ -2867,22 +2869,7 @@ async function loadCollections() {
       return;
     }
     list.innerHTML = '';
-    colls.forEach(c => {
-      const card = document.createElement('a');
-      card.className = 'item-card';
-      card.href = `/collections/${c.id}`;
-      card.innerHTML = `
-        <div class="item-card-header">
-          <span class="item-title">${escHtml(c.name)}</span>
-          <span class="item-date">${relTime(c.created_at)}</span>
-        </div>
-        ${c.description ? `<div class="item-preview">${escHtml(c.description)}</div>` : ''}
-        <div class="item-footer">
-          <span>${c.item_count} item${c.item_count !== 1 ? 's' : ''}</span>
-        </div>
-      `;
-      list.appendChild(card);
-    });
+    colls.forEach(c => list.appendChild(renderCollectionCard(c)));
   } catch (e) {
     list.innerHTML = `<div class="empty-state" style="color:var(--error)">${escHtml(e.message)}</div>`;
   }
@@ -2894,20 +2881,16 @@ route(/^\/collections\/(\d+)$/, async ([, id]) => {
   failedPath = null;
   const container = document.getElementById('item-view-content');
   container.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
-  try {
+  const show = async () => {
     const detail = await api(`/api/collections/${id}`);
     if (location.pathname !== `/collections/${id}`) return;  // the user moved on meanwhile
-    let html = `<div class="item-view-title">${escHtml(detail.name)}</div>`;
-    if (detail.description) html += `<div class="item-view-meta">${escHtml(detail.description)}</div>`;
-    html += `<div class="item-view-children-title">${detail.items.length} items</div>`;
-    html += '<div class="item-list" id="collection-items-list"></div>';
-    container.innerHTML = html;
-
-    const itemList = document.getElementById('collection-items-list');
-    detail.items.forEach(item => {
-      const card = renderCard(item);
-      itemList.appendChild(card);
+    renderCollectionPage(container, detail, {
+      toast: showToast,
+      reload: () => show().catch(e => showToast('Failed: ' + e.message, 'error')),
     });
+  };
+  try {
+    await show();
   } catch (e) {
     if (location.pathname !== `/collections/${id}`) return;
     container.innerHTML = `<div class="empty-state" style="padding:2rem">Collection not found: ${escHtml(e.message)}</div>`;

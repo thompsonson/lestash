@@ -962,3 +962,20 @@ body.sheet-open #item-view {
 .timeline-list { touch-action: pan-y pinch-zoom; }
 /* The empty space below a short day takes swipes too */
 body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
+
+/* ── Collections: reading order (#317) and the Kobo (#315) ── */
+.collection-kobo { margin: 0.6rem 0 1rem; }
+.collection-kobo .debug-switch { margin-bottom: 0.2rem; }
+.collection-kobo-status { font-size: 0.85rem; }
+.collection-kobo-error { font-size: 0.85rem; color: var(--error); margin-top: 0.2rem; }
+.collection-items { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.collection-item { display: flex; gap: 0.4rem; align-items: stretch; }
+.collection-item > .item-card { flex: 1; min-width: 0; }
+.collection-moves { display: flex; flex-direction: column; gap: 0.2rem; justify-content: center; }
+.collection-moves button {
+  min-width: 36px; min-height: 36px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); cursor: pointer; font-size: 0.9rem;
+}
+.collection-moves button:hover:not(:disabled) { background: var(--surface-2); }
+.collection-moves button:disabled { opacity: 0.35; cursor: default; }
+.collection-badge { margin-left: auto; min-height: 0; padding: 0.05rem 0.5rem; font-size: 0.75rem; }
