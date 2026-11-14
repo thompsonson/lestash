@@ -258,3 +258,22 @@ def test_a_shelf_it_lost_track_of_is_still_its_own(device, kobo, test_db) -> Non
     with get_connection(test_db) as conn:
         st = kobo_status(conn, cid)
     assert st and not st.error and st.on == 2
+
+
+def test_a_shelf_it_lost_track_of_can_still_be_taken_off(device, kobo, test_db) -> None:
+    store, cid = kobo
+    _show(test_db, cid)
+    assert _write(device).exit_code == 0
+    with get_connection(test_db) as conn:
+        conn.execute(
+            "UPDATE collection_places SET external_id = NULL, external_name = NULL, written = NULL"
+        )
+        conn.commit()
+    _show(test_db, cid, False)
+    store.take(device, _at(1))
+    result = _write(device)
+    assert result.exit_code == 0, result.output
+    got = _shelves(device)
+    assert got["shelves"]["0 Intro"][1] == "true"
+    assert ("0 Intro", NN, "true") in got["content"]
+    assert got["shelves"]["Formal Stuff"][1] == "false"

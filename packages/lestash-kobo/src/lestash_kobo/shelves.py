@@ -69,18 +69,21 @@ def _file_sha(path: Path) -> str | None:
     return h.hexdigest()
 
 
-def _forget(conn: sqlite3.Connection, shelf_id: str, name: str | None, when: str) -> int:
+def _forget(conn: sqlite3.Connection, shelf_id: str, when: str) -> int:
     """Mark a shelf LeStash wrote, and its books, deleted, as the Kobo does."""
+    row = conn.execute("SELECT Name FROM Shelf WHERE Id = ?", (shelf_id,)).fetchone()
+    if row is None:
+        return 0
     n = conn.execute(
         "UPDATE Shelf SET _IsDeleted = 'true', _IsSynced = 'false', LastModified = ?"
         " WHERE Id = ? AND _IsDeleted != 'true'",
         (when, shelf_id),
     ).rowcount
-    if name:
+    if row[0]:
         n += conn.execute(
             "UPDATE ShelfContent SET _IsDeleted = 'true', _IsSynced = 'false',"
             " DateModified = ? WHERE ShelfName = ? AND _IsDeleted != 'true'",
-            (when, name),
+            (when, row[0]),
         ).rowcount
     return n
 
@@ -105,8 +108,11 @@ def apply(conn: sqlite3.Connection, shelves: list[Shelf], when: str) -> list[She
         results.append(res)
         if not shelf.shown or (shelf.external_name and shelf.external_name != shelf.name):
             # Switched off, deleted in LeStash, or renamed: take the old shelf away
-            if shelf.external_id:
-                res.removed = _forget(conn, shelf.external_id, shelf.external_name, when)
+            # By the recorded id, and by the id it would have under its old or current
+            # name, so a write that landed unrecorded is taken off too
+            names = [shelf.external_name] + ([] if shelf.shown else [shelf.name])
+            ids = {shelf.external_id} | {shelf_id(shelf, n) for n in names if n}
+            res.removed = sum(_forget(conn, i, when) for i in sorted(filter(None, ids)))
             res.external_id = res.external_name = None
             if not shelf.shown:
                 continue
