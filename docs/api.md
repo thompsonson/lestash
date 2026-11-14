@@ -321,8 +321,21 @@ Set what bylines call a person: `{ "short_name": "Matt" }`, up to 40 characters.
 List all collections.
 
 ```json
-[{ "id": 1, "name": "Thesis", "description": "...", "item_count": 15, "created_at": "..." }]
+[{ "id": 1, "name": "Thesis", "description": "...", "item_count": 15, "created_at": "...", "kobo": null }]
 ```
+
+`kobo` is null for a collection never shown on the Kobo. Otherwise (#315):
+
+```json
+{ "shown": true, "on": 19, "waiting": 2, "missing": 2,
+  "status": "19 on the Kobo · 2 waiting · 2 not on the Kobo",
+  "last_written": "2026-11-14T13:00:00Z", "error": null }
+```
+
+- `on`: books written to the Kobo and still in the collection.
+- `waiting`: books to add or remove at the next plug-in.
+- `missing`: items with no copy on the Kobo. A Kobo book counts as itself; another item through a confirmed `alternate_of` link to one.
+- `error`: why the last write left this collection out, such as a collection of the same name made on the Kobo.
 
 ---
 
@@ -337,9 +350,9 @@ Create a collection.
 
 ### `GET /api/collections/{collection_id}`
 
-Get a collection with all its items.
+Get a collection with all its items, in reading order (#317): items with a place first, then the rest, newest first.
 
-**Response:** `{ id, name, description, items: ItemResponse[], created_at }`
+**Response:** `{ id, name, description, items: ItemResponse[], created_at, kobo }`
 
 ---
 
@@ -359,7 +372,7 @@ Delete a collection. Items are NOT deleted. (status 204)
 
 ### `POST /api/collections/{collection_id}/items`
 
-Add an item to a collection. Duplicates are silently ignored.
+Add an item to a collection, at the end of its reading order. Duplicates are silently ignored.
 
 **Request:** `{ "item_id": 123, "note": "optional annotation" }`
 **Response:** Updated `CollectionResponse` (status 201)
@@ -369,6 +382,24 @@ Add an item to a collection. Duplicates are silently ignored.
 ### `DELETE /api/collections/{collection_id}/items/{item_id}`
 
 Remove an item from a collection. (status 204)
+
+---
+
+### `PUT /api/collections/{collection_id}/items/{item_id}`
+
+Move an item in the collection's reading order (#317). The rest are numbered around it.
+
+**Request:** `{ "position": 1 }`: 1 is first; past the end puts it last; below 1 is `422`.
+**Response:** `CollectionResponse`; `404` if the item is not in the collection.
+
+---
+
+### `PUT /api/collections/{collection_id}/kobo`
+
+Show the collection on the Kobo, or take it off (#315). The Kobo is written at its next plug-in.
+
+**Request:** `{ "shown": true }`
+**Response:** `CollectionResponse`, with its `kobo` status.
 
 ---
 

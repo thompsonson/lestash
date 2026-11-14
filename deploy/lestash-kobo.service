@@ -1,5 +1,5 @@
 [Unit]
-Description=Snapshot the Kobo when it is plugged in, then import it into LeStash
+Description=Snapshot the Kobo when it is plugged in, import it, and write its collections
 # Started by udev (deploy/99-lestash-kobo.rules). Stops if the Kobo is unplugged mid-copy;
 # the next snapshot sweeps what a stopped one left behind.
 BindsTo=dev-disk-by\x2dlabel-KOBOeReader.device
@@ -20,8 +20,13 @@ ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonso
 # lock, so they run one after the other.
 ExecStart=/bin/sh -c '/usr/bin/systemctl --user start --no-block "lestash-kobo-sync@$(date +%%s%%N).service"'
 # Unmount (only if this unit mounted it), so the Kobo can be unplugged safely. umount
-# does not eject: the Kobo may stay on its Connected screen until unplugged.
-ExecStart=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/mounted" ]; then /usr/bin/umount /media/kobo && rm "$RUNTIME_DIRECTORY/mounted"; fi'
+# does not eject: the Kobo may stay on its Connected screen until unplugged. The "ours"
+# flag lets the next step write only to a Kobo this unit mounted.
+ExecStart=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/mounted" ]; then /usr/bin/umount /media/kobo && rm "$RUNTIME_DIRECTORY/mounted" && touch "$RUNTIME_DIRECTORY/ours"; fi'
+# Write the collections shown on the Kobo (K8, #315), after the snapshot, which is the
+# backup. It mounts /media/kobo-rw only when something changes, checks the database,
+# and unmounts. A failure fails this unit and is logged in Settings → Sources.
+ExecStart=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/ours" ]; then rm "$RUNTIME_DIRECTORY/ours"; exec /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo write-collections --mount; fi'
 # The same when a step failed
 ExecStopPost=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/mounted" ] && /usr/bin/mountpoint -q /media/kobo; then /usr/bin/umount /media/kobo; fi'
 WorkingDirectory=%h/Projects/thompsonson/lestash

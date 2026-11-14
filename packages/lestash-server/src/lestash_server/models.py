@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MediaResponse(BaseModel):
@@ -265,6 +265,18 @@ class CollectionCreate(BaseModel):
     description: str | None = None
 
 
+class CollectionKobo(BaseModel):
+    """Whether a collection is shown on the Kobo, and how far the Kobo is from it (#315)."""
+
+    shown: bool
+    on: int = 0
+    waiting: int = 0
+    missing: int = 0
+    status: str = ""  # "19 on the Kobo · 2 waiting · 2 not on the Kobo"
+    last_written: str | None = None
+    error: str | None = None
+
+
 class CollectionResponse(BaseModel):
     """Collection summary."""
 
@@ -273,23 +285,37 @@ class CollectionResponse(BaseModel):
     description: str | None = None
     item_count: int = 0
     created_at: datetime | None = None
+    kobo: CollectionKobo | None = None  # None: never shown on the Kobo
 
 
 class CollectionDetailResponse(BaseModel):
-    """Collection with its items."""
+    """Collection with its items, in reading order (#317)."""
 
     id: int
     name: str
     description: str | None = None
     items: list[ItemResponse]
     created_at: datetime | None = None
+    kobo: CollectionKobo | None = None
 
 
 class CollectionItemAdd(BaseModel):
-    """Request to add an item to a collection."""
+    """Request to add an item to a collection, at the end of its reading order."""
 
     item_id: int
     note: str | None = None
+
+
+class CollectionItemMove(BaseModel):
+    """Request to move an item in a collection's reading order; 1 is first."""
+
+    position: int = Field(ge=1)
+
+
+class CollectionKoboSwitch(BaseModel):
+    """Show a collection on the Kobo, or take it off, at the next plug-in."""
+
+    shown: bool
 
 
 class ImportResponse(BaseModel):

@@ -1,6 +1,9 @@
 """Collection API endpoints."""
 
+import sqlite3
+
 from fastapi import APIRouter, HTTPException
+from lestash.core.collections import KOBO, ORDER_SQL, add_item, kobo_status, move_item, set_shown
 from lestash.models.item import Item
 
 from lestash_server.deps import get_db
@@ -9,10 +12,49 @@ from lestash_server.models import (
     CollectionCreate,
     CollectionDetailResponse,
     CollectionItemAdd,
+    CollectionItemMove,
+    CollectionKobo,
+    CollectionKoboSwitch,
     CollectionResponse,
 )
 
 router = APIRouter(prefix="/api/collections", tags=["collections"])
+
+
+def _kobo(conn: sqlite3.Connection, collection_id: int) -> CollectionKobo | None:
+    st = kobo_status(conn, collection_id)
+    if st is None:
+        return None
+    return CollectionKobo(
+        shown=st.shown,
+        on=st.on,
+        waiting=st.waiting,
+        missing=st.missing,
+        status=st.text(),
+        last_written=st.last_written,
+        error=st.error,
+    )
+
+
+def _summary(conn: sqlite3.Connection, coll: sqlite3.Row) -> CollectionResponse:
+    item_count = conn.execute(
+        "SELECT COUNT(*) FROM collection_items WHERE collection_id = ?", (coll["id"],)
+    ).fetchone()[0]
+    return CollectionResponse(
+        id=coll["id"],
+        name=coll["name"],
+        description=coll["description"],
+        item_count=item_count,
+        created_at=coll["created_at"],
+        kobo=_kobo(conn, coll["id"]),
+    )
+
+
+def _collection(conn: sqlite3.Connection, collection_id: int) -> sqlite3.Row:
+    coll = conn.execute("SELECT * FROM collections WHERE id = ?", (collection_id,)).fetchone()
+    if not coll:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return coll
 
 
 @router.get("", response_model=list[CollectionResponse])
@@ -36,6 +78,7 @@ def list_collections():
                 description=r["description"],
                 item_count=r["item_count"],
                 created_at=r["created_at"],
+                kobo=_kobo(conn, r["id"]),
             )
             for r in rows
         ]
@@ -67,11 +110,11 @@ def get_collection(collection_id: int):
             raise HTTPException(status_code=404, detail="Collection not found")
 
         item_rows = conn.execute(
-            """
+            f"""
             SELECT items.* FROM items
             JOIN collection_items ci ON items.id = ci.item_id
             WHERE ci.collection_id = ?
-            ORDER BY ci.added_at DESC
+            ORDER BY {ORDER_SQL}
             """,
             (collection_id,),
         ).fetchall()
@@ -84,6 +127,7 @@ def get_collection(collection_id: int):
             description=row["description"],
             items=items,
             created_at=row["created_at"],
+            kobo=_kobo(conn, collection_id),
         )
 
 
@@ -138,11 +182,7 @@ def add_item_to_collection(collection_id: int, body: CollectionItemAdd):
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
 
-        conn.execute(
-            "INSERT OR IGNORE INTO collection_items"
-            " (collection_id, item_id, note) VALUES (?, ?, ?)",
-            (collection_id, body.item_id, body.note),
-        )
+        add_item(conn, collection_id, body.item_id, body.note)
         conn.execute(
             "UPDATE collections SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (collection_id,),
@@ -176,3 +216,28 @@ def remove_item_from_collection(collection_id: int, item_id: int):
             (collection_id,),
         )
         conn.commit()
+
+
+@router.put("/{collection_id}/items/{item_id}", response_model=CollectionResponse)
+def move_collection_item(collection_id: int, item_id: int, body: CollectionItemMove):
+    """Move an item in the collection's reading order (#317); 1 is first."""
+    with get_db() as conn:
+        coll = _collection(conn, collection_id)
+        if not move_item(conn, collection_id, item_id, body.position):
+            raise HTTPException(status_code=404, detail="Item not in this collection")
+        conn.execute(
+            "UPDATE collections SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (collection_id,),
+        )
+        conn.commit()
+        return _summary(conn, coll)
+
+
+@router.put("/{collection_id}/kobo", response_model=CollectionResponse)
+def show_on_kobo(collection_id: int, body: CollectionKoboSwitch):
+    """Show the collection on the Kobo, or take it off, from the next plug-in (#315)."""
+    with get_db() as conn:
+        coll = _collection(conn, collection_id)
+        set_shown(conn, collection_id, KOBO, body.shown)
+        conn.commit()
+        return _summary(conn, coll)

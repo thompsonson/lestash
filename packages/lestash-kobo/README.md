@@ -36,13 +36,30 @@ Its page reads "not on the Kobo since …". The mark goes if the book comes back
 Notebooks (#202), PDF ink (#200), reading activity (#201) and removed highlights
 (#207) come later.
 
-## Commands
+## Collections on the Kobo (#315)
+
+You manage collections in LeStash; the Kobo shows the ones you switch on.
+
+- Switch one on with **Show on Kobo** on its page, or `lestash kobo show NAME`.
+- At each plug-in, after the snapshot, the unit runs `lestash kobo write-collections --mount`.
+  - It plans the write on a copy of the snapshot's database, and leaves the Kobo alone when nothing changes.
+  - It mounts `/media/kobo-rw`, checks the Kobo's database is the snapshot's copy, writes, runs `integrity_check`, and unmounts.
+  - If the check fails, it puts the snapshot's copy back.
+  - Each write is logged as `kobo-collections` in Settings → Sources.
+- Only Kobo books go on: a collection's Kobo items, and items linked to one by `alternate_of`.
+- A newly sideloaded book joins at the plug-in after the Kobo imports it.
+- Collections made on the Kobo are never read or changed. A LeStash collection with the same name is left out, with an error.
+- The Kobo keeps no order inside a collection; the reading order shows in LeStash only.
+
 
 ```bash
 lestash kobo snapshot                                 # copy the mounted Kobo
 lestash kobo snapshot --from DIR --taken-at ISO       # a saved copy, dated
 lestash kobo snapshots                                # list snapshots
 lestash sources sync kobo                             # import the newest snapshot
+lestash kobo collections                              # each collection shown, and its status
+lestash kobo show NAME / hide NAME                    # on or off the Kobo at the next plug-in
+lestash kobo write-collections --dry-run              # what the next write would change
 ```
 
 ## Config (`~/.config/lestash/config.toml`)
