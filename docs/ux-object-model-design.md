@@ -28,7 +28,7 @@ This document designs the screens from the ontology, not from the sources.
 | **Activity** | Something you did at a time: watched, liked, prompted, searched | `activities` | 85,754 over 2,196 days |
 | **File** | A recording, PDF, slide image or book file that an item holds | `item_media`, `blobs` | 4,703 |
 | **Topic** | A subject you tag items with | `tags` | 23 |
-| **Collection** | A set of items you put together, with a description | `collections` | 13 |
+| **Collection** | A set of items you put together, with a description, in a reading order | `collections`, `collection_items` | 25 (14 Nov 2026) |
 
 Not objects, and why:
 
@@ -89,7 +89,7 @@ What this means for screens:
 | Activity | ✗ open the day; ✗ filter by verb; ✓ (indirect) open the item |
 | File | ✓ play or open; ✗ download; ✗ jump to a slide; ✗ see which items share it |
 | Topic | ✓ filter the feed; ✗ open a topic page; ✗ rename or merge |
-| Collection | ✓ create, edit, add, remove; ✓ open; reorder not checked |
+| Collection | ✓ create, edit, add, remove; ✓ open; ✓ reorder (#317); ✓ show on Kobo (#315); ✗ remove from its page |
 
 ## A — Attributes
 
@@ -100,7 +100,7 @@ What this means for screens:
 | Activity | verb, item | time, source, context item | verb, date, item kind |
 | File | the file | type, size, version, extracted-text tool | type |
 | Topic | name | number of items | name, size |
-| Collection | name, description | number of items, updated | updated, name |
+| Collection | name, description, items in order | number of items, updated, on the Kobo or not, Kobo status, last written | updated, name |
 
 ## Navigation
 
