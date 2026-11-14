@@ -41,6 +41,7 @@ ENCODE_BATCH = 32
 # made the old index, known by its width.
 VEC_TABLE = "vec_items"
 NEXT_TABLE = "vec_items_next"
+LOG_SOURCE = "embeddings"  # rebuilds' rows in sync_log, shown in Settings → Sources
 EARLIER_MODELS = {384: "all-MiniLM-L6-v2"}
 
 # A top-level item's recipe; the others, and what gets a vector, are in embed_units.

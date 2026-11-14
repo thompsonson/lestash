@@ -154,7 +154,9 @@ Decided 13 Nov 2026 from the experiments (`search-experiments.md`, #303).
 - **A full rebuild can run on another machine:** `lestash embeddings rebuild --host computer`, or `[embeddings] host` in the config.
   - Like transcripts: units go over ssh in batches of 4,000, `embed_worker.py` embeds them there at low priority, and the vectors come back.
   - Only the units' text is sent. The host keeps the worker, its environment and a copy of the model, which needs no Hugging Face account there.
-  - If the host can't be reached, the rebuild runs here instead. `--host local` runs here anyway.
+  - If the host can't be reached, or a batch on it fails, the rebuild stops with an error (#309). It doesn't go on here, because pop-mini can get overloaded. `--host local` runs here on purpose.
+  - Batches already stored are kept, so the next rebuild goes on from them.
+  - Each rebuild is logged with the syncs, under `embeddings`. Settings → Sources shows how it ended, in the web UI and the app.
 - **Routine syncs** embed here, after each sync, as before. The refresh's line in the log gives the model, time and rate.
 
 ## Supersedes

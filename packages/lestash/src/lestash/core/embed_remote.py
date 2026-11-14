@@ -36,7 +36,16 @@ SSH_OPTIONS = (
 
 
 class HostUnavailable(RuntimeError):
-    """The host can't be reached or set up: rebuild here instead."""
+    """The host can't be reached or set up, or a batch on it failed (#309).
+
+    The rebuild stops here: it doesn't go on on this machine, which can get
+    overloaded. ``counts`` holds what was done first; those vectors are kept, so
+    the next rebuild goes on from them.
+    """
+
+    def __init__(self, message: str, counts: emb.RefreshCounts | None = None) -> None:
+        super().__init__(message)
+        self.counts = counts or emb.RefreshCounts()
 
 
 def model_folder() -> Path:
@@ -82,8 +91,8 @@ def rebuild_on(
     progress_callback: typing.Callable[[int, int], None] | None = None,
 ) -> emb.RefreshCounts:
     """A whole refresh, with the embedding done on ``host``. Raises HostUnavailable
-    if the host can't be reached or set up, or a batch fails: the batches already
-    back are kept, and a refresh here goes on from them."""
+    if the host can't be reached or set up, or a batch fails or can't be stored:
+    the batches already stored are kept, and the error carries their counts."""
     started = time.monotonic()
     remote = _Host(host)
     q = shlex.quote
@@ -98,7 +107,7 @@ def rebuild_on(
         # -L: the cache's files are links into its blob store
         remote.copy("-L", "--delete", f"{model}/", f"{host}:{root}/model/", timeout=3600)
     except Exception as e:  # ssh, rsync, or the model's download
-        raise HostUnavailable(f"{host}: {_tail(e)}") from e
+        raise HostUnavailable(f"{host} unavailable: {_tail(e)}") from e
 
     todo, removed = emb.plan_refresh(conn)
     counts = emb.RefreshCounts(removed=removed)
@@ -110,10 +119,13 @@ def rebuild_on(
         batch = todo[start : start + CHUNK]
         try:
             vectors = _run_batch(remote, root, [(i, text) for i, _, text in batch], threads)
-        except (RuntimeError, ValueError, OSError) as e:
+            counts.embedded += emb.store_vectors(conn, batch, vectors)
+        except Exception as e:  # the run, its files (a malformed done.json), or the store
             logger.warning("Embedding on %s stopped after %d units: %s", host, done, e)
-            raise HostUnavailable(f"{host} stopped after {done} of {len(todo)}: {e}") from e
-        counts.embedded += emb.store_vectors(conn, batch, vectors)
+            counts.pending = len(todo) - done
+            counts.seconds = time.monotonic() - started
+            message = f"{host} stopped after {done} of {len(todo)}: {_tail(e)}"
+            raise HostUnavailable(message, counts) from e
         done += len(batch)
         if progress_callback:
             progress_callback(done, len(todo))

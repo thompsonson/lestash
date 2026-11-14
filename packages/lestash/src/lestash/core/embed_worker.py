@@ -44,14 +44,17 @@ def read_vectors(folder: Path, count: int) -> list[list[float]]:
     """The worker's vectors, checked against what was sent."""
     from array import array
 
-    done = json.loads((folder / "out" / "done.json").read_text())
-    if done["count"] != count:
-        raise ValueError(f"{done['count']} vectors for {count} units")
+    try:
+        done = json.loads((folder / "out" / "done.json").read_text())
+        sent, dim = int(done["count"]), int(done["dim"])
+    except (ValueError, KeyError, TypeError) as e:
+        raise ValueError(f"done.json can't be read: {e!r}") from e
+    if sent != count:
+        raise ValueError(f"{sent} vectors for {count} units")
     flat = array("f")
     flat.frombytes((folder / "out" / "vectors.f32").read_bytes())
     if sys.byteorder != "little":
         flat.byteswap()
-    dim = int(done["dim"])
     if len(flat) != count * dim:
         raise ValueError(f"{len(flat)} floats for {count} vectors of {dim}")
     return [flat[i * dim : (i + 1) * dim].tolist() for i in range(count)]

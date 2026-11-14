@@ -83,12 +83,15 @@ def rebuild(
     ),
     threads: int | None = typer.Option(None, "--threads", help="Threads on the host"),
 ) -> None:
-    """Embed every item that is new or changed, with no time limit: on the host named
-    by [embeddings] host if it can be reached, else here."""
+    """Embed every item that is new or changed, with no time limit, on the host named
+    by [embeddings] host. If it can't be reached, or stops, the rebuild stops with an
+    error rather than go on here (#309). Each run is logged with the syncs, under
+    'embeddings', so the web UI and the app show how it ended."""
     from lestash.core.config import Config
     from lestash.core.database import get_connection
     from lestash.core.embed_remote import HostUnavailable, rebuild_on
-    from lestash.core.embeddings import load_vec_extension, refresh_embeddings
+    from lestash.core.embeddings import LOG_SOURCE, load_vec_extension, refresh_embeddings
+    from lestash.core.sync import SyncAlreadyRunning, SyncRun
 
     config = Config.load()
     settings = config.get_plugin_config("embeddings")
@@ -99,20 +102,32 @@ def rebuild(
 
     with get_connection(config) as conn:
         load_vec_extension(conn)
+        try:
+            run = SyncRun.start(conn, LOG_SOURCE)
+        except SyncAlreadyRunning:
+            console.print("[red]A rebuild is already running.[/red]")
+            raise typer.Exit(1) from None
 
-        with Progress(console=console) as progress:
+        with run, Progress(console=console) as progress:
             task = progress.add_task("Embedding items...", total=None)
 
             def on_progress(done: int, total: int) -> None:
                 progress.update(task, completed=done, total=total)
 
-            counts = None
-            if host:
-                try:
+            try:
+                if host:
                     counts = rebuild_on(conn, host, threads=threads, progress_callback=on_progress)
-                except HostUnavailable as e:
-                    console.print(f"[yellow]{e}; embedding the rest here.[/yellow]")
-            if counts is None:
-                counts = refresh_embeddings(conn, progress_callback=on_progress)
+                else:
+                    counts = refresh_embeddings(conn, progress_callback=on_progress)
+            except HostUnavailable as e:
+                run.finish("failed", items_added=e.counts.embedded, items_updated=0, error=str(e))
+                progress.stop()
+                console.print(f"[red]Rebuild stopped: {e}[/red]")
+                console.print(
+                    f"{e.counts.embedded} item(s) embedded first are kept;"
+                    f" run it again when {host} is back."
+                )
+                raise typer.Exit(1) from None
+            run.finish("completed", items_added=counts.embedded, items_updated=0)
 
     _report(counts)

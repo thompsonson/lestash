@@ -5,6 +5,7 @@ import threading
 
 from fastapi import APIRouter, HTTPException
 from lestash.core.embeddings import (
+    LOG_SOURCE,
     embed_query,
     ensure_vec_table,
     get_embedding_stats,
@@ -73,10 +74,14 @@ def trigger_rebuild():
             _rebuild_running = True
             try:
                 from lestash.core.database import get_connection
+                from lestash.core.sync import SyncRun
 
                 with get_connection(config) as conn:
                     load_vec_extension(conn)
-                    count = rebuild_embeddings(conn)
+                    # Logged with the syncs, so Settings → Sources shows how it ended
+                    with SyncRun.start(conn, LOG_SOURCE) as run:
+                        count = rebuild_embeddings(conn)
+                        run.finish("completed", items_added=count, items_updated=0)
                     logger.info(f"Rebuild complete: {count} items embedded")
             except Exception:
                 logger.exception("Embedding rebuild failed")
