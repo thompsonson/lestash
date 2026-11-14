@@ -5,6 +5,7 @@ import threading
 
 from fastapi import APIRouter, HTTPException
 from lestash.core.embeddings import (
+    LOG_SOURCE,
     embed_query,
     ensure_vec_table,
     get_embedding_stats,
@@ -62,29 +63,52 @@ def trigger_rebuild():
     """Trigger embedding rebuild in background thread."""
     global _rebuild_running  # noqa: PLW0603
 
-    if _rebuild_running:
+    # Taken here, released by the thread: a second request never waits behind it
+    if not _rebuild_lock.acquire(blocking=False):
         return RebuildResponse(status="already_running", message="Rebuild is already in progress")
+    _rebuild_running = True
 
     config = get_config()  # the server's database, read before the thread starts
+    # Set once the thread holds the sync log's lock, or has given up
+    took_lock = threading.Event()
+    outcome = {"status": "starting"}  # still starting after the wait: answer started
 
     def _do_rebuild():
         global _rebuild_running  # noqa: PLW0603
-        with _rebuild_lock:
-            _rebuild_running = True
-            try:
-                from lestash.core.database import get_connection
+        try:
+            from lestash.core.database import get_connection
+            from lestash.core.sync import SyncAlreadyRunning, SyncRun
 
-                with get_connection(config) as conn:
-                    load_vec_extension(conn)
+            with get_connection(config) as conn:
+                load_vec_extension(conn)
+                try:
+                    # Logged with the syncs, so Settings → Sources shows how it ended
+                    run = SyncRun.start(conn, LOG_SOURCE)
+                except SyncAlreadyRunning:  # a rebuild from the CLI holds it
+                    outcome["status"] = "already_running"
+                    return
+                outcome["status"] = "started"
+                took_lock.set()
+                with run:
                     count = rebuild_embeddings(conn)
-                    logger.info(f"Rebuild complete: {count} items embedded")
-            except Exception:
-                logger.exception("Embedding rebuild failed")
-            finally:
-                _rebuild_running = False
+                    run.finish("completed", items_added=count, items_updated=0)
+                logger.info(f"Rebuild complete: {count} items embedded")
+        except Exception:
+            logger.exception("Embedding rebuild failed")
+            if outcome["status"] == "starting":
+                outcome["status"] = "failed"
+        finally:
+            _rebuild_running = False
+            _rebuild_lock.release()
+            took_lock.set()
 
     thread = threading.Thread(target=_do_rebuild, daemon=True)
     thread.start()
+    took_lock.wait(timeout=30)
+    if outcome["status"] == "already_running":
+        return RebuildResponse(status="already_running", message="Rebuild is already in progress")
+    if outcome["status"] == "failed":
+        return RebuildResponse(status="failed", message="Rebuild could not start; see the log")
 
     return RebuildResponse(status="started", message="Rebuild started in background")
 

@@ -240,6 +240,15 @@ def test_the_worker_files_round_trip(tmp_path):
         embed_worker.read_vectors(tmp_path, 3)
 
 
+def test_a_malformed_done_file_reads_as_a_value_error(tmp_path):
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "vectors.f32").write_bytes(b"")
+    for text in ("{}", "[1]", '{"count": "x", "dim": 4}', "not json"):
+        (tmp_path / "out" / "done.json").write_text(text)
+        with pytest.raises(ValueError, match="done.json can't be read"):
+            embed_worker.read_vectors(tmp_path, 1)
+
+
 class _FakeHost:
     def __init__(self, host):
         self.host = host
@@ -310,10 +319,11 @@ def test_a_batch_that_fails_keeps_the_batches_back_and_raises(conn, monkeypatch,
     monkeypatch.setattr(embed_remote, "model_folder", lambda: tmp_path)
     monkeypatch.setattr(embed_remote, "CHUNK", 1)
 
-    with pytest.raises(embed_remote.HostUnavailable, match="stopped after 1 of 2"):
+    with pytest.raises(embed_remote.HostUnavailable, match="stopped after 1 of 2") as failed:
         embed_remote.rebuild_on(conn, "computer")
+    assert (failed.value.counts.embedded, failed.value.counts.pending) == (1, 1)
     assert _ids(conn, emb.NEXT_TABLE) == {second}  # newest first
-    # A refresh here goes on and swaps
+    # The next run goes on from the batch kept, and swaps
     assert emb.refresh_embeddings(conn).swapped == 2
     assert first in _ids(conn, "vec_items")
 
@@ -332,3 +342,93 @@ def test_a_model_that_cannot_be_fetched_counts_as_the_host_unavailable(conn, mon
 def test_a_host_name_that_reads_as_an_option_is_refused():
     with pytest.raises(embed_remote.HostUnavailable):
         embed_remote._Host("-oProxyCommand=x")
+
+
+def test_a_batch_that_cannot_be_stored_raises_with_the_counts(conn, monkeypatch, tmp_path):
+    _add(conn, "a", "One", "text")
+    monkeypatch.setattr(embed_remote, "_Host", _FakeHost)
+    monkeypatch.setattr(
+        embed_remote, "_run_batch", lambda remote, root, batch, threads: [[0.5, 0.5]] * len(batch)
+    )
+    monkeypatch.setattr(embed_remote, "model_folder", lambda: tmp_path)
+
+    with pytest.raises(embed_remote.HostUnavailable, match="stopped after 0 of 1") as failed:
+        embed_remote.rebuild_on(conn, "computer")
+    assert failed.value.counts.embedded == 0
+
+
+# The rebuild command: an error, never a rebuild here, and a row in the sync log (#309)
+
+
+def _rebuild(test_db, monkeypatch, *args):
+    from lestash.cli.embeddings import app
+    from lestash.core.config import Config
+    from typer.testing import CliRunner
+
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: test_db))
+    return CliRunner().invoke(app, ["rebuild", *args])
+
+
+def _log(test_db):
+    with get_connection(test_db) as conn:
+        return [
+            tuple(row)
+            for row in conn.execute(
+                "SELECT status, items_added, error_message FROM sync_log "
+                "WHERE source_type = ? ORDER BY id",
+                (emb.LOG_SOURCE,),
+            )
+        ]
+
+
+def test_a_host_that_is_down_stops_the_rebuild_with_an_error(test_db, monkeypatch, conn):
+    _add(conn, "a", "One", "text")
+
+    def down(conn, host, **kwargs):
+        raise embed_remote.HostUnavailable(f"{host} unavailable: No route to host")
+
+    def never(*args, **kwargs):
+        raise AssertionError("the rebuild went on here")
+
+    monkeypatch.setattr(embed_remote, "rebuild_on", down)
+    monkeypatch.setattr(emb, "refresh_embeddings", never)
+
+    result = _rebuild(test_db, monkeypatch, "--host", "computer")
+
+    assert result.exit_code == 1
+    assert "Rebuild stopped: computer unavailable: No route to host" in result.output
+    assert _log(test_db) == [("failed", 0, "computer unavailable: No route to host")]
+
+
+def test_a_host_that_stops_midway_logs_what_was_kept(test_db, monkeypatch, conn):
+    def stops(conn, host, **kwargs):
+        kept = emb.RefreshCounts(embedded=4000, pending=100)
+        raise embed_remote.HostUnavailable(f"{host} stopped after 4000 of 4100: Killed", kept)
+
+    monkeypatch.setattr(embed_remote, "rebuild_on", stops)
+
+    result = _rebuild(test_db, monkeypatch, "--host", "computer")
+
+    assert result.exit_code == 1
+    assert "4000 item(s) embedded first are kept" in result.output
+    assert _log(test_db) == [("failed", 4000, "computer stopped after 4000 of 4100: Killed")]
+
+
+def test_a_rebuild_that_finishes_is_logged_as_completed(test_db, monkeypatch, conn):
+    monkeypatch.setattr(
+        embed_remote, "rebuild_on", lambda conn, host, **kw: emb.RefreshCounts(embedded=7)
+    )
+
+    result = _rebuild(test_db, monkeypatch, "--host", "computer")
+
+    assert result.exit_code == 0, result.output
+    assert _log(test_db) == [("completed", 7, None)]
+
+
+def test_host_local_rebuilds_here_and_is_logged(test_db, monkeypatch, conn):
+    _add(conn, "a", "One", "text")
+
+    result = _rebuild(test_db, monkeypatch, "--host", "local")
+
+    assert result.exit_code == 0, result.output
+    assert _log(test_db) == [("completed", 1, None)]

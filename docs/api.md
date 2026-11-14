@@ -477,7 +477,7 @@ Embedding coverage stats.
 
 ### `POST /api/embeddings/rebuild`
 
-Embed, in the background, every item that is new or changed, and drop vectors of items gone (the same as `lestash embeddings refresh`, with no time limit). Prevents concurrent rebuilds.
+Embed, in the background, every item that is new or changed, and drop vectors of items gone (the same as `lestash embeddings refresh`, with no time limit). Prevents concurrent rebuilds. Each run is logged in the sync history under `embeddings` (see `GET /api/sources/status`).
 
 ```json
 { "status": "started", "message": "Rebuild started in background" }
