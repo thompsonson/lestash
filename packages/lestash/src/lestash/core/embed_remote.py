@@ -95,6 +95,9 @@ def rebuild_on(
     q = shlex.quote
     try:
         model = model_folder()
+    except Exception as e:  # fetched here, so this machine's fault (#311)
+        raise emb.RefreshStopped(f"the model can't be fetched here: {_tail(e)}") from e
+    try:
         home = remote.ssh('printf %s "$HOME"').strip()
         root = f"{home}/{REMOTE_ROOT}"
         remote.ssh(f"mkdir -p {q(root)}/jobs {q(root)}/model")
@@ -103,7 +106,7 @@ def rebuild_on(
         remote.ssh(f"{lock} python3 -I {q(root)}/embed_worker.py setup {q(root)}", timeout=1800)
         # -L: the cache's files are links into its blob store
         remote.copy("-L", "--delete", f"{model}/", f"{host}:{root}/model/", timeout=3600)
-    except Exception as e:  # ssh, rsync, or the model's download
+    except Exception as e:  # ssh or rsync
         raise HostUnavailable(f"{host} unavailable: {_tail(e)}") from e
 
     todo, removed = emb.plan_refresh(conn)

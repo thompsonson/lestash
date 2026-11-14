@@ -328,15 +328,16 @@ def test_a_batch_that_fails_keeps_the_batches_back_and_raises(conn, monkeypatch,
     assert first in _ids(conn, "vec_items")
 
 
-def test_a_model_that_cannot_be_fetched_counts_as_the_host_unavailable(conn, monkeypatch):
+def test_a_model_that_cannot_be_fetched_here_does_not_blame_the_host(conn, monkeypatch):
     def no_model():
         raise OSError("gated repo")
 
     monkeypatch.setattr(embed_remote, "_Host", _FakeHost)
     monkeypatch.setattr(embed_remote, "model_folder", no_model)
 
-    with pytest.raises(embed_remote.HostUnavailable, match="gated repo"):
+    with pytest.raises(emb.RefreshStopped, match="can't be fetched here: gated repo") as failed:
         embed_remote.rebuild_on(conn, "computer")
+    assert not isinstance(failed.value, embed_remote.HostUnavailable)
 
 
 def test_a_host_name_that_reads_as_an_option_is_refused():
