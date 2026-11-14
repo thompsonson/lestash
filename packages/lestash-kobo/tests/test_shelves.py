@@ -210,3 +210,28 @@ def test_status_and_switch_commands(device, kobo, test_db) -> None:
     assert shown.exit_code == 0, shown.output
     assert "0 Intro: on; 0 on the Kobo · 2 waiting" in runner.invoke(app, ["collections"]).output
     assert runner.invoke(app, ["show", "missing"]).exit_code == 1
+
+
+def test_a_failed_mount_is_logged_not_a_traceback(device, kobo, test_db, monkeypatch) -> None:
+    import subprocess
+
+    from lestash_kobo import collections_cli
+
+    store, cid = kobo
+    _show(test_db, cid)
+
+    def fake_run(cmd, **kw):
+        code = 1 if cmd[0] == collections_cli.MOUNTPOINT else 32
+        return subprocess.CompletedProcess(cmd, code, "", "mount: permission denied")
+
+    monkeypatch.setattr(collections_cli.subprocess, "run", fake_run)
+    result = _write(device, "--mount")
+    assert result.exit_code == 1, result.output
+    assert "Nothing written: could not mount" in result.output
+    with get_connection(test_db) as conn:
+        st = kobo_status(conn, cid)
+        (status,) = conn.execute(
+            "SELECT status FROM sync_log WHERE source_type = 'kobo-collections'"
+        ).fetchone()
+    assert st and st.error and "could not mount" in st.error
+    assert status == "failed"

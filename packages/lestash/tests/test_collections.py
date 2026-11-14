@@ -68,12 +68,17 @@ def test_move_puts_an_item_in_place_and_numbers_the_rest(conn) -> None:
     assert not move_item(conn, c, 12345, 1)
 
 
-def test_items_added_before_positions_come_after_placed_ones(conn) -> None:
+def test_an_item_added_to_an_older_collection_goes_last(conn) -> None:
     c = _collection(conn)
-    old, new = _item(conn, "arxiv", "1"), _item(conn, "arxiv", "2")
-    conn.execute("INSERT INTO collection_items (collection_id, item_id) VALUES (?, ?)", (c, old))
+    first, second, new = (_item(conn, "arxiv", n) for n in "123")
+    for i, when in ((first, "2026-01-01"), (second, "2026-02-01")):
+        conn.execute(
+            "INSERT INTO collection_items (collection_id, item_id, added_at) VALUES (?, ?, ?)",
+            (c, i, when),
+        )
+    assert ordered_item_ids(conn, c) == [second, first]  # as before: newest first
     add_item(conn, c, new)
-    assert ordered_item_ids(conn, c) == [new, old]
+    assert ordered_item_ids(conn, c) == [second, first, new]
 
 
 def test_kobo_books_are_kobo_items_or_their_alternates(conn) -> None:

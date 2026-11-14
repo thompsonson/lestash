@@ -39,7 +39,16 @@ def ordered_item_ids(conn: sqlite3.Connection, collection_id: int) -> list[int]:
 def add_item(
     conn: sqlite3.Connection, collection_id: int, item_id: int, note: str | None = None
 ) -> bool:
-    """Add an item at the end of the reading order. False if it was already there."""
+    """Add an item at the end of the reading order. False if it was already there.
+
+    Items from before positions (#317) are numbered first, in the order they show, so
+    the new one goes after them rather than before.
+    """
+    if conn.execute(
+        "SELECT 1 FROM collection_items WHERE collection_id = ? AND position IS NULL LIMIT 1",
+        (collection_id,),
+    ).fetchone():
+        _number(conn, collection_id, ordered_item_ids(conn, collection_id))
     cur = conn.execute(
         "INSERT OR IGNORE INTO collection_items (collection_id, item_id, note, position)"
         " VALUES (?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM collection_items"
@@ -59,11 +68,15 @@ def move_item(conn: sqlite3.Connection, collection_id: int, item_id: int, positi
         return False
     ids.remove(item_id)
     ids.insert(max(0, min(position - 1, len(ids))), item_id)
+    _number(conn, collection_id, ids)
+    return True
+
+
+def _number(conn: sqlite3.Connection, collection_id: int, ids: list[int]) -> None:
     conn.executemany(
         "UPDATE collection_items SET position = ? WHERE collection_id = ? AND item_id = ?",
         [(n, collection_id, i) for n, i in enumerate(ids, 1)],
     )
-    return True
 
 
 def set_shown(conn: sqlite3.Connection, collection_id: int, place: str, shown: bool) -> None:

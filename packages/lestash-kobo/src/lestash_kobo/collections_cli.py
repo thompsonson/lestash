@@ -173,7 +173,9 @@ def _write(
         return kobo_shelf.write(store, the_plan, shelves, root)
     if _mounted(RO_MOUNT) or _mounted(root):
         raise OSError(f"the Kobo is already mounted ({RO_MOUNT} or {root}); unmount it first")
-    subprocess.run([MOUNT, str(root)], check=True, capture_output=True)
+    mounted = subprocess.run([MOUNT, str(root)], check=False, capture_output=True, text=True)
+    if mounted.returncode != 0:
+        raise OSError(f"could not mount {root}: {mounted.stderr.strip() or mounted.returncode}")
     try:
         return kobo_shelf.write(store, the_plan, shelves, root)
     finally:
