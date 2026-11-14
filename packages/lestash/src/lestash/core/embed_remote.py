@@ -35,17 +35,14 @@ SSH_OPTIONS = (
 )
 
 
-class HostUnavailable(RuntimeError):
+class HostUnavailable(emb.RefreshStopped):
     """The host can't be reached or set up, or a batch on it failed (#309).
 
     The rebuild stops here: it doesn't go on on this machine, which can get
     overloaded. ``counts`` holds what was done first; those vectors are kept, so
-    the next rebuild goes on from them.
+    the next rebuild goes on from them. A fault on this machine, such as storing a
+    batch, raises ``RefreshStopped`` instead (#311).
     """
-
-    def __init__(self, message: str, counts: emb.RefreshCounts | None = None) -> None:
-        super().__init__(message)
-        self.counts = counts or emb.RefreshCounts()
 
 
 def model_folder() -> Path:
@@ -119,20 +116,34 @@ def rebuild_on(
         batch = todo[start : start + CHUNK]
         try:
             vectors = _run_batch(remote, root, [(i, text) for i, _, text in batch], threads)
-            counts.embedded += emb.store_vectors(conn, batch, vectors)
-        except Exception as e:  # the run, its files (a malformed done.json), or the store
+        except Exception as e:  # the run, or its files (a malformed done.json)
             logger.warning("Embedding on %s stopped after %d units: %s", host, done, e)
-            counts.pending = len(todo) - done
-            counts.seconds = time.monotonic() - started
             message = f"{host} stopped after {done} of {len(todo)}: {_tail(e)}"
-            raise HostUnavailable(message, counts) from e
+            raise HostUnavailable(message, _so_far(counts, todo, done, started)) from e
+        try:
+            counts.embedded += emb.store_vectors(conn, batch, vectors)
+        except Exception as e:  # this machine's fault, not the host's
+            message = f"storing here stopped after {done} of {len(todo)}: {_tail(e)}"
+            raise emb.RefreshStopped(message, _so_far(counts, todo, done, started)) from e
         done += len(batch)
         if progress_callback:
             progress_callback(done, len(todo))
 
     counts.pending = len(todo) - done
     if not counts.pending:
-        counts.swapped = emb.swap_in_next(conn)
+        try:
+            counts.swapped = emb.swap_in_next(conn)
+        except Exception as e:
+            message = f"swapping in the new index failed: {_tail(e)}"
+            raise emb.RefreshStopped(message, _so_far(counts, todo, done, started)) from e
+    counts.seconds = time.monotonic() - started
+    return counts
+
+
+def _so_far(
+    counts: emb.RefreshCounts, todo: list[tuple[int, str, str]], done: int, started: float
+) -> emb.RefreshCounts:
+    counts.pending = len(todo) - done
     counts.seconds = time.monotonic() - started
     return counts
 

@@ -409,6 +409,7 @@ def test_similar_items_leave_out_the_items_own_parts(client, seeded, monkeypatch
         conn.commit()
     monkeypatch.setattr(route, "load_vec_extension", lambda conn: None)
     monkeypatch.setattr(route, "ensure_vec_table", lambda conn: None)
+    monkeypatch.setattr(route, "stored_vector", lambda conn, item_id: None)
     monkeypatch.setattr(route, "embed_query", lambda conn, text: [0.0] * 384)
     monkeypatch.setattr(
         route, "search_similar", lambda conn, e, limit: [(item, 0), (part, 0.1), (other, 0.2)]
@@ -418,6 +419,33 @@ def test_similar_items_leave_out_the_items_own_parts(client, seeded, monkeypatch
     assert [i["id"] for i in resp.json()] == [other]
     resp = client.get(f"/api/embeddings/similar/{part}")
     assert [i["id"] for i in resp.json()] == [other]
+
+
+def test_similar_items_search_with_the_items_own_vector(client, seeded, monkeypatch):
+    """Its stored vector, made with the document prompt like the rest; no query
+    embedding (#307). An item without one is embedded as before."""
+    from lestash_server.routes import embeddings as route
+
+    with deps.get_db() as conn:
+        item, other = (r[0] for r in conn.execute("SELECT id FROM items LIMIT 2"))
+    stored = {item: [0.25] * 768}
+    searched, embedded = [], []
+
+    def search(conn, e, limit):
+        searched.append(e)
+        return [(other, 0.1)]
+
+    monkeypatch.setattr(route, "load_vec_extension", lambda conn: None)
+    monkeypatch.setattr(route, "ensure_vec_table", lambda conn: None)
+    monkeypatch.setattr(route, "stored_vector", lambda conn, item_id: stored.get(item_id))
+    monkeypatch.setattr(route, "embed_query", lambda conn, text: embedded.append(text) or [0.5])
+    monkeypatch.setattr(route, "search_similar", search)
+
+    assert [i["id"] for i in client.get(f"/api/embeddings/similar/{item}").json()] == [other]
+    assert searched == [[0.25] * 768] and embedded == []
+
+    client.get(f"/api/embeddings/similar/{other}")
+    assert searched[-1] == [0.5] and len(embedded) == 1
 
 
 def _chat_with_turns(conn):

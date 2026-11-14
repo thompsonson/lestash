@@ -4,8 +4,10 @@ import logging
 import threading
 
 from fastapi import APIRouter, HTTPException
+from lestash.core.database import BUSY_TIMEOUT_S
 from lestash.core.embeddings import (
     LOG_SOURCE,
+    RefreshStopped,
     embed_query,
     ensure_vec_table,
     get_embedding_stats,
@@ -13,6 +15,7 @@ from lestash.core.embeddings import (
     make_embed_text,
     rebuild_embeddings,
     search_similar,
+    stored_vector,
 )
 from lestash.models.item import Item
 from pydantic import BaseModel
@@ -68,7 +71,12 @@ def trigger_rebuild():
         return RebuildResponse(status="already_running", message="Rebuild is already in progress")
     _rebuild_running = True
 
-    config = get_config()  # the server's database, read before the thread starts
+    try:
+        config = get_config()  # the server's database, read before the thread starts
+    except BaseException:
+        _rebuild_running = False
+        _rebuild_lock.release()
+        raise
     # Set once the thread holds the sync log's lock, or has given up
     took_lock = threading.Event()
     outcome = {"status": "starting"}  # still starting after the wait: answer started
@@ -90,7 +98,13 @@ def trigger_rebuild():
                 outcome["status"] = "started"
                 took_lock.set()
                 with run:
-                    count = rebuild_embeddings(conn)
+                    try:
+                        count = rebuild_embeddings(conn)
+                    except RefreshStopped as e:  # what was stored first is kept (#311)
+                        run.finish(
+                            "failed", items_added=e.counts.embedded, items_updated=0, error=str(e)
+                        )
+                        raise
                     run.finish("completed", items_added=count, items_updated=0)
                 logger.info(f"Rebuild complete: {count} items embedded")
         except Exception:
@@ -102,9 +116,16 @@ def trigger_rebuild():
             _rebuild_lock.release()
             took_lock.set()
 
-    thread = threading.Thread(target=_do_rebuild, daemon=True)
-    thread.start()
-    took_lock.wait(timeout=30)
+    try:
+        thread = threading.Thread(target=_do_rebuild, daemon=True)
+        thread.start()
+    except BaseException:  # no thread to give the lock back (#312)
+        _rebuild_running = False
+        _rebuild_lock.release()
+        raise
+    # Longer than the connection's and the sync log's busy waits, so a busy database
+    # answers failed or already_running, not started for a run that then fails (#312)
+    took_lock.wait(timeout=2 * BUSY_TIMEOUT_S + 5)
     if outcome["status"] == "already_running":
         return RebuildResponse(status="already_running", message="Rebuild is already in progress")
     if outcome["status"] == "failed":
@@ -125,11 +146,13 @@ def find_similar(item_id: int, limit: int = 10):
             raise HTTPException(status_code=404, detail="Item not found")
 
         item = Item.from_row(row)
-        text = make_embed_text(item)
-        if not text:
-            return []
-
-        query_emb = embed_query(conn, text)
+        # Its own vector, made like those it is compared with; embed only if it has none
+        query_emb = stored_vector(conn, item_id)
+        if query_emb is None:
+            text = make_embed_text(item)
+            if not text:
+                return []
+            query_emb = embed_query(conn, text)
         # Parts have vectors too (#221): ask for more, then keep whole items outside
         # this item's own family, as related items compare whole items
         family = item.parent_id if item.parent_id is not None else item_id

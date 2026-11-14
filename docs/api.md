@@ -487,7 +487,7 @@ Embed, in the background, every item that is new or changed, and drop vectors of
 
 ### `GET /api/embeddings/similar/{item_id}`
 
-Find semantically similar items. Query param: `limit` (default 10).
+Find semantically similar items. Query param: `limit` (default 10). Searches with the item's own stored vector; an item without one (no text, or a title-only video) is embedded from its title and text. Returns whole items outside the item's own family.
 
 ---
 

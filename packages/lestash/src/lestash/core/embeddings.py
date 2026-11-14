@@ -217,6 +217,18 @@ def delete_embedding(conn: sqlite3.Connection, item_id: int) -> None:
     conn.execute("DELETE FROM embedding_meta WHERE item_id = ?", (item_id,))
 
 
+def stored_vector(conn: sqlite3.Connection, item_id: int) -> list[float] | None:
+    """The item's own vector in the index search reads, or None if it has none (#307).
+    Made with the document prompt, like every vector it is compared with."""
+    row = conn.execute(
+        f"SELECT embedding FROM {VEC_TABLE} WHERE item_id = ?", (item_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    blob = row[0]
+    return list(struct.unpack(f"{len(blob) // 4}f", blob))
+
+
 def search_similar(
     conn: sqlite3.Connection,
     query_embedding: list[float],
@@ -258,14 +270,18 @@ def re_embed_item(conn: sqlite3.Connection, item_id: int) -> bool:
         return False
 
 
+# Top-level items that should have a vector: held, with text, not watch history.
+# On items as ``i``; its one parameter is TITLE_ONLY_SLACK.
+WANTED = (
+    "i.parent_id IS NULL AND i.held = 1"
+    " AND (coalesce(i.title, '') != '' OR coalesce(i.content, '') != '')"
+    f" AND NOT {TITLE_ONLY.format(t='i')}"
+)
+
+
 def get_embedding_stats(conn: sqlite3.Connection) -> dict:
     """Get embedding coverage statistics."""
-    # Top-level items that should have a vector: held, with text, not watch history
-    wanted = (
-        "i.parent_id IS NULL AND i.held = 1"
-        " AND (coalesce(i.title, '') != '' OR coalesce(i.content, '') != '')"
-        f" AND NOT {TITLE_ONLY.format(t='i')}"
-    )
+    wanted = WANTED
     total_parents = conn.execute(
         f"SELECT COUNT(*) FROM items i WHERE {wanted}", (TITLE_ONLY_SLACK,)
     ).fetchone()[0]
@@ -310,6 +326,15 @@ class RefreshCounts:
     stopped: bool = False
     swapped: int = 0  # vectors in the new model's index, if this refresh swapped it in
     seconds: float = 0.0
+
+
+class RefreshStopped(RuntimeError):
+    """A refresh or rebuild that failed part way (#311). ``counts`` holds what was
+    done first: those batches are committed and kept, so the next run goes on."""
+
+    def __init__(self, message: str, counts: RefreshCounts | None = None) -> None:
+        super().__init__(message)
+        self.counts = counts or RefreshCounts()
 
 
 def plan_refresh(
@@ -433,20 +458,25 @@ def refresh_embeddings(
     counts = RefreshCounts(removed=removed)
 
     done = 0
-    for start in range(0, len(todo), BATCH_SIZE):
-        if budget_s is not None and time.monotonic() - started > budget_s:
-            counts.stopped = True
-            break
-        batch = todo[start : start + BATCH_SIZE]
-        vectors = embed_batch([text for _, _, text in batch])
-        counts.embedded += store_vectors(conn, batch, vectors)
-        done += len(batch)
-        if progress_callback:
-            progress_callback(done, len(todo))
+    try:
+        for start in range(0, len(todo), BATCH_SIZE):
+            if budget_s is not None and time.monotonic() - started > budget_s:
+                counts.stopped = True
+                break
+            batch = todo[start : start + BATCH_SIZE]
+            vectors = embed_batch([text for _, _, text in batch])
+            counts.embedded += store_vectors(conn, batch, vectors)
+            done += len(batch)
+            if progress_callback:
+                progress_callback(done, len(todo))
 
-    counts.pending = len(todo) - done
-    if families is None and not counts.pending:
-        counts.swapped = swap_in_next(conn)
+        counts.pending = len(todo) - done
+        if families is None and not counts.pending:
+            counts.swapped = swap_in_next(conn)
+    except Exception as e:  # Ctrl-C and SIGTERM go through as they are
+        counts.pending = len(todo) - done
+        counts.seconds = time.monotonic() - started
+        raise RefreshStopped(f"stopped after {done} of {len(todo)}: {e}", counts) from e
     counts.seconds = time.monotonic() - started
     return counts
 
