@@ -187,8 +187,12 @@ def test_a_failed_write_puts_the_snapshot_back(device, kobo, test_db, monkeypatc
     monkeypatch.setattr(kobo_shelf, "apply", lambda *a: next(calls)(*a))
     result = _write(device)
     assert result.exit_code == 1, result.output
+    assert "Nothing written: disk I/O error" in result.output  # logged, not a traceback
     assert _sha(device / DB) == before
     assert "Formal Stuff" in _shelves(device)["shelves"]
+    with get_connection(test_db) as conn:
+        st = kobo_status(conn, cid)
+    assert st and st.error == "disk I/O error"
 
 
 def test_dry_run_touches_nothing(device, kobo, test_db) -> None:

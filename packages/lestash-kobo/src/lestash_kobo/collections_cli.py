@@ -131,7 +131,12 @@ def add_collection_commands(app: typer.Typer, store_for: Callable[[Config], Kobo
                 if the_plan.changes:
                     try:
                         results = _write(store, the_plan, shelves, root, mount)
-                    except (kobo_shelf.KoboChanged, kobo_shelf.KoboDamaged, OSError) as e:
+                    except (
+                        kobo_shelf.KoboChanged,
+                        kobo_shelf.KoboDamaged,
+                        OSError,
+                        sqlite3.Error,
+                    ) as e:
                         for shelf in shelves:
                             record_error(conn, shelf, str(e))
                         conn.commit()
