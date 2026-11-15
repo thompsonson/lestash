@@ -8,6 +8,7 @@ import { escHtml, dateText, sourceLabel } from '../../util.js';
 import { renderCard, byName } from './card.js';
 import { kindText, personName, generationSettings } from './kinds.js';
 import { selfName, selfFullName } from '../person/self.js';
+import { shortLink } from './actions.js';
 
 // ── Header ──────────────────────────────────────────────────────────────────────
 
@@ -41,7 +42,13 @@ export function itemHeader(item, title) {
   // "by Matt", linked to the person it is by
   const by = item.kind === 'video' ? '' : byName(item);
   if (by) meta.push(item.by_id ? `by <a href="/people/${item.by_id}">${escHtml(by)}</a>` : `by ${escHtml(by)}`);
-  if (item.url) meta.push(`<a href="${escHtml(item.url)}" target="_blank" rel="noopener">open original</a>`);
+  // A stub: by its post's author when its preview names one, and its short address
+  else if (item.held === false && item.author_display && item.author_display !== '-') meta.push(`by ${escHtml(item.author_display)}`);
+  if (item.url && item.held === false) {
+    meta.push(`<a class="item-short-link" href="${escHtml(item.url)}" target="_blank" rel="noopener">${escHtml(shortLink(item))}</a>`);
+  } else if (item.url) {
+    meta.push(`<a href="${escHtml(item.url)}" target="_blank" rel="noopener">open original</a>`);
+  }
   meta.push(escHtml(goneFromKobo(item)));
   html += `<div class="item-view-meta">${meta.filter(Boolean).join(' · ')}</div>`;
   html += frontMatterHtml(item);

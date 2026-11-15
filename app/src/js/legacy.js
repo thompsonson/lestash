@@ -16,7 +16,9 @@ import { startTimeline, redrawTimeline } from './places/timeline.js';
 import { startPeople, redrawPeople } from './places/people.js';
 import { startLibrary, redrawLibrary } from './places/library.js';
 import { startHelp } from './places/help.js';
-import { actionsHtml, replyTitle, setAnsweredPost, wireItemActions } from './objects/item/actions.js';
+import {
+  actionsHtml, fetchPreview, replyTitle, saveCopy, saveScreenshot, setAnsweredPost, wireItemActions,
+} from './objects/item/actions.js';
 import {
   itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
   renderParts, PARTS_QUERY, titleOnce,
@@ -382,8 +384,12 @@ function renderItemView(item) {
   html += player.html;
   html += reactionsLine(item);
   if (item.held === false) {
-    // A stub: known by its address only, so it has no content to show
-    html += `<div class="item-view-content" id="item-content-display" style="color:var(--muted)">LeStash doesn't hold this; it knows it only by its address. Its links and activity are below.</div>`;
+    // A stub: known by its address, with any copies of it you keep below (#322)
+    const kept = item.copies === 1 ? 'a copy' : `${item.copies} copies`;
+    const said = item.copies
+      ? `LeStash keeps ${kept} of this below; the post itself is known by its address.`
+      : "LeStash doesn't hold this; it knows it by its address. Keep a copy: paste its text or add a screenshot.";
+    html += `<div class="item-view-content" id="item-content-display" style="color:var(--muted)">${escHtml(said)}</div>`;
   } else {
     html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(cleanContent(item, title, reply ? {} : once))}</div>`;
   }
@@ -478,9 +484,9 @@ function renderItemView(item) {
     }
   }
 
-  // A stub can't be edited, tagged, noted or collected: when its post is imported,
-  // the stub is merged into it. Its links and activity still show.
-  html += `<div${item.held === false ? ' style="display:none"' : ''}>`;
+  // A stub can be noted, tagged, collected and copied, not edited: when its post is
+  // imported, all of these move to it (#322)
+  html += '<div>';
   // Actions first: one that fits the kind, then Add, Go and More menus (#323)
   html += actionsHtml(item);
   // Tags
@@ -560,6 +566,21 @@ function renderItemView(item) {
 
   container.innerHTML = html;
   wireItemActions(container);
+  const shotInput = container.querySelector('#copy-image-input');
+  if (shotInput) {
+    shotInput.addEventListener('change', async () => {
+      const file = shotInput.files[0];
+      if (!file) return;
+      try {
+        await saveScreenshot(item.id, file);
+        showToast('Screenshot kept');
+        const fresh = cacheItem(await api(`/api/items/${item.id}?include_children=true`));
+        if (location.pathname === `/items/${item.id}`) renderItemView(fresh);
+      } catch (err) {
+        showToast(`Couldn't keep the screenshot: ${err.message}`, 'error');
+      }
+    });
+  }
   wireTranscript(container);
   wireReactions(container, item);
 
@@ -935,6 +956,43 @@ function renderItemView(item) {
       } finally {
         btn.disabled = false;
         btn.textContent = 'Save';
+      }
+    }
+    // A stub's copies (#322): each saved copy redraws the page with it below
+    const redraw = async () => {
+      const fresh = cacheItem(await api(`/api/items/${item.id}?include_children=true`));
+      if (location.pathname === `/items/${item.id}`) renderItemView(fresh);
+    };
+    if (btn.dataset.action === 'show-copy-form') {
+      const form = document.getElementById('copy-form');
+      if (form) { form.hidden = false; document.getElementById('copy-text').focus(); }
+    }
+    if (btn.dataset.action === 'cancel-copy') {
+      document.getElementById('copy-form').hidden = true;
+    }
+    if (btn.dataset.action === 'save-copy') {
+      const text = document.getElementById('copy-text').value.trim();
+      if (!text) return;
+      btn.disabled = true;
+      try {
+        await saveCopy(item.id, text);
+        showToast('Copy kept');
+        await redraw();
+      } catch (err) {
+        showToast(`Couldn't keep the copy: ${err.message}`, 'error');
+        btn.disabled = false;
+      }
+    }
+    if (btn.dataset.action === 'add-screenshot') {
+      document.getElementById('copy-image-input').click();
+    }
+    if (btn.dataset.action === 'fetch-preview') {
+      try {
+        await fetchPreview(item.id);
+        await redraw();
+        showToast('Preview fetched');
+      } catch (err) {
+        showToast(`No preview: ${err.message}`, 'error');
       }
     }
     if (btn.dataset.action === 'edit-profile') {
