@@ -76,3 +76,13 @@ def test_suggestions_put_the_shared_links_item_first_then_your_work(client, test
     body = client.get("/api/items/suggest", params={"exclude": noted}).json()
     assert noted not in [i["id"] for i in body["worked_on"]]
     assert body["same_link"] == []
+
+
+def test_the_exact_address_is_found_among_many_that_contain_it(client, test_config):
+    with get_connection(test_config) as conn:
+        exact = _item(conn, "web", "exact", url="https://blog.example/post", title="The post")
+        for n in range(60):  # newer pages under it, each containing its address
+            _item(conn, "web", f"sub-{n}", url=f"https://blog.example/post/{n}", title=f"{n}")
+        conn.commit()
+    body = client.get("/api/items/suggest", params={"url": "http://blog.example/post?ref=x"})
+    assert [i["id"] for i in body.json()["same_link"]] == [exact]

@@ -463,15 +463,33 @@ def suggest_items(
         match = link_match(url or "")
         if match:
             pattern, bare = match
-            # An id is searched in addresses and source ids; an address in addresses
-            # only, then checked whole, so a site's front page doesn't match its pages
-            where = "url LIKE ? ESCAPE '\\'" + ("" if bare else " OR source_id LIKE ? ESCAPE '\\'")
-            rows = conn.execute(
-                f"""SELECT * FROM items WHERE ({where}) AND id != ? AND kind != 'reaction'
-                ORDER BY parent_id IS NOT NULL, held DESC, id DESC LIMIT ?""",
-                [pattern, *([] if bare else [pattern]), skip, 50 if bare else limit],
-            ).fetchall()
-            same = [r for r in rows if bare is None or _bare(r["url"] or "") == bare][:limit]
+            order = "ORDER BY parent_id IS NOT NULL, held DESC, id DESC"
+            if bare is None:
+                # An id: in addresses and source ids
+                same = conn.execute(
+                    f"""SELECT * FROM items
+                    WHERE (url LIKE ? ESCAPE '\\' OR source_id LIKE ? ESCAPE '\\')
+                      AND id != ? AND kind != 'reaction' {order} LIMIT ?""",
+                    [pattern, pattern, skip, limit],
+                ).fetchall()
+            else:
+                # An address: every address containing it is checked whole, so neither a
+                # site's front page matching its pages nor a crowd of them hides the one
+                ids = [
+                    item_id
+                    for item_id, item_url in conn.execute(
+                        """SELECT id, url FROM items WHERE url LIKE ? ESCAPE '\\'
+                        AND id != ? AND kind != 'reaction'""",
+                        [pattern, skip],
+                    )
+                    if _bare(item_url or "") == bare
+                ]
+                if ids:
+                    marks = ",".join("?" * len(ids))
+                    same = conn.execute(
+                        f"SELECT * FROM items WHERE id IN ({marks}) {order} LIMIT ?",
+                        [*ids, limit],
+                    ).fetchall()
         seen = {r["id"] for r in same}
         marks = ",".join("?" * len(_YOURS))
         recent = conn.execute(
