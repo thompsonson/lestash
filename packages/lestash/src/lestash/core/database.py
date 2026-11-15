@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -698,6 +698,19 @@ MIGRATIONS = [
             last_error TEXT,
             UNIQUE (collection_id, place)
         );
+        """,
+    ),
+    (
+        29,
+        "LinkedIn: a reaction other than Like is a 'reacted' activity (#320)",
+        # schema:ReactAction, with the reaction (PRAISE, EMPATHY...) in details. A Like
+        # stays 'liked' (schema:LikeAction, ActivityStreams Like). No 'reacted' row
+        # exists before this, so the key (verb, item, time, source, actor) can't clash.
+        """
+        UPDATE activities SET verb = 'reacted'
+        WHERE verb = 'liked' AND source = 'linkedin' AND json_valid(details)
+          AND json_extract(details, '$.reaction') IS NOT NULL
+          AND json_extract(details, '$.reaction') != 'LIKE';
         """,
     ),
 ]

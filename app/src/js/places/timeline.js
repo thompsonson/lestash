@@ -7,13 +7,14 @@ import { route, navigate } from '../router.js';
 import { escHtml, sourceLabel } from '../util.js';
 import { kindIcon } from '../objects/item/kinds.js';
 import { openFiltersWhenWide } from '../util.js';
+import { reactionText } from '../reactions.js';
 
 // Verbs that fold into one line once a day has more than FOLD_AT of one kind
-const FOLDING = new Set(['watched', 'viewed', 'liked', 'disliked', 'shared', 'searched']);
+const FOLDING = new Set(['watched', 'viewed', 'liked', 'reacted', 'disliked', 'shared', 'searched']);
 const FOLD_AT = 3;
 
 const VERB_WORDS = {
-  watched: 'watched', viewed: 'viewed', liked: 'liked', disliked: 'disliked', shared: 'shared',
+  watched: 'watched', viewed: 'viewed', liked: 'liked', reacted: 'reacted to', disliked: 'disliked', shared: 'shared',
   searched: 'searched for', prompted: 'prompted', listened: 'listened to', read: 'read',
 };
 const MADE_WORDS = {
@@ -28,7 +29,7 @@ const PLURALS = {
 
 const VERB_FILTERS = [
   ['', 'Everything'], ['made', 'Made by you'], ['watched', 'Watched'], ['viewed', 'Viewed'],
-  ['liked', 'Liked'], ['prompted', 'Prompted'], ['searched', 'Searched'], ['shared', 'Shared'],
+  ['liked', 'Liked'], ['reacted', 'Reacted'], ['prompted', 'Prompted'], ['searched', 'Searched'], ['shared', 'Shared'],
 ];
 const KIND_FILTERS = [
   ['', 'All kinds'], ['video', 'Videos'], ['post', 'Posts'], ['chat', 'Chats'], ['notebook', 'Notebooks'],
@@ -156,9 +157,23 @@ function swipeDays(tab) {
   area.addEventListener('touchcancel', () => { start = null; }, { passive: true });
 }
 
+// What a stub stands for, for its wording: a LinkedIn post or reply not held (#320)
+const shownKind = item => (item.kind === 'stub' && item.stub_of) || item.kind;
+
+// A stub with no cached preview: "A post from 11 Nov, 13:36"
+function stubTitle(item) {
+  const what = item.stub_of === 'comment' ? 'A reply' : (item.stub_of ? 'A post' : 'Something');
+  if (!item.made_at) return `${what} not held`;
+  const at = new Date(item.made_at);
+  if (Number.isNaN(at.getTime())) return `${what} not held`;
+  const day = at.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return `${what} from ${day}, ${clock(at)}`;
+}
+
 function entryTitle(e) {
   const item = e.item;
   if (!item) return (e.details && e.details.query) || '(nothing named)';
+  if (item.held === false && !item.title) return stubTitle(item);
   // A search's title repeats the verb: "Searched YouTube: sleep science"
   if (item.kind === 'search' && item.title) return item.title.replace(/^Searched( for)?( [A-Z][\w ]*?:)?\s*/, '');
   return item.title || '(untitled)';
@@ -183,18 +198,32 @@ function titleLine(e, { prompt = true } = {}) {
   const what = item ? `<a href="/items/${item.id}">${title}</a>` : title;
   const extra = [];
   if (item && item.channel) extra.push(escHtml(item.channel));
+  if (item && item.author) extra.push(escHtml(item.author));
+  // A stub is known by its address: the link to it on its service, kept in view
+  // when a long title is cut short
+  const out = item && item.held === false && item.url
+    ? `<a class="t-out" href="${escHtml(item.url)}" target="_blank" rel="noopener">${escHtml(sourceLabel(item.source_type) || 'open')} ↗</a>`
+    : '';
   if (item && item.kind_detail) extra.push(escHtml(item.kind_detail));
   if (e.context) extra.push(`with <a href="/items/${e.context.id}">${escHtml(e.context.title)}</a>`);
   const asked = prompt && e.prompt ? `<span class="t-prompt">“${escHtml(e.prompt)}”</span>` : '';
-  return `<span class="t-title">${what}${extra.length ? ` <span class="muted">· ${extra.join(' · ')}</span>` : ''}</span>${asked}`;
+  const named = `${what}${extra.length ? ` <span class="muted">· ${extra.join(' · ')}</span>` : ''}`;
+  if (out) return `<span class="t-title t-split"><span class="t-name">${named}</span>${out}</span>${asked}`;
+  return `<span class="t-title">${named}</span>${asked}`;
 }
 
 function verbFor(e) {
   const kind = e.item && e.item.kind;
   if (e.verb === 'made') return MADE_WORDS[kind] || 'made';
   if (e.verb === 'searched') return 'searched for';
+  const what = A_KIND[e.item ? shownKind(e.item) : ''];
+  if (e.verb === 'reacted') {
+    // "reacted 😂 Funny to a post"
+    const how = reactionText(e.details);
+    return `reacted${how ? ` ${how}` : ''}${what ? ` to ${what}` : ''}`;
+  }
   const verb = VERB_WORDS[e.verb] || e.verb;
-  return A_KIND[kind] ? `${verb} ${A_KIND[kind]}` : verb;
+  return what ? `${verb} ${what}` : verb;
 }
 
 function line(e) {
@@ -210,7 +239,10 @@ function subLine(e) {
     : (e.verb === 'made' && e.item && e.item.kind === 'chat'
       ? '<span class="t-title muted">started the chat</span>'
       : titleLine(e, { prompt: false }));
-  return `<li class="t-sub"><span class="t-time">${clock(e.at)}</span>${body}</li>`;
+  // A reaction in a folded group: "😂 Funny" before the title
+  const how = e.verb === 'reacted' ? reactionText(e.details) : '';
+  const react = how ? `<span class="t-react">${escHtml(how)}</span>` : '';
+  return `<li class="t-sub"><span class="t-time">${clock(e.at)}</span>${react}${body}</li>`;
 }
 
 // What an entry folds under: a chat's start and its prompts under the chat; busy
@@ -261,7 +293,9 @@ function groupHtml(list) {
     titles = `<span class="t-title"><a href="/items/${first.item.id}">${escHtml(entryTitle(first))}</a></span>`;
     if (started) landmark = ' landmark';
   } else {
-    const plural = PLURALS[kind] || 'things';
+    // Stubs that all stand for one kind are named by it: "liked 3 posts"
+    const kinds = new Set(list.map(e => (e.item ? shownKind(e.item) : 'other')));
+    const plural = PLURALS[kinds.size === 1 ? [...kinds][0] : kind] || 'things';
     if (first.verb === 'searched') act = `searched ${n} times`;
     else if (first.verb === 'made') { act = `${MADE_GROUP[kind] || 'made'} ${n} ${plural}`; landmark = ' landmark'; }
     else act = `${VERB_WORDS[first.verb] || first.verb} ${n} ${plural}`;

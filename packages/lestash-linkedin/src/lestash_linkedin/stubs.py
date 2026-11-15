@@ -12,10 +12,10 @@ finds the post. This pass runs after it:
   its post.
 - A comment without a parent links to its target as ``in_reply_to``. A comment with a
   parent has no such link: its parent is its post.
-- A reaction is a ``liked`` activity on its target (a post, held or stub, or a
-  comment's stub) with the reaction type in its details. Only the event that made it
-  counts, not a change or a delete. Someone else's has their person as its actor,
-  their LinkedIn account made if not yet seen; yours has none.
+- A reaction is an activity on its target (a post, held or stub, or a comment's stub):
+  ``liked`` for a Like, ``reacted`` for any other, with the reaction type in its details.
+  Only the event that made it counts, not a change or a delete. Someone else's has
+  their person as its actor, their LinkedIn account made if not yet seen; yours has none.
 - Once a post or comment is imported, its stub is merged into it.
 """
 
@@ -52,6 +52,12 @@ class StubCounts(NamedTuple):
     parented: int  # comments and reactions given their held post as parent
     links: int  # in_reply_to links added
     activities: int  # liked activities added
+
+
+def reaction_verb(reaction: str | None) -> str:
+    """A Like is ``liked`` (schema:LikeAction); any other reaction is ``reacted``
+    (schema:ReactAction), with the reaction kept in the activity's details (#320)."""
+    return "liked" if reaction in (None, "", "LIKE") else "reacted"
 
 
 def post_urn(target: str) -> str:
@@ -326,7 +332,7 @@ def link_linkedin_targets(conn: sqlite3.Connection) -> StubCounts:
                 target_id if target_id is not None else run.target(target),
                 [
                     ActivityCreate(
-                        verb="liked",
+                        verb=reaction_verb(reaction),
                         occurred_at=when,
                         source=SOURCE,
                         details={"reaction": reaction} if reaction else None,
