@@ -84,7 +84,7 @@ What this means for screens:
 
 | Object | Actions |
 |---|---|
-| Item | ✓ open; ✓ open original; ✓ tag; ✓ add to collection; ✓ add note; ✓ link to item; ✓ edit; ✓ history; ✓ copy link; ✓ share to Micro.blog; ✗ play from a transcript time; ✗ go up to its parent; ✗ see it in its day |
+| Item | ✓ open; ✓ one main action by kind: a reply opens the post it answers, a video plays, else open original (#323); ✓ Add: note, link to item, tag, collection; ✓ Go: the post it answers or its parent, its day, the original; ✓ More: edit, history, copy text, copy link, share to Micro.blog (your own, not replies); ✗ play from a transcript time |
 | Person | ✗ open; ✗ see their items by role; ✗ see your activity with them; ✗ name an unnamed account; ✗ merge two that are the same; ✓ open profile (only for you) |
 | Activity | ✗ open the day; ✗ filter by verb; ✓ (indirect) open the item |
 | File | ✓ play or open; ✗ download; ✗ jump to a slide; ✗ see which items share it |

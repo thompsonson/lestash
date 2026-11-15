@@ -984,6 +984,23 @@ body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
 .collection-moves button:disabled { opacity: 0.35; cursor: default; }
 .collection-badge { margin-left: auto; min-height: 0; padding: 0.05rem 0.5rem; font-size: 0.75rem; }
 
+/* Item page actions (#323): a main action, then Add, Go and More menus */
+.item-detail-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.item-detail-actions { margin-top: 0.75rem; }
+.btn-main, .item-menu > summary { display: inline-flex; align-items: center; height: 2.1rem; padding: 0 0.7rem; font-size: 0.85rem; border-radius: var(--radius); box-sizing: border-box; }
+.btn-main { background: var(--accent); color: var(--bg); font-weight: 600; text-decoration: none; }
+.btn-main[hidden] { display: none; }
+.item-menu { position: relative; }
+.item-menu > summary { list-style: none; cursor: pointer; min-height: 0; margin: 0; }
+.item-menu > summary::-webkit-details-marker { display: none; }
+.item-menu-list { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 11rem; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); padding: 0.25rem 0; }
+.item-menu-list.to-left { left: auto; right: 0; }
+.item-menu-list > button, .item-menu-list > a { text-align: left; padding: 0.55rem 0.8rem; background: none; border: 0; color: var(--text); font: inherit; font-size: 0.9rem; text-decoration: none; cursor: pointer; }
+.item-menu-list > button:hover, .item-menu-list > a:hover { background: var(--bg); }
+.item-menu-list > [hidden] { display: none; }
+#add-to-coll-select { font-size: 0.75rem; padding: 0.25rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
+||||||| 690264e
+
 /* Attach picker (#324): sections before you type, kind chips while you do */
 .picker-heading { padding: 0.35rem 0.6rem 0.15rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .picker-note { padding: 0.4rem 0.6rem; font-size: 0.8rem; color: var(--muted); }
