@@ -7,13 +7,29 @@ import { IS_TAURI, addDebugLog, tauriInvoke } from './api.js';
 import { showToast } from './toast.js';
 
 // Open a URL outside the app: the system browser under Tauri, a new tab on the web
+// Each step goes to the Debug page's log, as the phone's console can't be seen: the
+// tap, then the app's answer, its error, or no answer at all (#328)
+const NO_ANSWER_MS = 5000;
 export function openExternal(href) {
   if (!IS_TAURI) { window.open(href, '_blank'); return; }
-  tauriInvoke('open_external', { url: href }).catch(err => {
-    // Shown, not only logged: on the phone the console can't be seen (#328)
+  const start = performance.now();
+  addDebugLog('LINK', href, 'TAP', null, null);
+  let answered = false;
+  const wait = setTimeout(() => {
+    if (answered) return;
+    addDebugLog('LINK', href, 'NO ANSWER', NO_ANSWER_MS, 'open_external did not answer');
+    showToast("Couldn't open link: the app didn't answer", 'error');
+  }, NO_ANSWER_MS);
+  tauriInvoke('open_external', { url: href }).then(() => {
+    answered = true;
+    clearTimeout(wait);
+    addDebugLog('LINK', href, 'OK', Math.round(performance.now() - start), null);
+  }).catch(err => {
+    answered = true;
+    clearTimeout(wait);
     console.error('Could not open link', href, err);
     showToast(`Couldn't open link: ${err}`, 'error');
-    addDebugLog('LINK', 'open_external', 'ERR', null, `${href}: ${err}`);
+    addDebugLog('LINK', href, 'ERR', Math.round(performance.now() - start), String(err));
   });
 }
 
