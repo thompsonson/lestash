@@ -83,16 +83,18 @@ window.addEventListener('lestash:debuglog', () => renderDebugLog());
 function renderDebugLog() {
   const el = document.getElementById('debug-log');
   if (!el) return;
+  // Every field is escaped: entries carry addresses, links and error text (#328)
   el.innerHTML = debugLog.map(e => {
     const color = e.error ? 'var(--error)' : (e.status === 200 ? 'var(--ok)' : 'var(--warn)');
     const ts = e.ts.split('T')[1].split('.')[0];
+    const text = v => escHtml(String(v ?? ''));
     return `<div style="padding:0.3rem 0;border-bottom:1px solid var(--border)">
-      <span style="color:var(--muted)">${ts}</span>
-      <span style="color:${color}">${e.status}</span>
-      <span>${e.method}</span>
-      <span style="color:var(--muted);word-break:break-all">${e.url}</span>
-      ${e.time ? `<span style="color:var(--muted)">${e.time}ms</span>` : ''}
-      ${e.error ? `<div style="color:var(--error);margin-top:0.2rem">${e.error}</div>` : ''}
+      <span style="color:var(--muted)">${text(ts)}</span>
+      <span style="color:${color}">${text(e.status)}</span>
+      <span>${text(e.method)}</span>
+      <span style="color:var(--muted);word-break:break-all">${text(e.url)}</span>
+      ${e.time ? `<span style="color:var(--muted)">${text(e.time)}ms</span>` : ''}
+      ${e.error ? `<div style="color:var(--error);margin-top:0.2rem">${text(e.error)}</div>` : ''}
     </div>`;
   }).join('');
 }
