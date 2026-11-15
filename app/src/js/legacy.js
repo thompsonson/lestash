@@ -12,6 +12,7 @@ import { startTimeline, redrawTimeline } from './places/timeline.js';
 import { startPeople, redrawPeople } from './places/people.js';
 import { startLibrary, redrawLibrary } from './places/library.js';
 import { startHelp } from './places/help.js';
+import { actionsHtml, replyTitle, setAnsweredPost, wireItemActions } from './objects/item/actions.js';
 import {
   itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
   renderParts, PARTS_QUERY, titleOnce,
@@ -368,7 +369,9 @@ function renderItemView(item) {
 
   const once = titleOnce(item, item.title || item.preview);
   const title = `${emoji}${once.title || (item.held === false && item.url) || '(untitled)'}`;
-  let html = itemHeader(item, title);
+  // The header may name the item better than its title; the content is still
+  // trimmed against the title it repeats
+  let html = itemHeader(item, replyTitle(item) || title);
   const player = itemPlayer(item);
   html += player.html;
   html += reactionsLine(item);
@@ -441,44 +444,24 @@ function renderItemView(item) {
     html += `<div style="margin-top:0.5rem"><button class="sync-btn" onclick="openProcessDialog(${item.id})">Process</button></div>`;
   }
 
-  // Context section for reactions/comments
+  // Context section for reactions/comments: an unnamed actor, to name it, and the
+  // post it is on. A named actor shows under People, the post's author in the
+  // title (#323)
   const hasReactionContext = item.metadata && (item.metadata.reacted_to || item.metadata.commented_on);
-  if (hasReactionContext) {
-    const isUrn = (s) => s && s.startsWith('urn:');
-    const actorUrn = item.metadata.raw && item.metadata.raw.actor;
-    const ownerUrn = item.metadata.raw && item.metadata.raw.owner;
-    // For "you reacted to someone else's content", author is the post author
-    // For "someone else reacted to your content", actor is the reactor
-    const authorUrn = item.metadata.reacted_to || item.metadata.commented_on;
-
+  const actorUrn = hasReactionContext && item.metadata.raw && item.metadata.raw.actor;
+  const unnamed = actorUrn && item.actor_display && item.actor_display.startsWith('urn:');
+  if (hasReactionContext && (unnamed || item.parent_id)) {
     html += '<hr style="border-color:var(--border);margin:0.75rem 0">';
-
-    // Actor (who performed the action)
-    if (actorUrn) {
-      html += `<div class="item-detail-field"><label>Actor</label>`;
-      if (isUrn(item.actor_display)) {
-        html += `<span id="actor-display">${escHtml(item.actor_display)}</span>
-          <button class="sync-btn" data-action="edit-profile" data-urn="${escHtml(actorUrn)}" data-role="actor" style="font-size:0.7rem;padding:0.15rem 0.4rem;margin-left:0.3rem">Set name</button>
-          <div id="actor-edit" style="display:none" class="tag-input-row">
-            <input type="text" placeholder="Name" data-profile-name="actor" style="flex:2">
-            <input type="text" placeholder="Profile URL (optional)" data-profile-url="actor" style="flex:3">
-            <button class="sync-btn" data-action="save-profile" data-urn="${escHtml(actorUrn)}" data-role="actor" style="font-size:0.7rem;padding:0.15rem 0.4rem">Save</button>
-          </div>`;
-      } else {
-        html += `<span>${escHtml(item.actor_display)}</span>`;
-      }
-      html += `</div>`;
-    }
-
-    // Author (of the target post) — only show when someone reacted to another's content
-    if (ownerUrn && actorUrn && ownerUrn === actorUrn && item.author_display) {
-      html += `<div class="item-detail-field"><label>Post author</label>`;
-      if (item.author_display === '-') {
-        html += `<span style="color:var(--muted)">Unknown</span>`;
-      } else {
-        html += `<span>${escHtml(item.author_display)}</span>`;
-      }
-      html += `</div>`;
+    if (unnamed) {
+      html += `<div class="item-detail-field"><label>Actor</label>
+        <span id="actor-display">${escHtml(item.actor_display)}</span>
+        <button class="sync-btn" data-action="edit-profile" data-urn="${escHtml(actorUrn)}" data-role="actor" style="font-size:0.7rem;padding:0.15rem 0.4rem;margin-left:0.3rem">Set name</button>
+        <div id="actor-edit" style="display:none" class="tag-input-row">
+          <input type="text" placeholder="Name" data-profile-name="actor" style="flex:2">
+          <input type="text" placeholder="Profile URL (optional)" data-profile-url="actor" style="flex:3">
+          <button class="sync-btn" data-action="save-profile" data-urn="${escHtml(actorUrn)}" data-role="actor" style="font-size:0.7rem;padding:0.15rem 0.4rem">Save</button>
+        </div>
+      </div>`;
     }
 
     // Parent post link
@@ -492,6 +475,8 @@ function renderItemView(item) {
   // A stub can't be edited, tagged, noted or collected: when its post is imported,
   // the stub is merged into it. Its links and activity still show.
   html += `<div${item.held === false ? ' style="display:none"' : ''}>`;
+  // Actions first: one that fits the kind, then Add, Go and More menus (#323)
+  html += actionsHtml(item);
   // Tags
   html += '<hr style="border-color:var(--border);margin:0.75rem 0">';
   const currentTags = (item.tags || []).map(t =>
@@ -519,18 +504,6 @@ function renderItemView(item) {
     </div>
   </div>`;
 
-  // Actions
-  html += `<div class="item-detail-actions" id="item-detail-actions">
-    <button class="sync-btn" data-action="edit-item" data-id="${item.id}">Edit</button>
-    <button class="sync-btn" data-action="toggle-history" data-id="${item.id}">History</button>
-    <button class="sync-btn" data-action="show-note-form">+ Note</button>
-    <button class="sync-btn" data-action="link-item" data-id="${item.id}">+ Link</button>
-    <button class="sync-btn" data-action="copy" data-id="${item.id}">Copy</button>
-    <button class="sync-btn" data-action="copy-link" data-id="${item.id}">Copy Link</button>
-    <button class="sync-btn" onclick="addToCollection(${item.id})">+ Collection</button>
-    <button class="sync-btn" onclick="openMicroblogCompose(${item.id})">Share to micro.blog</button>
-    <select id="add-to-coll-select" style="display:none;font-size:0.75rem;padding:0.25rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px" onchange="confirmAddToCollection(this)"></select>
-  </div>`;
   html += `</div>`;
   html += `<div id="item-history-panel" style="display:none;margin-top:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:4px">
     <div style="font-size:0.85rem;font-weight:bold;margin-bottom:0.4rem">Version history</div>
@@ -580,6 +553,7 @@ function renderItemView(item) {
   </div>`;
 
   container.innerHTML = html;
+  wireItemActions(container);
   wireTranscript(container);
   wireReactions(container, item);
 
@@ -1162,6 +1136,9 @@ async function loadLinks(itemId) {
     section.style.display = 'none';
     return;
   }
+  // A top-level reply's post is known by its reply link: its main action goes there
+  const answered = data.links.find(l => l.kind === 'in_reply_to' && l.direction === 'outgoing');
+  if (answered) setAnsweredPost(answered.item.id);
   const rows = data.links.map(l => {
     const labels = LINK_LABELS[l.kind] || [l.kind, `${l.kind} (from)`];
     const label = labels[l.direction === 'outgoing' ? 0 : 1];
