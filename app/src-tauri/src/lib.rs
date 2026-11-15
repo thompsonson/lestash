@@ -45,14 +45,22 @@ async fn download_model(app: tauri::AppHandle) -> Result<String, String> {
 // plugin (on Android, an ACTION_VIEW intent). The shell plugin's open, used before,
 // is deprecated, and links did nothing on Android with it (#328). Only http, https
 // and mailto pass.
+//
+// Async, and the plugin call on a blocking thread: on Android the call is run on the
+// app's main thread and this side waits for its answer, so it must not wait on the
+// main thread itself (#328).
 #[tauri::command]
-fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let lower = url.to_ascii_lowercase();
     if !["https://", "http://", "mailto:"].iter().any(|p| lower.starts_with(p)) {
         return Err(format!("not a web or mail link: {url}"));
     }
-    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
