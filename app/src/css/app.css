@@ -983,3 +983,8 @@ body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
 .collection-moves button:hover:not(:disabled) { background: var(--surface-2); }
 .collection-moves button:disabled { opacity: 0.35; cursor: default; }
 .collection-badge { margin-left: auto; min-height: 0; padding: 0.05rem 0.5rem; font-size: 0.75rem; }
+
+/* Attach picker (#324): sections before you type, kind chips while you do */
+.picker-heading { padding: 0.35rem 0.6rem 0.15rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.picker-note { padding: 0.4rem 0.6rem; font-size: 0.8rem; color: var(--muted); }
+.picker-kinds { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); }

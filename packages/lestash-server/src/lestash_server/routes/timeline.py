@@ -114,7 +114,7 @@ PREVIEW_CHARS = 120
 _COMMENT_COUNT = re.compile(r"\s*\|\s*[\d,]+ comments? on LinkedIn\s*$")
 
 
-def _preview(text: str | None, stub_of: str | None) -> str | None:
+def preview_title(text: str | None, stub_of: str | None) -> str | None:
     """A stub's title from its post's cached preview: the first line, cut short."""
     # The preview is the page's og:description as written: HTML entities and all
     text = html.unescape(text or "")
@@ -142,7 +142,7 @@ def _summary(row, prefix: str = "") -> ItemSummary | None:
     title = (row[f"{prefix}title"] or "").strip()
     if not held and not title:
         # A stub has no title of its own: its post's preview, else the app names it
-        title = _preview(col("preview"), stub_of) or ""
+        title = preview_title(col("preview"), stub_of) or ""
     return ItemSummary(
         id=row[f"{prefix}id"],
         title=title or ("" if not held else "(untitled)"),

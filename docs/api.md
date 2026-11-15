@@ -101,6 +101,24 @@ Unknown paths under `/api` return a JSON `404` for every method, even when the s
 
 ---
 
+### `GET /api/items/suggest`
+
+Items to attach to before you search (#324): the item a shared link names, then items you worked on lately.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `url` | string | — | A shared link. A LinkedIn activity id or YouTube video id is matched in addresses and source ids; any other link by its whole address, ignoring scheme, `www.`, query and fragment |
+| `exclude` | int | — | An item not to offer, such as the one open |
+| `limit` | int | 8 | Max per list (1–30) |
+
+Returns `{ "same_link": [Item…], "worked_on": [Item…] }`.
+
+- `same_link`: items holding or naming the link, top-level and held first. Stubs count, titled by their post's cached preview; reaction items don't.
+- `worked_on`: from the last 90 days, items you added a note, voice note, share or image to, or edited, newest first; then items you put in a collection.
+- The app adds items close to the shared text (`/api/items/search?mode=semantic`) and the items opened recently on the device.
+
+---
+
 ### `POST /api/items`
 
 Create or update an item. Upserts on `(source_type, source_id)`.
