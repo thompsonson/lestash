@@ -4,9 +4,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
-import android.webkit.PermissionRequest
-import android.webkit.WebChromeClient
-import android.webkit.WebView
 import org.json.JSONObject
 import java.io.File
 
@@ -15,34 +12,9 @@ class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handleShareIntent(intent)
-        setupWebViewPermissions()
-    }
-
-    private fun setupWebViewPermissions() {
-        val rootView = findViewById<android.view.View>(android.R.id.content) ?: return
-        rootView.viewTreeObserver.addOnGlobalLayoutListener(object :
-            android.view.ViewTreeObserver.OnGlobalLayoutListener {
-            override fun onGlobalLayout() {
-                val webView = findWebView(rootView) ?: return
-                rootView.viewTreeObserver.removeOnGlobalLayoutListener(this)
-                webView.webChromeClient = object : WebChromeClient() {
-                    override fun onPermissionRequest(request: PermissionRequest) {
-                        runOnUiThread { request.grant(request.resources) }
-                    }
-                }
-            }
-        })
-    }
-
-    private fun findWebView(view: android.view.View?): WebView? {
-        if (view is WebView) return view
-        if (view is android.view.ViewGroup) {
-            for (i in 0 until view.childCount) {
-                val found = findWebView(view.getChildAt(i))
-                if (found != null) return found
-            }
-        }
-        return null
+        // The WebView keeps wry's own chrome client: it opens file pickers for
+        // <input type="file"> and grants the microphone. Replacing it, as this did
+        // before #328, left every file input dead.
     }
 
     override fun onNewIntent(intent: Intent) {

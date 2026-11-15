@@ -3,13 +3,17 @@
 // system browser through the app's open_external command. The web app keeps the
 // browser's own way.
 
-import { IS_TAURI, tauriInvoke } from './api.js';
+import { IS_TAURI, addDebugLog, tauriInvoke } from './api.js';
+import { showToast } from './toast.js';
 
 // Open a URL outside the app: the system browser under Tauri, a new tab on the web
 export function openExternal(href) {
   if (!IS_TAURI) { window.open(href, '_blank'); return; }
   tauriInvoke('open_external', { url: href }).catch(err => {
+    // Shown, not only logged: on the phone the console can't be seen (#328)
     console.error('Could not open link', href, err);
+    showToast(`Couldn't open link: ${err}`, 'error');
+    addDebugLog('LINK', 'open_external', 'ERR', null, `${href}: ${err}`);
   });
 }
 
