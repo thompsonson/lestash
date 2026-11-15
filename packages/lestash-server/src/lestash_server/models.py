@@ -37,6 +37,7 @@ class ItemResponse(BaseModel):
     metadata: dict[str, Any] | None = None
     parent_id: int | None = None
     held: bool = True  # False for a stub, known by its address only
+    copies: int = 0  # a stub's copies kept under it: pasted text, screenshots (#322)
     # Enriched fields
     subtype: str
     author_display: str
@@ -128,6 +129,13 @@ class StatsResponse(BaseModel):
     own_content: int
     date_range: dict[str, str | None]
     last_syncs: dict[str, str | None]
+
+
+class CopyCreateRequest(BaseModel):
+    """The pasted text of a stub's post, kept under it (#322). A screenshot goes to
+    /copies/screenshot, with its file."""
+
+    content: str = ""
 
 
 class ItemCreateRequest(BaseModel):

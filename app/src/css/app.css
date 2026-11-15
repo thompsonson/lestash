@@ -1005,3 +1005,9 @@ body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
 .picker-heading { padding: 0.35rem 0.6rem 0.15rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .picker-note { padding: 0.4rem 0.6rem; font-size: 0.8rem; color: var(--muted); }
 .picker-kinds { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); }
+
+/* A stub's copy form (#322) */
+.copy-form { margin-top: 0.6rem; }
+.copy-form textarea { width: 100%; resize: vertical; font: inherit; font-size: 0.85rem; padding: 0.5rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; box-sizing: border-box; }
+.copy-form-actions { display: flex; gap: 0.5rem; margin-top: 0.3rem; }
+.item-short-link { font-family: var(--font-mono, monospace); font-size: 0.8em; }

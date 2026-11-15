@@ -7,7 +7,6 @@ item. The app folds busy verbs into one line; the server returns every entry.
 
 import html
 import json
-import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -15,6 +14,7 @@ from lestash.core.kinds import ARTIFACT_LABELS, KINDS
 from pydantic import BaseModel
 
 from lestash_server.deps import get_db
+from lestash_server.enrich import preview_title
 
 router = APIRouter(prefix="/api/timeline", tags=["timeline"])
 
@@ -109,22 +109,6 @@ _PREVIEW = """
     LEFT JOIN post_cache pc ON i.held = 0 AND json_valid(i.metadata)
         AND pc.urn = json_extract(i.metadata, '$.post_urn')
 """
-PREVIEW_CHARS = 120
-# LinkedIn's preview can end with its comment count: "Context is everywhere! | 13 comments…"
-_COMMENT_COUNT = re.compile(r"\s*\|\s*[\d,]+ comments? on LinkedIn\s*$")
-
-
-def preview_title(text: str | None, stub_of: str | None) -> str | None:
-    """A stub's title from its post's cached preview: the first line, cut short."""
-    # The preview is the page's og:description as written: HTML entities and all
-    text = html.unescape(text or "")
-    line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
-    line = _COMMENT_COUNT.sub("", line)
-    if not line:
-        return None
-    if len(line) > PREVIEW_CHARS:
-        line = line[: PREVIEW_CHARS - 1].rstrip() + "…"
-    return f"A reply on: {line}" if stub_of == "comment" else line
 
 
 def _summary(row, prefix: str = "") -> ItemSummary | None:

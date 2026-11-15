@@ -184,7 +184,7 @@ CREATE INDEX idx_item_links_to ON item_links(to_id, kind);
 - When the thing itself is imported, its stub is merged into it.
   Links, activities, notes, tags, collections and media move to the imported item, and the stub is deleted.
 - Listings, keyword search, embeddings and `/api/stats` skip stubs.
-  The detail view shows a stub's address, links and activity, without edit, tag, note or collection actions.
+  The detail view shows a stub's address, links and activity. Since #322 it also takes notes, tags, collections and copies, which move to the post when it is imported; it still has no edit.
   `PATCH /api/items/{id}` refuses a stub with 409, since a merge would lose the edit.
 - The first importer to make stubs is LinkedIn, after `resolve_linkedin_parents`:
   - A post named by a URN made within 2 s of a held post's URN (a share and its activity) is that post, and becomes the parent.
@@ -663,6 +663,7 @@ Open from the data: #245, rows that point at deleted items.
 - Every YouTube channel becomes an entity; listings filter by watch count.
 - A LinkedIn reaction's record is its activity: `liked` for a Like, `reacted` (`schema:ReactAction`) for any other, the reaction in `details` (#320). The `reaction` item is its source, kept out of listings.
 - A stub is shown by what is known of it: its post's cached preview and author, else its kind and time, with a link to it where it lives (#320).
+- A copy of a stub's post you keep (pasted text, a screenshot) is a child of the stub, marked `metadata.copy_of`, by the post's author when known and not your own content (#322). It is a part only as your notes are: a child moves with the stub into the post when that is imported. Search finds it as its stub.
 - Nothing links people automatically; every match is a suggestion you confirm.
 - Item links from exact identifiers count at once and can be removed; name matches wait for you.
 - Gemini turns keep `user` and `model` as their author until the people tables exist.

@@ -2,20 +2,24 @@
 
 import json
 import logging
+import mimetypes
 import re
 import sqlite3
 from collections import Counter
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, UploadFile
 from lestash.core.agents import agents_for
+from lestash.core.blobs import adopt_media
 from lestash.core.database import (
+    add_item_media,
     add_tag,
     list_tags,
     mark_recent_history,
     max_history_id,
     remove_tag,
+    save_media_file,
 )
 from lestash.core.embed_units import ROUND_PREFIX
 from lestash.core.embeddings import re_embed_item
@@ -27,13 +31,14 @@ from lestash.core.links import links_of, reject_link
 from lestash.core.search import keyword_search
 from lestash.models.item import Item
 
-from lestash_server.deps import get_db
-from lestash_server.enrich import enrich_item
+from lestash_server.deps import get_config, get_db
+from lestash_server.enrich import enrich_item, stub_post
 from lestash_server.models import (
     _UNSET,
     Activity,
     ActivityListResponse,
     AttachSuggestions,
+    CopyCreateRequest,
     HistoryListResponse,
     HistoryVersion,
     HistoryVersionDetail,
@@ -360,9 +365,9 @@ def search_items(
             found = fts_results.get(item_id)
             hit = found["row"] if found else None
             if hit is None:
-                hit = conn.execute(
-                    "SELECT * FROM items WHERE id = ? AND held = 1", (item_id,)
-                ).fetchone()
+                # An owner reached through a held part may be a stub: a copy of its
+                # post you keep under it is found as the stub (#322)
+                hit = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
             if not hit:
                 continue
             enriched = enrich_item(conn, Item.from_row(hit))
@@ -439,27 +444,6 @@ def link_match(url: str) -> tuple[str, str | None] | None:
     return (f"%{_like(bare.split('?', 1)[0])}%", bare) if bare else None
 
 
-def _stub_titles(conn: sqlite3.Connection, items: list[ItemResponse]) -> None:
-    """A stub's title from its post's cached preview, as the Timeline shows it (#320)."""
-    from lestash_server.routes.timeline import preview_title
-
-    stubs = {i.id: i for i in items if not i.held and not (i.title or "").strip()}
-    if not stubs:
-        return
-    marks = ",".join("?" * len(stubs))
-    rows = conn.execute(
-        f"""SELECT i.id, pc.content_preview,
-               json_extract(i.metadata, '$.comment_urn') IS NOT NULL AS on_comment
-        FROM items i JOIN post_cache pc ON pc.urn = json_extract(i.metadata, '$.post_urn')
-        WHERE i.id IN ({marks}) AND json_valid(i.metadata)""",
-        list(stubs),
-    ).fetchall()
-    for item_id, preview, on_comment in rows:
-        title = preview_title(preview, "comment" if on_comment else "post")
-        if title:
-            stubs[item_id].title = title
-
-
 @router.get("/suggest", response_model=AttachSuggestions)
 def suggest_items(
     url: str | None = Query(None, description="A shared link: items holding or naming it"),
@@ -524,7 +508,6 @@ def suggest_items(
         recent = [r for r in recent if r["id"] not in seen][:limit]
         same_link = [enrich_item(conn, Item.from_row(r)) for r in same]
         worked_on = [enrich_item(conn, Item.from_row(r)) for r in recent]
-        _stub_titles(conn, same_link + worked_on)
     return AttachSuggestions(same_link=same_link, worked_on=worked_on)
 
 
@@ -904,6 +887,108 @@ def restore_item_history_version(
 
         row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         return enrich_item(conn, Item.from_row(row))
+
+
+def _stub(conn: sqlite3.Connection, item_id: int) -> sqlite3.Row:
+    row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+    if row["held"]:
+        raise HTTPException(status_code=409, detail="LeStash holds this item already")
+    return row
+
+
+def _insert_copy(
+    conn: sqlite3.Connection, stub: sqlite3.Row, source_type: str, content: str
+) -> int:
+    """A copy of a stub's post as its child: by the post's author when known, not
+    your own content. Not committed."""
+    _title, post_author = stub_post(conn, Item.from_row(stub))
+    metadata = {"copy_of": stub["id"], "copied_at": datetime.now(UTC).isoformat()}
+    return conn.execute(
+        """INSERT INTO items (source_type, content, title, author, created_at,
+                              is_own_content, metadata, parent_id)
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?) RETURNING id""",
+        (
+            source_type,
+            content,
+            "Screenshot" if source_type == "image" else None,
+            post_author,
+            datetime.now(UTC),
+            json.dumps(metadata),
+            stub["id"],
+        ),
+    ).fetchone()[0]
+
+
+@router.post("/{item_id}/copies", response_model=ItemResponse, status_code=201)
+def add_copy(item_id: int, body: CopyCreateRequest):
+    """Keep the pasted text of a stub's post under it (#322).
+
+    A child, so it moves to the post when the post is imported (merge_item). It is a
+    copy, not your writing: not your own content, by the post's author when known."""
+    if not body.content.strip():
+        raise HTTPException(status_code=422, detail="Nothing to keep: the text is empty")
+    with get_db() as conn:
+        new_id = _insert_copy(conn, _stub(conn, item_id), "note", body.content.strip())
+        conn.commit()
+        row = conn.execute("SELECT * FROM items WHERE id = ?", (new_id,)).fetchone()
+        return enrich_item(conn, Item.from_row(row))
+
+
+@router.post("/{item_id}/copies/screenshot", response_model=ItemResponse, status_code=201)
+def add_screenshot(item_id: int, file: UploadFile):
+    """Keep a screenshot of a stub's post under it (#322): an image copy and its file,
+    stored together, so a failed upload leaves no empty copy."""
+    mime = file.content_type or mimetypes.guess_type(file.filename or "")[0] or ""
+    if not mime.startswith("image/"):
+        raise HTTPException(status_code=422, detail="A screenshot must be an image")
+    data = file.file.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="The image is empty")
+    with get_db() as conn:
+        new_id = _insert_copy(conn, _stub(conn, item_id), "image", "")
+        rel_path = save_media_file(new_id, data, file.filename or "screenshot.png", get_config())
+        media_id = add_item_media(
+            conn,
+            new_id,
+            media_type="image",
+            local_path=rel_path,
+            mime_type=mime,
+            source_origin="upload",
+            _commit=False,
+        )
+        conn.commit()  # the copy and its file's row together
+        try:
+            adopt_media(conn, get_config(), ids=[media_id])  # into the file store
+        except sqlite3.Error as e:
+            logger.warning("Screenshot %s not yet in the file store: %s", media_id, e)
+        row = conn.execute("SELECT * FROM items WHERE id = ?", (new_id,)).fetchone()
+        return enrich_item(conn, Item.from_row(row))
+
+
+@router.post("/{item_id}/preview", response_model=ItemResponse)
+def fetch_stub_preview(item_id: int):
+    """Fetch a LinkedIn stub's public post preview now, as the sync does in bulk, so
+    the stub shows its post's text and author (#322)."""
+    with get_db() as conn:
+        stub = _stub(conn, item_id)
+        meta = Item.from_row(stub).metadata or {}
+        urn = meta.get("post_urn")
+        if stub["source_type"] != "linkedin" or not isinstance(urn, str):
+            raise HTTPException(status_code=422, detail="Only a LinkedIn post has a preview")
+        from lestash_linkedin.feed_preview import cache_preview
+
+        outcome, detail = cache_preview(conn, urn)
+        conn.commit()
+        if outcome == "429":
+            raise HTTPException(status_code=429, detail="LinkedIn is limiting requests")
+        if outcome == "err":
+            raise HTTPException(status_code=502, detail=f"LinkedIn didn't answer: {detail}")
+        if outcome == "unfetchable":
+            raise HTTPException(status_code=422, detail="This post has no public preview")
+        # "miss": deleted or private; the page keeps its address
+        return enrich_item(conn, Item.from_row(stub))
 
 
 @router.get("/{item_id}", response_model=ItemResponse)

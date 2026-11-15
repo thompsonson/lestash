@@ -272,6 +272,40 @@ def build_worklist(
     return worklist, scope
 
 
+def cache_preview(conn: sqlite3.Connection, urn: str) -> tuple[str, str]:
+    """Fetch one post's public preview and cache it. Returns (outcome, detail):
+    "ok"; "miss" (deleted or private: a sentinel is cached, so it isn't fetched
+    again); "429" (rate-limited); "err" (transient, left uncached); "unfetchable"
+    (a URN shape /feed/update can't open, such as a group post)."""
+    from lestash.core.database import upsert_post_cache
+
+    kind_id = _urn_to_fetchable_id(urn)
+    if kind_id is None:
+        return "unfetchable", ""
+    urn_kind, fid = kind_id
+    preview = fetch_preview(fid, urn_kind=urn_kind)
+    status = preview["status"]
+    if status == "429":
+        return "429", ""
+    if status != "200":
+        return "err", f"{status} {preview['error'] or ''}".strip()
+    og_url = preview["og_url"] or ""
+    # Deleted/private/inaccessible posts return LinkedIn's generic home meta (og:url
+    # without /posts/): a sentinel, rather than caching "500 million+ members | …"
+    if "/posts/" not in og_url:
+        upsert_post_cache(conn, urn=urn, source=GONE_SOURCE)
+        return "miss", ""
+    upsert_post_cache(
+        conn,
+        urn=urn,
+        author_name=preview["author"],
+        content_preview=preview["description"],
+        url=og_url,
+        source=CACHE_SOURCE,
+    )
+    return "ok", ""
+
+
 def cache_engaged_posts(
     conn: sqlite3.Connection,
     *,
@@ -297,7 +331,6 @@ def cache_engaged_posts(
     Returns:
         CacheStats with the run's outcome counts.
     """
-    from lestash.core.database import upsert_post_cache
 
     def _emit(msg: str) -> None:
         if on_progress:
@@ -321,38 +354,18 @@ def cache_engaged_posts(
 
     n = len(worklist)
     for i, (urn, _kind) in enumerate(worklist, 1):
-        kind_id = _urn_to_fetchable_id(urn)
-        assert kind_id is not None  # filtered in build_worklist
-        urn_kind, fid = kind_id
-        preview = fetch_preview(fid, urn_kind=urn_kind)
-        status = preview["status"]
-
-        if status == "429":
+        outcome, detail = cache_preview(conn, urn)
+        if outcome == "429":
             _emit(f"[{i}/{n}] 429 rate-limited — stopping early")
             break
-        if status != "200":
-            # Transport error or non-OK HTTP — transient, leave uncached to retry.
+        if outcome == "err":
             stats["err"] += 1
-            _emit(f"[{i}/{n}] {status} {preview['error'] or ''} {urn}".rstrip())
-        else:
-            og_url = preview["og_url"] or ""
-            # Deleted/private/inaccessible posts return LinkedIn's generic home meta
-            # (og:url without /posts/). Record a sentinel so we don't re-fetch them
-            # every run, rather than caching "500 million+ members | …".
-            if "/posts/" not in og_url:
-                stats["miss"] += 1
-                upsert_post_cache(conn, urn=urn, source=GONE_SOURCE)
-                _emit(f"[{i}/{n}] gone/private {urn}")
-            else:
-                upsert_post_cache(
-                    conn,
-                    urn=urn,
-                    author_name=preview["author"],
-                    content_preview=preview["description"],
-                    url=og_url,
-                    source=CACHE_SOURCE,
-                )
-                stats["ok"] += 1
+            _emit(f"[{i}/{n}] {detail} {urn}".rstrip())
+        elif outcome == "miss":
+            stats["miss"] += 1
+            _emit(f"[{i}/{n}] gone/private {urn}")
+        elif outcome == "ok":
+            stats["ok"] += 1
         time.sleep(sleep)
 
     logger.info(

@@ -4,6 +4,7 @@
 // The buttons carry data-action, which the item page's click listener handles, so
 // they work the same in a menu; a menu closes once something in it is chosen.
 
+import { api } from '../../api.js';
 import { escHtml } from '../../util.js';
 
 const pad = n => String(n).padStart(2, '0');
@@ -57,7 +58,70 @@ const menu = (label, entries) => {
 const action = (name, text, id) =>
   `<button type="button" data-action="${name}"${id ? ` data-id="${id}"` : ''}>${escHtml(text)}</button>`;
 
+// ── A stub: a post LeStash knows only by its address (#322) ──────────────────────
+
+// "linkedin/urn:li:activity:7526…", linking to the post: shorter than its address
+export function shortLink(item) {
+  const url = item.url || '';
+  const urn = url.match(/urn:li:[A-Za-z]+:[\w(),:-]+/);
+  if (item.source_type === 'linkedin' && urn) return `linkedin/${urn[0]}`;
+  return url.replace(/^https?:\/\/(www\.)?/, '').replace(/[?#].*$/, '').replace(/\/$/, '');
+}
+
+// Keep a copy: its text pasted, or a screenshot. Each is a child of the stub, so it
+// moves to the post if the post is ever imported.
+function stubActionsHtml(item) {
+  const day = dayOf(item);
+  const add = menu('+ Add', [
+    action('show-copy-form', 'Its text (paste)'),
+    action('add-screenshot', 'A screenshot'),
+    action('show-note-form', 'Note'),
+    action('focus-tag', 'Tag'),
+    `<button type="button" onclick="addToCollection(${item.id})">Collection</button>`,
+  ]);
+  const go = menu('Go', [
+    day ? `<a href="/day/${day}">Its day</a>` : '',
+    item.url ? external(item.url, 'Original') : '',
+  ]);
+  const more = menu('⋯', [
+    item.source_type === 'linkedin' ? action('fetch-preview', 'Fetch its preview', item.id) : '',
+    action('copy-link', 'Copy link', item.id),
+  ]);
+  return `<div class="item-detail-actions" id="item-detail-actions">
+    <button type="button" class="btn-main" data-action="show-copy-form">Keep a copy</button>${add}${go}${more}
+    <select id="add-to-coll-select" style="display:none" onchange="confirmAddToCollection(this)"></select>
+  </div>
+  <div id="copy-form" class="copy-form" hidden>
+    <textarea id="copy-text" rows="6" placeholder="Paste the post's text"></textarea>
+    <div class="copy-form-actions">
+      <button class="sync-btn" type="button" data-action="save-copy" data-id="${item.id}">Keep</button>
+      <button class="sync-btn" type="button" data-action="cancel-copy">Cancel</button>
+    </div>
+  </div>
+  <input type="file" id="copy-image-input" accept="image/*" hidden>`;
+}
+
+export async function saveCopy(itemId, text) {
+  return api(`/api/items/${itemId}/copies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: text }),
+  });
+}
+
+// A screenshot: the copy and its file in one request, so a failed upload leaves none
+export async function saveScreenshot(itemId, file) {
+  const form = new FormData();
+  form.append('file', file, file.name || 'screenshot.png');
+  return api(`/api/items/${itemId}/copies/screenshot`, { method: 'POST', body: form });
+}
+
+export async function fetchPreview(itemId) {
+  return api(`/api/items/${itemId}/preview`, { method: 'POST' });
+}
+
 export function actionsHtml(item) {
+  if (item.held === false) return stubActionsHtml(item);
   const day = dayOf(item);
   const add = menu('+ Add', [
     action('show-note-form', 'Note'),
