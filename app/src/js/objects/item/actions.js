@@ -17,16 +17,19 @@ export function dayOf(item) {
 
 // Your LinkedIn reply to a named author is titled by the post it answers, not by
 // its own opening words, which show in full below: "Reply to robnewby's post".
-// Others' comments, and a title that isn't the reply's opening (one you edited),
-// keep their title. Returns '' when the title stays.
+// Others' comments, and a title of your own (set with Edit), keep their title.
+// Returns '' when the title stays.
 const OPENING = 20;  // characters of the text a title made from it starts with
 export function replyTitle(item) {
   if (item.kind !== 'comment' || item.source_type !== 'linkedin') return '';
   const raw = (item.metadata && item.metadata.raw) || {};
   const who = item.author_display || '';
   if (!raw.owner || raw.owner !== raw.actor || !who || who === '-' || who.startsWith('urn:')) return '';
+  // Comments are stored without a title (the page shows a preview of the text); one
+  // set with Edit, not the text's opening, stays
   const opening = (item.content || '').trim().slice(0, OPENING);
-  if (!opening || !(item.title || '').trim().startsWith(opening)) return '';
+  const stored = (item.title || '').trim();
+  if (!opening || (stored && !stored.startsWith(opening))) return '';
   return `Reply to ${who}'s post`;
 }
 
