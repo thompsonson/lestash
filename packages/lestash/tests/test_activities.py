@@ -299,3 +299,33 @@ def test_migration_21_keys_activities_by_actor_and_keeps_every_row(test_db) -> N
         # Ann's like at the same time is hers; yours again is still one
         assert record_activities(conn, item, [_like(ann), _like(None)]) == 1
         assert record_activities(conn, item, [_like(ann)]) == 0
+
+
+def test_migration_29_makes_linkedin_reactions_other_than_like_reacted(test_db) -> None:
+    with get_connection(test_db) as conn:
+        item = conn.execute(
+            "INSERT INTO items (source_type, content) VALUES ('t', 'x') RETURNING id"
+        ).fetchone()[0]
+        rows = [
+            ("linkedin", {"reaction": "LIKE"}, 1),
+            ("linkedin", {"reaction": "ENTERTAINMENT"}, 2),
+            ("linkedin", None, 3),
+            ("takeout:youtube", {"reaction": "EMPATHY"}, 4),  # not LinkedIn: left alone
+        ]
+        for source, details, minute in rows:
+            record_activities(
+                conn,
+                item,
+                [
+                    ActivityCreate(
+                        verb="liked",
+                        occurred_at=datetime(2026, 11, 11, 16, minute, tzinfo=UTC),
+                        source=source,
+                        details=details,
+                    )
+                ],
+            )
+        conn.execute("PRAGMA user_version = 28")
+        assert apply_migrations(conn) == SCHEMA_VERSION - 28
+        verbs = conn.execute("SELECT verb FROM activities ORDER BY occurred_at").fetchall()
+        assert [v[0] for v in verbs] == ["liked", "reacted", "liked", "liked"]

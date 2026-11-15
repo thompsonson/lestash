@@ -5,7 +5,9 @@ Entries are activities (watched, liked, prompted...) and items you made in that 
 item. The app folds busy verbs into one line; the server returns every entry.
 """
 
+import html
 import json
+import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -48,6 +50,13 @@ class ItemSummary(BaseModel):
     parent_id: int | None = None
     parent_title: str | None = None
     channel: str | None = None  # a video's channel
+    # A stub (not held): what it stands for, where it is, and when it was made. Its
+    # title is the cached preview of the post, if any; its author the post's (#320)
+    held: bool = True
+    stub_of: str | None = None  # 'post' or 'comment'
+    url: str | None = None
+    made_at: str | None = None
+    author: str | None = None
 
 
 class TimelineEntry(BaseModel):
@@ -86,8 +95,36 @@ _SUMMARY = """
     CASE WHEN json_valid(i.metadata) THEN json_extract(i.metadata, '$.channel_title') END
         AS channel,
     CASE WHEN json_valid(i.metadata) THEN json_extract(i.metadata, '$.artifact_type') END
-        AS artifact_type
+        AS artifact_type,
+    i.held, i.url, strftime('%Y-%m-%dT%H:%M:%SZ', i.created_at) AS made_at,
+    CASE WHEN i.held = 0 AND json_valid(i.metadata) THEN
+        CASE WHEN json_extract(i.metadata, '$.comment_urn') IS NOT NULL THEN 'comment'
+             WHEN json_extract(i.metadata, '$.post_urn') IS NOT NULL THEN 'post' END
+    END AS stub_of,
+    pc.content_preview AS preview, pc.author_name AS author
 """
+
+# A LinkedIn stub's post, as its public preview was cached (lestash_linkedin.feed_preview)
+_PREVIEW = """
+    LEFT JOIN post_cache pc ON i.held = 0 AND json_valid(i.metadata)
+        AND pc.urn = json_extract(i.metadata, '$.post_urn')
+"""
+PREVIEW_CHARS = 120
+# LinkedIn's preview can end with its comment count: "Context is everywhere! | 13 comments…"
+_COMMENT_COUNT = re.compile(r"\s*\|\s*[\d,]+ comments? on LinkedIn\s*$")
+
+
+def _preview(text: str | None, stub_of: str | None) -> str | None:
+    """A stub's title from its post's cached preview: the first line, cut short."""
+    # The preview is the page's og:description as written: HTML entities and all
+    text = html.unescape(text or "")
+    line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    line = _COMMENT_COUNT.sub("", line)
+    if not line:
+        return None
+    if len(line) > PREVIEW_CHARS:
+        line = line[: PREVIEW_CHARS - 1].rstrip() + "…"
+    return f"A reply on: {line}" if stub_of == "comment" else line
 
 
 def _summary(row, prefix: str = "") -> ItemSummary | None:
@@ -95,9 +132,20 @@ def _summary(row, prefix: str = "") -> ItemSummary | None:
         return None
     kind = row[f"{prefix}kind"] or "document"
     artifact = row[f"{prefix}artifact_type"]
+    has = set(row.keys())
+
+    def col(name: str):
+        return row[f"{prefix}{name}"] if f"{prefix}{name}" in has else None
+
+    held = col("held") != 0
+    stub_of = None if held else col("stub_of")
+    title = (row[f"{prefix}title"] or "").strip()
+    if not held and not title:
+        # A stub has no title of its own: its post's preview, else the app names it
+        title = _preview(col("preview"), stub_of) or ""
     return ItemSummary(
         id=row[f"{prefix}id"],
-        title=(row[f"{prefix}title"] or "").strip() or "(untitled)",
+        title=title or ("" if not held else "(untitled)"),
         kind=kind,
         kind_label=KINDS[kind].label if kind in KINDS else kind,
         kind_detail=ARTIFACT_LABELS.get(artifact, artifact) if kind == "artifact" else None,
@@ -105,6 +153,11 @@ def _summary(row, prefix: str = "") -> ItemSummary | None:
         parent_id=row[f"{prefix}parent_id"],
         parent_title=row[f"{prefix}parent_title"],
         channel=row[f"{prefix}channel"] if isinstance(row[f"{prefix}channel"], str) else None,
+        held=held,
+        stub_of=stub_of,
+        url=col("url"),
+        made_at=None if held else col("made_at"),
+        author=None if held or not col("author") else html.unescape(col("author")),
     )
 
 
@@ -156,6 +209,7 @@ def timeline(
                 FROM activities a
                 LEFT JOIN items i ON i.id = a.item_id
                 LEFT JOIN items p ON p.id = i.parent_id
+                {_PREVIEW}
                 LEFT JOIN items c ON c.id = a.context_id
                 WHERE {" AND ".join(act_where)} AND a.actor_id IS NULL
                 ORDER BY a.occurred_at DESC LIMIT ?""",
@@ -183,6 +237,7 @@ def timeline(
             rows = conn.execute(
                 f"""SELECT strftime('%Y-%m-%dT%H:%M:%SZ', i.created_at) AS at, {_SUMMARY}
                 FROM items i LEFT JOIN items p ON p.id = i.parent_id
+                {_PREVIEW}
                 WHERE {made_where}
                   AND datetime(i.created_at) >= datetime(?) AND datetime(i.created_at) < datetime(?)
                 ORDER BY datetime(i.created_at) DESC LIMIT ?""",

@@ -4,6 +4,7 @@ import {
 } from './api.js';
 import { escHtml, relTime, sourceClass, sourceName } from './util.js';
 import { openExternal } from './external.js';
+import { reactionText } from './reactions.js';
 import { renderCard } from './objects/item/card.js';
 import { renderCollectionCard } from './objects/collection/card.js';
 import { renderCollectionPage } from './objects/collection/page.js';
@@ -1067,8 +1068,11 @@ async function loadActivities(itemId) {
   const verb = v => v.charAt(0).toUpperCase() + v.slice(1);
   const rows = data.activities.map(a => {
     const query = a.details && a.details.query ? ` “${escHtml(String(a.details.query))}”` : '';
+    // A LinkedIn reaction by its name: "Ann Lee reacted 😂 Funny" (#320)
+    const how = a.verb === 'reacted' ? reactionText(a.details) : '';
+    const said = how ? `${a.verb} ${how}` : a.verb;
     // Someone else's: "Ann Lee liked"; yours: "Liked"
-    const what = a.actor_id ? `${escHtml(a.actor || 'Someone')} ${escHtml(a.verb)}` : escHtml(verb(a.verb));
+    const what = a.actor_id ? `${escHtml(a.actor || 'Someone')} ${escHtml(said)}` : escHtml(verb(said));
     return `<div>${what}${query} · ${new Date(a.occurred_at).toLocaleString()}</div>`;
   }).join('');
   const more = data.total > data.activities.length

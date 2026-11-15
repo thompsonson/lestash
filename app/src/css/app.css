@@ -947,6 +947,10 @@ body.sheet-open #item-view {
 .t-subs { margin: 0.3rem 0 0 1.4em; }
 .t-sub { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.2rem 0; border-top: 1px solid var(--border); }
 .t-sub .t-title, .t-sub .t-prompt { padding-left: 0; flex: 1; min-width: 0; }
+.t-react { flex: none; white-space: nowrap; }
+.t-split { display: flex; gap: 0.5rem; align-items: baseline; }
+.t-split .t-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-out { flex: none; }
 .t-asked { font-family: var(--font-read); white-space: normal; }
 /* The day by kind: counts that filter, with the kind colours */
 .t-summary { display: flex; flex-wrap: wrap; gap: 0.35rem 0.8rem; margin: 0.2rem 0 0.6rem; font-size: 0.85rem; }

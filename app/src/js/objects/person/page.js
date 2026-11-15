@@ -11,7 +11,7 @@ const ROLE_WORDS = {
   author: 'wrote', creator: 'made', narrator: 'narrated', publisher: 'published', recipient: 'received',
 };
 const VERB_WORDS = {
-  watched: 'You watched', viewed: 'You viewed', liked: 'You liked', disliked: 'You disliked',
+  watched: 'You watched', viewed: 'You viewed', liked: 'You liked', reacted: 'You reacted to', disliked: 'You disliked',
   shared: 'You shared', prompted: 'You prompted', searched: 'You searched', listened: 'You listened to',
 };
 const PLURALS = {

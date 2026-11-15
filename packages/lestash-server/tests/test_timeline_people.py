@@ -252,3 +252,81 @@ def test_a_prompt_shows_what_you_asked(client, test_config):
     ).json()
     prompted = [e for e in day["entries"] if e["verb"] == "prompted"]
     assert [e["prompt"] for e in prompted] == ["How far is France?"]
+
+
+def test_a_reaction_on_a_stub_names_its_post_and_links_to_it(client, test_config):
+    """#320: a stub takes its post's cached preview and author; without one, no title."""
+    url = "https://www.linkedin.com/feed/update/urn:li:activity:{}"
+    with get_connection(test_config) as conn:
+        stubs = []
+        for n, comment in ((1, None), (2, None), (3, "urn:li:comment:(activity:1,9)")):
+            # A reply's stub names the post it is on: post 1
+            meta = f'{{"post_urn": "urn:li:activity:{1 if comment else n}"'
+            meta += f', "comment_urn": "{comment}"}}' if comment else "}"
+            stubs.append(
+                conn.execute(
+                    "INSERT INTO items (source_type, source_id, content, created_at, held, url,"
+                    " metadata) VALUES ('linkedin', ?, '', '2026-11-11T13:36:02.410000+00:00',"
+                    " 0, ?, ?) RETURNING id",
+                    (f"stub:{n}", url.format(n), meta),
+                ).fetchone()[0]
+            )
+        conn.execute(
+            "INSERT INTO post_cache (urn, author_name, content_preview, source) VALUES"
+            " ('urn:li:activity:1', 'a-company',"
+            " '\n  Black Friday deal! &amp; more | 13 comments on LinkedIn\nMore',"
+            " 'feed_preview')"
+        )
+        for minute, (stub, verb, reaction) in enumerate(
+            (
+                (stubs[0], "reacted", "ENTERTAINMENT"),
+                (stubs[1], "liked", "LIKE"),
+                (stubs[2], "reacted", "EMPATHY"),
+            ),
+            start=1,
+        ):
+            conn.execute(
+                "INSERT INTO activities (verb, item_id, occurred_at, source, details)"
+                " VALUES (?, ?, ?, 'linkedin', ?)",
+                (verb, stub, f"2026-11-11T16:0{minute}:00.000Z", f'{{"reaction": "{reaction}"}}'),
+            )
+        conn.commit()
+    day = client.get(
+        "/api/timeline", params={"start": "2026-11-11T00:00:00Z", "end": "2026-11-12T00:00:00Z"}
+    ).json()
+    got = [
+        (
+            e["verb"],
+            e["details"]["reaction"],
+            e["item"]["title"],
+            e["item"]["stub_of"],
+            e["item"]["author"],
+            e["item"]["url"],
+            e["item"]["made_at"],
+            e["item"]["held"],
+        )
+        for e in reversed(day["entries"])
+    ]
+    assert got == [
+        (
+            "reacted",
+            "ENTERTAINMENT",
+            "Black Friday deal! & more",
+            "post",
+            "a-company",
+            url.format(1),
+            "2026-11-11T13:36:02Z",
+            False,
+        ),
+        ("liked", "LIKE", "", "post", None, url.format(2), "2026-11-11T13:36:02Z", False),
+        (
+            "reacted",
+            "EMPATHY",
+            "A reply on: Black Friday deal! & more",
+            "comment",
+            "a-company",
+            url.format(3),
+            "2026-11-11T13:36:02Z",
+            False,
+        ),
+    ]

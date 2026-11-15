@@ -193,6 +193,7 @@ CREATE INDEX idx_item_links_to ON item_links(to_id, kind);
   - A comment without a parent links to its target as `in_reply_to`, and stays top-level, so listings still show it.
     A comment with a parent has no such link, whichever was imported first.
   - Your own reaction is a `liked` activity on its target, with the reaction type in `details`.
+    Since #320 only a Like is `liked`; any other reaction is `reacted` (migration 29).
     Its time is LinkedIn's UTC time, never the local `created_at`, so a run in another time zone adds no second like.
   - Only the event that made a reaction counts; a change or a delete adds no like.
   - Someone else's reaction waits for the people tables, since an activity without an actor is yours.
@@ -444,6 +445,7 @@ An activity is something someone did, at a time, usually to an item.
 | `searched` | a YouTube query | `SearchAction` | — |
 | `viewed` | a community post | `ViewAction` | `View` |
 | `liked` | a video | `LikeAction` | `Like` |
+| `reacted` | a LinkedIn post, other than with a Like (#320) | `ReactAction` | — |
 | `shared` | a video | `ShareAction` | `Announce` |
 | `commented` | on a video | `CommentAction` | `Create` |
 | `prompted` | a Gemini chat | `AskAction` | `Create` |
@@ -659,6 +661,8 @@ Open from the data: #245, rows that point at deleted items.
 - A YouTube watch without a known video item points at a stub item.
 - NotebookLM sources become items, reusing items LeStash already holds.
 - Every YouTube channel becomes an entity; listings filter by watch count.
+- A LinkedIn reaction's record is its activity: `liked` for a Like, `reacted` (`schema:ReactAction`) for any other, the reaction in `details` (#320). The `reaction` item is its source, kept out of listings.
+- A stub is shown by what is known of it: its post's cached preview and author, else its kind and time, with a link to it where it lives (#320).
 - Nothing links people automatically; every match is a suggestion you confirm.
 - Item links from exact identifiers count at once and can be removed; name matches wait for you.
 - Gemini turns keep `user` and `model` as their author until the people tables exist.

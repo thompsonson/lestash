@@ -40,16 +40,18 @@ def _comment(n: int, on: str = POST, actor: str = ME) -> ItemCreate:
     )
 
 
-def _reaction(n: int, on: str, actor: str = ME, time_ms: int | None = 1768815923678) -> ItemCreate:
+def _reaction(
+    n: int, on: str, actor: str = ME, time_ms: int | None = 1768815923678, kind: str = "PRAISE"
+) -> ItemCreate:
     raw: dict = {"actor": actor, "owner": ME, "capturedAt": 1768815924000}
     if time_ms:
         raw["activity"] = {"created": {"time": time_ms}}
     return ItemCreate(
         source_type="linkedin",
         source_id=f"changelog-socialActions/likes-{n}",
-        content="👏 PRAISE",
+        content=f"👏 {kind}",
         created_at="2026-01-19 10:45:54.022000",
-        metadata={"reacted_to": on, "reaction_type": "PRAISE", "raw": raw},
+        metadata={"reacted_to": on, "reaction_type": kind, "raw": raw},
     )
 
 
@@ -146,7 +148,7 @@ def test_reactions_are_liked_activities_with_their_actor(test_db) -> None:
     assert activities == [
         # A like on a comment is on the comment, not its post
         (
-            "liked",
+            "reacted",
             stubs[f"stub:{ON_COMMENT}"],
             "2026-01-19T09:45:23.678Z",
             "linkedin",
@@ -154,10 +156,10 @@ def test_reactions_are_liked_activities_with_their_actor(test_db) -> None:
             None,
         ),
         # Without LinkedIn's own time, when the changelog captured it, not local created_at
-        ("liked", stubs[f"stub:{POST}"], "2026-01-19T09:45:24.000Z", "linkedin", praise, None),
+        ("reacted", stubs[f"stub:{POST}"], "2026-01-19T09:45:24.000Z", "linkedin", praise, None),
         # Someone else's: their person, named by their URN until a source names them
         (
-            "liked",
+            "reacted",
             stubs[f"stub:{POST}"],
             "2026-01-19T09:45:23.678Z",
             "linkedin",
@@ -196,7 +198,7 @@ def test_an_imported_post_takes_over_its_stub_and_what_was_attached(test_db) -> 
         assert _stubs(conn) == {}
         # The comment is now the post's child; a reply link would say it twice
         assert _rows(conn, "SELECT COUNT(*) FROM item_links") == [(0,)]
-        assert _rows(conn, "SELECT item_id, verb FROM activities") == [(post, "liked")]
+        assert _rows(conn, "SELECT item_id, verb FROM activities") == [(post, "reacted")]
         children = _rows(conn, f"SELECT id FROM items WHERE parent_id = {post} ORDER BY id")
         assert note in [c[0] for c in children] and len(children) == 3
         reasons = _rows(conn, f"SELECT change_reason FROM item_history WHERE item_id = {note}")
@@ -313,4 +315,15 @@ def test_an_imported_comment_takes_over_its_stub(test_db) -> None:
         # The stub's reply link to the post went with it: one link, to the post's stub
         assert _rows(conn, f"SELECT to_id FROM item_links WHERE from_id = {comment}") == [
             (_stubs(conn)[f"stub:{POST}"],)
+        ]
+
+
+def test_a_like_is_liked_and_any_other_reaction_is_reacted(test_db) -> None:
+    with get_connection(test_db) as conn:
+        upsert_item(conn, _reaction(1, POST, kind="LIKE"))
+        upsert_item(conn, _reaction(2, POST, kind="ENTERTAINMENT", time_ms=1768815999000))
+        resolve_linkedin_parents(conn)
+        assert _rows(conn, "SELECT verb, details FROM activities ORDER BY occurred_at") == [
+            ("liked", json.dumps({"reaction": "LIKE"})),
+            ("reacted", json.dumps({"reaction": "ENTERTAINMENT"})),
         ]
