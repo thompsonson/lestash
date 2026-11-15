@@ -196,6 +196,7 @@ class KoboReader:
         for row in self.file_titles():
             self.on_device.add(row["ContentID"])
             self.imported.add(row["ContentID"])
+            kept.add(row["ContentID"])  # its highlights and markups attach to it
             item = self.title_item(row)
             item.metadata = {**(item.metadata or {}), NO_ROW_KEY: True}
             yield item

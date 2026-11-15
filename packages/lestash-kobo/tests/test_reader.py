@@ -642,6 +642,23 @@ def test_book_files_the_database_does_not_list_are_books(device: Path, tmp_path:
     _pdf(paper, "Ontology Development 101")
     (device / "Books").mkdir()
     (device / "Books" / "a-novel.epub").write_bytes(b"PK epub")
+    # A highlight on it, though its title has no row
+    import sqlite3
+
+    db = sqlite3.connect(device / ".kobo" / "KoboReader.sqlite")
+    db.execute(
+        "INSERT INTO Bookmark (BookmarkID, VolumeID, ContentID, Text, Annotation,"
+        " DateCreated, Hidden, Type) VALUES (?, ?, ?, ?, '', ?, 'false', 'highlight')",
+        (
+            "bm-on-file",
+            "file:///mnt/onboard/Research/Ontology/noy-101.pdf",
+            "file:///mnt/onboard/Research/Ontology/noy-101.pdf",
+            "Ontology development",
+            "2026-11-07T10:00:00.000",
+        ),
+    )
+    db.commit()
+    db.close()
     store = KoboStore(tmp_path / "store")
     store.take(device, T1)
     _pdf(paper, "Ontology Development 101", note=True)  # read, with a pen note
@@ -659,6 +676,7 @@ def test_book_files_the_database_does_not_list_are_books(device: Path, tmp_path:
     assert [m.superseded_at is None for m in pdf.media] == [False, True]
     assert {pdf_id, epub_id} <= reader.on_device and {pdf_id, epub_id} <= reader.imported
     # The Kobo's own folders hold no books of yours, and titles with rows stay as read
+    assert "bookmark:bm-on-file" in items  # its highlight is kept
     no_row = {i for i, item in items.items() if (item.metadata or {}).get(NO_ROW_KEY)}
     assert no_row == {pdf_id, epub_id}
     assert NO_ROW_KEY not in items[DRIVE_PDF].metadata
