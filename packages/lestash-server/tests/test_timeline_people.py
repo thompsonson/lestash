@@ -274,7 +274,7 @@ def test_a_reaction_on_a_stub_names_its_post_and_links_to_it(client, test_config
         conn.execute(
             "INSERT INTO post_cache (urn, author_name, content_preview, source) VALUES"
             " ('urn:li:activity:1', 'a-company',"
-            " '\n  Black Friday deal! | 13 comments on LinkedIn\nMore',"
+            " '\n  Black Friday deal! &amp; more | 13 comments on LinkedIn\nMore',"
             " 'feed_preview')"
         )
         for minute, (stub, verb, reaction) in enumerate(
@@ -311,7 +311,7 @@ def test_a_reaction_on_a_stub_names_its_post_and_links_to_it(client, test_config
         (
             "reacted",
             "ENTERTAINMENT",
-            "Black Friday deal!",
+            "Black Friday deal! & more",
             "post",
             "a-company",
             url.format(1),
@@ -322,7 +322,7 @@ def test_a_reaction_on_a_stub_names_its_post_and_links_to_it(client, test_config
         (
             "reacted",
             "EMPATHY",
-            "A reply on: Black Friday deal!",
+            "A reply on: Black Friday deal! & more",
             "comment",
             "a-company",
             url.format(3),

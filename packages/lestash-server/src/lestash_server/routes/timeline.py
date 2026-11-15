@@ -5,6 +5,7 @@ Entries are activities (watched, liked, prompted...) and items you made in that 
 item. The app folds busy verbs into one line; the server returns every entry.
 """
 
+import html
 import json
 import re
 from datetime import UTC, datetime
@@ -115,7 +116,9 @@ _COMMENT_COUNT = re.compile(r"\s*\|\s*[\d,]+ comments? on LinkedIn\s*$")
 
 def _preview(text: str | None, stub_of: str | None) -> str | None:
     """A stub's title from its post's cached preview: the first line, cut short."""
-    line = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
+    # The preview is the page's og:description as written: HTML entities and all
+    text = html.unescape(text or "")
+    line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
     line = _COMMENT_COUNT.sub("", line)
     if not line:
         return None
@@ -154,7 +157,7 @@ def _summary(row, prefix: str = "") -> ItemSummary | None:
         stub_of=stub_of,
         url=col("url"),
         made_at=None if held else col("made_at"),
-        author=None if held else col("author"),
+        author=None if held or not col("author") else html.unescape(col("author")),
     )
 
 
