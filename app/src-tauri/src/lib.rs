@@ -41,18 +41,18 @@ async fn download_model(app: tauri::AppHandle) -> Result<String, String> {
     stt::download_model(app).await.map_err(|e| e.to_string())
 }
 
-// Opens a web or mail link in the system browser or mail app. The shell plugin's own
-// JS command uses the desktop opener even on Android, where nothing happens; its Rust
-// call reaches Android's ACTION_VIEW intent. Only http, https and mailto pass.
+// Opens a web or mail link in the system browser or mail app, through the opener
+// plugin (on Android, an ACTION_VIEW intent). The shell plugin's open, used before,
+// is deprecated, and links did nothing on Android with it (#328). Only http, https
+// and mailto pass.
 #[tauri::command]
-#[allow(deprecated)]
 fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt;
+    use tauri_plugin_opener::OpenerExt;
     let lower = url.to_ascii_lowercase();
     if !["https://", "http://", "mailto:"].iter().any(|p| lower.starts_with(p)) {
         return Err(format!("not a web or mail link: {url}"));
     }
-    app.shell().open(url, None).map_err(|e| e.to_string())
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -65,6 +65,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_google_auth::init())
         .manage(AppState {
             stt: Arc::new(stt::SttEngine::new()),

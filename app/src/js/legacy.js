@@ -4,6 +4,7 @@ import {
 } from './api.js';
 import { escHtml, relTime, sourceClass, sourceName } from './util.js';
 import { openExternal } from './external.js';
+import { showToast } from './toast.js';
 import { reactionText } from './reactions.js';
 import {
   attachPickerGetId, attachPickerKind, attachPickerReset, attachPickerSearch, attachPickerSelect,
@@ -169,16 +170,7 @@ async function debugTestConnection() {
   }
 }
 
-/* ── Toasts ── */
-function showToast(message, level) {
-  const el = document.createElement('div');
-  el.className = `toast ${level || ''}`;
-  el.textContent = message;
-  const container = document.getElementById('toasts');
-  while (container.children.length >= 5) container.removeChild(container.firstChild);
-  container.appendChild(el);
-  el.addEventListener('animationend', () => el.remove());
-}
+/* ── Toasts: js/toast.js ── */
 
 /* ── Pages (#260): the router draws exactly one; see js/router.js ── */
 const TAB_PATHS = {

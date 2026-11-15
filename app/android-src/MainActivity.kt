@@ -4,9 +4,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
-import android.webkit.PermissionRequest
-import android.webkit.WebChromeClient
-import android.webkit.WebView
 import org.json.JSONObject
 import java.io.File
 
@@ -15,34 +12,9 @@ class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handleShareIntent(intent)
-        setupWebViewPermissions()
-    }
-
-    private fun setupWebViewPermissions() {
-        val rootView = findViewById<android.view.View>(android.R.id.content) ?: return
-        rootView.viewTreeObserver.addOnGlobalLayoutListener(object :
-            android.view.ViewTreeObserver.OnGlobalLayoutListener {
-            override fun onGlobalLayout() {
-                val webView = findWebView(rootView) ?: return
-                rootView.viewTreeObserver.removeOnGlobalLayoutListener(this)
-                webView.webChromeClient = object : WebChromeClient() {
-                    override fun onPermissionRequest(request: PermissionRequest) {
-                        runOnUiThread { request.grant(request.resources) }
-                    }
-                }
-            }
-        })
-    }
-
-    private fun findWebView(view: android.view.View?): WebView? {
-        if (view is WebView) return view
-        if (view is android.view.ViewGroup) {
-            for (i in 0 until view.childCount) {
-                val found = findWebView(view.getChildAt(i))
-                if (found != null) return found
-            }
-        }
-        return null
+        // The WebView keeps wry's own chrome client: it opens file pickers for
+        // <input type="file"> and grants the microphone. Replacing it, as this did
+        // before #328, left every file input dead.
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -156,7 +128,40 @@ class MainActivity : TauriActivity() {
             val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
             if (subject != null) json.put("subject", subject)
         } else {
-            return
+            // Fallback: check file extension for generic MIME types (e.g. application/octet-stream)
+            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            if (uri != null) {
+                val fileName = getFileName(uri) ?: ""
+                if (fileName.endsWith(".html", ignoreCase = true) || fileName.endsWith(".htm", ignoreCase = true)) {
+                    val tempFile = File(cacheDir, "shared_${System.currentTimeMillis()}.html")
+                    try {
+                        contentResolver.openInputStream(uri)?.use { input ->
+                            tempFile.outputStream().use { output -> input.copyTo(output) }
+                        } ?: return
+                    } catch (e: Exception) {
+                        return
+                    }
+                    json.put("mimeType", "text/html")
+                    json.put("filePath", tempFile.absolutePath)
+                    json.put("fileName", fileName)
+                } else if (fileName.endsWith(".pdf", ignoreCase = true)) {
+                    val tempFile = File(cacheDir, "shared_${System.currentTimeMillis()}.pdf")
+                    try {
+                        contentResolver.openInputStream(uri)?.use { input ->
+                            tempFile.outputStream().use { output -> input.copyTo(output) }
+                        } ?: return
+                    } catch (e: Exception) {
+                        return
+                    }
+                    json.put("mimeType", "application/pdf")
+                    json.put("filePath", tempFile.absolutePath)
+                    json.put("fileName", fileName)
+                } else {
+                    return
+                }
+            } else {
+                return
+            }
         }
 
         val pendingFile = File(cacheDir, "pending_share.json")
