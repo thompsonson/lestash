@@ -2,20 +2,24 @@
 
 import json
 import logging
+import mimetypes
 import re
 import sqlite3
 from collections import Counter
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, UploadFile
 from lestash.core.agents import agents_for
+from lestash.core.blobs import adopt_media
 from lestash.core.database import (
+    add_item_media,
     add_tag,
     list_tags,
     mark_recent_history,
     max_history_id,
     remove_tag,
+    save_media_file,
 )
 from lestash.core.embed_units import ROUND_PREFIX
 from lestash.core.embeddings import re_embed_item
@@ -27,7 +31,7 @@ from lestash.core.links import links_of, reject_link
 from lestash.core.search import keyword_search
 from lestash.models.item import Item
 
-from lestash_server.deps import get_db
+from lestash_server.deps import get_config, get_db
 from lestash_server.enrich import enrich_item, stub_post
 from lestash_server.models import (
     _UNSET,
@@ -894,34 +898,71 @@ def _stub(conn: sqlite3.Connection, item_id: int) -> sqlite3.Row:
     return row
 
 
+def _insert_copy(
+    conn: sqlite3.Connection, stub: sqlite3.Row, source_type: str, content: str
+) -> int:
+    """A copy of a stub's post as its child: by the post's author when known, not
+    your own content. Not committed."""
+    _title, post_author = stub_post(conn, Item.from_row(stub))
+    metadata = {"copy_of": stub["id"], "copied_at": datetime.now(UTC).isoformat()}
+    return conn.execute(
+        """INSERT INTO items (source_type, content, title, author, created_at,
+                              is_own_content, metadata, parent_id)
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?) RETURNING id""",
+        (
+            source_type,
+            content,
+            "Screenshot" if source_type == "image" else None,
+            post_author,
+            datetime.now(UTC),
+            json.dumps(metadata),
+            stub["id"],
+        ),
+    ).fetchone()[0]
+
+
 @router.post("/{item_id}/copies", response_model=ItemResponse, status_code=201)
 def add_copy(item_id: int, body: CopyCreateRequest):
-    """Keep a copy of a stub's post under it (#322): its pasted text, or an image for
-    a screenshot, whose file goes to the new item's media next.
+    """Keep the pasted text of a stub's post under it (#322).
 
     A child, so it moves to the post when the post is imported (merge_item). It is a
     copy, not your writing: not your own content, by the post's author when known."""
-    if body.kind == "text" and not body.content.strip():
+    if not body.content.strip():
         raise HTTPException(status_code=422, detail="Nothing to keep: the text is empty")
     with get_db() as conn:
-        stub = _stub(conn, item_id)
-        _title, post_author = stub_post(conn, Item.from_row(stub))
-        metadata = {"copy_of": item_id, "copied_at": datetime.now(UTC).isoformat()}
-        new_id = conn.execute(
-            """INSERT INTO items (source_type, content, title, author, created_at,
-                                  is_own_content, metadata, parent_id)
-            VALUES (?, ?, ?, ?, ?, 0, ?, ?) RETURNING id""",
-            (
-                "note" if body.kind == "text" else "image",
-                body.content.strip(),
-                "Screenshot" if body.kind == "image" else None,
-                post_author,
-                datetime.now(UTC),
-                json.dumps(metadata),
-                item_id,
-            ),
-        ).fetchone()[0]
+        new_id = _insert_copy(conn, _stub(conn, item_id), "note", body.content.strip())
         conn.commit()
+        row = conn.execute("SELECT * FROM items WHERE id = ?", (new_id,)).fetchone()
+        return enrich_item(conn, Item.from_row(row))
+
+
+@router.post("/{item_id}/copies/screenshot", response_model=ItemResponse, status_code=201)
+def add_screenshot(item_id: int, file: UploadFile):
+    """Keep a screenshot of a stub's post under it (#322): an image copy and its file,
+    stored together, so a failed upload leaves no empty copy."""
+    mime = file.content_type or mimetypes.guess_type(file.filename or "")[0] or ""
+    if not mime.startswith("image/"):
+        raise HTTPException(status_code=422, detail="A screenshot must be an image")
+    data = file.file.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="The image is empty")
+    with get_db() as conn:
+        new_id = _insert_copy(conn, _stub(conn, item_id), "image", "")
+        rel_path = save_media_file(new_id, data, file.filename or "screenshot.png", get_config())
+        media_id = add_item_media(
+            conn,
+            new_id,
+            media_type="image",
+            local_path=rel_path,
+            mime_type=mime,
+            source_origin="upload",
+            _commit=False,
+        )
+        conn.commit()  # the copy and its file's row together
+        try:
+            adopt_media(conn, get_config(), ids=[media_id])  # into the file store
+        except sqlite3.Error as e:
+            logger.warning("Screenshot %s not yet in the file store: %s", media_id, e)
         row = conn.execute("SELECT * FROM items WHERE id = ?", (new_id,)).fetchone()
         return enrich_item(conn, Item.from_row(row))
 

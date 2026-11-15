@@ -132,10 +132,9 @@ class StatsResponse(BaseModel):
 
 
 class CopyCreateRequest(BaseModel):
-    """A copy of a stub's post you keep under it (#322): its pasted text, or an image
-    (a screenshot) whose file is uploaded to the new item's media next."""
+    """The pasted text of a stub's post, kept under it (#322). A screenshot goes to
+    /copies/screenshot, with its file."""
 
-    kind: Literal["text", "image"] = "text"
     content: str = ""
 
 

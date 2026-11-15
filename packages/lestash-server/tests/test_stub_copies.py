@@ -50,8 +50,19 @@ def test_a_pasted_copy_is_a_child_by_the_posts_author_not_yours(client, test_con
         "a-company",
     )
     assert (copy["kind_label"], copy["metadata"]["copy_of"]) == ("Copy", stub)
-    shot = client.post(f"/api/items/{stub}/copies", json={"kind": "image"}).json()
+    png = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
+    resp = client.post(
+        f"/api/items/{stub}/copies/screenshot", files={"file": ("shot.png", png, "image/png")}
+    )
+    shot = resp.json()
     assert (shot["source_type"], shot["title"], shot["parent_id"]) == ("image", "Screenshot", stub)
+    assert [m["media_type"] for m in shot["media"]] == ["image"]
+    assert client.get(f"/api/items/{stub}").json()["copies"] == 2
+    # Not an image: refused, and no empty copy is left
+    resp = client.post(
+        f"/api/items/{stub}/copies/screenshot", files={"file": ("a.txt", b"x", "text/plain")}
+    )
+    assert resp.status_code == 422
     assert client.get(f"/api/items/{stub}").json()["copies"] == 2
 
     # Nothing to keep, or an item LeStash holds already

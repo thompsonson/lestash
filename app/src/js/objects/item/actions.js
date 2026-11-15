@@ -105,21 +105,15 @@ export async function saveCopy(itemId, text) {
   return api(`/api/items/${itemId}/copies`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind: 'text', content: text }),
+    body: JSON.stringify({ content: text }),
   });
 }
 
-// A screenshot: an image copy, then its file as that copy's media
+// A screenshot: the copy and its file in one request, so a failed upload leaves none
 export async function saveScreenshot(itemId, file) {
-  const shot = await api(`/api/items/${itemId}/copies`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind: 'image' }),
-  });
   const form = new FormData();
   form.append('file', file, file.name || 'screenshot.png');
-  await api(`/api/items/${shot.id}/media`, { method: 'POST', body: form });
-  return shot;
+  return api(`/api/items/${itemId}/copies/screenshot`, { method: 'POST', body: form });
 }
 
 export async function fetchPreview(itemId) {
