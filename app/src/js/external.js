@@ -33,11 +33,21 @@ export function openExternal(href) {
   });
 }
 
+// In the capture phase, so it acts before any other click listener: on the Android
+// app a tap on a link reached a capture listener on document but never this one when
+// it listened in the bubble phase (#328). Each way out is logged while that is traced.
 function onClick(e) {
-  if (e.defaultPrevented || e.button !== 0) return;
-  const a = e.target.closest('a[href]');
+  const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
   if (!a) return;
-  const url = new URL(a.href, location.href);
+  const skip = why => addDebugLog('LINK', `${a.getAttribute('href')}: ${why}`, 'SKIP', null, null);
+  if (e.defaultPrevented) return skip('already prevented');
+  if (e.button !== 0) return skip(`button ${e.button}`);
+  let url;
+  try {
+    url = new URL(a.href, location.href);
+  } catch (err) {
+    return skip(`bad address: ${err}`);
+  }
   if (!/^(https?|mailto):$/.test(url.protocol)) return;
   // Pages of the app itself stay with the router
   if (url.origin === location.origin && a.target !== '_blank') return;
@@ -73,7 +83,7 @@ function confirmExternal(href) {
   document.body.appendChild(box);
 }
 
-if (IS_TAURI) document.addEventListener('click', onClick);
+if (IS_TAURI) document.addEventListener('click', onClick, true);
 
 // Trace for #328: links do nothing on Android, and no tap reached openExternal. Log
 // that this file loaded, and every tap on a link as it first arrives (capture phase),
