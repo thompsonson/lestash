@@ -40,7 +40,7 @@ Not objects, and why:
 ### Item kinds
 
 An item's kind decides its card face and the extra section on its page.
-No `kind` field exists today; it is derived from source and metadata.
+`items.kind` (migration 24) holds it, generated from source and metadata by `core/kinds.py`.
 
 | Kind | Where it comes from | Extra on its page |
 |---|---|---|

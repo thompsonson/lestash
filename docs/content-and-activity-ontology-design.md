@@ -1,6 +1,6 @@
 # Content and Activity Ontology Design
 
-*Proposed 2026-11-07 — the Gemini importer has shipped (#214); the rest is planned in #222*
+*Proposed 2026-11-07. Waypoint 1 was built by 9 Nov 2026 ("W1 as built" below); the rest is planned in #222.*
 
 ## Overview
 
@@ -450,6 +450,8 @@ An activity is something someone did, at a time, usually to an item.
 | `created` | a Gemini Canvas, a Drive file | `CreateAction` | `Create` |
 | `edited` | a Drive Doc | `UpdateAction` | `Update` |
 | `listened` | an Audible book | `ListenAction` | `Listen` |
+| `disliked` | a video | `DislikeAction` | `Dislike` |
+| `read` | a Kobo book (planned, #201) | `ReadAction` | `Read` |
 
 ### Proposed table
 
@@ -468,6 +470,8 @@ CREATE TABLE activities (
 CREATE INDEX idx_activities_time ON activities(occurred_at);
 CREATE INDEX idx_activities_item ON activities(item_id);
 ```
+
+- Replaced: migration 21 keys `activities` on `(verb, item_id, occurred_at, source, ifnull(actor_id, 0))`, so two people's likes at one time are two rows (step 4d).
 
 - `actor_id` is null for your own activity, which is nearly all of it.
   It is set for others, such as a contact who reacted to your post.
@@ -559,6 +563,7 @@ flowchart LR
 A **Collection** is a set of items you put together for a purpose: a reading list, a theme to study, a queue.
 
 - **Not a Topic.** A Topic says what an item is about (`schema:about`, a SKOS concept). A Collection says what you gathered it for.
+  - Nor is it a `skos:Collection`, which groups concepts, not items.
   - The ontology papers' themes ("0 Introducing ontology"…) are Collections: each has a purpose, a reading order and a place on the Kobo.
   - A Topic has none of these.
 - **Members:** a Collection *holds* items. Published terms: `prov:Collection` with `prov:hadMember`.
@@ -567,12 +572,13 @@ A **Collection** is a set of items you put together for a purpose: a reading lis
   - So the place and the note sit on the membership row, as `item_agents.position` does for author order.
   - Published terms: the Collections Ontology's `co:List` of `co:ListItem`s, each with `co:index` and `co:itemContent`; schema.org's `ItemList`, `ListItem` and `position` say the same.
   - Members without a place (from before #317) come after the placed ones, newest first.
-- **Where a collection is shown is bookkeeping, not an object.**
+- **Where a collection is shown is bookkeeping, not a screen object.**
+  - It has no card or page of its own; DCAT would still model it as a class.
   - A Collection shown on the Kobo is the same Collection.
   - Its copy there is like a DCAT Distribution of a Dataset: the same thing, made available in one place.
-  - Each place records its device id, what was written, when, and any error.
+  - Each place records the Kobo's id for the collection (`external_id`), what was written, when, and any error.
   - Collections made on the Kobo are not LeStash's and are never read or changed.
-- **Which copy a place shows:** the Kobo shows each member's Kobo book. That is the member itself, or the item linked to it by `alternate_of`.
+- **Which copy a place shows:** the Kobo shows each member's Kobo book. That is the member itself, or an item linked to it by a confirmed `alternate_of` link, either way round.
 - **A book that left the Kobo** (`removed_from_device`, #314) stays a member, but isn't written there.
 
 ### As built (#318)
