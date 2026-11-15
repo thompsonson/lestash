@@ -618,3 +618,47 @@ def test_sync_uses_the_callers_database_not_the_default(
     # The checkpoint is read from the same database: a second sync imports nothing
     assert list(plugin.sync({})) == []
     assert not (Path.home() / ".config" / "lestash").exists()
+
+
+def _pdf(path: Path, title: str, note: bool = False) -> None:
+    import pymupdf
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        page.insert_text((72, 72), "Ontology development")
+        if note:  # a pen stroke, as the Kobo saves one into the PDF
+            page.add_ink_annot([[(72, 90), (150, 95)]])
+        doc.set_metadata({"title": title})
+        doc.save(path)
+
+
+def test_book_files_the_database_does_not_list_are_books(device: Path, tmp_path: Path) -> None:
+    """A Kobo can show a sideloaded PDF, and save pen notes into it, without a row in
+    KoboReader.sqlite: the file is imported as its book, with each version as media."""
+    from lestash_kobo.reader import NO_ROW_KEY
+
+    paper = device / "Research" / "Ontology" / "noy-101.pdf"
+    _pdf(paper, "Ontology Development 101")
+    (device / "Books").mkdir()
+    (device / "Books" / "a-novel.epub").write_bytes(b"PK epub")
+    store = KoboStore(tmp_path / "store")
+    store.take(device, T1)
+    _pdf(paper, "Ontology Development 101", note=True)  # read, with a pen note
+    later = store.take(device, datetime(2026, 11, 8, 9, 0, tzinfo=UTC)).snapshot
+
+    reader = KoboReader(store, later)
+    items = {i.source_id: i for i in reader.items()}
+    pdf_id = "file:///mnt/onboard/Research/Ontology/noy-101.pdf"
+    epub_id = "file:///mnt/onboard/Books/a-novel.epub"
+    pdf, epub = items[pdf_id], items[epub_id]
+    assert (pdf.title, epub.title) == ("Ontology Development 101", "a-novel")
+    assert pdf.metadata[NO_ROW_KEY] and pdf.metadata["kind"] == "sideloaded"
+    assert pdf.created_at == T1  # when a snapshot first held it
+    # Both versions: as sideloaded, then with the pen note
+    assert [m.superseded_at is None for m in pdf.media] == [False, True]
+    assert {pdf_id, epub_id} <= reader.on_device and {pdf_id, epub_id} <= reader.imported
+    # The Kobo's own folders hold no books of yours, and titles with rows stay as read
+    no_row = {i for i, item in items.items() if (item.metadata or {}).get(NO_ROW_KEY)}
+    assert no_row == {pdf_id, epub_id}
+    assert NO_ROW_KEY not in items[DRIVE_PDF].metadata

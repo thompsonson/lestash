@@ -34,13 +34,19 @@ logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "kobo"
 # Bump when the items change shape, so the next sync re-imports an unchanged snapshot
-READER_VERSION = 3  # 2: book files and markups as stored, versioned media; 3: #314
+READER_VERSION = 4  # 2: book files and markups as stored, versioned media; 3: #314; 4: files
+# the Kobo's database doesn't list
 DEVICE_ROOT = "file:///mnt/onboard/"
 MARKUP_PLACEHOLDER = "[Handwritten markup]"
 BOOKMARK_PLACEHOLDER = "[Bookmark]"
 KINDS = {"highlight": "Highlight", "note": "Note", "dogear": "Bookmark", "markup": "Markup"}
 # On a book no longer on the Kobo: when the first snapshot imported without it was taken
 REMOVED_KEY = "removed_from_device"
+# Book files a title can be, by extension: those on the Kobo its database doesn't list
+# are imported from the snapshot's files (see file_titles)
+BOOK_FILES = (".pdf", ".epub")
+# On such a book: its title has no row in KoboReader.sqlite
+NO_ROW_KEY = "no_kobo_row"
 
 
 def parse_date(value: str | None) -> datetime | None:
@@ -184,6 +190,15 @@ class KoboReader:
                 kept.add(row["ContentID"])
                 self.imported.add(row["ContentID"])
                 yield self.title_item(row)
+        # Book files on the Kobo that its database doesn't list: it can show a
+        # sideloaded PDF in its library, and save pen notes into the file, without
+        # writing a row for it. They are books on the device all the same.
+        for row in self.file_titles():
+            self.on_device.add(row["ContentID"])
+            self.imported.add(row["ContentID"])
+            item = self.title_item(row)
+            item.metadata = {**(item.metadata or {}), NO_ROW_KEY: True}
+            yield item
         # Highlights can outlive their book on the device. Keep them: they still name
         # their book, so they attach to its item if an earlier import stored it, and
         # stay top-level otherwise. (A stand-in book item would overwrite that one.)
@@ -195,6 +210,45 @@ class KoboReader:
         for mark in sorted(marks, key=lambda m: self._order(m, chapters)):
             if mark["VolumeID"] in kept:
                 yield self.bookmark_item(mark, chapters)
+
+    def file_titles(self) -> list[dict[str, Any]]:
+        """Rows, shaped as the database's, for the book files in this snapshot that no
+        title row names: a sideloaded PDF or EPUB outside the Kobo's own folders. The
+        title is the PDF's own, else the file name; the date is when a snapshot first
+        held the file."""
+        rows = []
+        for path in sorted(self.snapshot.files):
+            if not path.lower().endswith(BOOK_FILES) or path.startswith("."):
+                continue
+            content_id = DEVICE_ROOT + path
+            if content_id in self.on_device:
+                continue
+            versions = self._versions(path)
+            rows.append(
+                {
+                    "ContentID": content_id,
+                    "Title": self._pdf_title(path) or Path(path).stem,
+                    "MimeType": mimetypes.guess_type(path)[0],
+                    "DateAdded": versions[0][1] if versions else None,
+                }
+            )
+        return rows
+
+    def _pdf_title(self, path: str) -> str | None:
+        """The title a PDF gives itself, if any."""
+        if not path.lower().endswith(".pdf"):
+            return None
+        blob = self.snapshot.blob(self.store, path)
+        if blob is None:
+            return None
+        try:
+            import pymupdf
+
+            with pymupdf.open(blob) as doc:
+                return (doc.metadata or {}).get("title", "").strip() or None
+        except Exception as e:  # a damaged PDF still imports, by its file name
+            logger.warning("Could not read the title of %s: %s", path, e)
+            return None
 
     def _keep(self, row: dict[str, Any], marked: set[str]) -> bool:
         kind = title_kind(row)

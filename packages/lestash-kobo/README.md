@@ -28,6 +28,10 @@ mounts the Kobo, takes a snapshot, unmounts it, and starts the import.
   are skipped unless `include_store_titles = true`.
 - Each highlight, note, dog-ear and pen markup, as a child of its book.
   Markups carry the Kobo's JPG and SVG of the strokes.
+- A PDF or EPUB on the Kobo that its database doesn't list, as its book. The Kobo can
+  show a sideloaded PDF, and save pen notes into it, without writing a row for it. Its
+  title is the PDF's own, else the file name; it is marked `no_kobo_row`. Each version
+  of the file, such as one with your pen notes, is a version of its media.
 
 A book that leaves the Kobo keeps its item, highlights and files (#314). The import
 marks it `removed_from_device`: when the first snapshot imported without it was taken.
