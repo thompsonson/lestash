@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 29
+SCHEMA_VERSION = 30
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -711,6 +711,15 @@ MIGRATIONS = [
         WHERE verb = 'liked' AND source = 'linkedin' AND json_valid(details)
           AND json_extract(details, '$.reaction') IS NOT NULL
           AND json_extract(details, '$.reaction') != 'LIKE';
+        """,
+    ),
+    (
+        30,
+        "Index your own edits in item_history, for items you worked on lately (#324)",
+        # Imports write nearly all history rows; your edits are a few among them
+        """
+        CREATE INDEX IF NOT EXISTS idx_item_history_user_edit
+            ON item_history(changed_at) WHERE change_reason = 'user-edit';
         """,
     ),
 ]

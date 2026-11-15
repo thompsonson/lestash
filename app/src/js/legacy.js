@@ -5,6 +5,10 @@ import {
 import { escHtml, relTime, sourceClass, sourceName } from './util.js';
 import { openExternal } from './external.js';
 import { reactionText } from './reactions.js';
+import {
+  attachPickerGetId, attachPickerKind, attachPickerReset, attachPickerSearch, attachPickerSelect,
+  attachPickerSuggest, rememberOpened,
+} from './objects/item/picker.js';
 import { renderCard } from './objects/item/card.js';
 import { renderCollectionCard } from './objects/collection/card.js';
 import { renderCollectionPage } from './objects/collection/page.js';
@@ -307,6 +311,7 @@ route(/^\/items\/(\d+)$/, async ([, id]) => {
     }
   }
   if (location.pathname !== `/items/${id}`) return;  // the user moved on meanwhile
+  rememberOpened(item);
   renderItemView(item);
 });
 
@@ -2008,77 +2013,12 @@ async function runProcessDialog() {
   }
 }
 
-/* ── Shared attach-to-existing item picker ──
-   Resolves elements by convention: {prefix}-search, {prefix}-results,
-   {prefix}-selected, {prefix}-mode, {prefix}-attach-section,
-   optional {prefix}-new-section. Used by capture-modal,
-   image-capture-modal, multi-image-capture-modal, and #113. */
-const _attachPickerState = {};
-
-function _pickerState(prefix) {
-  return _attachPickerState[prefix] || (_attachPickerState[prefix] = {});
-}
-
-function attachPickerReset(prefix) {
-  const state = _pickerState(prefix);
-  if (state.timer) { clearTimeout(state.timer); state.timer = null; }
-  state.selectedId = null;
-  const search = document.getElementById(`${prefix}-search`);
-  if (search) search.value = '';
-  const results = document.getElementById(`${prefix}-results`);
-  if (results) { results.style.display = 'none'; results.innerHTML = ''; }
-  const selected = document.getElementById(`${prefix}-selected`);
-  if (selected) selected.style.display = 'none';
-}
-
-function attachPickerSearch(prefix, query) {
-  const state = _pickerState(prefix);
-  if (state.timer) clearTimeout(state.timer);
-  const results = document.getElementById(`${prefix}-results`);
-  if (!query || query.length < 2) { results.style.display = 'none'; return; }
-  state.timer = setTimeout(async () => {
-    try {
-      const data = await api(`/api/items/search?q=${encodeURIComponent(query)}&limit=10`);
-      const items = data.items || data;
-      if (!items.length) {
-        results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">No items found</div>';
-      } else {
-        results.innerHTML = items.map(it => {
-          const date = it.created_at ? new Date(it.created_at).toLocaleDateString() : '';
-          const title = it.title || it.content?.substring(0, 60) || 'Untitled';
-          return `<div class="img-attach-result" data-id="${it.id}" data-title="${escHtml(title)}" onclick="attachPickerSelect('${prefix}', ${it.id})">
-            <div>${escHtml(title)}</div>
-            <div class="result-meta">${escHtml(it.source_type)}${date ? ' · ' + date : ''}</div>
-          </div>`;
-        }).join('');
-      }
-      results.style.display = 'block';
-    } catch (e) {
-      results.innerHTML = '<div style="padding:0.4rem 0.6rem;font-size:0.8rem;color:var(--muted)">Search failed</div>';
-      results.style.display = 'block';
-    }
-  }, 300);
-}
-
-function attachPickerSelect(prefix, itemId) {
-  _pickerState(prefix).selectedId = itemId;
-  const results = document.getElementById(`${prefix}-results`);
-  results.querySelectorAll('.img-attach-result').forEach(r => r.classList.remove('selected'));
-  const row = results.querySelector(`[data-id="${itemId}"]`);
-  if (row) row.classList.add('selected');
-  const selectedLabel = document.getElementById(`${prefix}-selected`);
-  selectedLabel.textContent = 'Attaching to: ' + (row?.dataset.title || 'Item #' + itemId);
-  selectedLabel.style.display = 'block';
-}
-
-function attachPickerGetId(prefix) {
-  return _pickerState(prefix).selectedId ?? null;
-}
-
+/* ── Attach to an existing item: the picker is in objects/item/picker.js (#324) ── */
 function toggleAttachMode(prefix, hasNewSection) {
   const mode = document.querySelector(`input[name="${prefix}-mode"]:checked`).value;
   const attachSection = document.getElementById(`${prefix}-attach-section`);
   if (attachSection) attachSection.style.display = mode === 'attach' ? 'block' : 'none';
+  if (mode === 'attach') attachPickerSuggest(prefix);
   if (hasNewSection) {
     const newSection = document.getElementById(`${prefix}-new-section`);
     if (newSection) newSection.style.display = mode === 'new' ? 'block' : 'none';
@@ -2103,8 +2043,8 @@ function openCaptureDialog(share) {
   document.getElementById('capture-drive-option').style.display = _isDriveOrDocsUrl(url) ? 'block' : 'none';
   document.getElementById('capture-drive-import').checked = true;
   document.querySelector('input[name="capture-mode"][value="new"]').checked = true;
+  attachPickerReset('capture', { url, text });
   toggleAttachMode('capture');
-  attachPickerReset('capture');
   document.getElementById('capture-modal').classList.add('open');
 }
 
@@ -2211,7 +2151,8 @@ let _linkParentId = null;
 
 function openLinkDialog(parentItemId) {
   _linkParentId = parentItemId;
-  attachPickerReset('link');
+  attachPickerReset('link', { exclude: parentItemId });
+  attachPickerSuggest('link');
   const btn = document.getElementById('link-save-btn');
   btn.disabled = false;
   btn.textContent = 'Link';
@@ -2343,8 +2284,8 @@ function openImageCaptureDialog(file) {
   document.getElementById('image-capture-title').value = file.name.replace(/\.\w+$/, '').replace(/[_-]/g, ' ');
   document.getElementById('image-capture-notes').value = '';
   document.querySelector('input[name="image-capture-mode"][value="new"]').checked = true;
-  toggleAttachMode('image-capture');
   attachPickerReset('image-capture');
+  toggleAttachMode('image-capture');
   document.getElementById('image-capture-save-btn').disabled = false;
   document.getElementById('image-capture-save-btn').textContent = 'Save';
   document.getElementById('image-capture-modal').classList.add('open');
@@ -2429,8 +2370,8 @@ function openMultiImageCaptureDialog(files) {
   document.getElementById('multi-image-title').value = '';
   document.getElementById('multi-image-notes').value = '';
   document.querySelector('input[name="multi-image-mode"][value="new"]').checked = true;
-  toggleAttachMode('multi-image', true);
   attachPickerReset('multi-image');
+  toggleAttachMode('multi-image', true);
   document.getElementById('multi-image-save-btn').disabled = false;
   document.getElementById('multi-image-save-btn').textContent = 'Save';
   document.getElementById('multi-image-capture-modal').classList.add('open');
@@ -3329,7 +3270,7 @@ setInterval(checkHealth, 30000);
 // Inline handlers (onclick="…") in the markup and in rendered HTML call these by name.
 // A module's functions are not global, so these are; new code uses addEventListener.
 Object.assign(window, {
-  _isYouTubeUrl, addToCollection, attachPickerSearch, attachPickerSelect,
+  _isYouTubeUrl, addToCollection, attachPickerKind, attachPickerSearch, attachPickerSelect,
   closeCaptureDialog, closeHtmlImportDialog, closeImageCaptureDialog, closeItemView,
   closeLinkDialog, closeLinkedInCompose, closeMicroblogCompose,
   closeMultiImageCaptureDialog, closeProcessDialog, closeSettings, completeAudibleAuth,
