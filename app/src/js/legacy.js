@@ -369,9 +369,10 @@ function renderItemView(item) {
 
   const once = titleOnce(item, item.title || item.preview);
   const title = `${emoji}${once.title || (item.held === false && item.url) || '(untitled)'}`;
-  // The header may name the item better than its title; the content is still
-  // trimmed against the title it repeats
-  let html = itemHeader(item, replyTitle(item) || title);
+  // A reply of yours is named by the post it answers; its text then shows whole,
+  // as the header no longer repeats its first line
+  const reply = replyTitle(item);
+  let html = itemHeader(item, reply ? `${emoji}${reply}` : title);
   const player = itemPlayer(item);
   html += player.html;
   html += reactionsLine(item);
@@ -379,7 +380,7 @@ function renderItemView(item) {
     // A stub: known by its address only, so it has no content to show
     html += `<div class="item-view-content" id="item-content-display" style="color:var(--muted)">LeStash doesn't hold this; it knows it only by its address. Its links and activity are below.</div>`;
   } else {
-    html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(cleanContent(item, title, once))}</div>`;
+    html += `<div class="item-view-content" id="item-content-display">${renderMarkdown(cleanContent(item, title, reply ? {} : once))}</div>`;
   }
 
   // People: who made, voiced, published or received it. Under the content, as a

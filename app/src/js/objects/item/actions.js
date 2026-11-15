@@ -15,15 +15,19 @@ export function dayOf(item) {
   return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}`;
 }
 
-// Your LinkedIn reply is titled by the post it answers, not by its own text, which
-// shows in full below: "Reply to robnewby's post"
+// Your LinkedIn reply to a named author is titled by the post it answers, not by
+// its own opening words, which show in full below: "Reply to robnewby's post".
+// Others' comments, and a title that isn't the reply's opening (one you edited),
+// keep their title. Returns '' when the title stays.
+const OPENING = 20;  // characters of the text a title made from it starts with
 export function replyTitle(item) {
   if (item.kind !== 'comment' || item.source_type !== 'linkedin') return '';
   const raw = (item.metadata && item.metadata.raw) || {};
-  const yours = raw.owner && raw.owner === raw.actor;
   const who = item.author_display || '';
-  const named = yours && who && who !== '-' && !who.startsWith('urn:');
-  return named ? `Reply to ${who}'s post` : 'Reply to a post';
+  if (!raw.owner || raw.owner !== raw.actor || !who || who === '-' || who.startsWith('urn:')) return '';
+  const opening = (item.content || '').trim().slice(0, OPENING);
+  if (!opening || !(item.title || '').trim().startsWith(opening)) return '';
+  return `Reply to ${who}'s post`;
 }
 
 const external = (href, text, cls = '') =>
