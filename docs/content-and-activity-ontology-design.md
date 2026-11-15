@@ -1,6 +1,6 @@
 # Content and Activity Ontology Design
 
-*Proposed 2026-11-07 — the Gemini importer has shipped (#214); the rest is planned in #222*
+*Proposed 2026-11-07. Waypoint 1 was built by 9 Nov 2026 ("W1 as built" below); the rest is planned in #222.*
 
 ## Overview
 
@@ -450,6 +450,8 @@ An activity is something someone did, at a time, usually to an item.
 | `created` | a Gemini Canvas, a Drive file | `CreateAction` | `Create` |
 | `edited` | a Drive Doc | `UpdateAction` | `Update` |
 | `listened` | an Audible book | `ListenAction` | `Listen` |
+| `disliked` | a video | `DislikeAction` | `Dislike` |
+| `read` | a Kobo book (planned, #201) | `ReadAction` | `Read` |
 
 ### Proposed table
 
@@ -468,6 +470,8 @@ CREATE TABLE activities (
 CREATE INDEX idx_activities_time ON activities(occurred_at);
 CREATE INDEX idx_activities_item ON activities(item_id);
 ```
+
+- Replaced: migration 21 keys `activities` on `(verb, item_id, occurred_at, source, ifnull(actor_id, 0))`, so two people's likes at one time are two rows (step 4d).
 
 - `actor_id` is null for your own activity, which is nearly all of it.
   It is set for others, such as a contact who reacted to your post.
@@ -554,6 +558,53 @@ flowchart LR
 
 `tags` maps to SKOS concepts and stays as it is. An item's subject is `schema:about`.
 
+## Collections (14 Nov 2026, #315, #317)
+
+A **Collection** is a set of items you put together for a purpose: a reading list, a theme to study, a queue.
+
+- **Not a Topic.** A Topic says what an item is about (`schema:about`, a SKOS concept). A Collection says what you gathered it for.
+  - Nor is it a `skos:Collection`, which groups concepts, not items.
+  - The ontology papers' themes ("0 Introducing ontology"…) are Collections: each has a purpose, a reading order and a place on the Kobo.
+  - A Topic has none of these.
+- **Members:** a Collection *holds* items. Published terms: `prov:Collection` with `prov:hadMember`.
+- **Order and notes belong to the membership, not to the item.**
+  - One paper can be 2nd in "0 Introducing ontology" and 1st in "1 Ontology foundations".
+  - So the place and the note sit on the membership row, as `item_agents.position` does for author order.
+  - Published terms: the Collections Ontology's `co:List` of `co:ListItem`s, each with `co:index` and `co:itemContent`; schema.org's `ItemList`, `ListItem` and `position` say the same.
+  - Members without a place (from before #317) come after the placed ones, newest first.
+- **Where a collection is shown is bookkeeping, not a screen object.**
+  - It has no card or page of its own; DCAT would still model it as a class.
+  - A Collection shown on the Kobo is the same Collection.
+  - Its copy there is like a DCAT Distribution of a Dataset: the same thing, made available in one place.
+  - Each place records the Kobo's id for the collection (`external_id`), what was written, when, and any error.
+  - Collections made on the Kobo are not LeStash's and are never read or changed.
+- **Which copy a place shows:** the Kobo shows each member's Kobo book. That is the member itself, or an item linked to it by a confirmed `alternate_of` link, either way round.
+- **A book that left the Kobo** (`removed_from_device`, #314) stays a member, but isn't written there.
+
+### As built (#318)
+
+```sql
+-- collection_items: the membership (co:ListItem)
+--   collection_id, item_id, added_at, note,
+--   position INTEGER              -- co:index; null: no place yet (migration 28)
+
+CREATE TABLE collection_places (    -- where a collection is shown: bookkeeping
+    id INTEGER PRIMARY KEY,
+    collection_id INTEGER REFERENCES collections(id) ON DELETE SET NULL,
+    place TEXT NOT NULL,            -- 'kobo'
+    shown INTEGER NOT NULL DEFAULT 1,
+    external_id TEXT,               -- the Kobo's Shelf.Id
+    external_name TEXT,
+    written TEXT,                   -- JSON: the ContentIDs last written
+    last_written DATETIME,
+    last_error TEXT,
+    UNIQUE (collection_id, place)
+);
+```
+
+- A collection deleted in LeStash keeps its place row, with `collection_id` null, until the next write takes it off the Kobo.
+- The write at each plug-in: `packages/lestash-kobo/README.md`, "Collections on the Kobo".
+
 ## Plan
 
 The roadmap is tracked in #222, one issue per waypoint.
@@ -618,6 +669,7 @@ Open from the data: #245, rows that point at deleted items.
 - A collection shown on another device, such as the Kobo, is the same Collection, not a new object; where it is shown is bookkeeping (14 Nov 2026, #315). The Kobo's copy of a book held elsewhere is linked by `alternate_of`, not merged.
 - Data from the Kobo is read, never written back, except the collections you mark in LeStash. Highlights, notes, pen notes on PDFs and notebooks become items; opening, reading and finishing books become activities (`read`, #201).
 - A book that leaves the Kobo stays an item, marked `removed_from_device` with when it was first seen gone (#314). Its highlights stay with it.
+- A Collection's order and notes belong to the membership, not the item, so one item has a different place in each collection (14 Nov 2026, #317). Collections map to `prov:Collection` and the Collections Ontology's `co:List`; Topics stay SKOS concepts.
 
 ## References
 
@@ -629,4 +681,6 @@ Open from the data: #245, rows that point at deleted items.
 - [FOAF OnlineAccount](http://xmlns.com/foaf/spec/#term_OnlineAccount)
 - [microformats h-entry](https://microformats.org/wiki/h-entry)
 - [SKOS](https://www.w3.org/TR/skos-reference/)
+- [Collections Ontology](http://purl.org/co/) (`co:`; Ciccarese & Peroni, Semantic Web 5(6), 2014), [schema.org ItemList](https://schema.org/ItemList)
+- [DCAT 3](https://www.w3.org/TR/vocab-dcat-3/): Dataset and Distribution
 - [Drive Activity API](https://developers.google.com/workspace/drive/activity/v2/reference/rest)
