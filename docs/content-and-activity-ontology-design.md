@@ -79,6 +79,56 @@ Established vocabularies each cover one concern, and they share a split between 
 
 Items stay as they are. Relations between items gain types.
 
+### Item kinds (15 Nov 2026)
+
+An item's kind says what it is: a post, a video, a book.
+
+- **Where it's stored:** `items.kind`, a generated column (migration 24). Listings filter and count by it with an index.
+- **How it's worked out:** from the item's source, a few metadata keys, whether it has a parent, and whether LeStash holds it.
+  - The rule is `KIND_SQL` in `core/kinds.py`.
+  - `item_kind` there is the same rule in Python, and tests keep the two equal.
+- **The rule is fixed:** changing it needs a migration that drops and re-adds the column.
+
+The 21 kinds, with counts in the live database on 15 Nov 2026:
+
+| Kind | Label | From | Items (top-level) | Published term |
+|---|---|---|---|---|
+| `video` | Video | YouTube, by default | 67,326 (66,537) | `schema:VideoObject` |
+| `turn` | Turn | Claude, Gemini or Mistral item with a parent | 24,591 (0) | `schema:Message` |
+| `post` | Post | LinkedIn `ugcPosts`, `instantReposts`, `article`, `originalArticles`; top-level Bluesky and Micro.blog; YouTube `source_subtype` post | 3,672 (3,672) | `schema:SocialMediaPosting` |
+| `comment` | Reply | LinkedIn `socialActions/comments`; Bluesky and Micro.blog with a parent | 3,081 (2,661) | `schema:Comment` |
+| `search` | Search | YouTube `source_subtype` search | 2,495 (2,495) | — |
+| `stub` | Not held | any item with `held = 0` | 2,414 (2,414) | — |
+| `chat` | Chat | Claude, Gemini or Mistral item without a parent; NotebookLM `type` chat | 1,970 (1,944) | `schema:Conversation` |
+| `reaction` | Reaction | LinkedIn `socialActions/likes` | 1,265 (1,146) | — |
+| `message` | Message | LinkedIn messages and invitations; an email with a parent | 811 (798) | `schema:Message` |
+| `document` | Document | Gemini canvas, NotebookLM sources, a Claude project's files, and any source not named here | 566 (522) | `schema:DigitalDocument` |
+| `note` | Note | `note`, `voice`, `atomicguard`, `claude-memory`; NotebookLM `type` note | 217 (116) | `schema:NoteDigitalDocument` |
+| `artifact` | Generated | NotebookLM `type` artifact or report | 209 (0) | — |
+| `highlight` | Highlight | Kobo highlight, markup, dog-ear or note; an Audible clip | 185 (0) | `oa:Annotation` |
+| `book` | Book | Kobo, Audible `type` book, Jelu | 146 (146) | `schema:Book` |
+| `paper` | Paper | arXiv | 56 (56) | `schema:ScholarlyArticle` |
+| `notebook` | Notebook | NotebookLM `type` notebook | 42 (42) | — |
+| `project` | Project | a Claude project without a parent | 42 (42) | — |
+| `image` | Image | `image` | 29 (11) | `schema:ImageObject` |
+| `other` | Other | LinkedIn items of another resource | 12 (12) | — |
+| `email` | Email thread | Gmail; an email without a parent | 10 (10) | `schema:EmailMessage` |
+| `transcript` | Transcript | YouTube `type` transcript | 9 (0) | — |
+
+- A stub's kind says only that LeStash doesn't hold it (review issue 2). What it stands for comes from its metadata: `post_urn` for a post, `comment_urn` for a comment. The Timeline and the stub page read those (#320, #322).
+- A copy of a stub's post you keep is a `note` or an `image` with `metadata.copy_of` (#322).
+- **Containment** (`parent_id`, `part_of`) joins these kinds today. Parent → child, with counts:
+  - chat → turn (24,591), note (1);
+  - video → video (789), document (7), transcript (6), note (1);
+  - post → comment (419), reaction (119), note (3);
+  - notebook → artifact (209), note (66), chat (26);
+  - book → highlight (185);
+  - project → document (35);
+  - note → note (22), image (17), document (2);
+  - email → message (13);
+  - document → note (8), transcript (3);
+  - stub → image (1); image → comment (1).
+
 ### Containment stays as `parent_id`
 
 `parent_id` keeps its role as `part_of` (`dcterms:isPartOf`, `schema:isPartOf`).
@@ -115,6 +165,24 @@ ALTER TABLE items ADD COLUMN held INTEGER NOT NULL DEFAULT 1;
   A comment's `parent_id` stays its video; `in_reply_to` records which comment it answers.
 - `alternate_of` is deliberately weaker than `owl:sameAs`.
   A Drive PDF and the same PDF inside a NotebookLM notebook are linked, not merged.
+
+### Which kinds each link joins (15 Nov 2026)
+
+Each link kind's allowed ends (its domain and range), with the pairs in the live database on 15 Nov 2026.
+
+| Link | From | To | In use (from → to: count) |
+|---|---|---|---|
+| `in_reply_to` | a reply: `comment`, or a comment's `stub` | the post or comment it answers: `post`, `comment`, or their `stub` | comment → stub 2,655; stub → stub 183; stub → post 17; comment → comment 6 |
+| `references` | any item with text: `post`, `comment`, `turn`, `chat`, `document`, `note`, `message`, `video`, `search` | any item: `post`, `video`, `document`, `paper`, or a `stub` | turn → post 450; post → video 69; turn → video 61; post → post 49; turn → document 43; video → video 38; 18 rarer pairs |
+| `syndication` | `post` | `post` | post → post 76 |
+| `derived_from` | `notebook`, `artifact` | the source it was built from: any held item, or a `stub` | none yet |
+| `alternate_of` | any item | an item of the same kind, or a `book` and a `document` (a Kobo copy) | none yet |
+
+- All 3,878 link rows are `confirmed`.
+- `in_reply_to` overlaps containment for comments, so a reply has three forms (review issue 3):
+  - a LinkedIn comment with a parent has `parent_id` only;
+  - one without a parent has `in_reply_to` only;
+  - a YouTube comment, once built (#248), has both.
 
 ### NotebookLM sources become items
 

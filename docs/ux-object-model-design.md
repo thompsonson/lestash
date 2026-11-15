@@ -41,6 +41,7 @@ Not objects, and why:
 
 An item's kind decides its card face and the extra section on its page.
 `items.kind` (migration 24) holds it, generated from source and metadata by `core/kinds.py`.
+The 21 kinds, where each comes from, and which kinds each link joins: `content-and-activity-ontology-design.md`, "Item kinds".
 
 | Kind | Where it comes from | Extra on its page |
 |---|---|---|
