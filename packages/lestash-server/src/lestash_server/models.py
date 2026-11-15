@@ -72,6 +72,13 @@ class KindFacet(BaseModel):
     count: int
 
 
+class AttachSuggestions(BaseModel):
+    """Items to offer before you search, when attaching something to one (#324)."""
+
+    same_link: list[ItemResponse]  # items that hold or stand for the shared link
+    worked_on: list[ItemResponse]  # items you added notes, shares or edits to lately
+
+
 class ItemListResponse(BaseModel):
     """Paginated item list."""
 

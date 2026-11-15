@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import sqlite3
 from collections import Counter
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ from lestash_server.models import (
     _UNSET,
     Activity,
     ActivityListResponse,
+    AttachSuggestions,
     HistoryListResponse,
     HistoryVersion,
     HistoryVersionDetail,
@@ -387,6 +389,143 @@ def search_items(
         ]
 
     return ItemListResponse(items=items, total=len(items), limit=limit, offset=0, facets=facets)
+
+
+# The identifier a shared link carries, matched against items' addresses and ids (#324):
+# a LinkedIn post's activity id (in /posts/...-activity-<id>-... and feed URNs alike)
+# and a YouTube video id
+_LINKEDIN_ID = re.compile(r"(?:activity|ugcPost|share)(?::|-|%3A)(\d{15,20})", re.IGNORECASE)
+_YOUTUBE_ID = re.compile(
+    r"(?:youtube\.com/(?:watch\?(?:[^#]*&)?v=|shorts/|live/)|youtu\.be/)([\w-]{11})"
+)
+# What you add to an item yourself: a note, a voice note, a share, an image
+_YOURS = ("note", "voice", "share", "image")
+WORKED_ON_DAYS = 90
+
+
+def _like(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+# Query parameters that track a share rather than name a page
+_TRACKING = re.compile(r"^(utm_\w+|fbclid|gclid|igshid|mc_\w+|si|ref|ref_src|feature|trk|rcm)$")
+
+
+def _bare(url: str) -> str:
+    """An address without scheme, www., fragment, tracking parameters or trailing slash,
+    lowercased. Other parameters stay, sorted: on some sites they name the page."""
+    rest = re.sub(r"^[a-z]+://", "", url.strip(), flags=re.IGNORECASE)
+    rest = re.sub(r"^www\.", "", rest, flags=re.IGNORECASE).split("#", 1)[0]
+    path, _, query = rest.partition("?")
+    kept = sorted(
+        part for part in query.split("&") if part and not _TRACKING.match(part.split("=", 1)[0])
+    )
+    path = path.rstrip("/")
+    return (path + ("?" + "&".join(kept) if kept else "")).lower()
+
+
+def link_match(url: str) -> tuple[str, str | None] | None:
+    """A LIKE pattern (escape '\\') for items naming what the link names, and the bare
+    address a match must equal, or None when the link's own id is enough."""
+    url = url.strip()
+    if not url:
+        return None
+    for found in (_LINKEDIN_ID.search(url), _YOUTUBE_ID.search(url)):
+        if found:
+            return f"%{found.group(1)}%", None
+    bare = _bare(url)
+    # Searched by its path; the parameters, which may come in another order, are
+    # compared whole afterwards
+    return (f"%{_like(bare.split('?', 1)[0])}%", bare) if bare else None
+
+
+def _stub_titles(conn: sqlite3.Connection, items: list[ItemResponse]) -> None:
+    """A stub's title from its post's cached preview, as the Timeline shows it (#320)."""
+    from lestash_server.routes.timeline import preview_title
+
+    stubs = {i.id: i for i in items if not i.held and not (i.title or "").strip()}
+    if not stubs:
+        return
+    marks = ",".join("?" * len(stubs))
+    rows = conn.execute(
+        f"""SELECT i.id, pc.content_preview,
+               json_extract(i.metadata, '$.comment_urn') IS NOT NULL AS on_comment
+        FROM items i JOIN post_cache pc ON pc.urn = json_extract(i.metadata, '$.post_urn')
+        WHERE i.id IN ({marks}) AND json_valid(i.metadata)""",
+        list(stubs),
+    ).fetchall()
+    for item_id, preview, on_comment in rows:
+        title = preview_title(preview, "comment" if on_comment else "post")
+        if title:
+            stubs[item_id].title = title
+
+
+@router.get("/suggest", response_model=AttachSuggestions)
+def suggest_items(
+    url: str | None = Query(None, description="A shared link: items holding or naming it"),
+    exclude: int | None = Query(None, description="An item not to offer (the one open)"),
+    limit: int = Query(8, ge=1, le=30),
+):
+    """Items to attach to before you search (#324): those with the shared link, then
+    those you added notes, shares, images or edits to, or put in a collection, lately.
+    Stubs count: what is attached to one moves to the item when it is imported."""
+    skip = exclude if exclude is not None else -1
+    with get_db() as conn:
+        same: list[sqlite3.Row] = []
+        match = link_match(url or "")
+        if match:
+            pattern, bare = match
+            order = "ORDER BY parent_id IS NOT NULL, held DESC, id DESC"
+            if bare is None:
+                # An id: in addresses and source ids
+                same = conn.execute(
+                    f"""SELECT * FROM items
+                    WHERE (url LIKE ? ESCAPE '\\' OR source_id LIKE ? ESCAPE '\\')
+                      AND id != ? AND kind != 'reaction' {order} LIMIT ?""",
+                    [pattern, pattern, skip, limit],
+                ).fetchall()
+            else:
+                # An address: every address containing it is checked whole, so neither a
+                # site's front page matching its pages nor a crowd of them hides the one
+                ids = [
+                    item_id
+                    for item_id, item_url in conn.execute(
+                        """SELECT id, url FROM items WHERE url LIKE ? ESCAPE '\\'
+                        AND id != ? AND kind != 'reaction'""",
+                        [pattern, skip],
+                    )
+                    if _bare(item_url or "") == bare
+                ]
+                if ids:
+                    marks = ",".join("?" * len(ids))
+                    same = conn.execute(
+                        f"SELECT * FROM items WHERE id IN ({marks}) {order} LIMIT ?",
+                        [*ids, limit],
+                    ).fetchall()
+        seen = {r["id"] for r in same}
+        marks = ",".join("?" * len(_YOURS))
+        recent = conn.execute(
+            # Your own work first (tier 0): notes, shares, images, edits; then what you
+            # put in a collection (tier 1), which a script can do in bulk
+            f"""SELECT i.* FROM (
+                SELECT coalesce(parent_id, id) AS item_id,
+                       datetime(coalesce(fetched_at, created_at)) AS at, 0 AS tier
+                FROM items WHERE source_type IN ({marks})
+                UNION ALL
+                SELECT item_id, datetime(changed_at), 0 FROM item_history
+                WHERE change_reason = 'user-edit'
+                UNION ALL
+                SELECT item_id, datetime(added_at), 1 FROM collection_items
+            ) w JOIN items i ON i.id = w.item_id
+            WHERE w.at >= datetime('now', ?) AND i.id != ?
+            GROUP BY i.id ORDER BY min(w.tier), max(w.at) DESC, i.id DESC LIMIT ?""",
+            [*_YOURS, f"-{WORKED_ON_DAYS} days", skip, limit + len(seen)],
+        ).fetchall()
+        recent = [r for r in recent if r["id"] not in seen][:limit]
+        same_link = [enrich_item(conn, Item.from_row(r)) for r in same]
+        worked_on = [enrich_item(conn, Item.from_row(r)) for r in recent]
+        _stub_titles(conn, same_link + worked_on)
+    return AttachSuggestions(same_link=same_link, worked_on=worked_on)
 
 
 @router.post("", response_model=ItemResponse, status_code=201)
