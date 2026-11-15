@@ -18,9 +18,13 @@ def test_a_link_is_known_by_its_id_or_its_whole_address():
         "%dQw4w9WgXcQ%",
         None,
     )
-    assert link_match("HTTPS://www.Example.org/a_b/?x=1#top") == (
+    assert link_match("HTTPS://www.Example.org/a_b/?utm_source=x#top") == (
         "%example.org/a\\_b%",
         "example.org/a_b",
+    )
+    assert link_match("https://example.org/item?b=2&a=1&si=x") == (
+        "%example.org/item%",
+        "example.org/item?a=1&b=2",
     )
     assert link_match("  ") is None
 
@@ -86,3 +90,13 @@ def test_the_exact_address_is_found_among_many_that_contain_it(client, test_conf
         conn.commit()
     body = client.get("/api/items/suggest", params={"url": "http://blog.example/post?ref=x"})
     assert [i["id"] for i in body.json()["same_link"]] == [exact]
+
+
+def test_parameters_that_name_a_page_count_and_tracking_ones_do_not(client, test_config):
+    with get_connection(test_config) as conn:
+        one = _item(conn, "web", "hn-1", url="https://news.ycombinator.com/item?id=1", title="1")
+        _item(conn, "web", "hn-2", url="https://news.ycombinator.com/item?id=2", title="2")
+        conn.commit()
+    shared = "https://news.ycombinator.com/item?utm_source=x&id=1"
+    body = client.get("/api/items/suggest", params={"url": shared}).json()
+    assert [i["id"] for i in body["same_link"]] == [one]

@@ -407,11 +407,21 @@ def _like(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+# Query parameters that track a share rather than name a page
+_TRACKING = re.compile(r"^(utm_\w+|fbclid|gclid|igshid|mc_\w+|si|ref|ref_src|feature|trk|rcm)$")
+
+
 def _bare(url: str) -> str:
-    """An address without scheme, www., query, fragment or trailing slash, lowercased."""
+    """An address without scheme, www., fragment, tracking parameters or trailing slash,
+    lowercased. Other parameters stay, sorted: on some sites they name the page."""
     rest = re.sub(r"^[a-z]+://", "", url.strip(), flags=re.IGNORECASE)
-    rest = re.sub(r"^www\.", "", rest, flags=re.IGNORECASE)
-    return re.split(r"[?#]", rest, maxsplit=1)[0].rstrip("/").lower()
+    rest = re.sub(r"^www\.", "", rest, flags=re.IGNORECASE).split("#", 1)[0]
+    path, _, query = rest.partition("?")
+    kept = sorted(
+        part for part in query.split("&") if part and not _TRACKING.match(part.split("=", 1)[0])
+    )
+    path = path.rstrip("/")
+    return (path + ("?" + "&".join(kept) if kept else "")).lower()
 
 
 def link_match(url: str) -> tuple[str, str | None] | None:
@@ -424,7 +434,9 @@ def link_match(url: str) -> tuple[str, str | None] | None:
         if found:
             return f"%{found.group(1)}%", None
     bare = _bare(url)
-    return (f"%{_like(bare)}%", bare) if bare else None
+    # Searched by its path; the parameters, which may come in another order, are
+    # compared whole afterwards
+    return (f"%{_like(bare.split('?', 1)[0])}%", bare) if bare else None
 
 
 def _stub_titles(conn: sqlite3.Connection, items: list[ItemResponse]) -> None:
