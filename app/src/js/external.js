@@ -42,7 +42,48 @@ function onClick(e) {
   // Pages of the app itself stay with the router
   if (url.origin === location.origin && a.target !== '_blank') return;
   e.preventDefault();
-  openExternal(url.href);
+  confirmExternal(url.href);
+}
+
+// Temporary for #328: ask before leaving the app, in the page itself (not confirm(),
+// which the WebView handles natively). If this never shows on a tap, the tap never
+// reached onClick; if it shows, the fault is after it.
+function confirmExternal(href) {
+  addDebugLog('LINK', href, 'ASK', null, null);
+  document.getElementById('external-confirm')?.remove();
+  const box = document.createElement('div');
+  box.id = 'external-confirm';
+  box.className = 'modal-overlay open';
+  box.innerHTML = `<div class="modal" role="dialog" aria-label="Open link">
+    <p>This will open an external link. Are you sure?</p>
+    <p class="external-confirm-url"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" data-answer="no">Cancel</button>
+      <button type="button" class="btn-save" data-answer="yes">Open</button>
+    </div>
+  </div>`;
+  box.querySelector('.external-confirm-url').textContent = href;
+  box.addEventListener('click', ev => {
+    const answer = ev.target.closest('[data-answer]')?.dataset.answer;
+    if (!answer && ev.target !== box) return;
+    box.remove();
+    addDebugLog('LINK', href, answer === 'yes' ? 'YES' : 'NO', null, null);
+    if (answer === 'yes') openExternal(href);
+  });
+  document.body.appendChild(box);
 }
 
 if (IS_TAURI) document.addEventListener('click', onClick);
+
+// Trace for #328: links do nothing on Android, and no tap reached openExternal. Log
+// that this file loaded, and every tap on a link as it first arrives (capture phase),
+// before any other handler can act on it. To be removed once links work.
+addDebugLog('LINK', `external.js loaded, IS_TAURI=${IS_TAURI}`, 'INIT', null, null);
+for (const type of ['pointerup', 'click']) {
+  document.addEventListener(type, e => {
+    const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a) return;
+    addDebugLog('LINK', `${a.getAttribute('href')} target=${a.target || '-'} button=${e.button}`
+      + ` prevented=${e.defaultPrevented} on=${e.target.tagName}`, type.toUpperCase(), null, null);
+  }, true);
+}

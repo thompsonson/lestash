@@ -1011,3 +1011,6 @@ body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
 .copy-form textarea { width: 100%; resize: vertical; font: inherit; font-size: 0.85rem; padding: 0.5rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; box-sizing: border-box; }
 .copy-form-actions { display: flex; gap: 0.5rem; margin-top: 0.3rem; }
 .item-short-link { font-family: var(--font-mono, monospace); font-size: 0.8em; }
+
+/* Temporary external-link confirm (#328) */
+.external-confirm-url { word-break: break-all; font-size: 0.8rem; color: var(--muted); }
