@@ -46,3 +46,16 @@ function onClick(e) {
 }
 
 if (IS_TAURI) document.addEventListener('click', onClick);
+
+// Trace for #328: links do nothing on Android, and no tap reached openExternal. Log
+// that this file loaded, and every tap on a link as it first arrives (capture phase),
+// before any other handler can act on it. To be removed once links work.
+addDebugLog('LINK', 'external.js loaded', 'INIT', null, `IS_TAURI=${IS_TAURI}`);
+for (const type of ['pointerup', 'click']) {
+  document.addEventListener(type, e => {
+    const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a) return;
+    addDebugLog('LINK', a.getAttribute('href'), type.toUpperCase(), null,
+      `target=${a.target || '-'} button=${e.button} prevented=${e.defaultPrevented} on=${e.target.tagName}`);
+  }, true);
+}
