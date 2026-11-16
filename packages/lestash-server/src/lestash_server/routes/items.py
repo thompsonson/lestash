@@ -50,6 +50,9 @@ from lestash_server.models import (
     ItemListResponse,
     ItemPatchRequest,
     ItemResponse,
+    ItemVersion,
+    ItemVersionLink,
+    ItemVersionsResponse,
     KindFacet,
     TagAddRequest,
     TagListResponse,
@@ -737,6 +740,54 @@ def list_item_links(item_id: int):
         if not conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
         return ItemLinkListResponse(links=[ItemLink(**link) for link in links_of(conn, item_id)])
+
+
+def _versions(conn, item_id: int) -> ItemVersionsResponse:
+    from lestash.core.pdfs import versions
+
+    ids = versions(conn, item_id)
+    rows = {
+        r["id"]: r
+        for r in conn.execute(
+            f"SELECT id, source_type, title, created_at FROM items "
+            f"WHERE id IN ({','.join('?' * len(ids))})",
+            ids,
+        )
+    }
+    return ItemVersionsResponse(
+        versions=[
+            ItemVersion(
+                id=i,
+                source_type=rows[i]["source_type"],
+                title=rows[i]["title"],
+                created_at=str(rows[i]["created_at"]) if rows[i]["created_at"] else None,
+            )
+            for i in ids
+        ]
+    )
+
+
+@router.get("/{item_id}/versions", response_model=ItemVersionsResponse)
+def list_item_versions(item_id: int):
+    """Every version of the item's document, newest first, linked by ``revision_of``."""
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        return _versions(conn, item_id)
+
+
+@router.post("/{item_id}/versions", response_model=ItemVersionsResponse)
+def add_item_version(item_id: int, body: ItemVersionLink):
+    """Make this item the next version of another (#338)."""
+    from lestash.core.pdfs import VersionError, link_revision
+
+    with get_db() as conn:
+        try:
+            link_revision(conn, item_id, body.older_id)
+        except VersionError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        conn.commit()
+        return _versions(conn, item_id)
 
 
 @router.get("/{item_id}/agents", response_model=ItemAgentListResponse)

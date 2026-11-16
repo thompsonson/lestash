@@ -261,7 +261,7 @@ class ItemLink(BaseModel):
     """A typed link: ``outgoing`` from this item to ``item``, or ``incoming`` from it."""
 
     direction: Literal["outgoing", "incoming"]
-    kind: str  # references, syndication, ...
+    kind: str  # references, syndication, revision_of, ...
     evidence: str | None = None
     origin: str
     item: LinkedItem
@@ -271,6 +271,27 @@ class ItemLinkListResponse(BaseModel):
     """An item's confirmed links, both directions."""
 
     links: list[ItemLink]
+
+
+class ItemVersionLink(BaseModel):
+    """Make this item the next version of ``older_id`` (a ``revision_of`` link, #338)."""
+
+    older_id: int
+
+
+class ItemVersion(BaseModel):
+    """One version of a document."""
+
+    id: int
+    source_type: str
+    title: str | None = None
+    created_at: str | None = None
+
+
+class ItemVersionsResponse(BaseModel):
+    """Every version of an item's document, newest first, the item included."""
+
+    versions: list[ItemVersion]
 
 
 class CollectionCreate(BaseModel):

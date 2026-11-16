@@ -182,6 +182,7 @@ The item's confirmed links to and from other items, found by the linker after ea
 - `references`: the `from` item's content holds the `to` item's web address.
 - `syndication`: the `to` item is a cross-posted copy of the `from` item, a Micro.blog post.
 - `in_reply_to`: the `from` item is a comment on the `to` item, often a stub for a post LeStash doesn't hold.
+- `revision_of`: the `from` item is the next version of the `to` item (#338).
 - `direction` is `outgoing` when this item is the link's `from` end.
 
 ```json
@@ -197,6 +198,31 @@ The item's confirmed links to and from other items, found by the linker after ea
 ```
 
 `item.preview` is the start of the item's text (120 characters, whitespace folded), so an item without a title, such as a comment, can be told apart.
+
+---
+
+### `GET /api/items/{item_id}/versions`
+
+Every version of the item's document, newest first, the item included. Versions are linked by `revision_of` (#338). `404` if the item doesn't exist.
+
+```json
+{
+  "versions": [
+    {"id": 111710, "source_type": "pdf", "title": "Typing an Ontology", "created_at": "2026-11-17 09:12:03"},
+    {"id": 111696, "source_type": "pdf", "title": "Typing an Ontology", "created_at": "2026-11-16 06:12:40"}
+  ]
+}
+```
+
+### `POST /api/items/{item_id}/versions`
+
+Make this item the next version of another. Returns the versions, as `GET` does.
+
+```json
+{"older_id": 111696}
+```
+
+`400` if the link would break the line of versions: the older item already has a next version, this item already has one before it, the link would make a loop, or an item doesn't exist.
 
 ---
 
@@ -614,6 +640,7 @@ Import from an uploaded file (multipart/form-data, max 50MB).
 **Supported formats:**
 - `.json` — JSON array of items
 - `.zip` — auto-detects: Google Keep Takeout, Gemini Takeout, NotebookLM, Mistral Le Chat, generic JSON
+- `.pdf` — one `pdf` item with the file, text extracted for search. A file already held is not added again: `items_added` is 0 (#338). The CLI does the same: `lestash pdf add FILE… [--collection NAME] [--revision-of ID]`.
 
 **Response:**
 ```json

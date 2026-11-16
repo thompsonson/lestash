@@ -756,6 +756,7 @@ class TestImport:
 
         assert r1.status_code == 200
         assert r2.status_code == 200
+        assert r2.json()["items_added"] == 0  # held already: not added again (#338)
 
         with get_connection(test_config) as conn:
             rows = conn.execute(

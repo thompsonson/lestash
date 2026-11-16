@@ -160,11 +160,15 @@ ALTER TABLE items ADD COLUMN held INTEGER NOT NULL DEFAULT 1;
 | `derived_from` | A was built from B, as a notebook from its sources | `prov:wasDerivedFrom`, `dcterms:source` | source of |
 | `in_reply_to` | A is a reply or comment on B | ActivityStreams `inReplyTo`, `u-in-reply-to` | replies |
 | `alternate_of` | A and B are the same thing in two places | `prov:alternateOf` | (symmetric) |
+| `revision_of` | A is the next version of B, as a revised PDF of its earlier draft (#338) | `prov:wasRevisionOf` | next version |
 
 - `in_reply_to` overlaps `part_of` for comments.
   A comment's `parent_id` stays its video; `in_reply_to` records which comment it answers.
 - `alternate_of` is deliberately weaker than `owl:sameAs`.
   A Drive PDF and the same PDF inside a NotebookLM notebook are linked, not merged.
+- `revision_of` is a narrower `derived_from`: B is an earlier version of the same document, not a source.
+  Each version is its own item, so notes made on a version stay with it.
+  Versions form one line: at most one version before and one after.
 
 ### Which kinds each link joins (15 Nov 2026)
 
@@ -177,6 +181,7 @@ Each link kind's allowed ends (its domain and range), with the pairs in the live
 | `syndication` | `post` | `post` | post → post 76 |
 | `derived_from` | `notebook`, `artifact` | the source it was built from: any held item, or a `stub` | none yet |
 | `alternate_of` | any item | an item of the same kind, or a `book` and a `document` (a Kobo copy) | none yet |
+| `revision_of` | a `document` | the earlier version of that `document` | none yet |
 
 - All 3,878 link rows are `confirmed`.
 - `in_reply_to` overlaps containment for comments, so a reply has three forms (review issue 3):

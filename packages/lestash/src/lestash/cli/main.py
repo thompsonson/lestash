@@ -11,6 +11,7 @@ from lestash.cli import (
     google,
     items,
     media,
+    pdf,
     profiles,
     sources,
 )
@@ -36,6 +37,7 @@ app.add_typer(embeddings.app, name="embeddings")
 app.add_typer(media.app, name="media")
 app.add_typer(db.app, name="db")
 app.add_typer(enrich.app, name="enrich")
+app.add_typer(pdf.app, name="pdf")
 
 
 def register_plugin_commands() -> None:
