@@ -1,10 +1,7 @@
 """File import endpoint."""
 
-import hashlib
 import json
 import logging
-import tempfile
-from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile
 from lestash.core.activities import record_activities
@@ -234,43 +231,17 @@ def _insert_items_with_parents(conn, items):
 
 
 def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse:
-    """Import a PDF: extract markdown via Docling, save original as media."""
-    from lestash.core.database import save_media_file
-    from lestash.core.pdf_enrich.persistence import set_source_pdf
-    from lestash.core.text_extract import extract_content
-    from lestash.models.item import ItemCreate
+    """Import a PDF: extract markdown via Docling, save original as media.
 
-    sha = hashlib.sha256(data).hexdigest()[:16]
-    display_name = filename.rsplit("/", 1)[-1]
-    title = display_name[:-4] if display_name.lower().endswith(".pdf") else display_name
+    A file already held is not added again (#338).
+    """
+    from lestash.core.pdfs import add_pdf
 
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
-        tf.write(data)
-        tmp_path = Path(tf.name)
-    try:
-        markdown = extract_content(tmp_path, "application/pdf")
-    finally:
-        tmp_path.unlink(missing_ok=True)
-
-    item = ItemCreate(
-        source_type="pdf",
-        source_id=sha,
-        title=title,
-        content=markdown or f"[PDF: {display_name}]",
-        is_own_content=True,
-        metadata={"filename": display_name, "size_bytes": len(data)},
-    )
-
-    items_added = 0
-    enrich_item_id: int | None = None
     with get_db() as conn:
-        item_id = _upsert_item(conn, item)
-        if item_id:
-            rel_path = save_media_file(item_id, data, display_name, get_config())
-            set_source_pdf(conn, get_config(), item_id, local_path=rel_path, source_origin="upload")
-            items_added = 1
-            enrich_item_id = item_id
+        added = add_pdf(conn, get_config(), data, filename)
         conn.commit()
+    items_added = 1 if added.new else 0
+    enrich_item_id = added.item_id if added.new else None
 
     if enrich_item_id is not None:
         from lestash.core.pdf_enrich import enrich_item

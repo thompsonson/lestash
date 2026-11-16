@@ -1163,6 +1163,8 @@ const LINK_LABELS = {
   references: ['Links to', 'Linked from'],
   syndication: ['Cross-posted as', 'Cross-post of'],
   in_reply_to: ['Reply to', 'Replies'],
+  alternate_of: ['Same as', 'Same as'],
+  revision_of: ['Newer version of', 'Older version of'],
 };
 
 // Children come newest first, a page at a time: load every page, so a long chat
