@@ -5,6 +5,7 @@ import shutil
 from collections import namedtuple
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from lestash.core.collections import KOBO, add_item, kobo_books, set_shown
@@ -37,7 +38,9 @@ def copy_clock(test_db, monkeypatch):
 
 
 def _cli(*args: str):
-    return CliRunner().invoke(KoboSource().get_commands(), list(args))
+    result = CliRunner().invoke(KoboSource().get_commands(), list(args))
+    # Rich wraps at the terminal's width: compare the words, not the lines
+    return SimpleNamespace(exit_code=result.exit_code, output=" ".join(result.output.split()))
 
 
 def _copy(device: Path, *args: str):
@@ -181,7 +184,7 @@ def test_a_marked_item_without_a_pdf_is_reported(device, test_db) -> None:
 def test_send_unsend_and_files(device, test_db) -> None:
     item = _pdf(test_db, b"%PDF-1.4 x", "X.pdf")
     assert "For the Kobo" in _cli("send", str(item)).output
-    assert f"{item}  X  (you)" in _cli("files").output
+    assert f"{item} X (you)" in _cli("files").output
     assert "Not on the Kobo" in _cli("unsend", str(item)).output
     assert "No item is asked for" in _cli("files").output
     assert _cli("send", "99999").exit_code == 1
