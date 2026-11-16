@@ -151,6 +151,8 @@ def _record(
     before = conn.execute(
         "SELECT text FROM blob_text WHERE sha256 = ? AND tool = ?", (state.sha256, tool(book_id))
     ).fetchone()
+    if missing and before:
+        return  # these bytes were read before: their record stands as it is
     earlier = json.loads(before[0]) if before else {}
     notes = sorted(set(earlier.get("new_notes", [])) | set(new))
     record: dict = {"annotations": found, "new_notes": notes}
@@ -206,7 +208,8 @@ def extract_notes(conn: sqlite3.Connection, config: Config) -> NotesResult:
                 annotations = _read(path)
                 before = _children(conn, book_id)
                 if annotations is not None:
-                    _upsert_annotations(conn, book_id, annotations)
+                    # A note erased in this state was erased by the time it was seen
+                    _upsert_annotations(conn, book_id, annotations, state.seen.isoformat())
                 new = sorted(_children(conn, book_id) - before)  # never seen before
                 if new:
                     record_activities(

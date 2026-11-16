@@ -195,6 +195,7 @@ def _upsert_annotations(
     conn: sqlite3.Connection,
     parent_id: int,
     annotations: list[ExtractedAnnotation],
+    removed_at: str | None = None,
 ) -> None:
     """Upsert one child item per semantic annotation (ADR 0001 D6).
 
@@ -295,7 +296,8 @@ def _upsert_annotations(
     # and marked, not deleted: deleting would also drop its tags, collection
     # links, history and OCR text. It moves to a key no annotation can take, and
     # comes back to life if a later run matches it again.
-    removed_at = _now_iso()
+    # When the annotations were read: now, unless the caller knows when the file was
+    removed_at = removed_at or _now_iso()
     for child_id, child in existing.items():
         if child_id in claimed or child.meta.get(REMOVED_KEY):
             continue

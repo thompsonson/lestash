@@ -260,3 +260,35 @@ def test_a_missing_record_never_moves_the_cursor_back(device, test_db, three_sta
         conn.commit()
         assert _read_up_to(conn, book) == before
         assert extract_notes(conn, test_db).states == 0
+
+
+def test_a_missing_file_leaves_an_older_extractors_record_alone(
+    device, test_db, three_states
+) -> None:
+    from lestash_kobo.notes import _record, _states
+
+    with get_connection(test_db) as conn:
+        extract_notes(conn, test_db)
+        book = _book(conn)
+        conn.execute("UPDATE blob_text SET tool_version = '0' WHERE tool = ?", (tool(book),))
+        newest = _states(conn, book)[-1]
+        _record(conn, book, newest, None, [], missing=True)
+        (version,) = conn.execute(
+            "SELECT tool_version FROM blob_text WHERE tool = ? AND sha256 = ?",
+            (tool(book), newest.sha256),
+        ).fetchone()
+    assert version == "0"  # not claimed as read by this extractor
+
+
+def test_an_erased_note_is_dated_by_its_state(device, test_db, three_states) -> None:
+    with get_connection(test_db) as conn:
+        extract_notes(conn, test_db)
+    _plug_in(device, test_db, 4, 1)
+    with get_connection(test_db) as conn:
+        extract_notes(conn, test_db)
+        (removed,) = conn.execute(
+            "SELECT json_extract(metadata, '$.removed_from_pdf') FROM items"
+            " WHERE parent_id = ? AND json_extract(metadata, '$.removed_from_pdf') IS NOT NULL",
+            (_book(conn),),
+        ).fetchone()
+    assert removed.startswith("2026-11-14T10:04")
