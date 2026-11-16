@@ -219,7 +219,8 @@ def add_file_commands(app: typer.Typer, store_for: Callable[[Config], KoboStore]
         config = Config.load()
         store = store_for(config)
         with get_connection(config) as conn:
-            _note_removed(conn, store)
+            if not dry_run:  # a dry run touches nothing, the database included
+                _note_removed(conn, store)
             wanted, problems = to_copy(conn, config, KOBO)
             for problem in problems:
                 console.print(f"[yellow]{problem}[/yellow]")
