@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from lestash.core.blobs import media_file, sha_file
@@ -57,30 +58,34 @@ def set_wanted(conn: sqlite3.Connection, item_id: int, place: str, wanted: bool)
         )
 
 
-def copied(conn: sqlite3.Connection, item_id: int, place: str) -> bool:
-    """Whether LeStash already copied this item to the device."""
-    return bool(
-        conn.execute(
-            "SELECT 1 FROM item_places WHERE item_id = ? AND place = ? AND copied_at IS NOT NULL",
-            (item_id, place),
-        ).fetchone()
-    )
+def taken_off(conn: sqlite3.Connection, item_id: int, place: str = KOBO) -> bool:
+    """Whether the copy LeStash made of the item was on the Kobo and has left it (#314):
+    a copy of it marked gone at or after the time it was copied."""
+    row = conn.execute(
+        "SELECT copied_at FROM item_places WHERE item_id = ? AND place = ?"
+        " AND copied_at IS NOT NULL",
+        (item_id, place),
+    ).fetchone()
+    if row is None:
+        return False
+    copied_at = _utc(row[0])
+    for (gone,) in conn.execute(
+        f"""
+        SELECT json_extract(i.metadata, '$.removed_from_device') FROM item_links l
+        JOIN items i ON i.id = CASE WHEN l.from_id = :id THEN l.to_id ELSE l.from_id END
+        WHERE l.kind = 'alternate_of' AND l.status = 'confirmed'
+          AND :id IN (l.from_id, l.to_id) AND {_KOBO_BOOK} AND {_GONE}
+        """,
+        {"id": item_id},
+    ):
+        if _utc(gone) >= copied_at:
+            return True
+    return False
 
 
-def taken_off(conn: sqlite3.Connection, item_id: int) -> bool:
-    """Whether the item's copy was on the Kobo and has left it (#314)."""
-    return bool(
-        conn.execute(
-            f"""
-            SELECT 1 FROM item_links l
-            JOIN items i ON i.id = CASE WHEN l.from_id = :id THEN l.to_id ELSE l.from_id END
-            WHERE l.kind = 'alternate_of' AND l.status = 'confirmed'
-              AND :id IN (l.from_id, l.to_id) AND {_KOBO_BOOK} AND {_GONE}
-            LIMIT 1
-            """,
-            {"id": item_id},
-        ).fetchone()
-    )
+def _utc(text: object) -> datetime:
+    when = datetime.fromisoformat(str(text).replace("Z", "+00:00").replace(" ", "T"))
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
 
 
 def marked(conn: sqlite3.Connection, place: str) -> set[int]:
@@ -157,7 +162,7 @@ def to_copy(
         newest = versions(conn, item_id)[0]
         if newest in wanted or on_kobo(conn, newest):
             continue
-        if copied(conn, newest, place) and taken_off(conn, newest):
+        if taken_off(conn, newest, place):
             continue  # you took it off: it stays off until you send it again
         source_type, title = conn.execute(
             "SELECT source_type, title FROM items WHERE id = ?", (newest,)
@@ -216,7 +221,7 @@ class ItemPlace:
         """ "On the Kobo", "Copied, waiting for the Kobo to import it", "For the Kobo"."""
         if self.on:
             return "On the Kobo"
-        if self.gone and self.copied_at:
+        if self.gone:
             return "Taken off the Kobo; send it again to copy it back"
         if self.error:
             return f"Not copied: {self.error}"
@@ -252,7 +257,7 @@ def item_place(conn: sqlite3.Connection, item_id: int, place: str = KOBO) -> Ite
         collections=collections,
         newest_id=newest,
         on=on_kobo(conn, newest),
-        gone=taken_off(conn, newest),
+        gone=taken_off(conn, newest, place),
         path=copy[0] if copy else None,
         copied_at=copy[1] if copy else None,
         error=copy[2] if copy else None,

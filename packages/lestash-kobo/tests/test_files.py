@@ -3,7 +3,7 @@
 import hashlib
 import shutil
 from collections import namedtuple
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -20,6 +20,20 @@ from typer.testing import CliRunner
 
 def _at(minute: int) -> datetime:
     return datetime(2026, 11, 14, 9, minute, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def copy_clock(test_db, monkeypatch):
+    """A copy is made just after the newest snapshot, as at a plug-in: test snapshots
+    are dated in the past, so the real clock would put every copy after them."""
+    import lestash_kobo.files_cli as files
+
+    def now() -> str:
+        latest = _store({}, test_db).latest()
+        when = latest.taken_at + timedelta(seconds=30) if latest else _at(0)
+        return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    monkeypatch.setattr(files, "now_text", now)
 
 
 def _cli(*args: str):
@@ -63,7 +77,7 @@ def test_an_item_asked_for_is_copied_checked_and_recorded(device, test_db, paper
     assert result.exit_code == 0, result.output
     copy = device / "LeStash" / "Typing an Ontology.pdf"
     assert copy.read_bytes() == b"%PDF-1.4 typing v1"
-    assert not list((device / "LeStash").glob("*.part"))
+    assert not list((device / "LeStash").glob(".*"))
     with get_connection(test_db) as conn:
         place = item_place(conn, paper)
         (status,) = conn.execute(
@@ -210,3 +224,42 @@ def test_a_failed_copy_leaves_no_part_file(device, test_db, paper, monkeypatch) 
     result = _copy(device)
     assert result.exit_code == 1 and "doesn't match" in result.output
     assert list((device / "LeStash").iterdir()) == []
+
+
+def test_a_copy_left_unfinished_by_a_stopped_run_is_replaced(device, test_db, paper) -> None:
+    left = device / "LeStash" / ".Typing an Ontology.pdf.lestash-part"
+    left.parent.mkdir()
+    left.write_bytes(b"%PDF-1.4 typ")  # a run stopped mid-copy
+    assert _copy(device).exit_code == 0
+    assert [p.name for p in (device / "LeStash").iterdir()] == ["Typing an Ontology.pdf"]
+
+
+def test_sent_again_after_being_taken_off_reads_as_copied(device, test_db, paper) -> None:
+    _copy(device)
+    _import(device, test_db, 1)
+    (device / "LeStash" / "Typing an Ontology.pdf").unlink()
+    _import(device, test_db, 2)
+    _cli("send", str(paper))
+    _copy(device)
+    with get_connection(test_db) as conn:
+        assert item_place(conn, paper).text() == "Copied, waiting for the Kobo to import it"
+
+
+def test_an_older_version_with_its_own_copy_shows_the_newest(device, test_db, paper) -> None:
+    with get_connection(test_db) as conn:
+        cid = conn.execute("INSERT INTO collections (name) VALUES ('Learning')").lastrowid
+        add_item(conn, cid, paper)
+        set_shown(conn, cid, KOBO, True)
+        conn.commit()
+    _copy(device)  # the first version's copy
+    _import(device, test_db, 1)
+    newer = _pdf(test_db, b"%PDF-1.4 typing v2", "Typing an Ontology v2.pdf")
+    with get_connection(test_db) as conn:
+        link_revision(conn, newer, paper)
+        conn.commit()
+    _copy(device)
+    _import(device, test_db, 2)
+    with get_connection(test_db) as conn:
+        books = kobo_books(conn, cid)
+    assert list(books.values()) == [paper]
+    assert next(iter(books)).endswith("LeStash/Typing an Ontology v2.pdf")
