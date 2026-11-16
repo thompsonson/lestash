@@ -209,9 +209,30 @@ def test_a_file_missing_from_the_store_is_passed_over(device, test_db, three_sta
         conn.commit()
         first = extract_notes(conn, test_db)
         again = extract_notes(conn, test_db)
-    assert any("passed over" in e for e in first.errors)
+    assert any("not in the store" in m for m in first.missing) and not first.errors
     assert first.added == 2  # the newest state still has both marks
-    assert again.states == 0 and not again.errors
+    assert again.states == 0 and not again.missing  # a newer state was read: passed for good
+
+
+def test_a_missing_newest_state_is_read_once_its_file_is_back(device, test_db) -> None:
+    from lestash.core.blobs import BlobStore, store_root
+
+    _plug_in(device, test_db, 1, 1)
+    with get_connection(test_db) as conn:
+        book = _book(conn)
+        (sha,) = conn.execute(
+            "SELECT sha256 FROM item_media WHERE item_id = ? AND media_type = 'pdf'", (book,)
+        ).fetchone()
+        blob = BlobStore(store_root(test_db)).path(sha)
+        kept = blob.read_bytes()
+        blob.unlink()
+        conn.execute("UPDATE item_media SET local_path = NULL WHERE sha256 = ?", (sha,))
+        conn.commit()
+        first = extract_notes(conn, test_db)
+        blob.write_bytes(kept)
+        back = extract_notes(conn, test_db)
+    assert first.missing and first.added == 0
+    assert back.added == 1 and not back.missing
 
 
 def test_states_since_an_older_extractor_are_all_read(device, test_db) -> None:

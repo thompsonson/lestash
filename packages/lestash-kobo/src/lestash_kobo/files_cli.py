@@ -221,6 +221,8 @@ def add_file_commands(app: typer.Typer, store_for: Callable[[Config], KoboStore]
                 result = extract_notes(conn, Config.load())
                 for error in result.errors:
                     console.print(f"[red]{error}[/red]")
+                for missing in result.missing:
+                    console.print(f"[yellow]{missing}; passed over[/yellow]")
                 run.finish(
                     "failed" if result.errors else "completed",
                     items_added=result.added,

@@ -11,7 +11,9 @@ the time it was first seen. A book's states are read in that order:
   would mark newer notes erased. Bytes that come back later are a new state. After a
   newer extractor, the newest state read is read again first, then any newer ones, so
   earlier states don't erase and restore every note.
-- A state whose file is gone from the store is passed over and reported once.
+- A state whose file is gone from the store is passed over and reported. It doesn't
+  move the book on, so it is read once its file is back, unless a newer state was
+  read first.
 - A state with new notes records an ``annotated`` activity at the time it was first
   seen, naming the notes. The version the notes were drawn on is the book's
   ``alternate_of`` item, when it has one.
@@ -51,6 +53,7 @@ class NotesResult:
     added: int = 0  # notes new in them
     books: set[int] = field(default_factory=set)  # books with new notes
     errors: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)  # states passed over: no file
 
 
 @dataclass
@@ -150,9 +153,13 @@ def _record(
     ).fetchone()
     earlier = json.loads(before[0]).get("new_notes", []) if before else []
     notes = sorted(set(earlier) | set(new))
-    record = {"seen": state.seen.isoformat(), "annotations": found, "new_notes": notes}
+    record: dict = {"annotations": found, "new_notes": notes}
     if missing:
+        # No time: a missing state doesn't move the book on, so it is read once its file
+        # is back, if no newer state has been read by then
         record["missing"] = True
+    else:
+        record["seen"] = state.seen.isoformat()
     conn.execute(
         "INSERT OR REPLACE INTO blob_text (sha256, tool, tool_version, text) VALUES (?, ?, ?, ?)",
         (state.sha256, tool(book_id), str(EXTRACTOR_VERSION), json.dumps(record)),
@@ -183,11 +190,11 @@ def extract_notes(conn: sqlite3.Connection, config: Config) -> NotesResult:
         for state in _to_read(conn, book_id):
             path = media_file({"sha256": state.sha256, "local_path": state.local_path}, config)
             if path is None:
-                # Gone from the store: passed over, so the book's later states still come
+                # Gone from the store: passed over this time, so later states still come
                 _record(conn, book_id, state, None, [], missing=True)
                 conn.commit()
-                result.errors.append(
-                    f"book {book_id}: file {state.sha256[:12]} is not in the store; passed over"
+                result.missing.append(
+                    f"book {book_id}: file {state.sha256[:12]} is not in the store"
                 )
                 continue
             try:
