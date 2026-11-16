@@ -57,3 +57,55 @@ def test_ask_for_an_item_on_the_kobo(client, test_config) -> None:
     assert client.put(f"/api/items/{v1}/kobo", json={"wanted": False}).json()["marked"] is False
     assert client.put("/api/items/99999/kobo", json={"wanted": True}).status_code == 404
     assert client.get("/api/items/99999/kobo").status_code == 404
+
+
+def _kobo_copy(conn, pdf: int, book: int) -> None:
+    conn.execute(
+        "UPDATE items SET source_type = 'kobo', source_id = 'file:///mnt/onboard/LeStash/x.pdf'"
+        " WHERE id = ?",
+        (book,),
+    )
+    conn.execute(
+        "INSERT INTO item_links (from_id, to_id, kind, origin, status)"
+        " VALUES (?, ?, 'alternate_of', 'linker:sha256', 'confirmed')",
+        (book, pdf),
+    )
+
+
+def _note(conn, parent: int, name: str, removed: bool = False) -> None:
+    conn.execute(
+        "INSERT INTO items (source_type, source_id, content, parent_id, metadata)"
+        " VALUES ('pdf_annotation', ?, 'ink', ?, ?)",
+        (name, parent, '{"removed_from_pdf": "2026-11-16"}' if removed else "{}"),
+    )
+
+
+def test_notes_are_counted_on_the_kobo_copy(client, test_config) -> None:
+    pdf, book, _ = _ids(test_config)
+    with get_connection(test_config) as conn:
+        _kobo_copy(conn, pdf, book)
+        _note(conn, book, "n1")
+        _note(conn, book, "n2")
+        _note(conn, book, "n3", removed=True)
+        _note(conn, pdf, "own")  # the same ink read from the PDF itself: not added
+        conn.commit()
+    assert client.get(f"/api/items/{pdf}/kobo").json()["notes"] == 2
+    assert client.get(f"/api/items/{book}/kobo").json()["notes"] == 2
+
+
+def test_notes_all_erased_on_the_copy_count_none(client, test_config) -> None:
+    pdf, book, _ = _ids(test_config)
+    with get_connection(test_config) as conn:
+        _kobo_copy(conn, pdf, book)
+        _note(conn, book, "n1", removed=True)
+        _note(conn, pdf, "own")
+        conn.commit()
+    assert client.get(f"/api/items/{pdf}/kobo").json()["notes"] == 0
+
+
+def test_an_item_without_a_kobo_copy_counts_its_own_notes(client, test_config) -> None:
+    pdf, _, _ = _ids(test_config)
+    with get_connection(test_config) as conn:
+        _note(conn, pdf, "own")
+        conn.commit()
+    assert client.get(f"/api/items/{pdf}/kobo").json()["notes"] == 1

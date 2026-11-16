@@ -11,6 +11,7 @@ import {
   attachPickerSuggest, rememberOpened,
 } from './objects/item/picker.js';
 import { renderCard } from './objects/item/card.js';
+import { koboSectionHtml, loadKobo } from './objects/item/kobo.js';
 import { renderCollectionCard } from './objects/collection/card.js';
 import { renderCollectionPage } from './objects/collection/page.js';
 import { startTimeline, redrawTimeline } from './places/timeline.js';
@@ -532,6 +533,9 @@ function renderItemView(item) {
       <div class="item-list" id="similar-list"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
     </div>`;
   }
+
+  // Its place on the Kobo, and its versions (#338; hidden unless it has either)
+  html += koboSectionHtml(item);
 
   // Links to and from other items (hidden until some load)
   html += `<div class="item-view-children" id="links-section" data-item-id="${item.id}" style="margin-top:1rem;display:none">
@@ -1063,6 +1067,7 @@ function renderItemView(item) {
   loadActivities(item.id);
   loadPeople(item.id, item.source_type);
   loadLinks(item.id);
+  loadKobo(item, showToast);
 
   // Load similar items (held parent items only)
   if (!item.parent_id && item.held !== false) {

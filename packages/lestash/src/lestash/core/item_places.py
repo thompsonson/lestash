@@ -229,6 +229,41 @@ def record_copy_error(conn: sqlite3.Connection, item_id: int, place: str, error:
     )
 
 
+def notes_on(conn: sqlite3.Connection, item_id: int) -> int:
+    """Notes drawn on the item, not erased.
+
+    A Kobo book counts its own. Another item counts those on its Kobo copy, where the
+    pen notes are drawn: with several copies, the one with most, as they hold the same
+    ink. With no Kobo copy, it counts its own.
+    """
+
+    def live(parent: int) -> int:
+        return conn.execute(
+            "SELECT COUNT(*) FROM items WHERE source_type = 'pdf_annotation'"
+            " AND json_extract(metadata, '$.removed_from_pdf') IS NULL AND parent_id = ?",
+            (parent,),
+        ).fetchone()[0]
+
+    (source_type,) = conn.execute(
+        "SELECT source_type FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    if source_type == KOBO:
+        return live(item_id)
+    copies = [
+        r[0]
+        for r in conn.execute(
+            f"""
+            SELECT i.id FROM item_links l
+            JOIN items i ON i.id = CASE WHEN l.from_id = :id THEN l.to_id ELSE l.from_id END
+            WHERE l.kind = 'alternate_of' AND l.status = 'confirmed'
+              AND :id IN (l.from_id, l.to_id) AND {_KOBO_BOOK}
+            """,
+            {"id": item_id},
+        )
+    ]
+    return max(live(c) for c in copies) if copies else live(item_id)
+
+
 @dataclass
 class ItemPlace:
     """Where an item stands on a device, as the item page shows it."""
@@ -238,6 +273,7 @@ class ItemPlace:
     newest_id: int
     on: bool  # the newest version is on the device
     gone: bool = False  # its copy was on the device and was taken off
+    notes: int = 0  # notes drawn on its copies there, not erased (#338)
     path: str | None = None  # the copy LeStash made of the newest version
     copied_at: str | None = None
     error: str | None = None
@@ -287,6 +323,7 @@ def item_place(conn: sqlite3.Connection, item_id: int, place: str = KOBO) -> Ite
         newest_id=newest,
         on=on_kobo(conn, newest),
         gone=taken_off(conn, newest, place),
+        notes=notes_on(conn, item_id),
         path=copy[0] if copy else None,
         copied_at=copy[1] if copy else None,
         error=copy[2] if copy else None,
