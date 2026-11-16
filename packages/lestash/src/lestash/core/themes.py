@@ -27,7 +27,7 @@ MIN_SOURCES = 2
 # Louvain's resolution: higher makes more, smaller themes. 1.0 is its default.
 RESOLUTION = 1.0
 SEED = 1  # the same graph gives the same themes
-# A group sharing this share of its items with a decided theme counts as that theme
+# A group with this share of its items in a kept or dismissed theme counts as that theme
 SAME_THEME = 0.5
 NAME_WORDS = 3
 
@@ -169,8 +169,9 @@ def name_themes(groups: list[list[str]]) -> list[str]:
     return names
 
 
-def _overlap(a: set[int], b: set[int]) -> float:
-    return len(a & b) / len(a | b) if a or b else 0.0
+def _overlap(group: set[int], decided: set[int]) -> float:
+    """The share of a group's items that a decided theme holds too."""
+    return len(group & decided) / len(group) if group else 0.0
 
 
 def find_themes(conn: sqlite3.Connection) -> ThemeCounts:
@@ -204,16 +205,29 @@ def find_themes(conn: sqlite3.Connection) -> ThemeCounts:
         set(json.loads(r[0]))
         for r in conn.execute("SELECT item_ids FROM themes WHERE status IN ('kept', 'dismissed')")
     ]
-    conn.execute("DELETE FROM themes WHERE status = 'suggested'")
+    # A theme found again with the same items keeps its row and id, so a list
+    # already open can still keep or dismiss it
+    before = {
+        frozenset(json.loads(r[1])): r[0]
+        for r in conn.execute("SELECT id, item_ids FROM themes WHERE status = 'suggested'")
+    }
+    still: set[int] = set()
     for members, name in zip(groups, name_themes(titles), strict=True):
         if any(_overlap(set(members), d) >= SAME_THEME for d in decided):
             counts.skipped += 1
             continue
-        conn.execute(
-            "INSERT INTO themes (name, item_ids, status) VALUES (?, ?, 'suggested')",
-            (name, json.dumps(members)),
-        )
+        same = before.get(frozenset(members))
+        if same is not None:
+            conn.execute("UPDATE themes SET name = ? WHERE id = ?", (name, same))
+            still.add(same)
+        else:
+            conn.execute(
+                "INSERT INTO themes (name, item_ids, status) VALUES (?, ?, 'suggested')",
+                (name, json.dumps(members)),
+            )
         counts.suggested += 1
+    for theme_id in set(before.values()) - still:
+        conn.execute("DELETE FROM themes WHERE id = ?", (theme_id,))
     return counts
 
 

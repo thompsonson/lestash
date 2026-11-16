@@ -292,7 +292,7 @@ Left for separate work: search ranking of near-empty sessions; speaker splits in
   - A theme is a community (Louvain, fixed seed) in the related-items graph: every `related` link not rejected. It needs 4 or more items from 2 or more sources.
   - Its name is the three most distinctive words in its items' titles (an item without one uses its text's start), against the other themes' (TF-IDF). Words two or more items share come first; no LLM.
   - `themes` (migration 34) holds each theme's items, and its status: `suggested`, `kept` (with its collection) or `dismissed`.
-  - `lestash db themes` runs after `lestash db relate`. Each run replaces the suggestions; a group sharing half or more of its items with a kept or dismissed theme is left out.
+  - `lestash db themes` runs after `lestash db relate`. Each run replaces the suggestions; a theme found again with the same items keeps its id. A group with half or more of its items in a kept or dismissed theme is left out.
   - Collections and themes lists your collections, then Suggested themes, each with its items, "Keep as a collection" and "Dismiss".
   - On a copy of the live database: 45 themes from 983 related items, in about 2 s. Among them "LLMs, reasoning, In-context" (95 items), "Zero-RL, Reinforcement, LUFFY" (51) and "Reliable, Dual, Dual-State" (41).
   - A kept theme is a collection per question, step 2 of the reading loop (#338, #340).

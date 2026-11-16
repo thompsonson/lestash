@@ -59,6 +59,12 @@ export async function loadThemes(toast) {
           toast("Dismissed; it won't be suggested again", 'ok');
         }
       } catch (err) {
+        if (String(err.message).startsWith('404')) {
+          // A newer run replaced this theme: show the themes as they are now
+          toast('Themes have changed since this list loaded; here they are now', 'error');
+          loadThemes(toast);
+          return;
+        }
         card.querySelectorAll('.theme-actions button').forEach(b => { b.disabled = false; });
         toast('Failed: ' + err.message, 'error');
       }

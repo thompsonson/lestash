@@ -155,3 +155,28 @@ def test_names_come_from_shared_words_as_written():
     assert "b901" not in names[0]
     assert names[1].startswith("Federated") and "slug" not in names[1]
     assert names[2] == "Untitled theme"
+
+
+def test_a_theme_found_again_keeps_its_id(conn):
+    """A list already open can still keep or dismiss it (review round 1)."""
+    _two_themes(conn)
+    themes.find_themes(conn)
+    ids = {r["id"] for r in themes.suggested(conn)}
+
+    themes.find_themes(conn)
+
+    assert {r["id"] for r in themes.suggested(conn)} == ids
+
+
+def test_part_of_a_dismissed_theme_stays_away_when_it_splits(conn):
+    """Half or more of the group's own items in the dismissed theme is enough
+    (review round 1)."""
+    agents, _ = _two_themes(conn)
+    themes.find_themes(conn)
+    theme_id = next(r["id"] for r in themes.suggested(conn) if json.loads(r["item_ids"]) == agents)
+    themes.dismiss(conn, theme_id)
+    # The group grows to twice its size: half its items are the dismissed theme's
+    more = _items(conn, ["Agent design", "Agent tools", "Agent memory", "Agent plans"], SOURCES)
+    _relate(conn, [*agents, *more])
+
+    assert all(not set(agents) & set(ids) for ids in _suggested(conn))
