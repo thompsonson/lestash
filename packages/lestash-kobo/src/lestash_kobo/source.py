@@ -174,7 +174,7 @@ class KoboSource(SourcePlugin):
                 console.print(f"{s.name}  {len(s.files):5d} files  {size / 1e6:8.1f} MB")
 
         add_collection_commands(app, lambda cfg: _store(cfg.get_plugin_config(self.name), cfg))
-        add_eject_command(app)
+        add_eject_command(app, lambda cfg: _store(cfg.get_plugin_config(self.name), cfg))
         return app
 
     def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:

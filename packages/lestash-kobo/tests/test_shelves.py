@@ -362,3 +362,25 @@ def test_a_book_changed_while_it_was_read_is_written(device, kobo, test_db) -> N
     result = _write(device)
     assert result.exit_code == 0, result.output
     assert "0 Intro" in _shelves(device)["shelves"]
+
+
+def test_a_book_in_a_hidden_folder_does_not_stop_the_write(device, kobo, test_db) -> None:
+    store, cid = kobo
+    _show(test_db, cid)
+    trash = device / ".Trashes" / "old.pdf"
+    trash.parent.mkdir()
+    trash.write_bytes(b"%PDF-1.4 deleted on a Mac")
+    store.take(device, _at(1))
+    result = _write(device)
+    assert result.exit_code == 0, result.output
+
+
+def test_a_book_changed_before_the_last_eject_is_written(device, kobo, test_db) -> None:
+    store, cid = kobo
+    _show(test_db, cid)
+    _change_judge(device, _at(20))
+    kobo_shelf.record_eject(store, _at(25))
+    store.take(device, _at(30))
+    result = _write(device)
+    assert result.exit_code == 0, result.output
+    assert "0 Intro" in _shelves(device)["shelves"]

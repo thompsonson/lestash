@@ -31,7 +31,8 @@ ExecStart=/bin/sh -c 'if [ -e %h/.config/lestash/kobo-writes-paused ]; then rm -
 # new books. umount alone left it on its Connected screen for 30 hours. Ejecting needs
 # the polkit grant install-root.sh adds. A failed eject fails this unit. The eject
 # removes the disk, which stops this unit (BindsTo); nothing runs after it.
-ExecStart=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/eject" ]; then rm "$RUNTIME_DIRECTORY/eject"; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo eject; fi'
+# Not while ~/.config/lestash/kobo-no-eject exists, to keep the Kobo's files open on the desktop.
+ExecStart=/bin/sh -c 'if [ -e %h/.config/lestash/kobo-no-eject ]; then rm -f "$RUNTIME_DIRECTORY/eject"; echo "Not ejecting: %h/.config/lestash/kobo-no-eject exists."; fi; if [ -e "$RUNTIME_DIRECTORY/eject" ]; then rm "$RUNTIME_DIRECTORY/eject"; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo eject; fi'
 # The same when a step failed
 ExecStopPost=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/mounted" ] && /usr/bin/mountpoint -q /media/kobo; then /usr/bin/umount /media/kobo; fi'
 WorkingDirectory=%h/Projects/thompsonson/lestash

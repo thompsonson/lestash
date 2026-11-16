@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 from lestash_kobo import KoboSource
 from lestash_kobo import eject as kobo_eject
+from lestash_kobo import shelves as kobo_shelf
+from lestash_kobo.source import _store
 from typer.testing import CliRunner
 
 DRIVE = "/org/freedesktop/UDisks2/drives/Linux_File_Stor_Gadget_N6053C0033803"
@@ -41,10 +43,11 @@ def _eject(disk: Path):
     return CliRunner().invoke(KoboSource().get_commands(), ["eject", "--disk", str(disk)])
 
 
-def test_eject_asks_udisks_to_eject_the_kobo_drive(disk, monkeypatch) -> None:
+def test_eject_asks_udisks_to_eject_the_kobo_drive(disk, monkeypatch, test_db) -> None:
     calls = _fake(monkeypatch)
     result = _eject(disk)
     assert result.exit_code == 0, result.output
+    assert kobo_shelf._last_eject(_store({}, test_db)) is not None
     assert calls[-1] == [
         kobo_eject.BUSCTL,
         "call",

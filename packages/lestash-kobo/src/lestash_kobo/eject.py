@@ -13,11 +13,17 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from lestash.core.config import Config
 from rich.console import Console
+
+from lestash_kobo.shelves import record_eject
+from lestash_kobo.store import KoboStore
 
 console = Console()
 
@@ -66,7 +72,7 @@ def eject(disk: Path = KOBO_DISK) -> None:
         raise EjectFailed(f"udisks could not eject the Kobo: {reason}")
 
 
-def add_eject_command(app: typer.Typer) -> None:
+def add_eject_command(app: typer.Typer, store_for: Callable[[Config], KoboStore]) -> None:
     @app.command("eject")
     def eject_cmd(
         disk: Annotated[
@@ -79,4 +85,5 @@ def add_eject_command(app: typer.Typer) -> None:
         except EjectFailed as e:
             console.print(f"[red]Not ejected: {e}[/red]")
             raise typer.Exit(1) from None
+        record_eject(store_for(Config.load()), datetime.now(UTC))
         console.print("Ejected: the Kobo leaves USB mode and imports new books.")

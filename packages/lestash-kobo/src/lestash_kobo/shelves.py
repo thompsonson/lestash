@@ -216,6 +216,29 @@ DEVICE_ROOT = "file:///mnt/onboard/"
 # Kobo times are to the second, FAT file times to 2 s, and a book's file and its
 # reading time aren't saved at the same instant
 SLACK = timedelta(minutes=5)
+# The Kobo imports hidden folders only for its own Google Drive downloads
+HIDDEN_BOOKS = ".kobo/google_drive/"
+EJECTED = "last-eject"  # in the store: when ``lestash kobo eject`` last worked
+
+
+def record_eject(store: KoboStore, when: datetime) -> None:
+    """Note an eject: the Kobo saved everything it changed before it."""
+    store.root.mkdir(parents=True, exist_ok=True)
+    (store.root / EJECTED).write_text(when.astimezone(UTC).isoformat(timespec="seconds"))
+
+
+def _last_eject(store: KoboStore) -> datetime | None:
+    try:
+        return _when((store.root / EJECTED).read_text().strip())
+    except OSError:
+        return None
+
+
+def _book(rel: str) -> bool:
+    if not rel.lower().endswith(BOOK_FILES):
+        return False
+    hidden = any(part.startswith(".") for part in Path(rel).parts)
+    return not hidden or rel.startswith(HIDDEN_BOOKS)
 
 
 def _when(text: str | None) -> datetime | None:
@@ -235,6 +258,9 @@ def stale(store: KoboStore, snapshot: Snapshot, conn: sqlite3.Connection) -> lis
       when it leaves USB mode, so it was unplugged without an eject.
     - A book the Kobo changed (pen notes are saved into the PDF) after the newest
       reading or highlight time in the database: the Kobo hasn't saved that session.
+      A change before the last eject doesn't count: the eject made the Kobo save.
+
+    Files in hidden folders, which the Kobo doesn't import, are left out.
     """
     listed = {r[0] for r in conn.execute("SELECT ContentID FROM content WHERE ContentType = '6'")}
     times = [
@@ -246,11 +272,8 @@ def stale(store: KoboStore, snapshot: Snapshot, conn: sqlite3.Connection) -> lis
         )
     ]
     newest = max((t for t in times if t), default=None)
-    books = {
-        rel: entry
-        for rel, entry in snapshot.files.items()
-        if rel.lower().endswith(BOOK_FILES) and not Path(rel).name.startswith(".")
-    }
+    ejected = _last_eject(store)
+    books = {rel: entry for rel, entry in snapshot.files.items() if _book(rel)}
     first: dict[str, str] = {}
     for older in store.snapshots():
         if older.taken_at > snapshot.taken_at:
@@ -268,6 +291,7 @@ def stale(store: KoboStore, snapshot: Snapshot, conn: sqlite3.Connection) -> lis
             first.get(rel, entry.sha256) != entry.sha256
             and changed is not None
             and (newest is None or changed > newest + SLACK)
+            and (ejected is None or changed > ejected)
         ):
             reasons.append(
                 f"{rel} changed on the Kobo at {entry.mtime[:19]}Z, after the database's "
