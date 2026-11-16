@@ -230,23 +230,30 @@ def record_copy_error(conn: sqlite3.Connection, item_id: int, place: str, error:
 
 
 def notes_on(conn: sqlite3.Connection, item_id: int) -> int:
-    """Notes drawn on the item, or on its copies (``alternate_of``), not erased."""
-    return conn.execute(
-        """
-        SELECT COUNT(*) FROM items n
-        WHERE n.source_type = 'pdf_annotation'
-          AND json_extract(n.metadata, '$.removed_from_pdf') IS NULL
-          AND n.parent_id IN (
-              SELECT :id
-              UNION
-              SELECT CASE WHEN l.from_id = :id THEN l.to_id ELSE l.from_id END
-              FROM item_links l
-              WHERE l.kind = 'alternate_of' AND l.status = 'confirmed'
-                AND :id IN (l.from_id, l.to_id)
-          )
-        """,
-        {"id": item_id},
-    ).fetchone()[0]
+    """Notes drawn on the item's Kobo copies (``alternate_of``), not erased; or, with no
+    notes on a copy, its own. A copy's notes are read from the same ink as any the item
+    holds itself, so the two are never added up."""
+
+    def live(parents: list[int]) -> int:
+        if not parents:
+            return 0
+        return conn.execute(
+            "SELECT COUNT(*) FROM items WHERE source_type = 'pdf_annotation'"
+            " AND json_extract(metadata, '$.removed_from_pdf') IS NULL"
+            f" AND parent_id IN ({','.join('?' * len(parents))})",
+            parents,
+        ).fetchone()[0]
+
+    copies = [
+        r[0]
+        for r in conn.execute(
+            "SELECT DISTINCT CASE WHEN from_id = :id THEN to_id ELSE from_id END"
+            " FROM item_links WHERE kind = 'alternate_of' AND status = 'confirmed'"
+            " AND :id IN (from_id, to_id)",
+            {"id": item_id},
+        )
+    ]
+    return live(copies) or live([item_id])
 
 
 @dataclass

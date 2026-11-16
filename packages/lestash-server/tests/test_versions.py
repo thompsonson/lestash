@@ -77,3 +77,21 @@ def test_kobo_status_counts_notes_on_the_item_and_its_copies(client, test_config
         conn.commit()
     assert client.get(f"/api/items/{pdf}/kobo").json()["notes"] == 2
     assert client.get(f"/api/items/{book}/kobo").json()["notes"] == 2
+
+
+def test_notes_on_a_copy_and_the_item_are_not_added_up(client, test_config) -> None:
+    pdf, book, _ = _ids(test_config)
+    with get_connection(test_config) as conn:
+        conn.execute(
+            "INSERT INTO item_links (from_id, to_id, kind, origin, status)"
+            " VALUES (?, ?, 'alternate_of', 'linker:sha256', 'confirmed')",
+            (book, pdf),
+        )
+        for parent in (pdf, book):  # the same ink, read from each
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content, parent_id, metadata)"
+                " VALUES ('pdf_annotation', ?, 'ink', ?, '{}')",
+                (f"n-{parent}", parent),
+            )
+        conn.commit()
+    assert client.get(f"/api/items/{pdf}/kobo").json()["notes"] == 1

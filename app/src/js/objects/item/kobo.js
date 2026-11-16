@@ -38,13 +38,12 @@ function render(section, item, place, versions, toast) {
     <label class="debug-switch"><input type="checkbox" id="item-kobo-switch"${place.marked ? ' checked' : ''}> Send to the Kobo</label>`;
   const newest = place.newest_id !== item.id
     ? `<div class="collection-kobo-status muted">The newest version goes: <a href="/items/${place.newest_id}">item ${place.newest_id}</a>.</div>` : '';
-  const error = place.error ? `<div class="collection-kobo-error">${escHtml(place.error)}</div>` : '';
   section.innerHTML = `
     <div class="item-view-children-title">Kobo</div>
     <div class="collection-kobo">
       ${switchHtml}
       <div class="collection-kobo-status muted">${escHtml(statusLine(place))}</div>
-      ${newest}${error}
+      ${newest}
     </div>
     ${versionsHtml(item, versions)}`;
   const box = section.querySelector('#item-kobo-switch');
@@ -80,7 +79,7 @@ export async function loadKobo(item, toast) {
   if (!section || section.dataset.itemId !== String(item.id)) return;
   const list = versions.versions;
   const relevant = item.source_type === 'pdf' || place.wanted || place.on || place.copied_at
-    || place.notes || list.length > 1;
+    || place.error || place.notes || list.length > 1;
   if (!relevant) return;
   render(section, item, place, list, toast);
   section.style.display = '';
