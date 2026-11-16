@@ -230,30 +230,38 @@ def record_copy_error(conn: sqlite3.Connection, item_id: int, place: str, error:
 
 
 def notes_on(conn: sqlite3.Connection, item_id: int) -> int:
-    """Notes drawn on the item's Kobo copies (``alternate_of``), not erased; or, with no
-    notes on a copy, its own. A copy's notes are read from the same ink as any the item
-    holds itself, so the two are never added up."""
+    """Notes drawn on the item, not erased.
 
-    def live(parents: list[int]) -> int:
-        if not parents:
-            return 0
+    A Kobo book counts its own. Another item counts those on its Kobo copy, where the
+    pen notes are drawn: with several copies, the one with most, as they hold the same
+    ink. With no Kobo copy, it counts its own.
+    """
+
+    def live(parent: int) -> int:
         return conn.execute(
             "SELECT COUNT(*) FROM items WHERE source_type = 'pdf_annotation'"
-            " AND json_extract(metadata, '$.removed_from_pdf') IS NULL"
-            f" AND parent_id IN ({','.join('?' * len(parents))})",
-            parents,
+            " AND json_extract(metadata, '$.removed_from_pdf') IS NULL AND parent_id = ?",
+            (parent,),
         ).fetchone()[0]
 
+    (source_type,) = conn.execute(
+        "SELECT source_type FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    if source_type == KOBO:
+        return live(item_id)
     copies = [
         r[0]
         for r in conn.execute(
-            "SELECT DISTINCT CASE WHEN from_id = :id THEN to_id ELSE from_id END"
-            " FROM item_links WHERE kind = 'alternate_of' AND status = 'confirmed'"
-            " AND :id IN (from_id, to_id)",
+            f"""
+            SELECT i.id FROM item_links l
+            JOIN items i ON i.id = CASE WHEN l.from_id = :id THEN l.to_id ELSE l.from_id END
+            WHERE l.kind = 'alternate_of' AND l.status = 'confirmed'
+              AND :id IN (l.from_id, l.to_id) AND {_KOBO_BOOK}
+            """,
             {"id": item_id},
         )
     ]
-    return live(copies) or live([item_id])
+    return max(live(c) for c in copies) if copies else live(item_id)
 
 
 @dataclass
