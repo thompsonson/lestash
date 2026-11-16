@@ -182,12 +182,34 @@ Each link kind's allowed ends (its domain and range), with the pairs in the live
 | `derived_from` | `notebook`, `artifact` | the source it was built from: any held item, or a `stub` | none yet |
 | `alternate_of` | any item | an item of the same kind, or a `book` and a `document` (a Kobo copy; made by its bytes, #338) | none yet |
 | `revision_of` | a `document` | the earlier version of that `document` | none yet |
+| `related` | a whole held item | a whole held item from another source; symmetric, stored with the lower id first (#219) | none yet |
 
 - All 3,878 link rows are `confirmed`.
 - `in_reply_to` overlaps containment for comments, so a reply has three forms (review issue 3):
   - a LinkedIn comment with a parent has `parent_id` only;
   - one without a parent has `in_reply_to` only;
   - a YouTube comment, once built (#248), has both.
+
+### Related items (#219, 16 Nov 2026)
+
+Items from different sources whose vectors are close are suggested as `related`.
+Confirming or rejecting one is a judgement you record about two items (#340).
+
+- `core/related.py` compares each whole item's vector with every other's: top-level, held, with 60 characters or more of title and text.
+- It keeps up to 5 from other sources at cosine similarity 0.65 or more, skipping pairs any other link joins.
+  Same-source neighbours are left out: on the live scores, 98% of pairs above any cut-off were one channel's videos or one account's posts.
+- Each pair is one `item_links` row, kind `related`, origin `linker:vectors`, status `suggested`, lower id first.
+  Its evidence is JSON: `score`, `model`, and `found_by`, the item whose scan found it.
+- Confirming sets `confirmed`; rejecting sets `rejected`. Both stamp `decided_at` (migration 33), and neither is touched by a scan.
+  A pair you find yourself, such as two items from one source, is stored the same way with origin `manual`.
+- `related_scans` (migration 33) keeps the vector each item's scan used, as `embedded_at` and model.
+  An item is scanned again when its vector changes; a rescan replaces only the suggestions its own scan made.
+  An item no longer compared (deleted, stubbed, emptied, moved under another) loses every suggestion naming it.
+- `lestash db relate` runs after each embeddings refresh (`lestash-embed.service`); `--all` rescans every item.
+  Nothing runs while a new model's index is built.
+- The item page lists suggestions with "Related" and "Not related", then "Also similar": the nearest items from any source, as before, without those listed or rejected.
+  A confirmed pair shows with the item's links, as "Related to", with the usual remove action.
+- On a copy of the live database (16 Nov 2026): 17,380 whole items compared, 1,406 suggested pairs, in 43 s.
 
 ### NotebookLM sources become items
 

@@ -280,6 +280,26 @@ Returns `{"status": "rejected"}`.
 
 ---
 
+### `GET /api/items/{item_id}/related`
+
+Items from other sources suggested as related, by their vectors (#219), best first. Confirmed ones are links, listed by `GET /links`. `404` if the item doesn't exist.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | int | 5 | At most this many, 1–50 |
+
+```json
+{"suggestions": [{"item": {"id": 42, "source_type": "arxiv", "title": "...", "...": "..."}, "score": 0.71}]}
+```
+
+---
+
+### `PUT /api/items/{item_id}/related/{other_id}`
+
+Confirm or reject that two items are related, suggested or not. A rejected pair is never suggested again, nor listed by `GET /api/embeddings/similar`. Body: `{"status": "confirmed"}` or `{"status": "rejected"}`. `400` for an item with itself, `404` if either item doesn't exist. Returns the body.
+
+---
+
 ### `PATCH /api/items/{item_id}`
 
 Partially update an item. Only provided fields are changed.
@@ -583,7 +603,7 @@ Embed, in the background, every item that is new or changed, and drop vectors of
 
 ### `GET /api/embeddings/similar/{item_id}`
 
-Find semantically similar items. Query param: `limit` (default 10). Searches with the item's own stored vector; an item without one (no text, or a title-only video) is embedded from its title and text. Returns whole items outside the item's own family.
+Find semantically similar items. Query param: `limit` (default 10). Searches with the item's own stored vector; an item without one (no text, or a title-only video) is embedded from its title and text. Returns whole items outside the item's own family, leaving out those whose relation to it you rejected (#219).
 
 ---
 

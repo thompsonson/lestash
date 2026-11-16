@@ -496,6 +496,33 @@ def link() -> None:
 
 
 @app.command()
+def relate(
+    everything: bool = typer.Option(
+        False, "--all", help="Scan every item again, not only those whose vector changed"
+    ),
+) -> None:
+    """Suggest related items from other sources, by their vectors (#219).
+
+    Runs after each embeddings refresh, for items whose vector changed.
+    """
+    from lestash.core.config import Config
+    from lestash.core.database import get_connection
+    from lestash.core.embeddings import load_vec_extension
+    from lestash.core.related import relate as relate_items
+
+    with get_connection(Config.load()) as conn:
+        load_vec_extension(conn)
+        counts = relate_items(conn, everything=everything)
+    if counts.building:
+        console.print("A new model's index is being built; nothing done until it is in use.")
+        return
+    console.print(
+        f"Scanned {counts.scanned} item(s) in {counts.seconds:.0f}s, dropped {counts.dropped}; "
+        f"{counts.suggested} suggested related pair(s) stored."
+    )
+
+
+@app.command()
 def agents() -> None:
     """Record who made, voiced, published or received each item, from the identifiers
     its source gives: YouTube channels, LinkedIn members, arXiv authors, chat roles.
