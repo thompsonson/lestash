@@ -171,3 +171,42 @@ def test_send_unsend_and_files(device, test_db) -> None:
     assert "Not on the Kobo" in _cli("unsend", str(item)).output
     assert "No item is asked for" in _cli("files").output
     assert _cli("send", "99999").exit_code == 1
+
+
+def test_a_collection_of_an_older_version_shows_the_newest_copy(device, test_db, paper) -> None:
+    newer = _pdf(test_db, b"%PDF-1.4 typing v2", "Typing an Ontology v2.pdf")
+    with get_connection(test_db) as conn:
+        link_revision(conn, newer, paper)
+        set_wanted(conn, paper, KOBO, False)
+        cid = conn.execute("INSERT INTO collections (name) VALUES ('Learning')").lastrowid
+        add_item(conn, cid, paper)  # the collection holds the first version
+        set_shown(conn, cid, KOBO, True)
+        conn.commit()
+    _copy(device)
+    _import(device, test_db, 1)
+    with get_connection(test_db) as conn:
+        books = kobo_books(conn, cid)
+    assert list(books.values()) == [paper]
+    assert next(iter(books)).endswith("LeStash/Typing an Ontology v2.pdf")
+
+
+def test_a_copy_taken_off_the_kobo_stays_off_until_sent_again(device, test_db, paper) -> None:
+    _copy(device)
+    _import(device, test_db, 1)
+    (device / "LeStash" / "Typing an Ontology.pdf").unlink()
+    _import(device, test_db, 2)
+    with get_connection(test_db) as conn:
+        assert item_place(conn, paper).text().startswith("Taken off the Kobo")
+    assert "Nothing to copy" in _copy(device).output
+    assert "copied at the next plug-in" in _cli("send", str(paper)).output
+    assert _copy(device).exit_code == 0
+    assert (device / "LeStash" / "Typing an Ontology.pdf").is_file()
+
+
+def test_a_failed_copy_leaves_no_part_file(device, test_db, paper, monkeypatch) -> None:
+    import lestash_kobo.files_cli as files
+
+    monkeypatch.setattr(files, "_sha", lambda path: "0" * 64)
+    result = _copy(device)
+    assert result.exit_code == 1 and "doesn't match" in result.output
+    assert list((device / "LeStash").iterdir()) == []

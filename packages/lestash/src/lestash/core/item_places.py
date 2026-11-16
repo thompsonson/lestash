@@ -41,12 +41,45 @@ class Wanted:
 def set_wanted(conn: sqlite3.Connection, item_id: int, place: str, wanted: bool) -> None:
     """Ask for an item on a device on its own, or stop asking. The caller commits.
 
-    Not asking any more never takes a copy off the device.
+    Not asking any more never takes a copy off the device. Asking again forgets the
+    copy made of its newest version, so one taken off the device is copied back.
     """
     conn.execute(
         "INSERT INTO item_places (item_id, place, wanted) VALUES (?, ?, ?)"
         " ON CONFLICT (item_id, place) DO UPDATE SET wanted = excluded.wanted",
         (item_id, place, int(wanted)),
+    )
+    if wanted:
+        conn.execute(
+            "UPDATE item_places SET copied_at = NULL, last_error = NULL"
+            " WHERE item_id = ? AND place = ?",
+            (versions(conn, item_id)[0], place),
+        )
+
+
+def copied(conn: sqlite3.Connection, item_id: int, place: str) -> bool:
+    """Whether LeStash already copied this item to the device."""
+    return bool(
+        conn.execute(
+            "SELECT 1 FROM item_places WHERE item_id = ? AND place = ? AND copied_at IS NOT NULL",
+            (item_id, place),
+        ).fetchone()
+    )
+
+
+def taken_off(conn: sqlite3.Connection, item_id: int) -> bool:
+    """Whether the item's copy was on the Kobo and has left it (#314)."""
+    return bool(
+        conn.execute(
+            f"""
+            SELECT 1 FROM item_links l
+            JOIN items i ON i.id = CASE WHEN l.from_id = :id THEN l.to_id ELSE l.from_id END
+            WHERE l.kind = 'alternate_of' AND l.status = 'confirmed'
+              AND :id IN (l.from_id, l.to_id) AND {_KOBO_BOOK} AND {_GONE}
+            LIMIT 1
+            """,
+            {"id": item_id},
+        ).fetchone()
     )
 
 
@@ -124,6 +157,8 @@ def to_copy(
         newest = versions(conn, item_id)[0]
         if newest in wanted or on_kobo(conn, newest):
             continue
+        if copied(conn, newest, place) and taken_off(conn, newest):
+            continue  # you took it off: it stays off until you send it again
         source_type, title = conn.execute(
             "SELECT source_type, title FROM items WHERE id = ?", (newest,)
         ).fetchone()
@@ -168,6 +203,7 @@ class ItemPlace:
     collections: list[str]  # shown collections there that hold it
     newest_id: int
     on: bool  # the newest version is on the device
+    gone: bool = False  # its copy was on the device and was taken off
     path: str | None = None  # the copy LeStash made of the newest version
     copied_at: str | None = None
     error: str | None = None
@@ -180,6 +216,8 @@ class ItemPlace:
         """ "On the Kobo", "Copied, waiting for the Kobo to import it", "For the Kobo"."""
         if self.on:
             return "On the Kobo"
+        if self.gone and self.copied_at:
+            return "Taken off the Kobo; send it again to copy it back"
         if self.error:
             return f"Not copied: {self.error}"
         if self.copied_at:
@@ -214,6 +252,7 @@ def item_place(conn: sqlite3.Connection, item_id: int, place: str = KOBO) -> Ite
         collections=collections,
         newest_id=newest,
         on=on_kobo(conn, newest),
+        gone=taken_off(conn, newest),
         path=copy[0] if copy else None,
         copied_at=copy[1] if copy else None,
         error=copy[2] if copy else None,

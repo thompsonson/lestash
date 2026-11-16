@@ -125,13 +125,18 @@ def copy_files(root: Path, wanted: list[Wanted], held: dict[str, str]) -> list[C
             dest = root / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             part = dest.with_name(dest.name + ".part")
-            shutil.copyfile(result.wanted.file, part)
-            with part.open("rb+") as f:
-                os.fsync(f.fileno())
-            if _sha(part) != result.wanted.sha256:
-                part.unlink()
-                raise OSError("the copy read back from the Kobo doesn't match; removed")
-            part.rename(dest)  # never over a file: _place found the name free
+            if part.exists():
+                raise OSError(f"{part.name} is on the Kobo already; nothing overwritten")
+            try:
+                shutil.copyfile(result.wanted.file, part)
+                with part.open("rb+") as f:
+                    os.fsync(f.fileno())
+                if _sha(part) != result.wanted.sha256:
+                    raise OSError("the copy read back from the Kobo doesn't match; removed")
+                part.rename(dest)  # never over a file: _place found the name free
+            except OSError:
+                part.unlink(missing_ok=True)  # this run's own unfinished copy
+                raise
             result.made = True
         except OSError as e:
             result.path = None

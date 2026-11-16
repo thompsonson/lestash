@@ -92,8 +92,9 @@ def kobo_books(conn: sqlite3.Connection, collection_id: int) -> dict[str, int]:
     """The Kobo books a collection holds, as Kobo ContentID → item id.
 
     An item that is a Kobo book counts as itself; another item counts through a
-    confirmed ``alternate_of`` link to a Kobo book (its copy on the Kobo). Books marked
-    gone from the Kobo (#314) are left out.
+    confirmed ``alternate_of`` link to a Kobo book (its copy on the Kobo), or through its
+    newest version's link, as only the newest is copied (#338). Books marked gone from
+    the Kobo (#314) are left out.
     """
     rows = conn.execute(
         f"""
@@ -112,6 +113,29 @@ def kobo_books(conn: sqlite3.Connection, collection_id: int) -> dict[str, int]:
     books: dict[str, int] = {}
     for content_id, item_id in rows:
         books.setdefault(content_id, item_id)
+    # A member that is an older version counts through its newest version's copy, the
+    # one copied to the Kobo (#338)
+    from lestash.core.pdfs import versions
+
+    found = set(books.values())
+    for (member,) in conn.execute(
+        "SELECT item_id FROM collection_items WHERE collection_id = ?", (collection_id,)
+    ).fetchall():
+        newest = versions(conn, member)[0]
+        if member in found or newest == member:
+            continue
+        for (content_id,) in conn.execute(
+            f"""
+            SELECT i.source_id FROM items i WHERE i.id = :n AND {_KOBO_BOOK} AND NOT {_GONE}
+            UNION
+            SELECT i.source_id FROM item_links l
+            JOIN items i ON i.id = CASE WHEN l.from_id = :n THEN l.to_id ELSE l.from_id END
+            WHERE l.kind = 'alternate_of' AND l.status = 'confirmed'
+              AND :n IN (l.from_id, l.to_id) AND {_KOBO_BOOK} AND NOT {_GONE}
+            """,
+            {"n": newest},
+        ):
+            books.setdefault(content_id, member)
     return books
 
 
