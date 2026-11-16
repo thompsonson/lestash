@@ -118,6 +118,42 @@ Run on a copy of the database in a test environment, on a frozen test set, repor
 - Use paired comparisons per kind of item, not the overall average.
 - Pick the smallest model within noise of the best, because re-embedding and search time recur.
 
+## Targets
+
+What others reach is in [`embedding-research.md`](embedding-research.md), "Reference scores". The nearest, LongMemEval, finds the right part of a chat history in the top 10 for 69–86% of questions. Past that, gains come at a cost others have already paid for: a reranker, an LLM pass, or a much larger model.
+
+**E1, the baseline (13 Nov 2026, live 1.101.1, draft test set of 150 queries).** Queries whose item ranked in the top 10:
+
+| Query kind | Keyword | Semantic | Hybrid |
+|---|---|---|---|
+| known-item (35) | 15 | 31 | 29 |
+| paraphrase (30) | 0 | 11 | 12 |
+| deep (30) | 14 | 1 | 14 |
+| chat (30) | 9 | 13 | 14 |
+| French (25) | 9 | 10 | 12 |
+| all (150), MRR@10 | 47, 0.27 | 66, 0.30 | 81, 0.39 |
+
+- Hybrid is best overall; semantic alone is slightly ahead on known items.
+- A chat query counts as found when either turn of its round is; each round is embedded once, on its prompt turn.
+
+**Targets (agreed 13 Nov 2026), for hybrid, top 10:**
+
+| Query kind | E1 | Target |
+|---|---|---|
+| known-item | 83%, MRR 0.63 | 90%+, MRR 0.8+ |
+| deep | 47% | 70%+, once whole items are embedded (E2) |
+| paraphrase | 40% | 60–70% |
+| chat | 47% | 70%, about LongMemEval's round level |
+| French | 48% | 60%+ |
+| all | 54% | 75%+ |
+
+- These are judgements against the reference scores, not a standard.
+- The test set is harder than most benchmarks by design: paraphrase, deep and cross-language queries.
+- Noise: with 30 queries a single score has a 95% margin of about ±18 points; across 150, about ±8. Paired, query-by-query comparison narrows it.
+- When a kind reaches its target, stop tuning it; past the reference scores, extra effort rarely pays.
+
+Results of the experiments so far: [`search-experiments.md`](search-experiments.md).
+
 ## Decisions for Matthew
 
 - **Watch-history videos:** 66k items that are just titles.
