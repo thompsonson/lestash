@@ -1,6 +1,6 @@
 # UX Object Model — an ORCA pass over the ontology
 
-Status: decisions taken 11 Nov 2026 (see "Decided"). Tracked in #268 (waypoints U1–U7). Refs #257, #222.
+Status: decisions taken 11 Nov 2026 (see "Decided"). Tracked in #268 (waypoints U1–U7). ORCA round 2 proposed 11 Nov 2026, closing with your walkthrough. Refs #257, #222.
 
 ## Why
 
@@ -340,6 +340,148 @@ The layout held up in the walk-through; the look did not. These are the choices,
 - **The item opens over its list:** a sheet sliding up on a phone, a panel on the right on a wider screen. The list keeps its place; Back, Escape, the backdrop or a swipe down closes it. An item opened from a link is a whole page.
 - **Show what differs, fold what repeats:** a chat's prompts fold under one Timeline line that opens to what you asked; replies show each author's initial, their name once per run, and mark whom they answer; a part's row in its parent's page leaves the parent out.
 - **You are named, not "You":** bylines say "by Matt", from your person's short name, which you set on your page. Sentences addressed to you keep "you" ("You watched 466 of their videos (502 times), since Jan 2022").
+
+## ORCA round 2 (11 Nov 2026)
+
+Round 1 found the objects and drew the screens; U1–U6 built them.
+Round 2 does the ORCA steps round 1 skipped, using what the built app and its first walkthrough showed:
+
+1. a second discovery of objects;
+2. a relationship audit, both ends;
+3. the actions matrix in full;
+4. ranking per object;
+5. an object guide;
+6. your think-aloud walkthrough, which closes the round.
+
+Everything below is **proposed** until the walkthrough confirms or changes it.
+Counts are from the live DB on 11 Nov 2026.
+
+### 1. Discovery, second pass
+
+Nouns that came up since round 1, and what each should be:
+
+| Noun | Evidence | Proposal |
+|---|---|---|
+| **Session** (a Claude Code or Gemini working session) | 201 Claude Code sessions; "by user" on their cards | A **Chat** kind, not a new object. A session is a chat with an AI that also touched files. |
+| **Prompt** (what you asked, inside a chat) | 3,008 `prompted` activities on 527 chats; the Timeline repeated a chat's title 13 times on 1 Nov | A **part** of a chat (a turn by you). The Timeline shows the prompt's own text, folded under its chat. Not its own object. |
+| **Highlight** | 185: Kobo highlights 62, markups 9, dog-ears 7, notes 1; Audible clips 47, notes 40, bookmarks 19 | A **part** of a book with its own card face: the quoted text first, the place in the book second. Bookmarks and dog-ears have no text, so they show as a place only. |
+| **Topic** (a tag) | 23 tags on 50 items | An **object** with its own page: `/topics/<name>`, listing its items by kind. It's the hand-made side of Themes. |
+| **File** | 622 files are shared by more than one item | An **object**, later: a page showing every item that holds a file, such as a PDF used by three notebooks. Low priority. |
+| **Day** | The Timeline | Stays a **view** of Activities with an address (`/day/<date>`), as decided. |
+| **Source** | Sources page in More | Stays **configuration**, as decided. |
+| **Following** | Channels | A **relationship**, You → Channel, with a date (#267), as decided. |
+| **Unnamed account** | 181 people named only by an address (`urn:…`, `did:…`) | A **Person** with no name yet; its page offers "name them". |
+
+### 2. Relationship audit: both ends
+
+Every relationship with a count must be visible on both objects' pages.
+
+| Relationship | From the first object | From the second | Gap |
+|---|---|---|---|
+| Item has parts / part of | ✓ parts grouped by kind | ✓ up link | — |
+| Item replies to / replies | ✓ thread on a post | ✓ up link | Names in a thread open the reply, not the person |
+| Item references / referenced by | ✓ Links section | ✓ Links section | Below the fold on every page |
+| Item made by / Person made | ✓ People section | ✓ person page, by kind | Kobo and Audible authors are in the byline, not linked (the walkthrough's book had an empty People section) |
+| Item mentions / Person mentioned in | ✗ | count only ("mentioned in 113") | Neither page lists the mentions |
+| Activity on an Item | ✓ Activity section | ✓ Timeline | An activity can't be opened alone. The Timeline's line is the activity's page, so that's fine. |
+| Person's activity with you | ✓ "With you" | — | Counts watches, not videos (502 vs 466) |
+| Item in Collection | ✗ on the item page | ✓ collection page | The item page doesn't say which collections hold it |
+| Item tagged Topic | ✓ tag chips | ✗ no Topic page | Topic page |
+| Item holds File | ✓ media | ✗ no File page | File page, later |
+| You follow a Channel | ✗ | ✗ | #267 |
+
+### 3. Actions matrix
+
+✓ built · ◐ partly · ✗ missing. "Where" is where it should be available.
+
+| Object | Action | Where | Now |
+|---|---|---|---|
+| **Item** | Open | every card | ✓ |
+| | Go up to its parent | item page | ✓ |
+| | See it on its day | item page, from its date | ✗ |
+| | Tag | item page | ✓ |
+| | Add to a collection | item page; a card's menu | ◐ item page only |
+| | See which collections hold it | item page | ✗ |
+| | Add a note, link to an item | item page | ✓ |
+| | Edit, see and restore history | item page | ✓ |
+| | Play, seek from a transcript time | audio and video pages | ✓ |
+| | Open the original | item page | ✓ |
+| | Copy text, copy link, share to Micro.blog | item page | ✓ |
+| | Hide or delete | item page | ✗ |
+| **Person** | Open their page | every name | ✓ (item page People section) · ✗ (card bylines, thread names) |
+| | See their items by kind | person page | ✓ |
+| | Name an unnamed account | person page | ✗ (only the old LinkedIn "Set name" on a reaction) |
+| | Merge two who are the same | person page | ✗ (two "Adrian Tchaikovsky" rows exist) |
+| | Rename | person page | ✗ |
+| | Follow a channel | channel page | ✗ (#267) |
+| **Activity** | Filter by verb and kind | Timeline | ✓ |
+| | Fold and open a busy verb | Timeline | ✓ · ✗ for repeats of one item (prompts) |
+| **Topic** | Filter by it | Library filters, tag chip | ◐ |
+| | Open its page | tag chip | ✗ |
+| | Rename, merge | Topic page | ✗ |
+| **Collection** | Create, add, remove, open | Collections | ✓ |
+| | Reorder, describe each item | collection page | ✗ |
+| **Library shelf** | Filter by person, topic, year; sort | shelf | ✓ |
+| **Search** | Filter results by kind | search page | ✗ (`kind` exists in the API) |
+
+### 4. Ranking per object
+
+What leads each card and page: the attribute you look for first, and the action you take most. From the walkthrough:
+
+| Object | Leads the card | Leads the page | Pushed down or out |
+|---|---|---|---|
+| Post | its first line, once | the text, then reactions, then replies | the cut-off title |
+| Chat or session | your first message; "by You" | turns | "by user", "by human" |
+| Notebook | title, then parts by kind | Generated and Sources, above tags and buttons | the importer's long "Sources (32): …" text |
+| Audio overview | title, length | the player, then the transcript | the prompt, folded to two lines |
+| Book | title, author, highlights count | highlights with their text | Kobo import dates; bookmarks without text |
+| Video | title, channel, times watched | player link, transcript | — |
+| Person | name, kind, item count | "With you", then what they made | the list of platforms (on their page only) |
+| Channel | name, latest video | videos newest first | — |
+
+### 5. Object guide
+
+One line each; the words the screens use.
+
+| Object | What it is | Say | Don't say |
+|---|---|---|---|
+| Item | anything you keep | its kind: Post, Book, Video, Chat, Notebook… | item, record, entry |
+| Part | an item inside another | Reply, Highlight, Turn, Generated | child |
+| Person | someone who makes or receives items | the name; **You** for you | user, human, author URN |
+| Channel | anything that publishes a series | Channel | organisation, publisher |
+| AI | Claude, Gemini, Mistral | the AI's name | assistant, model, software |
+| Activity | something you did at a time | watched, liked, prompted, searched | event, log |
+| Topic | a tag you give items | Topic | tag (in the app) |
+| Collection | items you put together | Collection | list, folder |
+| File | a recording, PDF or image an item holds | File | media, blob |
+| Source | where items come from | Source | plugin, connector |
+
+### 6. Your think-aloud walkthrough
+
+How:
+- Use the app on your phone, then on the desktop.
+- Say aloud what you expect before each tap, and what surprised you after.
+- Record yourself, or jot one line per surprise. 20–30 minutes.
+- Don't explain the app to yourself: where you hesitate is the finding.
+
+Tasks:
+1. Find a paper you read last month, and open its PDF.
+2. See what you watched on a Saturday in October, then open one video's channel.
+3. Find what you asked Gemini about France on 1 Nov.
+4. Open a NotebookLM notebook, play an audio overview, and jump to a point in its transcript.
+5. Find who replied most to your LinkedIn posts, and what they said.
+6. Find everything you've kept about AtomicGuard, across kinds.
+7. Put three items about one theme into a new collection.
+8. On the phone: go from the Timeline to a book's highlights and back, using Back only.
+
+For each task, note:
+- did you find it;
+- how many taps or pages it took;
+- where you expected something that wasn't there;
+- any word that didn't mean what you expected.
+
+Round 2 closes when the walkthrough has confirmed, changed or dropped each proposal above.
+The confirmed changes then become the next waypoints in #268.
 
 ## References
 - Sophia Prater, Object-Oriented UX and the ORCA process.
