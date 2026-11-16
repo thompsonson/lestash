@@ -70,11 +70,15 @@ def _whole_items(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
     ).fetchall()
 
 
-def _linked_pairs(conn: sqlite3.Connection) -> set[tuple[int, int]]:
-    """Pairs a link of another kind joins already, in either direction."""
+def _skipped_pairs(conn: sqlite3.Connection) -> set[tuple[int, int]]:
+    """Pairs a scan passes over without counting them: those a link of another kind
+    joins already, in either direction, and related pairs you have decided."""
     return {
         (min(a, b), max(a, b))
-        for a, b in conn.execute("SELECT from_id, to_id FROM item_links WHERE kind != ?", (KIND,))
+        for a, b in conn.execute(
+            "SELECT from_id, to_id FROM item_links WHERE kind != ? OR status != 'suggested'",
+            (KIND,),
+        )
     }
 
 
@@ -124,7 +128,7 @@ def relate(conn: sqlite3.Connection, *, everything: bool = False) -> RelateCount
         )
         codes: dict[str, int] = {}
         source = np.array([codes.setdefault(r[1], len(codes)) for r in rows])
-        linked = _linked_pairs(conn)
+        skipped = _skipped_pairs(conn)
         look = min(LOOK_AT, len(rows) - 1)
         for start in range(0, len(todo), BLOCK):
             block = np.array(todo[start : start + BLOCK])
@@ -153,12 +157,12 @@ def relate(conn: sqlite3.Connection, *, everything: bool = False) -> RelateCount
                             break
                         other = int(ids[other_n])
                         pair = (min(item_id, other), max(item_id, other))
-                        if pair in linked:
+                        if pair in skipped:
                             continue
                         evidence = json.dumps(
                             {"score": round(float(score), 3), "model": model, "found_by": item_id}
                         )
-                        # A decided pair, or one the other item's scan found, is kept as it is
+                        # One the other item's scan found is kept as it is, and counts here too
                         conn.execute(
                             "INSERT OR IGNORE INTO item_links "
                             "(from_id, to_id, kind, evidence, origin, status) "

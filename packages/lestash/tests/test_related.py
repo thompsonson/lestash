@@ -217,3 +217,25 @@ def test_removing_a_link_records_when(conn):
         "SELECT status, decided_at FROM item_links WHERE kind = 'related'"
     ).fetchone()
     assert status == "rejected" and decided
+
+
+def test_decided_pairs_dont_use_up_an_items_five(conn):
+    """Rejected and confirmed pairs are passed over: the item still gets five
+    suggestions (review round 1)."""
+    anchor = _item(conn, "kobo", 1.0)
+    others = [_item(conn, f"source{n}", 0.95 - n / 100, axis=n + 2) for n in range(7)]
+    related.decide(conn, anchor, others[0], "rejected")
+    related.decide(conn, anchor, others[1], "confirmed")
+    conn.commit()
+
+    related.relate(conn)
+
+    found = {
+        max(r[0], r[1]) if min(r[0], r[1]) == anchor else min(r[0], r[1])
+        for r in conn.execute(
+            "SELECT from_id, to_id FROM item_links WHERE kind = 'related' "
+            "AND status = 'suggested' AND json_extract(evidence, '$.found_by') = ?",
+            (anchor,),
+        )
+    }
+    assert found == set(others[2:7])
