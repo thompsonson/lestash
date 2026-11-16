@@ -1,5 +1,6 @@
 """Notes drawn on PDFs on the Kobo, read from each annotated state (#338)."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,7 +9,7 @@ import pytest
 from lestash.core.database import get_connection
 from lestash.core.sync import SyncStore
 from lestash_kobo import KoboSource
-from lestash_kobo.notes import extract_notes
+from lestash_kobo.notes import extract_notes, tool
 from lestash_kobo.source import _store
 from typer.testing import CliRunner
 
@@ -48,18 +49,24 @@ def _book(conn) -> int:
 
 
 def _notes(conn, book: int) -> list[tuple]:
+    """Each note: the state it was first read from, and whether it was erased."""
+    first = {}
+    for sha, text in conn.execute(
+        "SELECT sha256, text FROM blob_text WHERE tool = ?", (tool(book),)
+    ):
+        for note in json.loads(text)["new_notes"]:
+            first[note] = sha
     rows = conn.execute(
-        "SELECT json_extract(metadata, '$.first_seen_in'),"
-        " json_extract(metadata, '$.removed_from_pdf') IS NOT NULL"
+        "SELECT id, json_extract(metadata, '$.removed_from_pdf') IS NOT NULL"
         " FROM items WHERE parent_id = ? AND source_type = 'pdf_annotation' ORDER BY id",
         (book,),
     ).fetchall()
-    return [tuple(r) for r in rows]
+    return [(first.get(r[0]), r[1]) for r in rows]
 
 
 def _annotated(conn, book: int) -> list[tuple]:
     rows = conn.execute(
-        "SELECT occurred_at, json_extract(details, '$.notes') FROM activities"
+        "SELECT occurred_at, json_array_length(details, '$.notes') FROM activities"
         " WHERE item_id = ? AND verb = 'annotated' ORDER BY occurred_at",
         (book,),
     ).fetchall()
@@ -132,3 +139,45 @@ def test_the_command_reports_and_logs(three_states, test_db) -> None:
             "SELECT status, items_added FROM sync_log WHERE source_type = 'kobo-notes'"
         ).fetchone()
     assert (status, added) == ("completed", 2)
+
+
+def test_the_same_bytes_on_two_books_are_two_states(device, test_db) -> None:
+    (device / "Research").mkdir()
+    (device / "Research" / "Copy.pdf").write_bytes(_pdf(1))
+    _plug_in(device, test_db, 1, 1)
+    with get_connection(test_db) as conn:
+        result = extract_notes(conn, test_db)
+    assert result.added == 2 and len(result.books) == 2
+
+
+def test_an_older_state_read_late_does_not_erase_newer_notes(three_states, test_db) -> None:
+    with get_connection(test_db) as conn:
+        book = _book(conn)
+        extract_notes(conn, test_db)
+        # The first marked state forgotten, as if a file had been missing for it
+        (sha,) = conn.execute(
+            "SELECT sha256 FROM item_media WHERE item_id = ? AND media_type = 'pdf'"
+            " ORDER BY created_at LIMIT 1 OFFSET 1",
+            (book,),
+        ).fetchone()
+        conn.execute("DELETE FROM blob_text WHERE sha256 = ? AND tool = ?", (sha, tool(book)))
+        conn.commit()
+        result = extract_notes(conn, test_db)
+        notes = _notes(conn, book)
+    assert result.states == 0
+    assert [removed for _, removed in notes] == [0, 0]
+
+
+def test_a_newer_extractor_reads_only_the_newest_state(three_states, test_db) -> None:
+    with get_connection(test_db) as conn:
+        book = _book(conn)
+        extract_notes(conn, test_db)
+        conn.execute("UPDATE blob_text SET tool_version = '0' WHERE tool = ?", (tool(book),))
+        conn.commit()
+        result = extract_notes(conn, test_db)
+        removed = conn.execute(
+            "SELECT COUNT(*) FROM items WHERE parent_id = ?"
+            " AND json_extract(metadata, '$.removed_from_pdf') IS NOT NULL",
+            (book,),
+        ).fetchone()[0]
+    assert result.added == 0 and removed == 0
