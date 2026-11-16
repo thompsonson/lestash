@@ -199,11 +199,11 @@ Confirming or rejecting one is a judgement you record about two items (#340).
 - It keeps up to 5 from other sources at cosine similarity 0.65 or more, skipping pairs any other link joins.
   Same-source neighbours are left out: on the live scores, 98% of pairs above any cut-off were one channel's videos or one account's posts.
 - Each pair is one `item_links` row, kind `related`, origin `linker:vectors`, status `suggested`, lower id first.
-  Its evidence is JSON: `score`, `model`, and `found_by`, the item whose scan found it.
+  Its evidence is JSON: `score`, `model`, and `found_by`, the items whose scans found it.
 - Confirming sets `confirmed`; rejecting sets `rejected`. Both stamp `decided_at` (migration 33), and neither is touched by a scan.
   A pair you find yourself, such as two items from one source, is stored the same way with origin `manual`.
 - `related_scans` (migration 33) keeps the vector each item's scan used, as `embedded_at` and model.
-  An item is scanned again when its vector changes; a rescan replaces only the suggestions its own scan made.
+  An item is scanned again when its vector changes. A rescan takes the item out of `found_by`; a pair no scan finds any more is dropped.
   An item no longer compared (deleted, stubbed, emptied, moved under another) loses every suggestion naming it.
 - `lestash db relate` runs after each embeddings refresh (`lestash-embed.service`); `--all` rescans every item.
   Nothing runs while a new model's index is built.

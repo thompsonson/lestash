@@ -22,7 +22,7 @@ def three(test_config):
         conn.execute(
             "INSERT INTO item_links (from_id, to_id, kind, evidence, origin, status) "
             "VALUES (?, ?, 'related', ?, 'linker:vectors', 'suggested')",
-            (a, b, json.dumps({"score": 0.71, "model": "m", "found_by": a})),
+            (a, b, json.dumps({"score": 0.71, "model": "m", "found_by": [a]})),
         )
         conn.commit()
     return ids

@@ -7,14 +7,15 @@ sources at ``MIN_SCORE`` or more, and stores them in ``item_links`` as ``related
 
 - Confirming sets ``confirmed``; rejecting sets ``rejected``. Neither is touched again,
   and the row stops the pair from being suggested once more.
-- A rescan replaces the suggestions that item's own scan made (``found_by`` in the
-  evidence), so a changed item drops matches it no longer has.
+- ``found_by`` in the evidence lists the items whose scans found the pair. A rescan
+  takes the item out of it; a pair no scan finds any more is dropped.
 - An item is scanned again when its vector changes: ``related_scans`` keeps the
   ``embedded_at`` and model of the vector each scan used.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import time
@@ -93,6 +94,63 @@ def _forget(conn: sqlite3.Connection, item_id: int) -> None:
     conn.execute("DELETE FROM related_scans WHERE item_id = ?", (item_id,))
 
 
+def _finders(evidence: dict[str, Any]) -> list[int]:
+    """The items whose scans found a pair: a list, or one id in rows from before it."""
+    found = evidence.get("found_by")
+    if isinstance(found, int):
+        return [found]
+    return [f for f in found if isinstance(f, int)] if isinstance(found, list) else []
+
+
+def _found(
+    conn: sqlite3.Connection, pair: tuple[int, int], item_id: int, score: float, model: str
+) -> None:
+    """Store a pair this item's scan found, or add the item to those that found it."""
+    row = conn.execute(
+        "SELECT evidence FROM item_links WHERE from_id = ? AND to_id = ? AND kind = ? "
+        "AND status = 'suggested'",
+        (*pair, KIND),
+    ).fetchone()
+    finders = [item_id]
+    if row is not None:
+        with contextlib.suppress(TypeError, ValueError, AttributeError):
+            finders = sorted({item_id, *_finders(json.loads(row[0]))})
+    evidence = json.dumps({"score": score, "model": model, "found_by": finders})
+    conn.execute(
+        "INSERT INTO item_links (from_id, to_id, kind, evidence, origin, status) "
+        "VALUES (?, ?, ?, ?, ?, 'suggested') "
+        "ON CONFLICT(from_id, to_id, kind) DO UPDATE SET evidence = excluded.evidence "
+        "WHERE item_links.status = 'suggested'",
+        (*pair, KIND, evidence, ORIGIN),
+    )
+
+
+def _unfind(conn: sqlite3.Connection, item_id: int) -> None:
+    """Take an item out of the finders of the suggestions naming it, before its scan
+    runs again. A pair no scan finds any more is dropped."""
+    for from_id, to_id, evidence in conn.execute(
+        "SELECT from_id, to_id, evidence FROM item_links WHERE kind = ? "
+        "AND status = 'suggested' AND (from_id = ? OR to_id = ?)",
+        (KIND, item_id, item_id),
+    ).fetchall():
+        try:
+            found = json.loads(evidence)
+            finders = [f for f in _finders(found) if f != item_id]
+        except (TypeError, ValueError, AttributeError):
+            found, finders = {}, []
+        if finders:
+            found["found_by"] = finders
+            conn.execute(
+                "UPDATE item_links SET evidence = ? WHERE from_id = ? AND to_id = ? AND kind = ?",
+                (json.dumps(found), from_id, to_id, KIND),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM item_links WHERE from_id = ? AND to_id = ? AND kind = ?",
+                (from_id, to_id, KIND),
+            )
+
+
 def relate(conn: sqlite3.Connection, *, everything: bool = False) -> RelateCounts:
     """Suggest related items for every whole item whose vector changed since its last
     scan; with ``everything``, for every whole item. Commits as it goes.
@@ -146,11 +204,7 @@ def relate(conn: sqlite3.Connection, *, everything: bool = False) -> RelateCount
             try:
                 for row_n, n in enumerate(block):
                     item_id = int(ids[n])
-                    conn.execute(
-                        "DELETE FROM item_links WHERE kind = ? AND status = 'suggested' "
-                        "AND json_extract(evidence, '$.found_by') = ?",
-                        (KIND, item_id),
-                    )
+                    _unfind(conn, item_id)
                     kept = 0
                     for other_n, score in zip(best[row_n], best_scores[row_n], strict=True):
                         if kept == PER_ITEM or score < MIN_SCORE:
@@ -159,16 +213,7 @@ def relate(conn: sqlite3.Connection, *, everything: bool = False) -> RelateCount
                         pair = (min(item_id, other), max(item_id, other))
                         if pair in skipped:
                             continue
-                        evidence = json.dumps(
-                            {"score": round(float(score), 3), "model": model, "found_by": item_id}
-                        )
-                        # One the other item's scan found is kept as it is, and counts here too
-                        conn.execute(
-                            "INSERT OR IGNORE INTO item_links "
-                            "(from_id, to_id, kind, evidence, origin, status) "
-                            "VALUES (?, ?, ?, ?, ?, 'suggested')",
-                            (*pair, KIND, evidence, ORIGIN),
-                        )
+                        _found(conn, pair, item_id, round(float(score), 3), model)
                         kept += 1
                     conn.execute(
                         "INSERT INTO related_scans (item_id, embedded_at, model) VALUES (?, ?, ?) "

@@ -49,6 +49,19 @@ def _pairs(conn, status="suggested"):
     }
 
 
+def _found_by(conn, item_id):
+    """The items paired with this one by its own scan."""
+    return {
+        r[1] if r[0] == item_id else r[0]
+        for r in conn.execute(
+            "SELECT from_id, to_id FROM item_links l WHERE kind = 'related' "
+            "AND status = 'suggested' AND EXISTS (SELECT 1 FROM json_each(l.evidence, "
+            "'$.found_by') WHERE value = ?)",
+            (item_id,),
+        )
+    }
+
+
 def test_suggests_close_items_from_other_sources_only(conn):
     anchor = _item(conn, "kobo", 1.0)
     close = _item(conn, "arxiv", 0.9, axis=2)
@@ -77,7 +90,7 @@ def test_a_pair_is_stored_once_lower_id_first_with_its_evidence(conn):
     assert (from_id, to_id) == (min(a, b), max(a, b)) and origin == related.ORIGIN
     found = json.loads(evidence)
     assert found["score"] == pytest.approx(0.9, abs=0.001)
-    assert found["model"] == emb.MODEL_NAME and found["found_by"] in (a, b)
+    assert found["model"] == emb.MODEL_NAME and found["found_by"] == [a, b]
 
 
 def test_pairs_linked_by_another_kind_are_skipped(conn):
@@ -102,13 +115,7 @@ def test_at_most_five_from_each_items_own_scan(conn):
 
     related.relate(conn)
 
-    found = [
-        r[0]
-        for r in conn.execute(
-            "SELECT json_extract(evidence, '$.found_by') FROM item_links WHERE kind = 'related'"
-        )
-    ]
-    assert found.count(anchor) == related.PER_ITEM
+    assert len(_found_by(conn, anchor)) == related.PER_ITEM
 
 
 def test_decided_pairs_are_kept_and_never_suggested_again(conn):
@@ -146,11 +153,8 @@ def test_only_items_whose_vector_changed_are_scanned_again(conn):
     counts = related.relate(conn)
 
     assert counts.scanned == 1
-    # a's own scan still holds the pair until a's vector changes
-    found = conn.execute(
-        "SELECT json_extract(evidence, '$.found_by') FROM item_links WHERE kind = 'related'"
-    ).fetchall()
-    assert [r[0] for r in found] == [a]
+    # a's own scan still finds the pair, until a's vector changes
+    assert _found_by(conn, a) == {b} and _found_by(conn, b) == set()
 
 
 def test_an_item_no_longer_compared_loses_its_suggestions(conn):
@@ -230,12 +234,31 @@ def test_decided_pairs_dont_use_up_an_items_five(conn):
 
     related.relate(conn)
 
-    found = {
-        max(r[0], r[1]) if min(r[0], r[1]) == anchor else min(r[0], r[1])
-        for r in conn.execute(
-            "SELECT from_id, to_id FROM item_links WHERE kind = 'related' "
-            "AND status = 'suggested' AND json_extract(evidence, '$.found_by') = ?",
-            (anchor,),
-        )
-    }
-    assert found == set(others[2:7])
+    assert _found_by(conn, anchor) == set(others[2:7])
+
+
+def test_a_pair_both_scans_found_stays_until_neither_does(conn):
+    """The pair counts for both items, and goes only when neither scan finds it
+    (review round 2)."""
+    a = _item(conn, "kobo", 1.0)
+    b = _item(conn, "arxiv", 0.9, axis=2)
+    related.relate(conn)
+    assert _found_by(conn, a) == {b} and _found_by(conn, b) == {a}
+
+    _change(conn, a, _vector(0.1, 1))
+    related.relate(conn)
+    # b's vector hasn't changed: its scan still holds the pair
+    assert _pairs(conn) == {(min(a, b), max(a, b))} and _found_by(conn, a) == set()
+
+    _change(conn, b, _vector(0.1, 2))
+    related.relate(conn)
+    assert _pairs(conn) == set()
+
+
+def _change(conn, item_id, vector):
+    emb.upsert_embedding(conn, item_id, vector, f"changed {item_id}")
+    conn.execute(
+        "UPDATE embedding_meta SET embedded_at = datetime('now', '+1 day', ?) WHERE item_id = ?",
+        (f"+{item_id} seconds", item_id),
+    )
+    conn.commit()
