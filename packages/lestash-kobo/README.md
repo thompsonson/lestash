@@ -37,7 +37,7 @@ A book that leaves the Kobo keeps its item, highlights and files (#314). The imp
 marks it `removed_from_device`: when the first snapshot imported without it was taken.
 Its page reads "not on the Kobo since …". The mark goes if the book comes back.
 
-Notebooks (#202), PDF ink (#200), reading activity (#201) and removed highlights
+Notebooks (#202), the text under PDF ink (#200), reading activity (#201) and removed highlights
 (#207) come later.
 
 ## Collections on the Kobo (#315)
@@ -90,6 +90,17 @@ lestash kobo eject                                    # eject, so the Kobo leave
 - The Kobo imports the copies when it is ejected. The next plug-in's import links each book to its item by its bytes (`alternate_of`), and collections show it from then on.
   - The link holds after you draw on the copy, because the book keeps the copied bytes as its first version.
 - So a new PDF takes two plug-ins to show in a collection on the Kobo: one to copy it, one to write the collection.
+
+## Notes drawn on PDFs (#338)
+
+- The Elipsa saves pen notes into the PDF itself. Each snapshot where a PDF changed is an annotated state, kept as a version of the book's file.
+- After each import, the import unit runs `lestash kobo extract-notes`. It reads each state not read yet, oldest first.
+  - Each note becomes a child of the book, matched across states by its strokes, so a later state adds only new ones.
+  - A note records the state it was first read from (`first_seen_in`). One erased later is kept, marked `removed_from_pdf`.
+  - A state with new notes records an `annotated` activity, at the time the state was first seen.
+- A state read is recorded by extractor version, so a newer extractor reads every state again.
+- Each run is logged as `kobo-notes` in Settings → Sources.
+- The text under a note, and reading handwriting, come later (#200).
 
 ## Config (`~/.config/lestash/config.toml`)
 

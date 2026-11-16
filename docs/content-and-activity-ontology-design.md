@@ -524,6 +524,7 @@ An activity is something someone did, at a time, usually to an item.
 | `prompted` | a Gemini chat | `AskAction` | `Create` |
 | `created` | a Gemini Canvas, a Drive file | `CreateAction` | `Create` |
 | `edited` | a Drive Doc | `UpdateAction` | `Update` |
+| `annotated` | a PDF on the Kobo, drawn on with the pen; one per annotated state with new notes (#338) | — (Web Annotation `oa:Annotation`) | `Create` |
 | `listened` | an Audible book | `ListenAction` | `Listen` |
 | `disliked` | a video | `DislikeAction` | `Dislike` |
 | `read` | a Kobo book (planned, #201) | `ReadAction` | `Read` |
