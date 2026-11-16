@@ -410,3 +410,46 @@ def test_a_broken_book_replaced_after_an_eject_counts_again(device, kobo, test_d
     result = _write(device)
     assert result.exit_code == 1, result.output
     assert "looks unsaved" in result.output
+
+
+def _damage(path: Path) -> None:
+    """Overwrite the first page of the content table, as in the 16 Nov corruption (#339)."""
+    conn = sqlite3.connect(path)
+    page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+    (root,) = conn.execute(
+        "SELECT rootpage FROM sqlite_master WHERE type = 'table' AND name = 'content'"
+    ).fetchone()
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+    with open(path, "r+b") as f:
+        f.seek((root - 1) * page_size)
+        f.write(b"\xff" * 64)
+
+
+def test_a_damaged_snapshot_is_reported_not_written(device, kobo, test_db) -> None:
+    store, cid = kobo
+    _show(test_db, cid)
+    _damage(device / DB)
+    store.take(device, _at(1))
+    before = _sha(device / DB)
+    result = _write(device)
+    assert result.exit_code == 1, result.output
+    assert "Nothing written" in result.output and "is damaged" in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert _sha(device / DB) == before
+    with get_connection(test_db) as conn:
+        st = kobo_status(conn, cid)
+    assert st and st.error and "is damaged" in st.error
+
+
+def test_a_damaged_snapshot_in_a_dry_run_records_nothing(device, kobo, test_db) -> None:
+    store, cid = kobo
+    _show(test_db, cid)
+    _damage(device / DB)
+    store.take(device, _at(1))
+    result = _write(device, "--dry-run")
+    assert result.exit_code == 1, result.output
+    assert "is damaged" in result.output
+    with get_connection(test_db) as conn:
+        st = kobo_status(conn, cid)
+    assert st is None or not st.error
