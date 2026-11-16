@@ -45,30 +45,59 @@ def set_wanted(conn: sqlite3.Connection, item_id: int, place: str, wanted: bool)
     Not asking any more never takes a copy off the device. Asking again forgets the
     copy made of its newest version, so one taken off the device is copied back.
     """
+    was = conn.execute(
+        "SELECT wanted FROM item_places WHERE item_id = ? AND place = ?", (item_id, place)
+    ).fetchone()
     conn.execute(
         "INSERT INTO item_places (item_id, place, wanted) VALUES (?, ?, ?)"
         " ON CONFLICT (item_id, place) DO UPDATE SET wanted = excluded.wanted",
         (item_id, place, int(wanted)),
     )
-    if wanted:
+    newest = versions(conn, item_id)[0]
+    # Newly asked, or asked again for a copy taken off: forget the copy, so it is made
+    # again. Not on every call: a copy still there would lose its record.
+    if wanted and (not (was and was[0]) or taken_off(conn, newest, place)):
         conn.execute(
-            "UPDATE item_places SET copied_at = NULL, last_error = NULL"
+            "UPDATE item_places SET copied_at = NULL, removed_at = NULL, last_error = NULL"
             " WHERE item_id = ? AND place = ?",
-            (versions(conn, item_id)[0], place),
+            (newest, place),
         )
 
 
+def record_removed(conn: sqlite3.Connection, item_id: int, place: str, when: str) -> None:
+    """Record that a snapshot after the copy no longer held it. The caller commits."""
+    conn.execute(
+        "UPDATE item_places SET removed_at = ? WHERE item_id = ? AND place = ?",
+        (when, item_id, place),
+    )
+
+
+def copies_made(conn: sqlite3.Connection, place: str) -> list[tuple[int, str, str]]:
+    """Copies LeStash made and hasn't seen leave: (item id, path, copied_at)."""
+    return [
+        (r[0], r[1], r[2])
+        for r in conn.execute(
+            "SELECT item_id, path, copied_at FROM item_places WHERE place = ?"
+            " AND copied_at IS NOT NULL AND path IS NOT NULL AND removed_at IS NULL",
+            (place,),
+        )
+    ]
+
+
 def taken_off(conn: sqlite3.Connection, item_id: int, place: str = KOBO) -> bool:
-    """Whether the copy LeStash made of the item was on the Kobo and has left it (#314):
-    a copy of it marked gone at or after the time it was copied."""
+    """Whether the copy LeStash made of the item was on the Kobo and has left it: a
+    snapshot after the copy no longer held it, or its Kobo book was marked gone (#314)
+    at or after the time it was copied."""
     row = conn.execute(
-        "SELECT copied_at FROM item_places WHERE item_id = ? AND place = ?"
+        "SELECT copied_at, removed_at FROM item_places WHERE item_id = ? AND place = ?"
         " AND copied_at IS NOT NULL",
         (item_id, place),
     ).fetchone()
     if row is None:
         return False
     copied_at = _utc(row[0])
+    if row[1] and _utc(row[1]) >= copied_at:
+        return True  # gone before the Kobo imported it
     for (gone,) in conn.execute(
         f"""
         SELECT json_extract(i.metadata, '$.removed_from_device') FROM item_links l

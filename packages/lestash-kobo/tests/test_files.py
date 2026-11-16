@@ -263,3 +263,24 @@ def test_an_older_version_with_its_own_copy_shows_the_newest(device, test_db, pa
         books = kobo_books(conn, cid)
     assert list(books.values()) == [paper]
     assert next(iter(books)).endswith("LeStash/Typing an Ontology v2.pdf")
+
+
+def test_a_copy_deleted_before_the_kobo_imported_it_stays_off(device, test_db, paper) -> None:
+    _copy(device)
+    (device / "LeStash" / "Typing an Ontology.pdf").unlink()  # deleted on the desktop
+    _store({}, test_db).take(device, _at(5))
+    result = _copy(device)
+    assert "Nothing to copy" in result.output
+    with get_connection(test_db) as conn:
+        assert item_place(conn, paper).text().startswith("Taken off the Kobo")
+    _cli("unsend", str(paper))
+    _cli("send", str(paper))
+    assert _copy(device).exit_code == 0
+    assert (device / "LeStash" / "Typing an Ontology.pdf").is_file()
+
+
+def test_sending_twice_keeps_the_copy_record(device, test_db, paper) -> None:
+    _copy(device)
+    _cli("send", str(paper))  # already asked for: nothing forgotten
+    with get_connection(test_db) as conn:
+        assert item_place(conn, paper).copied_at
