@@ -1,6 +1,7 @@
 """Writing LeStash collections to the Kobo (K8, #315)."""
 
 import hashlib
+import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -303,3 +304,61 @@ def test_a_kobo_collection_made_later_with_the_name_is_untouched(device, kobo, t
     assert result.exit_code == 0, result.output
     assert _sha(device / DB) == before
     assert ("0 Intro", NN, "false") in _shelves(device)["content"]
+
+
+def _status(test_db) -> str:
+    with get_connection(test_db) as conn:
+        row = conn.execute(
+            "SELECT status FROM sync_log WHERE source_type = 'kobo-collections'"
+            " ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    return row[0]
+
+
+def test_a_book_the_database_does_not_list_stops_the_write(device, kobo, test_db) -> None:
+    store, cid = kobo
+    _show(test_db, cid)
+    paper = device / "Research" / "new.pdf"
+    paper.parent.mkdir()
+    paper.write_bytes(b"%PDF-1.4 sideloaded")
+    store.take(device, _at(1))
+    before = _sha(device / DB)
+    result = _write(device)
+    assert result.exit_code == 1, result.output
+    assert "looks unsaved" in result.output
+    assert _sha(device / DB) == before
+    assert _status(test_db) == "failed"
+    with get_connection(test_db) as conn:
+        st = kobo_status(conn, cid)
+    assert st and st.error and "Research/new.pdf is on the Kobo but not in its database" in st.error
+
+
+def _change_judge(device: Path, when: datetime) -> None:
+    pdf = device / ".kobo" / "google_drive" / "Papers" / "Judge.pdf"
+    pdf.write_bytes(b"%PDF-1.4 with pen notes")
+    os.utime(pdf, (when.timestamp(), when.timestamp()))
+
+
+def test_a_book_changed_after_the_last_reading_stops_the_write(device, kobo, test_db) -> None:
+    store, cid = kobo
+    _show(test_db, cid)
+    _change_judge(device, _at(20))  # the newest reading time is in 2025
+    store.take(device, _at(30))
+    before = _sha(device / DB)
+    result = _write(device)
+    assert result.exit_code == 1, result.output
+    assert _sha(device / DB) == before
+    with get_connection(test_db) as conn:
+        st = kobo_status(conn, cid)
+    assert st and st.error and "Judge.pdf changed on the Kobo at 2026-11-14T12:20:00Z" in st.error
+
+
+def test_a_book_changed_while_it_was_read_is_written(device, kobo, test_db) -> None:
+    store, cid = kobo
+    _show(test_db, cid)
+    # Saved a minute before the newest reading time (2025-09-30T08:48:03Z)
+    _change_judge(device, datetime(2025, 9, 30, 8, 47, tzinfo=UTC))
+    store.take(device, _at(30))
+    result = _write(device)
+    assert result.exit_code == 0, result.output
+    assert "0 Intro" in _shelves(device)["shelves"]

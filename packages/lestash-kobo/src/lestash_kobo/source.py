@@ -28,6 +28,7 @@ from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 
 from lestash_kobo.collections_cli import add_collection_commands
+from lestash_kobo.eject import add_eject_command
 from lestash_kobo.reader import READER_VERSION, SOURCE_TYPE, KoboReader, removed_books
 from lestash_kobo.store import KoboStore, SnapshotResult
 
@@ -173,6 +174,7 @@ class KoboSource(SourcePlugin):
                 console.print(f"{s.name}  {len(s.files):5d} files  {size / 1e6:8.1f} MB")
 
         add_collection_commands(app, lambda cfg: _store(cfg.get_plugin_config(self.name), cfg))
+        add_eject_command(app)
         return app
 
     def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:

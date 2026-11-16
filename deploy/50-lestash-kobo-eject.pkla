@@ -1,0 +1,10 @@
+# Lets the account that runs LeStash eject a USB disk through udisks without a password,
+# from the Kobo plug-in unit and SSH, which have no desktop session. polkit 0.105 reads
+# this folder; it can't name one disk, so this covers ejecting any removable disk.
+# Eject only: no mount, format or power-off. Installed by deploy/install-root.sh.
+[LeStash: eject the Kobo]
+Identity=unix-user:@USER@
+Action=org.freedesktop.udisks2.eject-media;org.freedesktop.udisks2.eject-media-other-seat
+ResultAny=yes
+ResultInactive=yes
+ResultActive=yes
