@@ -57,6 +57,7 @@ ARTIFACT_LABELS: Mapping[str, str] = {
 
 _LINKEDIN_POSTS = ("ugcPosts", "instantReposts", "article", "originalArticles")
 _BOOK_PARTS = ("highlight", "markup", "dogear", "note")
+_JELU_NOTES = ("notes", "review")  # Jelu's metadata.type for your writing on a book (#347)
 
 
 def _text(metadata: Mapping[str, Any] | None, key: str) -> str | None:
@@ -104,7 +105,11 @@ def item_kind(
     if source_type == "audible":
         return "book" if _text(metadata, "type") == "book" else "highlight"
     if source_type == "jelu":
-        return "book"
+        # Your notes and reviews on a book are your writing; a saved quote is a highlight
+        jelu = _text(metadata, "type")
+        if jelu in _JELU_NOTES:
+            return "note"
+        return "highlight" if jelu == "quote" else "book"
     if source_type in ("claude", "claude-code", "claude_code", "mistral"):
         return "turn" if child else "chat"
     if source_type == "gemini":
@@ -163,7 +168,10 @@ KIND_SQL = f"""CASE
         CASE WHEN {_m("kind")} IN ({_in(_BOOK_PARTS)}) THEN 'highlight' ELSE 'book' END
     WHEN source_type = 'audible' THEN
         CASE WHEN {_m("type")} = 'book' THEN 'book' ELSE 'highlight' END
-    WHEN source_type = 'jelu' THEN 'book'
+    WHEN source_type = 'jelu' THEN CASE
+        WHEN {_m("type")} IN ({_in(_JELU_NOTES)}) THEN 'note'
+        WHEN {_m("type")} = 'quote' THEN 'highlight'
+        ELSE 'book' END
     WHEN source_type IN ('claude', 'claude-code', 'claude_code', 'mistral') THEN
         CASE WHEN parent_id IS NULL THEN 'chat' ELSE 'turn' END
     WHEN source_type = 'gemini' THEN CASE
