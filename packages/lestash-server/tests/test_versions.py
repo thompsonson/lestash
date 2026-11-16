@@ -42,3 +42,18 @@ def test_versions_of_a_missing_item_is_a_404(client) -> None:
 def test_an_item_with_no_versions_lists_itself(client, test_config) -> None:
     v1, _, _ = _ids(test_config)
     assert [v["id"] for v in client.get(f"/api/items/{v1}/versions").json()["versions"]] == [v1]
+
+
+def test_ask_for_an_item_on_the_kobo(client, test_config) -> None:
+    v1, v2, _ = _ids(test_config)
+    resp = client.get(f"/api/items/{v1}/kobo")
+    assert resp.status_code == 200
+    assert resp.json()["wanted"] is False and resp.json()["text"] == "Not on the Kobo"
+    client.post(f"/api/items/{v2}/versions", json={"older_id": v1})
+    resp = client.put(f"/api/items/{v1}/kobo", json={"wanted": True})
+    body = resp.json()
+    assert body["marked"] and body["wanted"] and body["newest_id"] == v2
+    assert body["text"] == "For the Kobo, copied at the next plug-in"
+    assert client.put(f"/api/items/{v1}/kobo", json={"wanted": False}).json()["marked"] is False
+    assert client.put("/api/items/99999/kobo", json={"wanted": True}).status_code == 404
+    assert client.get("/api/items/99999/kobo").status_code == 404

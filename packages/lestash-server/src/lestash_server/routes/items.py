@@ -45,6 +45,8 @@ from lestash_server.models import (
     ItemAgent,
     ItemAgentListResponse,
     ItemCreateRequest,
+    ItemKobo,
+    ItemKoboSwitch,
     ItemLink,
     ItemLinkListResponse,
     ItemListResponse,
@@ -788,6 +790,47 @@ def add_item_version(item_id: int, body: ItemVersionLink):
             raise HTTPException(status_code=400, detail=str(e)) from None
         conn.commit()
         return _versions(conn, item_id)
+
+
+def _kobo(conn, item_id: int) -> ItemKobo:
+    from lestash.core.item_places import item_place
+
+    place = item_place(conn, item_id)
+    return ItemKobo(
+        wanted=place.wanted,
+        marked=place.marked,
+        collections=place.collections,
+        newest_id=place.newest_id,
+        on=place.on,
+        path=place.path,
+        copied_at=str(place.copied_at) if place.copied_at else None,
+        error=place.error,
+        text=place.text(),
+    )
+
+
+@router.get("/{item_id}/kobo", response_model=ItemKobo)
+def get_item_kobo(item_id: int):
+    """Where an item stands on the Kobo: asked for, copied, on it (#338)."""
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        return _kobo(conn, item_id)
+
+
+@router.put("/{item_id}/kobo", response_model=ItemKobo)
+def set_item_kobo(item_id: int, body: ItemKoboSwitch):
+    """Ask for an item on the Kobo on its own, or stop asking. The newest version is
+    copied at the next plug-in; not asking any more never takes a copy off the Kobo."""
+    from lestash.core.collections import KOBO
+    from lestash.core.item_places import set_wanted
+
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        set_wanted(conn, item_id, KOBO, body.wanted)
+        conn.commit()
+        return _kobo(conn, item_id)
 
 
 @router.get("/{item_id}/agents", response_model=ItemAgentListResponse)

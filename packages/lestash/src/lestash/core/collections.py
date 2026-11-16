@@ -88,30 +88,46 @@ def set_shown(conn: sqlite3.Connection, collection_id: int, place: str, shown: b
     )
 
 
+def _copies(conn: sqlite3.Connection, item_id: int) -> list[str]:
+    """The ContentIDs of the item's Kobo books still on the Kobo: itself if it is one,
+    and those linked ``alternate_of`` it."""
+    return [
+        r[0]
+        for r in conn.execute(
+            f"""
+            SELECT i.source_id FROM items i WHERE i.id = :n AND {_KOBO_BOOK} AND NOT {_GONE}
+            UNION
+            SELECT i.source_id FROM item_links l
+            JOIN items i ON i.id = CASE WHEN l.from_id = :n THEN l.to_id ELSE l.from_id END
+            WHERE l.kind = 'alternate_of' AND l.status = 'confirmed'
+              AND :n IN (l.from_id, l.to_id) AND {_KOBO_BOOK} AND NOT {_GONE}
+            ORDER BY 1
+            """,
+            {"n": item_id},
+        )
+    ]
+
+
 def kobo_books(conn: sqlite3.Connection, collection_id: int) -> dict[str, int]:
     """The Kobo books a collection holds, as Kobo ContentID → item id.
 
     An item that is a Kobo book counts as itself; another item counts through a
-    confirmed ``alternate_of`` link to a Kobo book (its copy on the Kobo). Books marked
-    gone from the Kobo (#314) are left out.
+    confirmed ``alternate_of`` link to a Kobo book (its copy on the Kobo). A member that
+    is an older version counts through its newest version's copy when there is one, as
+    only the newest is copied (#338); else through its own. Books marked gone from the
+    Kobo (#314) are left out.
     """
-    rows = conn.execute(
-        f"""
-        SELECT i.source_id, ci.item_id FROM collection_items ci
-        JOIN items i ON i.id = ci.item_id
-        WHERE ci.collection_id = :c AND {_KOBO_BOOK} AND NOT {_GONE}
-        UNION
-        SELECT i.source_id, ci.item_id FROM collection_items ci
-        JOIN item_links l ON l.kind = 'alternate_of' AND l.status = 'confirmed'
-            AND ci.item_id IN (l.from_id, l.to_id)
-        JOIN items i ON i.id = CASE WHEN l.from_id = ci.item_id THEN l.to_id ELSE l.from_id END
-        WHERE ci.collection_id = :c AND {_KOBO_BOOK} AND NOT {_GONE}
-        """,
-        {"c": collection_id},
-    ).fetchall()
+    from lestash.core.pdfs import versions
+
     books: dict[str, int] = {}
-    for content_id, item_id in rows:
-        books.setdefault(content_id, item_id)
+    for (member,) in conn.execute(
+        "SELECT item_id FROM collection_items WHERE collection_id = ? ORDER BY item_id",
+        (collection_id,),
+    ).fetchall():
+        newest = versions(conn, member)[0]
+        copies = (_copies(conn, newest) if newest != member else []) or _copies(conn, member)
+        for content_id in copies:
+            books.setdefault(content_id, member)
     return books
 
 
