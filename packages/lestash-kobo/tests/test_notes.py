@@ -246,3 +246,17 @@ def test_states_since_an_older_extractor_are_all_read(device, test_db) -> None:
     with get_connection(test_db) as conn:
         result = extract_notes(conn, test_db)
     assert result.states == 2 and result.added == 1  # the old newest again, then the new
+
+
+def test_a_missing_record_never_moves_the_cursor_back(device, test_db, three_states) -> None:
+    from lestash_kobo.notes import _read_up_to, _record, _states
+
+    with get_connection(test_db) as conn:
+        extract_notes(conn, test_db)
+        book = _book(conn)
+        newest = _states(conn, book)[-1]
+        before = _read_up_to(conn, book)
+        _record(conn, book, newest, None, [], missing=True)  # the same bytes, file missing
+        conn.commit()
+        assert _read_up_to(conn, book) == before
+        assert extract_notes(conn, test_db).states == 0

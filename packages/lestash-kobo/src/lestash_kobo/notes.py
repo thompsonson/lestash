@@ -151,15 +151,20 @@ def _record(
     before = conn.execute(
         "SELECT text FROM blob_text WHERE sha256 = ? AND tool = ?", (state.sha256, tool(book_id))
     ).fetchone()
-    earlier = json.loads(before[0]).get("new_notes", []) if before else []
-    notes = sorted(set(earlier) | set(new))
+    earlier = json.loads(before[0]) if before else {}
+    notes = sorted(set(earlier.get("new_notes", [])) | set(new))
     record: dict = {"annotations": found, "new_notes": notes}
+    # The row is per bytes: a time read before for the same bytes is kept, and only a
+    # later one replaces it, so the book's cursor never moves back
+    times = [earlier["seen"]] if earlier.get("seen") else []
     if missing:
-        # No time: a missing state doesn't move the book on, so it is read once its file
-        # is back, if no newer state has been read by then
+        # A missing state adds no time: it doesn't move the book on, so it is read once
+        # its file is back, if no newer state has been read by then
         record["missing"] = True
     else:
-        record["seen"] = state.seen.isoformat()
+        times.append(state.seen.isoformat())
+    if times:
+        record["seen"] = max(times, key=_when)
     conn.execute(
         "INSERT OR REPLACE INTO blob_text (sha256, tool, tool_version, text) VALUES (?, ?, ?, ?)",
         (state.sha256, tool(book_id), str(EXTRACTOR_VERSION), json.dumps(record)),
