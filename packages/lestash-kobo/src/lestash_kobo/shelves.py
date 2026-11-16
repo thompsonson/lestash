@@ -8,6 +8,11 @@ The write is planned on a copy of the newest snapshot's database, and only touch
 Kobo when something changes. On the Kobo it first checks the database is the one in the
 snapshot, so the snapshot is its backup; after writing it runs ``integrity_check``, and
 puts the snapshot's copy back if that fails.
+
+It also refuses to write when the snapshot's database looks stale (``stale``): the
+Kobo holds book files its database doesn't list, or changed a book after the newest
+reading time the database records. Then the Kobo hasn't saved its own view to the
+file, and a write to the file could be lost or clash with it.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ import sqlite3
 import tempfile
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from lestash.core.collections import Shelf
@@ -34,6 +39,10 @@ SHELF_IDS = uuid.UUID("5d0c1c6e-9f4e-4c1b-9a51-1e57a5a0b0b0")
 
 class KoboChanged(RuntimeError):
     """The Kobo's database is not the one in the newest snapshot."""
+
+
+class KoboStale(RuntimeError):
+    """The Kobo's database doesn't reflect files the Kobo holds; it may not be saved."""
 
 
 class KoboDamaged(RuntimeError):
@@ -187,6 +196,7 @@ class Plan:
     when: str
     results: list[ShelfResult]
     changes: int  # rows the write changes on the Kobo; 0 means leave it alone
+    stale: list[str] = field(default_factory=list)  # why the database looks unsaved
 
 
 def _copy_db(store: KoboStore, snapshot: Snapshot, folder: Path) -> Path:
@@ -201,6 +211,113 @@ def _copy_db(store: KoboStore, snapshot: Snapshot, folder: Path) -> Path:
     return local
 
 
+BOOK_FILES = (".pdf", ".epub")
+DEVICE_ROOT = "file:///mnt/onboard/"
+# Kobo times are to the second, FAT file times to 2 s, and a book's file and its
+# reading time aren't saved at the same instant
+SLACK = timedelta(minutes=5)
+# The Kobo imports hidden folders only for its own Google Drive downloads
+HIDDEN_BOOKS = ".kobo/google_drive/"
+EJECTED = "last-eject"  # in the store: when ``lestash kobo eject`` last worked
+
+
+def record_eject(store: KoboStore, when: datetime | None) -> None:
+    """Note an eject: the Kobo saved everything it changed before it. None forgets it."""
+    path = store.root / EJECTED
+    if when is None:
+        path.unlink(missing_ok=True)
+        return
+    store.root.mkdir(parents=True, exist_ok=True)
+    path.write_text(when.astimezone(UTC).isoformat(timespec="seconds"))
+
+
+def last_eject(store: KoboStore) -> datetime | None:
+    try:
+        return _when((store.root / EJECTED).read_text().strip())
+    except OSError:
+        return None
+
+
+def _book(rel: str) -> bool:
+    if not rel.lower().endswith(BOOK_FILES):
+        return False
+    hidden = any(part.startswith(".") for part in Path(rel).parts)
+    return not hidden or rel.startswith(HIDDEN_BOOKS)
+
+
+def _when(text: str | None) -> datetime | None:
+    if not text:
+        return None
+    try:
+        when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
+
+
+def stale(store: KoboStore, snapshot: Snapshot, conn: sqlite3.Connection) -> list[str]:
+    """Why the snapshot's database looks unsaved (#336), or an empty list.
+
+    - A book file with no ``content`` row, first seen after the last eject: the Kobo
+      hasn't imported it. It imports when it leaves USB mode, so it was unplugged
+      without an eject. One seen before an eject is a file the Kobo won't import.
+    - A book the Kobo changed (pen notes are saved into the PDF) after the newest
+      reading or highlight time in the database: the Kobo hasn't saved that session.
+      A change before the last eject doesn't count: the eject made the Kobo save.
+
+    Files in hidden folders, which the Kobo doesn't import, are left out.
+    """
+    listed = {r[0] for r in conn.execute("SELECT ContentID FROM content WHERE ContentType = '6'")}
+    times = [
+        _when(r[0])
+        for r in conn.execute(
+            "SELECT MAX(DateLastRead) FROM content "
+            "UNION ALL SELECT MAX(DateModified) FROM Bookmark "
+            "UNION ALL SELECT MAX(DateCreated) FROM Bookmark"
+        )
+    ]
+    newest = max((t for t in times if t), default=None)
+    ejected = last_eject(store)
+    books = {rel: entry for rel, entry in snapshot.files.items() if _book(rel)}
+    first: dict[str, str] = {}  # the book's contents when first seen
+    # Since when the book has been there with these contents, without a gap: a book
+    # copied again, or replaced, is new
+    seen: dict[str, datetime | None] = dict.fromkeys(books)
+    for older in store.snapshots():
+        if older.taken_at > snapshot.taken_at:
+            break
+        for rel, entry in books.items():
+            there = older.files.get(rel)
+            if there is not None and rel not in first:
+                first[rel] = there.sha256
+            if there is None or there.sha256 != entry.sha256:
+                seen[rel] = None
+            elif seen[rel] is None:
+                seen[rel] = older.taken_at
+    reasons = []
+    for rel, entry in sorted(books.items()):
+        if DEVICE_ROOT + rel not in listed:
+            # Seen before an eject, the Kobo had its chance to import it, and won't
+            first_seen = seen[rel] or snapshot.taken_at
+            if ejected is None or first_seen > ejected:
+                reasons.append(f"{rel} is on the Kobo but not in its database")
+            continue
+        changed = _when(entry.mtime)
+        if (
+            first.get(rel, entry.sha256) != entry.sha256
+            and changed is not None
+            and (newest is None or changed > newest + SLACK)
+            and (ejected is None or changed > ejected)
+        ):
+            reasons.append(
+                f"{rel} changed on the Kobo at {entry.mtime[:19]}Z, after the database's "
+                f"newest reading time ({newest:%Y-%m-%dT%H:%M:%S}Z)"
+                if newest
+                else f"{rel} changed on the Kobo, and the database records no reading"
+            )
+    return reasons
+
+
 def plan(store: KoboStore, snapshot: Snapshot, shelves: list[Shelf]) -> Plan:
     """Work out the write on a copy of the snapshot's database."""
     when = now_text()
@@ -208,6 +325,7 @@ def plan(store: KoboStore, snapshot: Snapshot, shelves: list[Shelf]) -> Plan:
     with tempfile.TemporaryDirectory(prefix="lestash-kobo-shelves-") as tmp:
         conn = sqlite3.connect(_copy_db(store, snapshot, Path(tmp)))
         try:
+            reasons = stale(store, snapshot, conn)
             before = conn.total_changes
             results = apply(conn, shelves, when)
             changes = conn.total_changes - before
@@ -217,7 +335,7 @@ def plan(store: KoboStore, snapshot: Snapshot, shelves: list[Shelf]) -> Plan:
             conn.close()
     if check != "ok":
         raise KoboDamaged(f"the planned write fails integrity_check on a copy: {check}")
-    return Plan(snapshot, when, results, changes)
+    return Plan(snapshot, when, results, changes, reasons)
 
 
 def _same_as_snapshot(store: KoboStore, snapshot: Snapshot, root: Path) -> None:

@@ -130,8 +130,20 @@ def add_collection_commands(app: typer.Typer, store_for: Callable[[Config], Kobo
                 results = the_plan.results
                 if the_plan.changes:
                     try:
+                        if the_plan.stale:
+                            raise kobo_shelf.KoboStale(
+                                "the Kobo's database looks unsaved: "
+                                + "; ".join(the_plan.stale[:3])
+                                + (
+                                    f" (and {len(the_plan.stale) - 3} more)"
+                                    if len(the_plan.stale) > 3
+                                    else ""
+                                )
+                                + ". Eject the Kobo, let it import, then plug in again"
+                            )
                         results = _write(store, the_plan, shelves, root, mount)
                     except (
+                        kobo_shelf.KoboStale,
                         kobo_shelf.KoboChanged,
                         kobo_shelf.KoboDamaged,
                         OSError,

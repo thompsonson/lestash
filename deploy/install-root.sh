@@ -15,6 +15,8 @@ RULE_DEST=/etc/udev/rules.d/99-lestash-kobo.rules
 FSTAB_MATCH='^LABEL=KOBOeReader[[:space:]]+/media/kobo[[:space:]]'
 RW_POINT=/media/kobo-rw
 RW_MATCH='^LABEL=KOBOeReader[[:space:]]+/media/kobo-rw[[:space:]]'
+PKLA_SRC="$SCRIPT_DIR/50-lestash-kobo-eject.pkla"
+PKLA_DEST=/etc/polkit-1/localauthority/50-local.d/50-lestash-kobo-eject.pkla
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Run this with sudo: sudo $0" >&2
@@ -64,5 +66,17 @@ else
     udevadm control --reload
     echo "udev: installed $RULE_DEST."
 fi
+
+# Eject without root, so the Kobo leaves USB mode and saves its database
+SUDO_NAME="$(id -un "$SUDO_UID")"
+PKLA_TMP="$(mktemp)"
+sed "s/@USER@/$SUDO_NAME/" "$PKLA_SRC" >"$PKLA_TMP"
+if cmp -s "$PKLA_TMP" "$PKLA_DEST"; then
+    echo "polkit: the eject grant is up to date."
+else
+    install -D -m 0644 "$PKLA_TMP" "$PKLA_DEST"
+    echo "polkit: installed $PKLA_DEST (eject for $SUDO_NAME)."
+fi
+rm -f "$PKLA_TMP"
 
 echo "Done. Plug in the Kobo and tap Connect to sync it."
