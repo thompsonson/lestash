@@ -46,7 +46,8 @@ class KoboStale(RuntimeError):
 
 
 class KoboDamaged(RuntimeError):
-    """The Kobo's database failed its check after the write, and was put back."""
+    """A Kobo database failed its check: the snapshot's, the planned write's, or the
+    Kobo's after the write (which is then put back)."""
 
 
 @dataclass
@@ -318,6 +319,19 @@ def stale(store: KoboStore, snapshot: Snapshot, conn: sqlite3.Connection) -> lis
     return reasons
 
 
+def _check_snapshot(conn: sqlite3.Connection, snapshot: Snapshot) -> None:
+    """Raise KoboDamaged if the snapshot's database is damaged; a write would build on it."""
+    try:
+        check = conn.execute("PRAGMA integrity_check").fetchone()[0]
+    except sqlite3.DatabaseError as e:
+        check = str(e)
+    if check != "ok":
+        raise KoboDamaged(
+            f"the Kobo's database in snapshot {snapshot.name} is damaged ({check}). "
+            "Nothing is written until a snapshot passes its check; the database needs repair"
+        )
+
+
 def plan(store: KoboStore, snapshot: Snapshot, shelves: list[Shelf]) -> Plan:
     """Work out the write on a copy of the snapshot's database."""
     when = now_text()
@@ -325,6 +339,7 @@ def plan(store: KoboStore, snapshot: Snapshot, shelves: list[Shelf]) -> Plan:
     with tempfile.TemporaryDirectory(prefix="lestash-kobo-shelves-") as tmp:
         conn = sqlite3.connect(_copy_db(store, snapshot, Path(tmp)))
         try:
+            _check_snapshot(conn, snapshot)
             reasons = stale(store, snapshot, conn)
             before = conn.total_changes
             results = apply(conn, shelves, when)

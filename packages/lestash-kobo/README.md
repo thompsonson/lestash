@@ -46,6 +46,7 @@ You manage collections in LeStash; the Kobo shows the ones you switch on.
   - It mounts `/media/kobo-rw`, checks the Kobo's database is the snapshot's copy, writes, runs `integrity_check`, and unmounts.
   - It refuses to write when the database looks unsaved: a book file it doesn't list, or a PDF changed after its newest reading time and after the last eject.
   - If the check fails, it puts the snapshot's copy back.
+  - It refuses to write when the snapshot's database fails `integrity_check`, and shows the damage as the collection's error (#339).
   - Each write is logged as `kobo-collections` in Settings → Sources.
 - Only Kobo books go on: a collection's Kobo items, and items linked to one by `alternate_of`.
 - A newly sideloaded book joins at the plug-in after the Kobo imports it.

@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Annotated
 
@@ -117,7 +118,18 @@ def add_collection_commands(app: typer.Typer, store_for: Callable[[Config], Kobo
             if snapshot is None:
                 console.print(f"[red]No readable Kobo snapshot ({newest}); nothing written.[/red]")
                 raise typer.Exit(1)
-            the_plan = kobo_shelf.plan(store, snapshot, shelves)
+            try:
+                the_plan = kobo_shelf.plan(store, snapshot, shelves)
+            except (kobo_shelf.KoboDamaged, sqlite3.Error) as e:
+                console.print(f"[red]Nothing written: {e}[/red]")
+                if not dry_run:
+                    for shelf in shelves:
+                        record_error(conn, shelf, str(e))
+                    conn.commit()
+                    # Logged like every other failed write; a running write logs its own
+                    with suppress(SyncAlreadyRunning), SyncRun.start(conn, LOG_SOURCE) as run:
+                        run.finish("failed", items_added=0, items_updated=0, error=str(e))
+                raise typer.Exit(1) from None
             _report(the_plan.results, dry_run or the_plan.changes == 0)
             if dry_run:
                 return
