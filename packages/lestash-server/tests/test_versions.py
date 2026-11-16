@@ -57,3 +57,23 @@ def test_ask_for_an_item_on_the_kobo(client, test_config) -> None:
     assert client.put(f"/api/items/{v1}/kobo", json={"wanted": False}).json()["marked"] is False
     assert client.put("/api/items/99999/kobo", json={"wanted": True}).status_code == 404
     assert client.get("/api/items/99999/kobo").status_code == 404
+
+
+def test_kobo_status_counts_notes_on_the_item_and_its_copies(client, test_config) -> None:
+    pdf, book, _ = _ids(test_config)
+    with get_connection(test_config) as conn:
+        conn.execute(
+            "INSERT INTO item_links (from_id, to_id, kind, origin, status)"
+            " VALUES (?, ?, 'alternate_of', 'linker:sha256', 'confirmed')",
+            (book, pdf),
+        )
+        for n, removed in ((1, False), (2, False), (3, True)):
+            meta = '{"removed_from_pdf": "2026-11-16"}' if removed else "{}"
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content, parent_id, metadata)"
+                " VALUES ('pdf_annotation', ?, 'ink', ?, ?)",
+                (f"n{n}", book, meta),
+            )
+        conn.commit()
+    assert client.get(f"/api/items/{pdf}/kobo").json()["notes"] == 2
+    assert client.get(f"/api/items/{book}/kobo").json()["notes"] == 2

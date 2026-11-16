@@ -805,6 +805,7 @@ def _kobo(conn, item_id: int) -> ItemKobo:
         path=place.path,
         copied_at=str(place.copied_at) if place.copied_at else None,
         error=place.error,
+        notes=place.notes,
         text=place.text(),
     )
 

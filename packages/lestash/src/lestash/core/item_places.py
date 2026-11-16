@@ -229,6 +229,26 @@ def record_copy_error(conn: sqlite3.Connection, item_id: int, place: str, error:
     )
 
 
+def notes_on(conn: sqlite3.Connection, item_id: int) -> int:
+    """Notes drawn on the item, or on its copies (``alternate_of``), not erased."""
+    return conn.execute(
+        """
+        SELECT COUNT(*) FROM items n
+        WHERE n.source_type = 'pdf_annotation'
+          AND json_extract(n.metadata, '$.removed_from_pdf') IS NULL
+          AND n.parent_id IN (
+              SELECT :id
+              UNION
+              SELECT CASE WHEN l.from_id = :id THEN l.to_id ELSE l.from_id END
+              FROM item_links l
+              WHERE l.kind = 'alternate_of' AND l.status = 'confirmed'
+                AND :id IN (l.from_id, l.to_id)
+          )
+        """,
+        {"id": item_id},
+    ).fetchone()[0]
+
+
 @dataclass
 class ItemPlace:
     """Where an item stands on a device, as the item page shows it."""
@@ -238,6 +258,7 @@ class ItemPlace:
     newest_id: int
     on: bool  # the newest version is on the device
     gone: bool = False  # its copy was on the device and was taken off
+    notes: int = 0  # notes drawn on its copies there, not erased (#338)
     path: str | None = None  # the copy LeStash made of the newest version
     copied_at: str | None = None
     error: str | None = None
@@ -287,6 +308,7 @@ def item_place(conn: sqlite3.Connection, item_id: int, place: str = KOBO) -> Ite
         newest_id=newest,
         on=on_kobo(conn, newest),
         gone=taken_off(conn, newest, place),
+        notes=notes_on(conn, item_id),
         path=copy[0] if copy else None,
         copied_at=copy[1] if copy else None,
         error=copy[2] if copy else None,

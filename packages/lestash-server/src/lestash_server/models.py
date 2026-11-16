@@ -299,6 +299,7 @@ class ItemKobo(BaseModel):
     path: str | None = None  # the copy LeStash made, from the Kobo's root
     copied_at: str | None = None
     error: str | None = None
+    notes: int = 0  # notes drawn on it or its Kobo copies, not erased
     text: str  # "On the Kobo", "For the Kobo, copied at the next plug-in", ...
 
 
