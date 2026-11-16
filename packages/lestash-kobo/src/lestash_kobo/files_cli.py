@@ -1,4 +1,4 @@
-"""``lestash kobo send``, ``unsend``, ``files`` and ``copy-files``: PDFs to the Kobo (#338).
+"""``lestash kobo send``, ``unsend``, ``files``, ``copy-files`` and ``extract-notes`` (#338).
 
 At each plug-in, after the collections are written, ``copy-files --mount`` puts the
 newest version of each item asked for into ``LeStash/`` on the Kobo. The Kobo imports
@@ -49,6 +49,7 @@ from lestash_kobo.store import KoboStore
 console = Console()
 
 LOG_SOURCE = "kobo-files"
+NOTES_SOURCE = "kobo-notes"
 FOLDER = "LeStash"  # where copies go on the Kobo
 PART = ".lestash-part"  # the end of an unfinished copy's hidden name
 NAME_CHARS = 120  # the longest file name made, before ".pdf"
@@ -201,6 +202,39 @@ def add_file_commands(app: typer.Typer, store_for: Callable[[Config], KoboStore]
                 ).fetchone()
                 via = "you" if place.marked else ", ".join(place.collections)
                 console.print(f"{item_id}  {title}  ({via}): {place.text()}")
+
+    @app.command("extract-notes")
+    def notes_cmd() -> None:
+        """Read the notes drawn on PDFs, from each annotated state not read yet.
+
+        Run by the import unit after each plug-in's import.
+        """
+        from lestash_kobo.notes import extract_notes
+
+        with get_connection(Config.load()) as conn:
+            try:
+                run = SyncRun.start(conn, NOTES_SOURCE)
+            except SyncAlreadyRunning:
+                console.print("[red]Notes are being read already.[/red]")
+                raise typer.Exit(1) from None
+            with run:
+                result = extract_notes(conn, Config.load())
+                for error in result.errors:
+                    console.print(f"[red]{error}[/red]")
+                for missing in result.missing:
+                    console.print(f"[yellow]{missing}; passed over[/yellow]")
+                run.finish(
+                    "failed" if result.errors else "completed",
+                    items_added=result.added,
+                    items_updated=0,
+                    error="; ".join(result.errors) or None,
+                )
+        console.print(
+            f"Read {result.states} annotated states: {result.added} new notes"
+            f" on {len(result.books)} books."
+        )
+        if result.errors:
+            raise typer.Exit(1)
 
     @app.command("copy-files")
     def copy_cmd(

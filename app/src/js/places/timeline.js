@@ -15,7 +15,7 @@ const FOLD_AT = 3;
 
 const VERB_WORDS = {
   watched: 'watched', viewed: 'viewed', liked: 'liked', reacted: 'reacted to', disliked: 'disliked', shared: 'shared',
-  searched: 'searched for', prompted: 'prompted', listened: 'listened to', read: 'read',
+  searched: 'searched for', prompted: 'prompted', listened: 'listened to', read: 'read', annotated: 'annotated',
 };
 const MADE_WORDS = {
   post: 'posted', comment: 'replied', note: 'wrote a note', chat: 'chatted', notebook: 'made a notebook',
