@@ -97,10 +97,11 @@ lestash kobo eject                                    # eject, so the Kobo leave
 - After each import, the import unit runs `lestash kobo extract-notes`. It reads each book's states not read yet, oldest first.
   - Each note becomes a child of the book, matched across states by its strokes, so a later state adds only new ones.
   - A note erased later is kept, marked `removed_from_pdf`.
-  - Only states newer than the last one read are applied, so a state read late can't mark newer notes erased.
+  - Only states newer than the newest one read are applied, so a state read late can't mark newer notes erased. A file put back to earlier bytes is a new state.
+  - A state whose file is gone from the store is passed over and reported once.
   - A state with new notes records an `annotated` activity at the time the state was first seen, naming its new notes.
 - Each state read is recorded per book and by extractor version, with the notes first read from it (`blob_text`, tool `pdf-annotations:item-N`).
-  - After a newer extractor, only each book's newest state is read again.
+  - After a newer extractor, each book's newest state read is read again, then any newer ones.
   - A PDF PyMuPDF can't read is recorded and not retried. A file it can't open is tried again at the next run.
 - Each run is logged as `kobo-notes` in Settings → Sources.
 - The text under a note, and reading handwriting, come later (#200).

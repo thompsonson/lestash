@@ -181,3 +181,47 @@ def test_a_newer_extractor_reads_only_the_newest_state(three_states, test_db) ->
             (book,),
         ).fetchone()[0]
     assert result.added == 0 and removed == 0
+
+
+def test_a_file_put_back_to_earlier_bytes_is_read_again(device, test_db, three_states) -> None:
+    with get_connection(test_db) as conn:
+        extract_notes(conn, test_db)
+    _plug_in(device, test_db, 4, 1)  # back to the one-mark bytes
+    with get_connection(test_db) as conn:
+        result = extract_notes(conn, test_db)
+        notes = _notes(conn, _book(conn))
+    assert result.states == 1
+    assert [removed for _, removed in notes] == [0, 1]  # the second mark erased
+
+
+def test_a_file_missing_from_the_store_is_passed_over(device, test_db, three_states) -> None:
+    from lestash.core.blobs import BlobStore, store_root
+
+    with get_connection(test_db) as conn:
+        book = _book(conn)
+        (sha,) = conn.execute(
+            "SELECT sha256 FROM item_media WHERE item_id = ? AND media_type = 'pdf'"
+            " ORDER BY created_at LIMIT 1 OFFSET 1",
+            (book,),
+        ).fetchone()
+        BlobStore(store_root(test_db)).path(sha).unlink()
+        conn.execute("UPDATE item_media SET local_path = NULL WHERE sha256 = ?", (sha,))
+        conn.commit()
+        first = extract_notes(conn, test_db)
+        again = extract_notes(conn, test_db)
+    assert any("passed over" in e for e in first.errors)
+    assert first.added == 2  # the newest state still has both marks
+    assert again.states == 0 and not again.errors
+
+
+def test_states_since_an_older_extractor_are_all_read(device, test_db) -> None:
+    for minute, strokes in ((1, 0), (2, 1)):
+        _plug_in(device, test_db, minute, strokes)
+    with get_connection(test_db) as conn:
+        extract_notes(conn, test_db)
+        conn.execute("UPDATE blob_text SET tool_version = '0' WHERE tool = ?", (tool(_book(conn)),))
+        conn.commit()
+    _plug_in(device, test_db, 3, 2)  # arrives after the upgrade
+    with get_connection(test_db) as conn:
+        result = extract_notes(conn, test_db)
+    assert result.states == 2 and result.added == 1  # the old newest again, then the new
