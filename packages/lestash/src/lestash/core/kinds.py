@@ -1,11 +1,12 @@
 """Item kinds: what an item is to you (a post, a book, a video), derived from its source.
 
-Items have no kind field of their own; it follows from the source, a few metadata keys,
-whether the item is part of another and whether LeStash holds it. ``items.kind`` is a
-generated column with the SQL below (migration 24), so listings filter and count by kind
-with an index; ``item_kind`` is the same rule in Python, kept equal by tests.
+An item's kind follows from its source, a few metadata keys, whether it is part of
+another and whether LeStash holds it. ``items.kind`` is a generated column with the SQL
+below (migration 24), so listings filter and count by kind with an index; ``item_kind``
+is the same rule in Python, kept equal by tests.
 
-See docs/ux-object-model-design.md, "Item kinds".
+See docs/content-and-activity-ontology-design.md, "Item kinds", and
+docs/ux-object-model-design.md, "Item kinds".
 """
 
 from collections.abc import Mapping
