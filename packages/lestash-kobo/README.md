@@ -48,12 +48,19 @@ You manage collections in LeStash; the Kobo shows the ones you switch on.
 - At each plug-in, after the snapshot, the unit runs `lestash kobo write-collections --mount`.
   - It plans the write on a copy of the snapshot's database, and leaves the Kobo alone when nothing changes.
   - It mounts `/media/kobo-rw`, checks the Kobo's database is the snapshot's copy, writes, runs `integrity_check`, and unmounts.
+  - It refuses to write when the database looks unsaved: a book file it doesn't list, or a PDF changed after its newest reading time and after the last eject.
   - If the check fails, it puts the snapshot's copy back.
   - Each write is logged as `kobo-collections` in Settings → Sources.
 - Only Kobo books go on: a collection's Kobo items, and items linked to one by `alternate_of`.
 - A newly sideloaded book joins at the plug-in after the Kobo imports it.
 - Collections made on the Kobo are never read or changed. A LeStash collection with the same name is left out, with an error.
 - The Kobo keeps no order inside a collection; the reading order shows in LeStash only.
+- Last, the unit ejects the Kobo (`lestash kobo eject`), so it leaves USB mode.
+  - The Kobo saves its database, and imports new books, only when it leaves USB mode.
+  - An unmount alone left it on its Connected screen for 30 hours, with nothing saved.
+  - Ejecting without root needs the polkit grant from `sudo deploy/install-root.sh`.
+  - To keep the Kobo connected, create `~/.config/lestash/kobo-no-eject`.
+- To pause collection writes, create `~/.config/lestash/kobo-writes-paused`; snapshots and imports still run.
 
 
 ```bash
@@ -64,6 +71,7 @@ lestash sources sync kobo                             # import the newest snapsh
 lestash kobo collections                              # each collection shown, and its status
 lestash kobo show NAME / hide NAME                    # on or off the Kobo at the next plug-in
 lestash kobo write-collections --dry-run              # what the next write would change
+lestash kobo eject                                    # eject, so the Kobo leaves USB mode
 ```
 
 ## Config (`~/.config/lestash/config.toml`)

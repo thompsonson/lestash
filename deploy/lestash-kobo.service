@@ -1,5 +1,5 @@
 [Unit]
-Description=Snapshot the Kobo when it is plugged in, import it, and write its collections
+Description=Snapshot the Kobo when it is plugged in, import it, write its collections, and eject it
 # Started by udev (deploy/99-lestash-kobo.rules). Stops if the Kobo is unplugged mid-copy;
 # the next snapshot sweeps what a stopped one left behind.
 BindsTo=dev-disk-by\x2dlabel-KOBOeReader.device
@@ -19,14 +19,20 @@ ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonso
 # that is still running would merge into it and import nothing new. Imports take a
 # lock, so they run one after the other.
 ExecStart=/bin/sh -c '/usr/bin/systemctl --user start --no-block "lestash-kobo-sync@$(date +%%s%%N).service"'
-# Unmount (only if this unit mounted it), so the Kobo can be unplugged safely. umount
-# does not eject: the Kobo may stay on its Connected screen until unplugged. The "ours"
-# flag lets the next step write only to a Kobo this unit mounted.
-ExecStart=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/mounted" ]; then /usr/bin/umount /media/kobo && rm "$RUNTIME_DIRECTORY/mounted" && touch "$RUNTIME_DIRECTORY/ours"; fi'
+# Unmount (only if this unit mounted it). The "ours" flag lets the next steps write to,
+# and eject, only a Kobo this unit mounted.
+ExecStart=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/mounted" ]; then /usr/bin/umount /media/kobo && rm "$RUNTIME_DIRECTORY/mounted" && touch "$RUNTIME_DIRECTORY/ours" "$RUNTIME_DIRECTORY/eject"; fi'
 # Write the collections shown on the Kobo (K8, #315), after the snapshot, which is the
-# backup. It mounts /media/kobo-rw only when something changes, checks the database,
-# and unmounts. A failure fails this unit and is logged in Settings → Sources.
-ExecStart=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/ours" ]; then rm "$RUNTIME_DIRECTORY/ours"; exec /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo write-collections --mount; fi'
+# backup. It mounts /media/kobo-rw only when something changes, checks the database is
+# the snapshot's and is saved, and unmounts. A failure is logged in Settings → Sources,
+# and the eject still runs. Paused while ~/.config/lestash/kobo-writes-paused exists.
+ExecStart=/bin/sh -c 'if [ -e %h/.config/lestash/kobo-writes-paused ]; then rm -f "$RUNTIME_DIRECTORY/ours"; echo "Collection writes paused: %h/.config/lestash/kobo-writes-paused exists."; fi; if [ -e "$RUNTIME_DIRECTORY/ours" ]; then rm "$RUNTIME_DIRECTORY/ours"; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo write-collections --mount || echo "Collection write failed; see Settings, Sources."; fi'
+# Eject, so the Kobo leaves USB mode: only then does it save its database and import
+# new books. umount alone left it on its Connected screen for 30 hours. Ejecting needs
+# the polkit grant install-root.sh adds. A failed eject fails this unit. The eject
+# removes the disk, which stops this unit (BindsTo); nothing runs after it.
+# Not while ~/.config/lestash/kobo-no-eject exists, to keep the Kobo's files open on the desktop.
+ExecStart=/bin/sh -c 'if [ -e %h/.config/lestash/kobo-no-eject ]; then rm -f "$RUNTIME_DIRECTORY/eject"; echo "Not ejecting: %h/.config/lestash/kobo-no-eject exists."; fi; if [ -e "$RUNTIME_DIRECTORY/eject" ]; then rm "$RUNTIME_DIRECTORY/eject"; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo eject; fi'
 # The same when a step failed
 ExecStopPost=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/mounted" ] && /usr/bin/mountpoint -q /media/kobo; then /usr/bin/umount /media/kobo; fi'
 WorkingDirectory=%h/Projects/thompsonson/lestash

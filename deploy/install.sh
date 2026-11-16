@@ -39,11 +39,12 @@ systemctl --user status lestash-server.service --no-pager || true
 echo ""
 systemctl --user list-timers lestash-sync.timer lestash-cert.timer --no-pager
 
-# The Kobo plug-in sync also needs an fstab line and a udev rule, which need root.
+# The Kobo plug-in sync also needs fstab lines, a udev rule and a polkit grant (root).
 # install-root.sh does both; say when it is due (missing, or the rule changed).
 if ! grep -qE '^LABEL=KOBOeReader[[:space:]]+/media/kobo[[:space:]]' /etc/fstab ||
     ! grep -qE '^LABEL=KOBOeReader[[:space:]]+/media/kobo-rw[[:space:]]' /etc/fstab ||
-    ! cmp -s "$SCRIPT_DIR/99-lestash-kobo.rules" /etc/udev/rules.d/99-lestash-kobo.rules; then
+    ! cmp -s "$SCRIPT_DIR/99-lestash-kobo.rules" /etc/udev/rules.d/99-lestash-kobo.rules ||
+    [ ! -e /etc/polkit-1/localauthority/50-local.d/50-lestash-kobo-eject.pkla ]; then
     echo ""
     echo "Kobo plug-in sync: run once, with sudo:"
     echo "  sudo $SCRIPT_DIR/install-root.sh"

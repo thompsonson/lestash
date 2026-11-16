@@ -241,6 +241,21 @@ Notes:
 - Score at **item level**, collapsing chunks to their parent (MaxP-style), as LeStash shows items. [J]
 - Report per-kind results and paired bootstrap or paired t-tests between systems. [J]
 
+### Reference scores: what others reach
+
+No public benchmark sets a target for a personal collection. These are the nearest reference points, all from sources cited above; use them to judge how far is realistic, not as goals.
+
+| Benchmark | What it measures | Scores reported |
+|---|---|---|
+| BEIR (18 mixed public sets), nDCG@10 | ranking quality across domains | BM25 a robust zero-shot baseline [M]; distilSPLADE v2 49.9 [M]; MTEB retrieval, close to BEIR: all-MiniLM-L6-v2 about 42.9, bge-small-en-v1.5 51.68 |
+| MS MARCO passage dev, MRR@10 | one right passage per web query | BM25 0.184 [M]; docTTTTTquery 0.265–0.277 [M]; ColBERTv2 0.397 [M]; MiniLM-L6 reranker 0.390 [M] |
+| LongMemEval-M, Recall@10 | the right part of a long personal chat history | rounds 0.692, rounds plus facts 0.784; sessions 0.783, sessions plus facts 0.862 [M] |
+| Anthropic contextual retrieval, Recall@20 | their document sets | 94.3% plain; 98.1% with context, BM25 and reranking [V] |
+
+- LongMemEval is the nearest to LeStash: personal chats, paraphrased questions, one right part. [J]
+- Practice is to compare systems on your own frozen test set, query by query, rather than chase an absolute score. [J]
+- The usual order of gains is hybrid, then a reranker, then better embeddings or units (section 2). [M]
+
 ### Synthetic queries
 
 - Rahmani et al. (SIGIR 2024) found LLM-generated test collections ranked systems like human ones. [M] ([arXiv 2405.07767](https://arxiv.org/abs/2405.07767))
