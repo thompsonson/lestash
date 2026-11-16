@@ -123,7 +123,9 @@ def cli(test_db, monkeypatch, no_docling):
     monkeypatch.setattr("lestash.core.pdf_enrich.enrich_item", enrich)
 
     def run(*args: str):
-        return CliRunner().invoke(app, ["pdf", *args])
+        result = CliRunner().invoke(app, ["pdf", *args])
+        # Rich wraps at the terminal's width: compare the words, not the lines
+        return SimpleNamespace(exit_code=result.exit_code, output=" ".join(result.output.split()))
 
     run.enriched = enriched  # type: ignore[attr-defined]
     return run
