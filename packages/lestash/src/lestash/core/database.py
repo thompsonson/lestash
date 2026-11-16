@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 32
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -745,6 +745,13 @@ MIGRATIONS = [
         );
         """,
     ),
+    (
+        32,
+        "Jelu notes, reviews and quotes get their own kinds, not 'book' (#347)",
+        # Run in apply_migrations: items.kind is generated from KIND_SQL, so a new rule
+        # means dropping the column (and its index) and adding it again.
+        "",
+    ),
 ]
 
 
@@ -1019,6 +1026,17 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
             if version == 24 and not _column_exists(conn, "items", "kind"):
                 from lestash.core.kinds import KIND_SQL
 
+                conn.execute(
+                    "ALTER TABLE items ADD COLUMN kind TEXT"
+                    f" GENERATED ALWAYS AS ({KIND_SQL}) VIRTUAL"
+                )
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_items_kind ON items(kind, parent_id)")
+            if version == 32:
+                from lestash.core.kinds import KIND_SQL
+
+                conn.execute("DROP INDEX IF EXISTS idx_items_kind")
+                if _column_exists(conn, "items", "kind"):
+                    conn.execute("ALTER TABLE items DROP COLUMN kind")
                 conn.execute(
                     "ALTER TABLE items ADD COLUMN kind TEXT"
                     f" GENERATED ALWAYS AS ({KIND_SQL}) VIRTUAL"

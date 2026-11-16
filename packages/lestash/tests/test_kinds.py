@@ -32,6 +32,10 @@ CASES = [
     ("audible", {"type": "book"}, None, True, "book"),
     ("audible", {"type": "audible.clip"}, 2, True, "highlight"),
     ("jelu", None, None, True, "book"),
+    ("jelu", {"type": "notes"}, 2, True, "note"),
+    ("jelu", {"type": "review"}, 2, True, "note"),
+    ("jelu", {"type": "review"}, None, True, "note"),  # a review of a book not held
+    ("jelu", {"type": "quote"}, 2, True, "highlight"),
     ("claude", None, None, True, "chat"),
     ("claude", None, 9, True, "turn"),
     ("claude-code", None, None, True, "chat"),
@@ -89,3 +93,33 @@ def test_artifact_detail_in_words():
     assert kind_detail("artifact", {"artifact_type": "audio_overview"}) == "Audio overview"
     assert kind_detail("artifact", {"type": "report"}) == "Report"
     assert kind_detail("video", {}) is None
+
+
+def test_migration_32_relabels_stored_jelu_items(tmp_path) -> None:
+    """A database made before #347 gets the new kinds for rows already stored."""
+    import sqlite3
+
+    from lestash.core.config import Config, GeneralConfig
+    from lestash.core.database import apply_migrations, init_database
+
+    config = Config(general=GeneralConfig(database_path=str(tmp_path / "t.db")))
+    init_database(config)
+    conn = sqlite3.connect(tmp_path / "t.db")
+    # The kind column as it was before migration 32: every Jelu item a book
+    conn.execute("DROP INDEX idx_items_kind")
+    conn.execute("ALTER TABLE items DROP COLUMN kind")
+    conn.execute(
+        "ALTER TABLE items ADD COLUMN kind TEXT GENERATED ALWAYS AS"
+        " (CASE WHEN source_type = 'jelu' THEN 'book' ELSE 'other' END) VIRTUAL"
+    )
+    conn.execute("PRAGMA user_version = 31")
+    conn.execute(
+        "INSERT INTO items (source_type, source_id, content, metadata)"
+        """ VALUES ('jelu', 'jelu:notes:1', 'Everand audiobook', '{"type": "notes"}')"""
+    )
+    conn.commit()
+    assert conn.execute("SELECT kind FROM items").fetchone()[0] == "book"
+    apply_migrations(conn)
+    assert conn.execute("SELECT kind FROM items").fetchone()[0] == "note"
+    assert conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'idx_items_kind'").fetchone()
+    conn.close()
