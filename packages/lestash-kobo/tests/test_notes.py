@@ -133,7 +133,7 @@ def test_an_unreadable_pdf_is_recorded_not_retried(device, test_db) -> None:
 def test_the_command_reports_and_logs(three_states, test_db) -> None:
     result = CliRunner().invoke(KoboSource().get_commands(), ["extract-notes"])
     assert result.exit_code == 0, result.output
-    assert "2 new notes on 1 books" in result.output
+    assert "2 new notes on 1 books" in " ".join(result.output.split())  # Rich wraps
     with get_connection(test_db) as conn:
         (status, added) = conn.execute(
             "SELECT status, items_added FROM sync_log WHERE source_type = 'kobo-notes'"
