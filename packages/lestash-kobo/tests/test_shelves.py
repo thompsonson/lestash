@@ -384,3 +384,15 @@ def test_a_book_changed_before_the_last_eject_is_written(device, kobo, test_db) 
     result = _write(device)
     assert result.exit_code == 0, result.output
     assert "0 Intro" in _shelves(device)["shelves"]
+
+
+def test_a_book_the_kobo_would_not_import_stops_no_write(device, kobo, test_db) -> None:
+    store, cid = kobo
+    _show(test_db, cid)
+    broken = device / "broken.pdf"
+    broken.write_bytes(b"not a pdf")
+    store.take(device, _at(1))
+    kobo_shelf.record_eject(store, _at(2))  # ejected, and still not imported
+    store.take(device, _at(3))
+    result = _write(device)
+    assert result.exit_code == 0, result.output

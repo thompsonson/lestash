@@ -22,7 +22,7 @@ import typer
 from lestash.core.config import Config
 from rich.console import Console
 
-from lestash_kobo.shelves import record_eject
+from lestash_kobo.shelves import last_eject, record_eject
 from lestash_kobo.store import KoboStore
 
 console = Console()
@@ -80,10 +80,15 @@ def add_eject_command(app: typer.Typer, store_for: Callable[[Config], KoboStore]
         ] = KOBO_DISK,
     ) -> None:
         """Eject the Kobo, so it leaves USB mode, saves, and imports new books."""
+        store = store_for(Config.load())
+        # Saved first: a working eject removes the disk, and the plug-in unit is
+        # stopped with it (BindsTo), maybe before this command could save anything
+        before = last_eject(store)
+        record_eject(store, datetime.now(UTC))
         try:
             eject(disk)
         except EjectFailed as e:
+            record_eject(store, before)
             console.print(f"[red]Not ejected: {e}[/red]")
             raise typer.Exit(1) from None
-        record_eject(store_for(Config.load()), datetime.now(UTC))
         console.print("Ejected: the Kobo leaves USB mode and imports new books.")

@@ -221,13 +221,17 @@ HIDDEN_BOOKS = ".kobo/google_drive/"
 EJECTED = "last-eject"  # in the store: when ``lestash kobo eject`` last worked
 
 
-def record_eject(store: KoboStore, when: datetime) -> None:
-    """Note an eject: the Kobo saved everything it changed before it."""
+def record_eject(store: KoboStore, when: datetime | None) -> None:
+    """Note an eject: the Kobo saved everything it changed before it. None forgets it."""
+    path = store.root / EJECTED
+    if when is None:
+        path.unlink(missing_ok=True)
+        return
     store.root.mkdir(parents=True, exist_ok=True)
-    (store.root / EJECTED).write_text(when.astimezone(UTC).isoformat(timespec="seconds"))
+    path.write_text(when.astimezone(UTC).isoformat(timespec="seconds"))
 
 
-def _last_eject(store: KoboStore) -> datetime | None:
+def last_eject(store: KoboStore) -> datetime | None:
     try:
         return _when((store.root / EJECTED).read_text().strip())
     except OSError:
@@ -254,8 +258,9 @@ def _when(text: str | None) -> datetime | None:
 def stale(store: KoboStore, snapshot: Snapshot, conn: sqlite3.Connection) -> list[str]:
     """Why the snapshot's database looks unsaved (#336), or an empty list.
 
-    - A book file with no ``content`` row: the Kobo hasn't imported it. It imports
-      when it leaves USB mode, so it was unplugged without an eject.
+    - A book file with no ``content`` row, first seen after the last eject: the Kobo
+      hasn't imported it. It imports when it leaves USB mode, so it was unplugged
+      without an eject. One seen before an eject is a file the Kobo won't import.
     - A book the Kobo changed (pen notes are saved into the PDF) after the newest
       reading or highlight time in the database: the Kobo hasn't saved that session.
       A change before the last eject doesn't count: the eject made the Kobo save.
@@ -272,19 +277,24 @@ def stale(store: KoboStore, snapshot: Snapshot, conn: sqlite3.Connection) -> lis
         )
     ]
     newest = max((t for t in times if t), default=None)
-    ejected = _last_eject(store)
+    ejected = last_eject(store)
     books = {rel: entry for rel, entry in snapshot.files.items() if _book(rel)}
-    first: dict[str, str] = {}
+    first: dict[str, str] = {}  # the book's contents when first seen
+    seen: dict[str, datetime] = {}  # and when
     for older in store.snapshots():
         if older.taken_at > snapshot.taken_at:
             break
         for rel in books:
             if rel not in first and rel in older.files:
                 first[rel] = older.files[rel].sha256
+                seen[rel] = older.taken_at
     reasons = []
     for rel, entry in sorted(books.items()):
         if DEVICE_ROOT + rel not in listed:
-            reasons.append(f"{rel} is on the Kobo but not in its database")
+            # Seen before an eject, the Kobo had its chance to import it, and won't
+            first_seen = seen.get(rel, snapshot.taken_at)
+            if ejected is None or first_seen > ejected:
+                reasons.append(f"{rel} is on the Kobo but not in its database")
             continue
         changed = _when(entry.mtime)
         if (

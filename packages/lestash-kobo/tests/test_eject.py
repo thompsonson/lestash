@@ -1,6 +1,7 @@
 """Ejecting the Kobo through udisks, so it leaves USB mode."""
 
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -47,7 +48,7 @@ def test_eject_asks_udisks_to_eject_the_kobo_drive(disk, monkeypatch, test_db) -
     calls = _fake(monkeypatch)
     result = _eject(disk)
     assert result.exit_code == 0, result.output
-    assert kobo_shelf._last_eject(_store({}, test_db)) is not None
+    assert kobo_shelf.last_eject(_store({}, test_db)) is not None
     assert calls[-1] == [
         kobo_eject.BUSCTL,
         "call",
@@ -84,3 +85,12 @@ def test_a_refused_eject_says_how_to_allow_it(disk, monkeypatch) -> None:
     )
     with pytest.raises(kobo_eject.EjectFailed, match="50-lestash-kobo-eject.pkla"):
         kobo_eject.eject(disk)
+
+
+def test_a_failed_eject_keeps_the_previous_eject_time(disk, monkeypatch, test_db) -> None:
+    store = _store({}, test_db)
+    kobo_shelf.record_eject(store, datetime(2026, 11, 1, tzinfo=UTC))
+    _fake(monkeypatch, eject_rc=1, eject_err="Call failed: busy")
+    result = _eject(disk)
+    assert result.exit_code == 1
+    assert kobo_shelf.last_eject(store) == datetime(2026, 11, 1, tzinfo=UTC)
