@@ -47,6 +47,7 @@ console = Console()
 
 LOG_SOURCE = "kobo-files"
 FOLDER = "LeStash"  # where copies go on the Kobo
+PART = ".lestash-part"  # the end of an unfinished copy's hidden name
 NAME_CHARS = 120  # the longest file name made, before ".pdf"
 SPARE = 50 * 1024 * 1024  # space left free on the Kobo
 UNSAFE = re.compile(r'[\x00-\x1f<>:"/\\|?*]+')  # not allowed in a FAT file name
@@ -124,9 +125,9 @@ def copy_files(root: Path, wanted: list[Wanted], held: dict[str, str]) -> list[C
                 continue
             dest = root / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            part = dest.with_name(dest.name + ".part")
-            if part.exists():
-                raise OSError(f"{part.name} is on the Kobo already; nothing overwritten")
+            # LeStash's own unfinished copy: hidden, so the Kobo never imports it. One
+            # left by a run that was stopped is LeStash's too, and is replaced.
+            part = dest.with_name(f".{dest.name}{PART}")
             try:
                 shutil.copyfile(result.wanted.file, part)
                 with part.open("rb+") as f:
@@ -134,8 +135,8 @@ def copy_files(root: Path, wanted: list[Wanted], held: dict[str, str]) -> list[C
                 if _sha(part) != result.wanted.sha256:
                     raise OSError("the copy read back from the Kobo doesn't match; removed")
                 part.rename(dest)  # never over a file: _place found the name free
-            except OSError:
-                part.unlink(missing_ok=True)  # this run's own unfinished copy
+            except BaseException:
+                part.unlink(missing_ok=True)  # stopped or failed: remove the unfinished copy
                 raise
             result.made = True
         except OSError as e:
