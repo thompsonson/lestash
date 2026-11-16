@@ -437,6 +437,7 @@ def test_a_damaged_snapshot_is_reported_not_written(device, kobo, test_db) -> No
     assert "Nothing written" in result.output and "is damaged" in result.output
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert _sha(device / DB) == before
+    assert _status(test_db) == "failed"
     with get_connection(test_db) as conn:
         st = kobo_status(conn, cid)
     assert st and st.error and "is damaged" in st.error
@@ -452,4 +453,8 @@ def test_a_damaged_snapshot_in_a_dry_run_records_nothing(device, kobo, test_db) 
     assert "is damaged" in result.output
     with get_connection(test_db) as conn:
         st = kobo_status(conn, cid)
+        logged = conn.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE source_type = 'kobo-collections'"
+        ).fetchone()[0]
     assert st is None or not st.error
+    assert logged == 0
