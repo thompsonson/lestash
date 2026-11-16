@@ -1,5 +1,5 @@
 [Unit]
-Description=Snapshot the Kobo when it is plugged in, import it, write its collections, and eject it
+Description=Snapshot the Kobo when it is plugged in, import it, write its collections, copy PDFs to it, and eject it
 # Started by udev (deploy/99-lestash-kobo.rules). Stops if the Kobo is unplugged mid-copy;
 # the next snapshot sweeps what a stopped one left behind.
 BindsTo=dev-disk-by\x2dlabel-KOBOeReader.device
@@ -26,7 +26,9 @@ ExecStart=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/mounted" ]; then /usr/bin/umou
 # backup. It mounts /media/kobo-rw only when something changes, checks the database is
 # the snapshot's and is saved, and unmounts. A failure is logged in Settings → Sources,
 # and the eject still runs. Paused while ~/.config/lestash/kobo-writes-paused exists.
-ExecStart=/bin/sh -c 'if [ -e %h/.config/lestash/kobo-writes-paused ]; then rm -f "$RUNTIME_DIRECTORY/ours"; echo "Collection writes paused: %h/.config/lestash/kobo-writes-paused exists."; fi; if [ -e "$RUNTIME_DIRECTORY/ours" ]; then rm "$RUNTIME_DIRECTORY/ours"; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo write-collections --mount || echo "Collection write failed; see Settings, Sources."; fi'
+# Then copy the PDFs asked for (#338) into LeStash/, never over a file; the Kobo
+# imports them at the eject. A failure is logged the same way.
+ExecStart=/bin/sh -c 'if [ -e %h/.config/lestash/kobo-writes-paused ]; then rm -f "$RUNTIME_DIRECTORY/ours"; echo "Collection writes paused: %h/.config/lestash/kobo-writes-paused exists."; fi; if [ -e "$RUNTIME_DIRECTORY/ours" ]; then rm "$RUNTIME_DIRECTORY/ours"; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo write-collections --mount || echo "Collection write failed; see Settings, Sources."; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo copy-files --mount || echo "Copying PDFs failed; see Settings, Sources."; fi'
 # Eject, so the Kobo leaves USB mode: only then does it save its database and import
 # new books. umount alone left it on its Connected screen for 30 hours. Ejecting needs
 # the polkit grant install-root.sh adds. A failed eject fails this unit. The eject

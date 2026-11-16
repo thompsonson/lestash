@@ -6,8 +6,8 @@ import signal
 import sqlite3
 import subprocess
 import sys
-from collections.abc import Callable
-from contextlib import suppress
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Annotated
 
@@ -191,6 +191,27 @@ def add_collection_commands(app: typer.Typer, store_for: Callable[[Config], Kobo
                 )
 
 
+@contextmanager
+def rw_mounted(root: Path, mount: bool) -> Iterator[None]:
+    """Mount ``root`` read-write for the block when ``mount`` is set, then sync and unmount.
+
+    Refuses when the Kobo is already mounted, so nothing else is reading it meanwhile.
+    """
+    if not mount:
+        yield
+        return
+    if _mounted(RO_MOUNT) or _mounted(root):
+        raise OSError(f"the Kobo is already mounted ({RO_MOUNT} or {root}); unmount it first")
+    mounted = subprocess.run([MOUNT, str(root)], check=False, capture_output=True, text=True)
+    if mounted.returncode != 0:
+        raise OSError(f"could not mount {root}: {mounted.stderr.strip() or mounted.returncode}")
+    try:
+        yield
+    finally:
+        subprocess.run(["sync"], check=False)
+        subprocess.run([UMOUNT, str(root)], check=False)
+
+
 def _write(
     store: KoboStore,
     the_plan: kobo_shelf.Plan,
@@ -198,18 +219,8 @@ def _write(
     root: Path,
     mount: bool,
 ) -> list[kobo_shelf.ShelfResult]:
-    if not mount:
+    with rw_mounted(root, mount):
         return kobo_shelf.write(store, the_plan, shelves, root)
-    if _mounted(RO_MOUNT) or _mounted(root):
-        raise OSError(f"the Kobo is already mounted ({RO_MOUNT} or {root}); unmount it first")
-    mounted = subprocess.run([MOUNT, str(root)], check=False, capture_output=True, text=True)
-    if mounted.returncode != 0:
-        raise OSError(f"could not mount {root}: {mounted.stderr.strip() or mounted.returncode}")
-    try:
-        return kobo_shelf.write(store, the_plan, shelves, root)
-    finally:
-        subprocess.run(["sync"], check=False)
-        subprocess.run([UMOUNT, str(root)], check=False)
 
 
 def _report(results: list[kobo_shelf.ShelfResult], preview: bool) -> None:

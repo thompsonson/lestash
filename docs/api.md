@@ -226,6 +226,27 @@ Make this item the next version of another. Returns the versions, as `GET` does.
 
 ---
 
+### `GET /api/items/{item_id}/kobo`
+
+Where the item stands on the Kobo (#338). `404` if the item doesn't exist.
+
+```json
+{"wanted": true, "marked": true, "collections": ["Ontology learning set"],
+ "newest_id": 111710, "on": false, "path": "LeStash/Typing an Ontology.pdf",
+ "copied_at": "2026-11-17T08:10:00Z", "error": null,
+ "text": "Copied, waiting for the Kobo to import it"}
+```
+
+- `marked`: you asked for it on its own. `collections`: collections shown on the Kobo that hold it. `wanted` is either.
+- `newest_id`: the version copied, the newest. `path`, `copied_at` and `error` are about that version's copy.
+- `on`: the newest version is a book on the Kobo, or linked `alternate_of` one.
+
+### `PUT /api/items/{item_id}/kobo`
+
+Ask for the item on the Kobo on its own, or stop asking: `{"wanted": true}`. Returns the status, as `GET` does. The newest version is copied at the next plug-in. Not asking any more never takes a copy off the Kobo.
+
+---
+
 ### `GET /api/items/{item_id}/agents`
 
 Who made, voiced, published or received the item, ordered by role and position. `404` if the item doesn't exist.

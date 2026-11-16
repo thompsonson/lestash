@@ -75,6 +75,22 @@ lestash kobo write-collections --dry-run              # what the next write woul
 lestash kobo eject                                    # eject, so the Kobo leaves USB mode
 ```
 
+## PDFs to the Kobo (#338)
+
+- Ask for an item on the Kobo with `lestash kobo send ID`, or `PUT /api/items/{id}/kobo`. Every item in a collection shown on the Kobo is asked for too.
+- `lestash kobo unsend ID` stops asking. A copy already on the Kobo stays.
+- `lestash kobo files` lists what is asked for, and where each item stands.
+- At each plug-in, after the collections are written, the unit runs `lestash kobo copy-files --mount`.
+  - It copies the newest version of each item asked for into `LeStash/`, named after its title.
+  - It never overwrites or deletes a file. A taken name gets the file's hash added: `Title (1a2b3c4d).pdf`.
+  - It reads each copy back and checks its SHA-256 before recording it.
+  - It skips a file whose bytes are already on the Kobo, however they got there.
+  - Items without a PDF, and books taken off the Kobo, are left out.
+  - Each run is logged as `kobo-files` in Settings → Sources.
+- The Kobo imports the copies when it is ejected. The next plug-in's import links each book to its item by its bytes (`alternate_of`), and collections show it from then on.
+  - The link holds after you draw on the copy, because the book keeps the copied bytes as its first version.
+- So a new PDF takes two plug-ins to show in a collection on the Kobo: one to copy it, one to write the collection.
+
 ## Config (`~/.config/lestash/config.toml`)
 
 ```toml

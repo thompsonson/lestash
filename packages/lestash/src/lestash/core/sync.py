@@ -24,6 +24,7 @@ from lestash.core.database import (
 )
 from lestash.core.extract import content_on_import
 from lestash.core.links import link_items
+from lestash.core.pdfs import link_copies
 from lestash.importers import merge_with_stored
 from lestash.models.item import ItemCreate
 from lestash.models.sync import SyncCheckpoint
@@ -161,6 +162,12 @@ class SyncStore:
             except Exception:
                 self.conn.rollback()
                 logger.exception("Recording agents failed after the %s sync", self.source)
+            try:
+                link_copies(self.conn)
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                logger.exception("Linking copies of PDFs failed after the %s sync", self.source)
 
     def _store(self, item: ItemCreate) -> bool:
         """Store one item; False when merge_with_stored() says a stored item holds it.

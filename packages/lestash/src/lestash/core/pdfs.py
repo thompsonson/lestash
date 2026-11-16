@@ -22,6 +22,9 @@ SOURCE_TYPE = "pdf"
 REVISION = "revision_of"
 # Who made a revision link: you, by hand or through the app
 REVISION_ORIGIN = "manual"
+ALTERNATE = "alternate_of"
+# Who links a copy to its PDF: the same bytes
+COPY_ORIGIN = "linker:sha256"
 
 
 class VersionError(ValueError):
@@ -95,6 +98,7 @@ def add_pdf(
     )
     rel_path = save_media_file(item_id, data, name, config)
     set_source_pdf(conn, config, item_id, local_path=rel_path, source_origin="upload")
+    link_copies(conn)  # a copy already held, such as one sideloaded to the Kobo
     return Added(item_id, True, sha)
 
 
@@ -163,3 +167,34 @@ def link_revision(conn: sqlite3.Connection, newer_id: int, older_id: int) -> boo
         (newer_id, older_id, REVISION, REVISION_ORIGIN),
     )
     return True
+
+
+def link_copies(conn: sqlite3.Connection) -> int:
+    """Link each item holding a PDF's exact bytes to that PDF, ``alternate_of``.
+
+    A Kobo book copied from a PDF item holds the copied bytes as its first file version,
+    so it is linked even after notes drawn on it change the file. Rejected links stay
+    rejected. Returns how many were added; the caller commits.
+    """
+    pdfs = conn.execute(
+        "SELECT id, source_id, json_extract(metadata, '$.sha256') FROM items WHERE source_type = ?",
+        (SOURCE_TYPE,),
+    ).fetchall()
+    links: set[tuple[int, int, str]] = set()
+    for pdf_id, key, full in pdfs:
+        if not key:
+            continue
+        # The item key is the hash's start: a range on the indexed hash finds its copies
+        for copy_id, sha in conn.execute(
+            "SELECT item_id, sha256 FROM item_media WHERE sha256 >= ? AND sha256 < ?",
+            (key, key + "g"),
+        ):
+            if copy_id != pdf_id and (full is None or sha == full):
+                links.add((copy_id, pdf_id, sha))
+    before = conn.total_changes
+    conn.executemany(
+        "INSERT OR IGNORE INTO item_links (from_id, to_id, kind, evidence, origin, status)"
+        f" VALUES (?, ?, '{ALTERNATE}', ?, '{COPY_ORIGIN}', 'confirmed')",
+        sorted(links),
+    )
+    return conn.total_changes - before

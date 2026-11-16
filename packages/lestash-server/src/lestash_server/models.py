@@ -288,6 +288,26 @@ class ItemVersion(BaseModel):
     created_at: str | None = None
 
 
+class ItemKobo(BaseModel):
+    """Where an item stands on the Kobo (#338)."""
+
+    wanted: bool  # marked on its own, or in a collection shown on the Kobo
+    marked: bool  # you asked for it on its own
+    collections: list[str]  # collections shown on the Kobo that hold it
+    newest_id: int  # the version that goes: the newest
+    on: bool  # the newest version is on the Kobo
+    path: str | None = None  # the copy LeStash made, from the Kobo's root
+    copied_at: str | None = None
+    error: str | None = None
+    text: str  # "On the Kobo", "For the Kobo, copied at the next plug-in", ...
+
+
+class ItemKoboSwitch(BaseModel):
+    """Ask for an item on the Kobo on its own, or stop asking."""
+
+    wanted: bool
+
+
 class ItemVersionsResponse(BaseModel):
     """Every version of an item's document, newest first, the item included."""
 

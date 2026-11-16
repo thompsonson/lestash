@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 30
+SCHEMA_VERSION = 31
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -720,6 +720,27 @@ MIGRATIONS = [
         """
         CREATE INDEX IF NOT EXISTS idx_item_history_user_edit
             ON item_history(changed_at) WHERE change_reason = 'user-edit';
+        """,
+    ),
+    (
+        31,
+        "Items wanted on a device, and the copies put there (#338)",
+        # Intent and bookkeeping only, as collection_places: whether a copy is on the
+        # device is worked out from its snapshots. wanted: you asked for this item on
+        # its own (a collection shown there asks for its items too). path, sha256 and
+        # copied_at: the copy LeStash made and checked, never overwritten or deleted.
+        """
+        CREATE TABLE IF NOT EXISTS item_places (
+            id INTEGER PRIMARY KEY,
+            item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            place TEXT NOT NULL,
+            wanted INTEGER NOT NULL DEFAULT 0,
+            path TEXT,
+            sha256 TEXT,
+            copied_at DATETIME,
+            last_error TEXT,
+            UNIQUE (item_id, place)
+        );
         """,
     ),
 ]
