@@ -729,6 +729,7 @@ MIGRATIONS = [
         # device is worked out from its snapshots. wanted: you asked for this item on
         # its own (a collection shown there asks for its items too). path, sha256 and
         # copied_at: the copy LeStash made and checked, never overwritten or deleted.
+        # removed_at: a snapshot after the copy no longer held it, before any import.
         """
         CREATE TABLE IF NOT EXISTS item_places (
             id INTEGER PRIMARY KEY,
@@ -738,6 +739,7 @@ MIGRATIONS = [
             path TEXT,
             sha256 TEXT,
             copied_at DATETIME,
+            removed_at DATETIME,
             last_error TEXT,
             UNIQUE (item_id, place)
         );

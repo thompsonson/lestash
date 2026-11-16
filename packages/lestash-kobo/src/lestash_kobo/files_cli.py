@@ -19,6 +19,7 @@ import signal
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -29,9 +30,11 @@ from lestash.core.database import get_connection
 from lestash.core.item_places import (
     Wanted,
     asked_for,
+    copies_made,
     item_place,
     record_copy,
     record_copy_error,
+    record_removed,
     set_wanted,
     to_copy,
 )
@@ -146,6 +149,22 @@ def copy_files(root: Path, wanted: list[Wanted], held: dict[str, str]) -> list[C
     return results
 
 
+def _note_removed(conn, store: KoboStore) -> None:
+    """Record each copy a snapshot taken after it no longer holds, so a copy taken off
+    the Kobo before it was imported stays off."""
+    snapshot = store.latest()
+    if snapshot is None:
+        return
+    taken = snapshot.taken_at.astimezone(UTC)
+    for item_id, path, copied_at in copies_made(conn, KOBO):
+        when = datetime.fromisoformat(str(copied_at).replace("Z", "+00:00").replace(" ", "T"))
+        if (
+            when if when.tzinfo else when.replace(tzinfo=UTC)
+        ) < taken and path not in snapshot.files:
+            record_removed(conn, item_id, KOBO, taken.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    conn.commit()
+
+
 def add_file_commands(app: typer.Typer, store_for: Callable[[Config], KoboStore]) -> None:
     """Register the PDF commands on the ``lestash kobo`` app."""
 
@@ -232,6 +251,7 @@ def add_file_commands(app: typer.Typer, store_for: Callable[[Config], KoboStore]
         config = Config.load()
         store = store_for(config)
         with get_connection(config) as conn:
+            _note_removed(conn, store)
             wanted, problems = to_copy(conn, config, KOBO)
             for problem in problems:
                 console.print(f"[yellow]{problem}[/yellow]")
