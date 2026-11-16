@@ -38,7 +38,10 @@ class EjectFailed(RuntimeError):
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=30)
+    try:
+        return subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise EjectFailed(f"{cmd[0]} {cmd[1]}: {e}") from e
 
 
 def eject(disk: Path = KOBO_DISK) -> None:

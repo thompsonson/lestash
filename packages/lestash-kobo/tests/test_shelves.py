@@ -396,3 +396,17 @@ def test_a_book_the_kobo_would_not_import_stops_no_write(device, kobo, test_db) 
     store.take(device, _at(3))
     result = _write(device)
     assert result.exit_code == 0, result.output
+
+
+def test_a_broken_book_replaced_after_an_eject_counts_again(device, kobo, test_db) -> None:
+    store, cid = kobo
+    _show(test_db, cid)
+    book = device / "book.pdf"
+    book.write_bytes(b"not a pdf")
+    store.take(device, _at(1))
+    kobo_shelf.record_eject(store, _at(2))
+    book.write_bytes(b"%PDF-1.4 fixed copy")  # copied again, not imported yet
+    store.take(device, _at(3))
+    result = _write(device)
+    assert result.exit_code == 1, result.output
+    assert "looks unsaved" in result.output

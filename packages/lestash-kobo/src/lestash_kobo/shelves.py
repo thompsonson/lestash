@@ -280,19 +280,25 @@ def stale(store: KoboStore, snapshot: Snapshot, conn: sqlite3.Connection) -> lis
     ejected = last_eject(store)
     books = {rel: entry for rel, entry in snapshot.files.items() if _book(rel)}
     first: dict[str, str] = {}  # the book's contents when first seen
-    seen: dict[str, datetime] = {}  # and when
+    # Since when the book has been there with these contents, without a gap: a book
+    # copied again, or replaced, is new
+    seen: dict[str, datetime | None] = dict.fromkeys(books)
     for older in store.snapshots():
         if older.taken_at > snapshot.taken_at:
             break
-        for rel in books:
-            if rel not in first and rel in older.files:
-                first[rel] = older.files[rel].sha256
+        for rel, entry in books.items():
+            there = older.files.get(rel)
+            if there is not None and rel not in first:
+                first[rel] = there.sha256
+            if there is None or there.sha256 != entry.sha256:
+                seen[rel] = None
+            elif seen[rel] is None:
                 seen[rel] = older.taken_at
     reasons = []
     for rel, entry in sorted(books.items()):
         if DEVICE_ROOT + rel not in listed:
             # Seen before an eject, the Kobo had its chance to import it, and won't
-            first_seen = seen.get(rel, snapshot.taken_at)
+            first_seen = seen[rel] or snapshot.taken_at
             if ejected is None or first_seen > ejected:
                 reasons.append(f"{rel} is on the Kobo but not in its database")
             continue

@@ -94,3 +94,21 @@ def test_a_failed_eject_keeps_the_previous_eject_time(disk, monkeypatch, test_db
     result = _eject(disk)
     assert result.exit_code == 1
     assert kobo_shelf.last_eject(store) == datetime(2026, 11, 1, tzinfo=UTC)
+
+
+def test_a_hung_eject_keeps_the_previous_eject_time(disk, monkeypatch, test_db) -> None:
+    store = _store({}, test_db)
+    kobo_shelf.record_eject(store, datetime(2026, 11, 1, tzinfo=UTC))
+
+    def hang(cmd, **kw):
+        if cmd[0] == kobo_eject.BUSCTL:
+            raise subprocess.TimeoutExpired(cmd, 30)
+        return subprocess.CompletedProcess(
+            cmd, 1 if cmd[0] == kobo_eject.MOUNTPOINT else 0, INFO, ""
+        )
+
+    monkeypatch.setattr(kobo_eject.subprocess, "run", hang)
+    result = _eject(disk)
+    assert result.exit_code == 1
+    assert "timed out" in result.output
+    assert kobo_shelf.last_eject(store) == datetime(2026, 11, 1, tzinfo=UTC)
