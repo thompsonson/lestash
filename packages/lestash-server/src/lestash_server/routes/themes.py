@@ -83,8 +83,8 @@ def keep_theme(theme_id: int, body: ThemeKeep | None = None):
     return ThemeKept(collection_id=collection_id)
 
 
-@router.post("/{theme_id}/dismiss", status_code=204)
-def dismiss_theme(theme_id: int):
+@router.post("/{theme_id}/dismiss")
+def dismiss_theme(theme_id: int) -> dict[str, str]:
     """Never suggest this theme, or one mostly like it, again."""
     with get_db() as conn:
         try:
@@ -92,3 +92,4 @@ def dismiss_theme(theme_id: int):
         except ThemeGone as e:
             raise HTTPException(status_code=404, detail=str(e)) from None
         conn.commit()
+    return {"status": "dismissed"}

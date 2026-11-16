@@ -502,7 +502,7 @@ Make a collection of the theme's items. Optional body `{"name": "..."}`; the the
 
 ### `POST /api/themes/{theme_id}/dismiss`
 
-Never suggest this theme, or one sharing half or more of its items, again. Returns `204`; `404` if the theme isn't suggested now.
+Never suggest this theme, or one sharing half or more of its items, again. Returns `{"status": "dismissed"}`; `404` if the theme isn't suggested now.
 
 ---
 

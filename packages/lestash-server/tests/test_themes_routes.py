@@ -57,7 +57,7 @@ def test_keeping_a_theme_makes_a_collection(client, theme):
 def test_dismissing_a_theme_hides_it(client, theme):
     theme_id = client.get("/api/themes").json()[0]["id"]
 
-    assert client.post(f"/api/themes/{theme_id}/dismiss").status_code == 204
+    assert client.post(f"/api/themes/{theme_id}/dismiss").json() == {"status": "dismissed"}
 
     assert client.get("/api/themes").json() == []
     assert client.post(f"/api/themes/{theme_id}/dismiss").status_code == 404
