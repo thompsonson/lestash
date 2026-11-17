@@ -21,6 +21,7 @@ from lestash.core.db_admin import (
     get_status_summary,
     get_sync_health,
     get_table_stats,
+    is_labelled,
     list_backups,
     prune_backups,
     purge_history,
@@ -396,12 +397,25 @@ class TestCli:
         db_path = get_db_path(test_db)
         for i in range(3):
             shutil.copy2(db_path, db_path.parent / f"lestash-backup-20260101-00000{i}.db")
-        result = runner.invoke(cli_app, ["backup", "create", "--label", "pre-test", "--keep", "2"])
+        (db_path.parent / "lestash-backup-20250101-000000-pre-deploy-1.db").write_bytes(
+            db_path.read_bytes()
+        )
+        result = runner.invoke(cli_app, ["backup", "create", "--keep", "2"])
+        assert result.exit_code == 0, result.output
+        assert "Pruned 2 older scheduled backup(s), keeping 2" in result.output
+        names = [b["filename"] for b in list_backups(db_path)]
+        assert len(names) == 3  # 2 scheduled, and the labelled one is never pruned by --keep
+        assert "lestash-backup-20250101-000000-pre-deploy-1.db" in names
+        result = runner.invoke(cli_app, ["backup", "create", "--label", "pre-test"])
         assert result.exit_code == 0, result.output
         assert "pre-test.db" in result.output
-        assert "Pruned 2 older backup(s), keeping 2" in result.output
+        result = runner.invoke(
+            cli_app, ["backup", "prune", "--labelled", "--keep", "1", "--confirm"]
+        )
+        assert "Pruned 1 labelled backup(s)" in result.output
         names = [b["filename"] for b in list_backups(db_path)]
-        assert len(names) == 2 and names[0].endswith("-pre-test.db")
+        (left,) = [n for n in names if is_labelled(n)]
+        assert left.endswith("-pre-test.db")
 
     def test_backup_create_refuses_a_bad_label(self, runner, cli_app):
         result = runner.invoke(cli_app, ["backup", "create", "--label", "Bad Label"])

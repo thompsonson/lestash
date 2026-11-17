@@ -519,9 +519,25 @@ def verify_backup(backup_path: Path) -> dict:
     return result
 
 
-def prune_backups(db_path: Path, keep: int = 5, backup_dir: Path | None = None) -> list[Path]:
-    """Delete oldest managed backups beyond the keep count. Returns deleted paths."""
-    backups = list_backups(db_path, backup_dir)
+_UNLABELLED = re.compile(rf"^{BACKUP_PREFIX}\d{{8}}-\d{{6}}\.db$")
+
+
+def is_labelled(filename: str) -> bool:
+    """A labelled backup was made before a change; an unlabelled one, by the schedule."""
+    return not _UNLABELLED.match(filename)
+
+
+def prune_backups(
+    db_path: Path, keep: int = 5, backup_dir: Path | None = None, labelled: bool = False
+) -> list[Path]:
+    """Delete the oldest backups of one kind beyond the keep count. Returns deleted paths.
+
+    Scheduled (unlabelled) and labelled backups are counted apart, so the schedule's
+    pruning never deletes a copy made before a change.
+    """
+    backups = [
+        b for b in list_backups(db_path, backup_dir) if is_labelled(b["filename"]) == labelled
+    ]
     to_delete = backups[keep:]  # already sorted newest-first
     deleted = []
     for b in to_delete:

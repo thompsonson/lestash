@@ -19,6 +19,7 @@ from lestash.core.db_admin import (
     find_backup,
     get_history_stats,
     get_status_summary,
+    is_labelled,
     list_backups,
     prune_backups,
     purge_history,
@@ -396,7 +397,10 @@ def backup_create(
         None, "--label", help="Why the copy was made, e.g. pre-deploy-355 (a-z, 0-9, -)."
     ),
     keep: int = typer.Option(
-        None, "--keep", min=1, help="Then prune to the newest N backups, this one included."
+        None,
+        "--keep",
+        min=1,
+        help="Then prune to the newest N scheduled (unlabelled) backups; labelled ones stay.",
     ),
 ) -> None:
     """Create a timestamped database backup, then check its integrity.
@@ -424,9 +428,9 @@ def backup_create(
         f"schema v{result['schema_version']}, {result['item_count']:,} items"
     )
     if keep is not None:
-        deleted = prune_backups(db_path, keep=keep)
+        deleted = prune_backups(db_path, keep=keep, labelled=False)
         if deleted:
-            console.print(f"Pruned {len(deleted)} older backup(s), keeping {keep}.")
+            console.print(f"Pruned {len(deleted)} older scheduled backup(s), keeping {keep}.")
 
 
 @backup_app.command("list")
@@ -483,25 +487,32 @@ def backup_verify(
 
 @backup_app.command("prune")
 def backup_prune(
-    keep: int = typer.Option(5, "--keep", help="Number of backups to keep."),
+    keep: int = typer.Option(5, "--keep", min=0, help="Number of backups to keep."),
+    labelled: bool = typer.Option(
+        False, "--labelled", help="Prune the labelled (pre-change) backups instead."
+    ),
     confirm: bool = typer.Option(False, "--confirm", help="Skip confirmation prompt."),
 ) -> None:
-    """Delete old managed backups, keeping the newest N."""
+    """Delete old backups of one kind, keeping the newest N.
+
+    Scheduled (unlabelled) backups by default; labelled ones with ``--labelled``.
+    """
     from lestash.core.database import get_db_path
 
     db_path = get_db_path()
-    backups = list_backups(db_path)
+    kind = "labelled" if labelled else "scheduled"
+    backups = [b for b in list_backups(db_path) if is_labelled(b["filename"]) == labelled]
     to_delete_count = max(0, len(backups) - keep)
 
     if to_delete_count == 0:
-        console.print(f"Nothing to prune ({len(backups)} backups, keeping {keep}).")
+        console.print(f"Nothing to prune ({len(backups)} {kind} backups, keeping {keep}).")
         return
 
     if not confirm:
-        typer.confirm(f"Delete {to_delete_count} backup(s)?", abort=True)
+        typer.confirm(f"Delete {to_delete_count} {kind} backup(s)?", abort=True)
 
-    deleted = prune_backups(db_path, keep=keep)
-    console.print(f"[green]Pruned {len(deleted)} backup(s).[/green]")
+    deleted = prune_backups(db_path, keep=keep, labelled=labelled)
+    console.print(f"[green]Pruned {len(deleted)} {kind} backup(s).[/green]")
 
 
 # --------------------------------------------------------------------------- #

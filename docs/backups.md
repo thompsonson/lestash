@@ -15,15 +15,17 @@ LeStash backs up its own database. sysbak, or any file backup, copies those back
 |---|---|
 | `lestash db backup create` | Copies the database, checks its integrity, and keeps it only if it passes |
 | `lestash db backup create --label pre-deploy-355` | The same, with why in the file name |
-| `lestash db backup create --keep 6` | The same, then deletes all but the newest 6 |
+| `lestash db backup create --keep 6` | The same, then deletes all but the newest 6 scheduled (unlabelled) backups |
 | `lestash db backup list` | Lists the backups, newest first |
 | `lestash db backup verify [file]` | Checks a backup, the newest by default; exits 1 if it fails |
-| `lestash db backup prune --keep N` | Deletes all but the newest N |
+| `lestash db backup prune --keep N` | Deletes all but the newest N scheduled backups |
+| `lestash db backup prune --labelled --keep N` | Deletes all but the newest N labelled backups |
 
 - Backups are `~/.local/share/lestash/backups/lestash-backup-<UTC time>[-<label>].db`.
 - A copy is written as `….db.partial` and renamed once complete, so a half-made copy is never counted.
 - A copy that fails its integrity check is deleted, and `create` exits 1 before it prunes.
-- `--keep` and `prune` count every `lestash-backup-*.db`, labelled or not.
+- Scheduled (unlabelled) and labelled backups are pruned apart: the schedule's `--keep` never deletes a labelled copy.
+- Labelled copies stay until `prune --labelled` removes them; the sysbak drive holds them for weeks after.
 - Other files in the folder, made by hand, are never pruned; delete them yourself.
 
 ## The schedule

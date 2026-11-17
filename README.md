@@ -205,7 +205,8 @@ lestash db backup create                          # copy, check, keep only if it
 lestash db backup create --label pre-deploy-355   # before a deploy, migration or cleanup
 lestash db backup list                            # newest first
 lestash db backup verify                          # check the newest; exits 1 if it fails
-lestash db backup prune --keep 6                  # keep the newest 6
+lestash db backup prune --keep 6                  # keep the newest 6 scheduled copies
+lestash db backup prune --labelled --keep 10      # keep the newest 10 labelled copies
 ```
 
 `lestash-backup.timer` runs `create --keep 6` every 4 hours, 10 minutes before sysbak.
