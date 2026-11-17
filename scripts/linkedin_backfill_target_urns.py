@@ -17,9 +17,9 @@ import json
 import re
 import sqlite3
 
-from lestash.core.paths import database_path
+from _lestash_paths import paths
 
-DB_PATH = database_path()
+DB_PATH = paths.database_path()
 
 _RESOURCE_URI_PARENT_RE = re.compile(r"/socialActions/(urn:li:[^/]+)/(?:comments|likes)/")
 

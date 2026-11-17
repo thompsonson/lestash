@@ -306,17 +306,11 @@ def prune_media(
     db_path = Path(config.general.database_path).expanduser()
     from lestash.core.db_admin import BACKUP_GLOB
 
-    others: list[Path] = []
-    if (
-        custom_db_dir(config) is not None
-    ):  # the default media folder is the default database's alone
-        backups = set(db_path.parent.glob(BACKUP_GLOB))  # older copies of this database
-        others = [
-            p for p in db_path.parent.glob("*.db") if p.name != db_path.name and p not in backups
-        ]
+    # Another database in this folder may share the media folder
+    backups = set(db_path.parent.glob(BACKUP_GLOB))  # older copies of this database
+    others = [p for p in db_path.parent.glob("*.db") if p.name != db_path.name and p not in backups]
     if others:
-        # The media folder is <db dir>/media: another database there shares it, and
-        # its rows are not ours to read
+        # Its rows are not ours to read
         logger.warning("Not pruning %s: shared with %s", media_dir, others[0])
         counts.shared_with = others[0]
         return counts

@@ -16,6 +16,7 @@ from lestash.core.db_admin import (
     count_fk_violations,
     count_history_before,
     create_backup,
+    find_backup,
     get_history_stats,
     get_status_summary,
     list_backups,
@@ -430,7 +431,7 @@ def backup_verify(
 
     db_path = get_db_path()
     if filename:
-        backup_path = db_path.parent / filename
+        backup_path = find_backup(db_path, filename)
     else:
         backups = list_backups(db_path)
         if not backups:

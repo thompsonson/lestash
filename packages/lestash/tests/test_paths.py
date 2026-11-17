@@ -187,3 +187,34 @@ def test_only_the_paths_module_names_the_legacy_folder() -> None:
                 if _OLD.search(line):
                     found.append(f"{path.relative_to(root)}:{n}: {line.strip()}")
     assert not found, "\n".join(found)
+
+
+def test_an_old_default_pinned_in_config_toml_follows_the_default(home: Path) -> None:
+    """A config.toml saved before #304 names the old default places; after the move
+    they must not bring the old database back."""
+    legacy = paths.legacy_dir()
+    legacy.mkdir(parents=True)
+    get_config_path().write_text(
+        f'[general]\ndatabase_path = "{legacy / "lestash.db"}"\n\n'
+        f'[logging]\nfile_path = "{legacy / "logs" / "lestash.log"}"\nlevel = "DEBUG"\n'
+    )
+    config = Config.load()
+    assert config.general.database_path == str(paths.data_dir() / "lestash.db")
+    assert config.logging.file_path == str(paths.state_dir() / "logs" / "lestash.log")
+    config.save()
+    assert _saved() == {"logging": {"level": "DEBUG"}}
+
+
+def test_backups_made_beside_the_default_database_are_still_found(home: Path) -> None:
+    from lestash.core.db_admin import find_backup, list_backups
+
+    legacy = paths.legacy_dir() / "lestash.db"
+    with get_connection(Config(general=GeneralConfig(database_path=str(legacy)))):
+        pass
+    old = legacy.parent / "lestash-backup-20260101-000000.db"
+    old.write_bytes(legacy.read_bytes())
+    new = create_backup(legacy)
+    assert new.parent == paths.backups_dir()
+    assert [b["path"] for b in list_backups(legacy)] == [str(new), str(old)]
+    assert find_backup(legacy, old.name) == old
+    assert find_backup(legacy, new.name) == new

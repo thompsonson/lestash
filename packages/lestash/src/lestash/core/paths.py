@@ -151,4 +151,4 @@ def switch_file(name: str) -> Path:
 
     ``deploy/lestash-kobo.service`` checks the same folder: config_dir().
     """
-    return settings_dir() / name
+    return config_dir() / name

@@ -26,9 +26,9 @@ import time
 from collections.abc import Iterable
 from urllib.request import Request, urlopen
 
-from lestash.core.paths import database_path
+from _lestash_paths import paths
 
-DB_PATH = database_path()
+DB_PATH = paths.database_path()
 UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"

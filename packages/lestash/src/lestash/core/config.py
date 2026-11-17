@@ -164,6 +164,26 @@ ENV_OVERRIDES: dict[str, tuple[str, str]] = {
 }
 
 
+def _drop_pinned_defaults(data: dict[str, Any]) -> dict[str, Any]:
+    """Drop a database or log path that an older save pinned to its old default.
+
+    Before #304, saving wrote every default, so a config.toml may name
+    the legacy database (``paths.legacy_dir()``) only because it was the default then. Read as
+    unset, it follows the default: the old place until the move, the new one after.
+    """
+    legacy = paths.legacy_dir()
+    pinned = {
+        ("general", "database_path"): legacy / paths.DB_NAME,
+        ("logging", "file_path"): legacy / "logs" / "lestash.log",
+    }
+    for (section, key), old_default in pinned.items():
+        table = data.get(section)
+        value = table.get(key) if isinstance(table, dict) else None
+        if isinstance(value, str) and value and Path(value).expanduser() == old_default:
+            del table[key]  # type: ignore[union-attr]
+    return data
+
+
 class Config(BaseModel):
     """Application configuration.
 
@@ -186,7 +206,7 @@ class Config(BaseModel):
         config_path = get_config_path()
         if config_path.exists():
             with config_path.open("rb") as f:
-                config = cls(**tomllib.load(f))
+                config = cls(**_drop_pinned_defaults(tomllib.load(f)))
         else:
             config = cls()
         for variable, (section, key) in ENV_OVERRIDES.items():

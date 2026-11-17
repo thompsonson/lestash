@@ -21,9 +21,9 @@ import json
 import sqlite3
 from collections import Counter, defaultdict
 
-from lestash.core.paths import database_path
+from _lestash_paths import paths
 
-DB_PATH = database_path()
+DB_PATH = paths.database_path()
 
 
 def walk_attributes(meta_raw: str) -> list[tuple[str, str]]:
