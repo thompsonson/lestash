@@ -1,6 +1,6 @@
 """``lestash kobo push-jelu``: the Kobo's reading status into Jelu (#203).
 
-Shows what it would change; ``--apply`` makes the changes. Not run by any timer.
+Shows what it would change; ``--apply`` makes the changes. Runs at each Kobo plug-in.
 """
 
 from __future__ import annotations
@@ -88,8 +88,9 @@ def add_jelu_commands(app: typer.Typer, store_for: Callable[[Config], KoboStore]
                 with client:
                     books = push.jelu_books(client.userbooks(), client.books())
                     todo = push.plan(conn, kobo, books, also)
-                    _show(todo, snapshot.name, apply_changes)
-                    if not apply_changes or not todo.changes:
+                    links_due = push.to_link(conn, todo)
+                    _show(todo, snapshot.name, apply_changes, len(links_due))
+                    if not apply_changes or not (todo.changes or links_due):
                         _remember(creds, client)
                         return
                     try:
@@ -127,7 +128,7 @@ def _remember(creds: dict[str, str], client) -> None:
         save_credentials(creds["url"], creds["username"], creds["password"], client.token)
 
 
-def _show(todo, snapshot: str, applying: bool) -> None:
+def _show(todo, snapshot: str, applying: bool, links_due: int = 0) -> None:
     from lestash_kobo import jelu_push as push
 
     console.print(f"Kobo snapshot {snapshot}.")
@@ -148,6 +149,8 @@ def _show(todo, snapshot: str, applying: bool) -> None:
         for step in left:
             item = step.kobo.item_id if step.kobo.item_id is not None else "not imported"
             console.print(f"  {item}  {escape(step.text())} ({step.kobo.status})")
+    if links_due and not applying:
+        console.print(f"\n{links_due} link(s) to add in LeStash; run with --apply.")
     if todo.changes and not applying:
         console.print(f"\n{len(todo.changes)} change(s). Nothing was sent; run with --apply.")
     elif not todo.changes:
