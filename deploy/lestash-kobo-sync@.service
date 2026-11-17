@@ -12,4 +12,7 @@ Type=oneshot
 ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash sources sync kobo
 # Then read the notes drawn on PDFs, from each annotated state not read yet (#338)
 ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo extract-notes
+# Then send the reading and finished books to Jelu, the tracker of record (#203).
+# Last, and "-": Jelu being down never fails the import or the notes before it
+ExecStart=-/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo push-jelu --apply
 WorkingDirectory=%h/Projects/thompsonson/lestash

@@ -112,7 +112,7 @@ Jelu is the tracker of record for all reading, ebooks included.
 `lestash kobo push-jelu` sends the Kobo's reading and finished books to Jelu as reading events.
 
 - It reads the newest snapshot and your Jelu library, and shows what it would change.
-- `--apply` makes the changes. No timer runs it.
+- `--apply` makes the changes. The plug-in sync (`lestash-kobo-sync@.service`) runs it last, after `extract-notes`; a failure there never fails the import.
 - **Which titles:** reading or finished on the Kobo, and only books: a title with an ISBN, or one already in Jelu.
   Papers and documents are listed as left out; `--title <item id>` pushes one anyway.
 - **Matching:** ISBN first (ISBN-10 read as 13), else the whole title, subtitle included, with an author surname in common.
