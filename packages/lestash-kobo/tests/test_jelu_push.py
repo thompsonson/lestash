@@ -444,6 +444,23 @@ def test_the_command_applies_logs_and_pushes_a_title_asked_for(test_db, device, 
     assert "Nothing to send" in _cli("push-jelu").output
 
 
+def test_the_command_links_a_book_already_in_step(test_db, device, fake_jelu) -> None:
+    kobo_id, jelu_id = _kobo_and_jelu_items(test_db, device)
+    fake_jelu.add("Neural Networks for Beginners", ["Brian Murray"], "9798224814305", push.READING)
+    dry = _cli("push-jelu")
+    assert "1 link(s) to add in LeStash; run with --apply" in dry.output
+    assert "Nothing to send" in dry.output
+    result = _cli("push-jelu", "--apply")
+    assert result.exit_code == 0, result.output
+    assert "Done: 0 book(s) created, 0 status(es) sent, 1 link(s) added" in result.output
+    assert fake_jelu.events == []
+    with get_connection(test_db) as conn:
+        assert conn.execute(
+            "SELECT 1 FROM item_links WHERE from_id = ? AND to_id = ?", (kobo_id, jelu_id)
+        ).fetchone()
+    assert "link(s) to add" not in _cli("push-jelu").output
+
+
 def test_a_title_that_isnt_a_kobo_book_is_refused(test_db, device, fake_jelu) -> None:
     _store({}, test_db).take(device, datetime(2026, 11, 14, 9, 0, tzinfo=UTC))
     result = _cli("push-jelu", "--title", "999999")

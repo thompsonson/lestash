@@ -123,6 +123,8 @@ Jelu is the tracker of record for all reading, ebooks included.
   since Jelu's update call clears the fields it isn't given.
 - **New books:** a Kobo book with an ISBN that Jelu lacks is created; a Jelu book with that ISBN is used first.
 - **Links:** each match becomes an `alternate_of` link in LeStash once both items exist.
+  A new Jelu book reaches LeStash at the next Jelu sync, so its link comes at the plug-in after that.
+  `--apply` adds due links even when nothing goes to Jelu; the dry run counts them.
   A rejected link means "not the same book", and the pair is never matched again.
 - **Record:** each `--apply` run is logged in the sync log as `kobo-jelu`, with a log line per change.
 - A rerun changes nothing.

@@ -345,14 +345,46 @@ def _rejected(conn: sqlite3.Connection, a: int | None, b: int | None) -> bool:
     )
 
 
-def link_match(conn: sqlite3.Connection, step: Step) -> bool:
-    """Record a match as an ``alternate_of`` link, once both items exist. True if added."""
-    if step.jelu is None or step.how not in ("isbn", "title and author", "title, no authors"):
-        return False
+LINKED = (START, FINISH, NOTHING, CONFLICT, SAME_BOOK)  # steps whose match is linked
+
+
+def _link_ids(conn: sqlite3.Connection, step: Step) -> tuple[int, int] | None:
+    """(Kobo item, Jelu item) for a match that can be linked, once both items exist."""
+    if step.action not in LINKED or step.jelu is None:
+        return None
+    if step.how not in ("isbn", "title and author", "title, no authors"):
+        return None
     kobo_id = _item_ids(conn, [step.kobo.content_id]).get(step.kobo.content_id)
     jelu_id = _jelu_item(conn, step.jelu.book_id)
     if kobo_id is None or jelu_id is None:
+        return None
+    return kobo_id, jelu_id
+
+
+def to_link(conn: sqlite3.Connection, todo: Plan) -> list[Step]:
+    """The matches that can be linked now and aren't yet."""
+    steps = []
+    for step in todo.steps:
+        ids = _link_ids(conn, step)
+        if ids is None:
+            continue
+        kobo_id, jelu_id = ids
+        linked = conn.execute(
+            "SELECT 1 FROM item_links WHERE kind = 'alternate_of'"
+            " AND ((from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?))",
+            (kobo_id, jelu_id, jelu_id, kobo_id),
+        ).fetchone()
+        if linked is None:
+            steps.append(step)
+    return steps
+
+
+def link_match(conn: sqlite3.Connection, step: Step) -> bool:
+    """Record a match as an ``alternate_of`` link, once both items exist. True if added."""
+    ids = _link_ids(conn, step)
+    if ids is None:
         return False
+    kobo_id, jelu_id = ids
     evidence = (
         {"isbn": step.kobo.isbn13}
         if step.how == "isbn"
@@ -482,7 +514,7 @@ def apply(conn: sqlite3.Connection, client: Any, todo: Plan) -> tuple[int, int, 
             except Exception as e:  # report it and carry on with the next book
                 errors.append(f"{step.kobo.title}: {e}")
                 continue
-        if step.action in (START, FINISH, NOTHING, CONFLICT, SAME_BOOK) and link_match(conn, step):
+        if link_match(conn, step):
             links += 1
     conn.commit()
     return created, events, links, errors
