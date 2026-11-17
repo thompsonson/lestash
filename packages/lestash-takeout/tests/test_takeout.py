@@ -12,6 +12,7 @@ import pytest
 import typer
 from googleapiclient.errors import HttpError
 from lestash.cli import sources as sources_cli
+from lestash.core import paths
 from lestash.core.database import get_checkpoints, get_connection
 from lestash.importers import IMPORTER_VERSION
 from lestash_takeout import source
@@ -120,7 +121,7 @@ def test_sync_uses_the_callers_database_not_the_default(test_db, drive, monkeypa
     forbid_default_config(monkeypatch, test_db, allowed=1)
     _sync()
     assert drive.downloaded == []
-    assert not (Path.home() / ".config" / "lestash").exists()
+    assert not paths.legacy_dir().exists() and not paths.data_dir().exists()
 
 
 def test_sync_imports_new_zips_once_and_deletes_downloads(test_db, drive) -> None:

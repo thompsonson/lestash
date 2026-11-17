@@ -24,10 +24,11 @@ import sqlite3
 import sys
 import time
 from collections.abc import Iterable
-from pathlib import Path
 from urllib.request import Request, urlopen
 
-DB_PATH = Path.home() / ".config/lestash/lestash.db"
+from lestash.core.paths import database_path
+
+DB_PATH = database_path()
 UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"

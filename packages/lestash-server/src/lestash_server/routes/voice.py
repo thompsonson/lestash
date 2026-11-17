@@ -10,6 +10,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Form, HTTPException, UploadFile
+from lestash.core import paths
 
 from lestash_server.models import RefineRequest, RefineResponse, TranscribeResponse
 
@@ -85,7 +86,7 @@ async def upload_audio(file: UploadFile):
     if len(data) > 50 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large (max 50MB)")
 
-    cache_dir = Path.home() / ".config" / "lestash" / "cache" / "voice"
+    cache_dir = paths.voice_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     filename = f"voice-{int(time.time())}-{file.filename or 'recording.wav'}"
@@ -130,7 +131,7 @@ async def transcribe_audio(
         raise HTTPException(status_code=413, detail="File too large (max 50MB)")
 
     # Save to temp file for transcription
-    cache_dir = Path.home() / ".config" / "lestash" / "cache" / "voice"
+    cache_dir = paths.voice_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
     temp_filename = f"voice-{int(time.time())}-{original_filename}"
     temp_path = cache_dir / temp_filename

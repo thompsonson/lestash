@@ -422,6 +422,11 @@ BACKUP_GLOB = f"{BACKUP_PREFIX}*.db"
 
 
 def _backup_dir(db_path: Path, backup_dir: Path | None = None) -> Path:
+    """``paths.backups_dir()`` for the default database; beside any other (#304)."""
+    from lestash.core import paths
+
+    if backup_dir is None and db_path.resolve() == paths.database_path().resolve():
+        backup_dir = paths.backups_dir()
     d = backup_dir or db_path.parent
     d.mkdir(parents=True, exist_ok=True)
     return d

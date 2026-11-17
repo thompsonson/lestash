@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from lestash.core.config import secrets_dir
 
 PAGE_SIZE = 100
 SESSION_HEADER = "X-Auth-Token"
@@ -31,9 +32,7 @@ class JeluAuthError(RuntimeError):
 
 
 def get_config_path() -> Path:
-    config_dir = Path.home() / ".config" / "lestash"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    return config_dir / "jelu.json"
+    return secrets_dir() / "jelu.json"
 
 
 def save_credentials(url: str, username: str, password: str, token: str | None = None) -> None:

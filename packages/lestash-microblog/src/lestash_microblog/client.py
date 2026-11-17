@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from lestash.core.config import write_secret
+from lestash.core.config import secrets_dir, write_secret
 
 MICROPUB_ENDPOINT = "https://micro.blog/micropub"
 MICROBLOG_API_BASE = "https://micro.blog"
@@ -14,9 +14,7 @@ MICROBLOG_API_BASE = "https://micro.blog"
 
 def get_config_dir() -> Path:
     """Get lestash config directory."""
-    config_dir = Path.home() / ".config" / "lestash"
-    config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return config_dir
+    return secrets_dir()
 
 
 def get_token_path() -> Path:

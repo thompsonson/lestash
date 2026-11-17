@@ -142,7 +142,7 @@ def set_config(
             raise typer.Exit(1)
         parsed = parse_value(value)
 
-    data = config.model_dump()
+    data = config.user_settings()  # never the defaults or the environment's values
     current = data.get(section)
     if not isinstance(current, dict):
         current = data[section] = {}

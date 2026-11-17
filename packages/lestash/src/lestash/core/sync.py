@@ -14,6 +14,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import IO, Self
 
+from lestash.core import paths
 from lestash.core.activities import record_activities
 from lestash.core.agents import link_agents
 from lestash.core.database import (
@@ -389,12 +390,22 @@ def _now() -> str:
 def _take_lock(
     conn: sqlite3.Connection, source: str, wait: Callable[[], None] | None
 ) -> IO[bytes] | None:
-    """Lock ``<database>.sync-<source>.lock``; None for an in-memory database."""
+    """Lock the source's sync; None for an in-memory database.
+
+    The lock file is ``sync-<source>.lock`` in ``paths.locks_dir()`` for the default
+    database, and ``<database>.sync-<source>.lock`` beside any other (#304).
+    """
     db_file = next((row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main"), "")
     if not db_file:
         return None
+    if Path(db_file).resolve() == paths.database_path().resolve():
+        locks = paths.locks_dir()
+        locks.mkdir(parents=True, exist_ok=True)
+        lock_path = locks / f"sync-{source}.lock"
+    else:
+        lock_path = Path(f"{db_file}.sync-{source}.lock")
     # Kept open for the whole run: closing the file releases the lock
-    lock = Path(f"{db_file}.sync-{source}.lock").open("ab")  # noqa: SIM115
+    lock = lock_path.open("ab")  # noqa: SIM115
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:

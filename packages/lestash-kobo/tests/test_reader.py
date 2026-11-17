@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import typer
+from lestash.core import paths
 from lestash.core.blobs import BlobStore, store_root
 from lestash.core.database import get_connection
 from lestash.core.sync import SyncStore
@@ -617,7 +618,7 @@ def test_sync_uses_the_callers_database_not_the_default(
     assert len(shas) == 3 and all(BlobStore(shared).has(s) for s in shas)
     # The checkpoint is read from the same database: a second sync imports nothing
     assert list(plugin.sync({})) == []
-    assert not (Path.home() / ".config" / "lestash").exists()
+    assert not paths.legacy_dir().exists() and not paths.data_dir().exists()
 
 
 def _pdf(path: Path, title: str, note: bool = False) -> None:

@@ -161,15 +161,11 @@ SQLite database with:
 
 ## Configuration
 
-Default location: `~/.config/lestash/config.toml`
+`config.toml` in `~/.config/lestash` (or `$XDG_CONFIG_HOME/lestash`). It holds only what you set: the database defaults to `~/.local/share/lestash/lestash.db` and the log to `~/.local/state/lestash/logs/lestash.log`. See [`docs/folders.md`](../../docs/folders.md).
 
 ```toml
-[general]
-database_path = "~/.config/lestash/lestash.db"
-
 [logging]
 level = "INFO"
-file_path = "~/.config/lestash/logs/lestash.log"
 ```
 
 ## License

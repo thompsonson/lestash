@@ -40,6 +40,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
+from lestash.core import paths
 from lestash.core import transcribe_worker as _worker
 from lestash.core.blobs import BlobStore, store_root
 from lestash.core.config import Config
@@ -51,8 +52,6 @@ OCR_TOOL = "rapidocr-en"
 HTML_TOOL = "html-text"
 TRANSCRIPT_TOOL = f"faster-whisper-{_worker.WHISPER_MODEL}+speakers"
 # The model folder lestash-voice uses too
-WHISPER_MODELS = Path.home() / ".local" / "share" / "lestash" / "whisper-models"
-SPEAKER_MODELS = Path.home() / ".local" / "share" / "lestash" / "speaker-models"
 REMOTE_ROOT = "lestash-worker"  # the worker's folder in the host's home
 FFMPEG_TIMEOUT_S = 600  # converting an hour's recording takes seconds
 HEADING_EVERY_S = 60  # a transcript's ``## 12:34`` headings, about this far apart
@@ -377,7 +376,8 @@ class _Transcriber:
         try:
             subprocess.run(
                 [*nice, sys.executable, "-I", _worker.__file__, "run", str(folder),
-                 "--models", str(SPEAKER_MODELS), "--whisper-models", str(WHISPER_MODELS),
+                 "--models", str(paths.speaker_models_dir()),
+                 "--whisper-models", str(paths.whisper_models_dir()),
                  "--workers", str(workers), "--threads", str(threads)],
                 check=True, capture_output=True, text=True,
             )  # fmt: skip

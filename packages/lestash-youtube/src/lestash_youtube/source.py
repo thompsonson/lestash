@@ -414,7 +414,8 @@ class YouTubeSource(SourcePlugin):
             3. Enable the YouTube Data API v3
             4. Create OAuth 2.0 Client ID (Application type: Desktop app)
             5. Download the JSON file
-            6. Save it as: ~/.config/lestash/youtube_client_secrets.json
+            6. Save it as youtube_client_secrets.json in LeStash's config folder
+               (``lestash config show`` names it)
 
             Then run: lestash youtube auth
             """

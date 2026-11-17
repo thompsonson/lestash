@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lestash.core.config import write_secret
+from lestash.core import paths
+from lestash.core.config import secrets_dir, write_secret
 
 if TYPE_CHECKING:
     from atproto import Client, models
@@ -12,9 +13,7 @@ if TYPE_CHECKING:
 
 def get_config_dir() -> Path:
     """Get lestash config directory."""
-    config_dir = Path.home() / ".config" / "lestash"
-    config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return config_dir
+    return secrets_dir()
 
 
 def get_credentials_path() -> Path:
@@ -23,8 +22,10 @@ def get_credentials_path() -> Path:
 
 
 def get_session_path() -> Path:
-    """Get path to Bluesky session file."""
-    return get_config_dir() / "bluesky_session.json"
+    """Get path to Bluesky session file: state, not config (#304)."""
+    path = paths.bluesky_session_path()
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return path
 
 
 def save_credentials(handle: str, password: str) -> None:

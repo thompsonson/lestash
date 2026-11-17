@@ -24,9 +24,10 @@ import argparse
 import re
 import sqlite3
 import unicodedata
-from pathlib import Path
 
-DB_PATH = Path.home() / ".config/lestash/lestash.db"
+from lestash.core.paths import database_path
+
+DB_PATH = database_path()
 
 # Curated LinkedIn handle → human display name. Extend over time; the script
 # does nothing destructive if a handle here is wrong — it only upgrades rows

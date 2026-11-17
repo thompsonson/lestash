@@ -210,12 +210,9 @@ cd app && npx tauri build
 
 ## Configuration
 
-Configuration is stored in `~/.config/lestash/config.toml`:
+Configuration is stored in `config.toml` in LeStash's config folder, `~/.config/lestash`. The database lives in `~/.local/share/lestash`; [`docs/folders.md`](docs/folders.md) lists every folder and the environment variables that override a setting.
 
 ```toml
-[general]
-database_path = "~/.config/lestash/lestash.db"
-
 [logging]
 level = "INFO"
 ```

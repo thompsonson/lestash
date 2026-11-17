@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from lestash.core import paths
+
 LEAKS = """
 from lestash.core.database import get_connection
 
@@ -17,7 +19,7 @@ def test_uses_the_default_config():
 
 def test_home_is_a_temp_folder() -> None:
     assert Path.home() == Path(os.environ["HOME"])
-    assert not (Path.home() / ".config" / "lestash").exists()
+    assert not paths.legacy_dir().exists() and not paths.data_dir().exists()
 
 
 def test_a_test_that_opens_the_default_database_fails(tmp_path: Path) -> None:

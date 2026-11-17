@@ -7,14 +7,15 @@ from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 
+from lestash.core import paths
 from lestash.models.item import ItemCreate
 
 logger = logging.getLogger(__name__)
 
 
 def _cache_dir() -> Path:
-    """Downloaded Drive files, under the home folder at the time of the call."""
-    return Path.home() / ".config" / "lestash" / "cache" / "drive"
+    """Downloaded Drive files (``paths.drive_cache_dir()``), looked up at call time."""
+    return paths.drive_cache_dir()
 
 
 FOLDER_MIME = "application/vnd.google-apps.folder"

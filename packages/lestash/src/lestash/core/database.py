@@ -15,8 +15,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from lestash.core import paths
 from lestash.core.activities import record_activities
-from lestash.core.config import Config
+from lestash.core.config import Config, custom_db_dir
 
 if TYPE_CHECKING:
     from lestash.models.item import ItemCreate
@@ -1086,7 +1087,7 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
 def init_database(config: Config | None = None) -> None:
     """Initialize the database with schema and apply migrations."""
     db_path = get_db_path(config)
-    # The config folder holds credentials: readable only by you when made here (#189)
+    # Readable only by you when made here (#189)
     db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     with sqlite3.connect(db_path) as conn:
@@ -1567,13 +1568,12 @@ def get_cache_dir(config: Config | None = None) -> Path:
     Creates the directory if it doesn't exist.
 
     Returns:
-        Path to ~/.lestash/cache/posts/
+        The default database's: ``paths.posts_cache_dir()``; else beside the database.
     """
     if config is None:
         config = Config.load()
-    # Use the database path's parent as the base for cache
-    db_path = Path(config.general.database_path).expanduser()
-    cache_dir = db_path.parent / "cache" / "posts"
+    custom = custom_db_dir(config)
+    cache_dir = paths.posts_cache_dir() if custom is None else custom / "cache" / "posts"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 
@@ -1661,12 +1661,12 @@ def get_media_dir(config: Config | None = None) -> Path:
     """Get the media directory for storing attachments.
 
     Returns:
-        Path to ~/.lestash/media/
+        The default database's: ``paths.media_dir()``; else beside the database.
     """
     if config is None:
         config = Config.load()
-    db_path = Path(config.general.database_path).expanduser()
-    media_dir = db_path.parent / "media"
+    custom = custom_db_dir(config)
+    media_dir = paths.media_dir() if custom is None else custom / "media"
     media_dir.mkdir(parents=True, exist_ok=True)
     return media_dir
 

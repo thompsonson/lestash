@@ -16,9 +16,10 @@ import argparse
 import json
 import re
 import sqlite3
-from pathlib import Path
 
-DB_PATH = Path.home() / ".config/lestash/lestash.db"
+from lestash.core.paths import database_path
+
+DB_PATH = database_path()
 
 _RESOURCE_URI_PARENT_RE = re.compile(r"/socialActions/(urn:li:[^/]+)/(?:comments|likes)/")
 

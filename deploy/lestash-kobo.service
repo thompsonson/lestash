@@ -25,16 +25,18 @@ ExecStart=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/mounted" ]; then /usr/bin/umou
 # Write the collections shown on the Kobo (K8, #315), after the snapshot, which is the
 # backup. It mounts /media/kobo-rw only when something changes, checks the database is
 # the snapshot's and is saved, and unmounts. A failure is logged in Settings → Sources,
-# and the eject still runs. Paused while ~/.config/lestash/kobo-writes-paused exists.
+# and the eject still runs. Paused while the switch file kobo-writes-paused exists.
+# Switch files live in lestash.core.paths.config_dir(). A unit can't import it, so it
+# spells the same rule: $XDG_CONFIG_HOME, else ~/.config, then lestash/.
 # Then copy the PDFs asked for (#338) into LeStash/, never over a file; the Kobo
 # imports them at the eject. A failure is logged the same way.
-ExecStart=/bin/sh -c 'if [ -e %h/.config/lestash/kobo-writes-paused ]; then rm -f "$RUNTIME_DIRECTORY/ours"; echo "Collection writes paused: %h/.config/lestash/kobo-writes-paused exists."; fi; if [ -e "$RUNTIME_DIRECTORY/ours" ]; then rm "$RUNTIME_DIRECTORY/ours"; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo write-collections --mount || echo "Collection write failed; see Settings, Sources."; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo copy-files --mount || echo "Copying PDFs failed; see Settings, Sources."; fi'
+ExecStart=/bin/sh -c 'if [ -e $${XDG_CONFIG_HOME:-%h/.config}/lestash/kobo-writes-paused ]; then rm -f "$RUNTIME_DIRECTORY/ours"; echo "Collection writes paused: $${XDG_CONFIG_HOME:-%h/.config}/lestash/kobo-writes-paused exists."; fi; if [ -e "$RUNTIME_DIRECTORY/ours" ]; then rm "$RUNTIME_DIRECTORY/ours"; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo write-collections --mount || echo "Collection write failed; see Settings, Sources."; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo copy-files --mount || echo "Copying PDFs failed; see Settings, Sources."; fi'
 # Eject, so the Kobo leaves USB mode: only then does it save its database and import
 # new books. umount alone left it on its Connected screen for 30 hours. Ejecting needs
 # the polkit grant install-root.sh adds. A failed eject fails this unit. The eject
 # removes the disk, which stops this unit (BindsTo); nothing runs after it.
-# Not while ~/.config/lestash/kobo-no-eject exists, to keep the Kobo's files open on the desktop.
-ExecStart=/bin/sh -c 'if [ -e %h/.config/lestash/kobo-no-eject ]; then rm -f "$RUNTIME_DIRECTORY/eject"; echo "Not ejecting: %h/.config/lestash/kobo-no-eject exists."; fi; if [ -e "$RUNTIME_DIRECTORY/eject" ]; then rm "$RUNTIME_DIRECTORY/eject"; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo eject; fi'
+# Not while the switch file kobo-no-eject exists, to keep the Kobo's files open on the desktop.
+ExecStart=/bin/sh -c 'if [ -e $${XDG_CONFIG_HOME:-%h/.config}/lestash/kobo-no-eject ]; then rm -f "$RUNTIME_DIRECTORY/eject"; echo "Not ejecting: $${XDG_CONFIG_HOME:-%h/.config}/lestash/kobo-no-eject exists."; fi; if [ -e "$RUNTIME_DIRECTORY/eject" ]; then rm "$RUNTIME_DIRECTORY/eject"; /home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash kobo eject; fi'
 # The same when a step failed
 ExecStopPost=/bin/sh -c 'if [ -e "$RUNTIME_DIRECTORY/mounted" ] && /usr/bin/mountpoint -q /media/kobo; then /usr/bin/umount /media/kobo; fi'
 WorkingDirectory=%h/Projects/thompsonson/lestash
