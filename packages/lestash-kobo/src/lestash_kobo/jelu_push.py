@@ -282,9 +282,13 @@ def match(title: KoboTitle, books: list[JeluBook]) -> tuple[JeluBook | None, str
             # Your own copy first, if Jelu holds the same ISBN twice
             by_isbn.sort(key=lambda b: b.userbook_id is None)
             return by_isbn[0], "isbn"
-    if not title_key(title.title):
+    if not full_key(title.title):
         return None, None
     same = [b for b in books if same_title(title.title, b.title)]
+    if title.isbn13:
+        # Both carry ISBNs, and they differ: only the whole title still says it's the
+        # same work, so a book missing a subtitle is another book (round 5, #203)
+        same = [b for b in same if not b.isbns or full_key(b.title) == full_key(title.title)]
     if not same:
         return None, None
     surnames = _surnames(title.authors)

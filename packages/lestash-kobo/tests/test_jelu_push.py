@@ -177,6 +177,23 @@ def test_the_whole_title_wins_over_one_missing_its_subtitle(test_db) -> None:
     assert (book.title, how) == ("Dune", "title and author")
 
 
+def test_a_book_with_another_isbn_and_a_subtitle_is_another_book(test_db) -> None:
+    jelu = FakeJelu()
+    jelu.add("Neural Networks for Beginners: Deep Learning", ["Brian Murray"], "9781234567897")
+    books = push.jelu_books(jelu.userbooks(), jelu.books())
+    assert push.match(_title(), books) == (None, None)
+    (step,) = _plan(test_db, jelu, _title()).steps
+    assert step.action == push.CREATE
+
+
+def test_a_title_starting_with_a_bracket_still_matches(test_db) -> None:
+    jelu = FakeJelu()
+    jelu.add("(Un)Learning", ["Brian Murray"])
+    books = push.jelu_books(jelu.userbooks(), jelu.books())
+    title = _title(isbn13=None, title="(Un)Learning")
+    assert push.match(title, books)[1] == "title and author"
+
+
 # --- the plan ---
 
 
