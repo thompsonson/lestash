@@ -427,6 +427,17 @@ class TestCli:
             runner.invoke(cli_app, ["backup", "prune", *flags, "--confirm"])
         assert odd.exists()
 
+    def test_a_backup_under_another_name_sorts_by_its_file_time(self, test_db):
+        import os
+
+        db_path = get_db_path(test_db)
+        odd = db_path.parent / "lestash-backup-by-hand.db"
+        odd.write_bytes(db_path.read_bytes())
+        os.utime(odd, (0, 0))  # written in 1970
+        newest = create_backup(db_path)
+        names = [b["filename"] for b in list_backups(db_path)]
+        assert names == [newest.name, odd.name]
+
     def test_backup_create_refuses_a_bad_label(self, runner, cli_app):
         result = runner.invoke(cli_app, ["backup", "create", "--label", "Bad Label"])
         assert result.exit_code == 2

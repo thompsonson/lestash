@@ -484,11 +484,21 @@ def find_backup(db_path: Path, filename: str) -> Path:
     return _backup_dir(db_path) / filename
 
 
+def _backup_time(p: Path) -> str:
+    """When a backup was made, as ``YYYYMMDD-HHMMSS`` UTC: from its name, else its file time.
+
+    So a file under another name sorts by when it was written, not above every backup.
+    """
+    if backup_kind(p.name) is not None:
+        return p.name[len(BACKUP_PREFIX) : len(BACKUP_PREFIX) + 15]
+    return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).strftime("%Y%m%d-%H%M%S")
+
+
 def list_backups(db_path: Path, backup_dir: Path | None = None) -> list[dict]:
     """List managed backups sorted newest-first."""
     found = [p for d in _backup_dirs(db_path, backup_dir) for p in d.glob(BACKUP_GLOB)]
     backups = []
-    for p in sorted(found, key=lambda p: p.name, reverse=True):
+    for p in sorted(found, key=_backup_time, reverse=True):
         backups.append(
             {
                 "path": str(p),
