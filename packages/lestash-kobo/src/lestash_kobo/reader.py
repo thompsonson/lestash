@@ -178,6 +178,10 @@ class KoboReader:
                 conn.close()
         return titles, marks, chapters
 
+    def title_rows(self) -> list[dict[str, Any]]:
+        """The snapshot's title rows, as its database holds them (reading status included)."""
+        return self._read_db()[0]
+
     def items(self) -> Iterator[ItemCreate]:
         titles, marks, chapters = self._read_db()
         self.on_device = {row["ContentID"] for row in titles}

@@ -7,6 +7,7 @@ license = {text = "AGPL-3.0-only"}
 requires-python = ">=3.12"
 dependencies = [
     "lestash",
+    "lestash-jelu",
 ]
 
 [project.entry-points."lestash.sources"]
@@ -14,6 +15,7 @@ kobo = "lestash_kobo:KoboSource"
 
 [tool.uv.sources]
 lestash = { workspace = true }
+lestash-jelu = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

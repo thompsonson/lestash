@@ -1,4 +1,8 @@
-"""Minimal read-only client for the Jelu REST API.
+"""Minimal client for the Jelu REST API.
+
+The sync only reads. Three writes exist for ``lestash kobo push-jelu`` (#203): add a book,
+and add a reading event (which also adds the book to your library). Nothing here updates
+or deletes anything in Jelu.
 
 Jelu (https://github.com/bayang/jelu) is a self-hosted reading tracker. The client signs in
 the way Jelu's own web UI does: ``GET /api/v1/users/me`` with HTTP Basic auth returns the
@@ -71,7 +75,7 @@ def load_credentials() -> dict[str, str] | None:
 
 
 class JeluClient:
-    """The few read-only Jelu calls the plugin needs, over a Jelu session."""
+    """The few Jelu calls LeStash needs, over a Jelu session."""
 
     def __init__(
         self,
@@ -113,18 +117,26 @@ class JeluClient:
         self.user = data["user"]
         return self.user
 
-    def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+    def _call(
+        self, method: str, path: str, params: dict[str, Any] | None = None, body: Any = None
+    ) -> Any:
         if not self.token:
             self.login()
-        response = self._client.get(path, params=params, headers={SESSION_HEADER: self.token or ""})
+        response = self._client.request(
+            method, path, params=params, json=body, headers={SESSION_HEADER: self.token or ""}
+        )
         if response.status_code == 401:
-            # The session expired (Jelu drops it after a week without use): sign in again once
+            # The session expired (Jelu drops it after a week without use): sign in again once.
+            # A 401 means Jelu refused the request, so sending a write again can't double it.
             self.login()
-            response = self._client.get(
-                path, params=params, headers={SESSION_HEADER: self.token or ""}
+            response = self._client.request(
+                method, path, params=params, json=body, headers={SESSION_HEADER: self.token or ""}
             )
         response.raise_for_status()
         return response.json()
+
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        return self._call("GET", path, params)
 
     def _pages(self, path: str, params: dict[str, Any] | None = None) -> Iterator[dict[str, Any]]:
         for page in range(MAX_PAGES):
@@ -164,3 +176,41 @@ class JeluClient:
 
     def quotes(self, user_id: str) -> Iterator[dict[str, Any]]:
         return self._pages("/book-quotes", {"userId": user_id})
+
+    def books(self) -> Iterator[dict[str, Any]]:
+        """Every book Jelu holds, in anyone's library or none."""
+        return self._pages("/books")
+
+    def add_book(
+        self,
+        title: str,
+        authors: list[str],
+        isbn10: str | None = None,
+        isbn13: str | None = None,
+        publisher: str | None = None,
+    ) -> dict[str, Any]:
+        """Add a book to Jelu (not yet to your library). Returns the new book."""
+        body: dict[str, Any] = {"title": title, "authors": [{"name": a} for a in authors]}
+        for key, value in (("isbn10", isbn10), ("isbn13", isbn13), ("publisher", publisher)):
+            if value:
+                body[key] = value
+        result: dict[str, Any] = self._call("POST", "/books", body=body)
+        return result
+
+    def add_reading_event(
+        self, book_id: str, event_type: str, when: str | None = None
+    ) -> dict[str, Any]:
+        """Add a reading event (CURRENTLY_READING, FINISHED, DROPPED) for a book.
+
+        Jelu adds the book to your library if it isn't there. A FINISHED or DROPPED event
+        closes the open CURRENTLY_READING one rather than adding a second (Jelu 0.88).
+        ``when`` is an ISO time with its offset: the event's date, and a reading event's
+        start.
+        """
+        body: dict[str, Any] = {"eventType": event_type, "bookId": book_id}
+        if when:
+            body["eventDate"] = when
+            if event_type == "CURRENTLY_READING":
+                body["startDate"] = when
+        result: dict[str, Any] = self._call("POST", "/reading-events", body=body)
+        return result

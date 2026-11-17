@@ -343,3 +343,53 @@ def test_sync_without_credentials_warns_and_yields_nothing(monkeypatch, caplog) 
     with caplog.at_level("WARNING"):
         assert list(JeluSource().sync({})) == []
     assert "not configured" in caplog.text
+
+
+# --- the writes push-jelu makes (#203) ---
+
+
+def _writes(sent: list[httpx.Request], expire_once: bool = False) -> httpx.MockTransport:
+    state = {"expired": expire_once}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/users/me":
+            return httpx.Response(200, json={"user": {"id": "u-1"}, "token": "fresh"})
+        if state["expired"]:
+            state["expired"] = False
+            return httpx.Response(401)
+        sent.append(request)
+        return httpx.Response(200, json={"id": "new-1", **json.loads(request.content)})
+
+    return httpx.MockTransport(handler)
+
+
+def test_add_book_sends_only_what_it_knows() -> None:
+    sent: list[httpx.Request] = []
+    with JeluClient(BASE, "mt", "pw", token="t", transport=_writes(sent)) as c:
+        book = c.add_book("Chip War", ["Chris Miller"], isbn13="9781398504127")
+    assert book["id"] == "new-1"
+    (request,) = sent
+    assert (request.method, request.url.path) == ("POST", "/api/v1/books")
+    assert json.loads(request.content) == {
+        "title": "Chip War",
+        "authors": [{"name": "Chris Miller"}],
+        "isbn13": "9781398504127",
+    }
+
+
+def test_a_reading_event_is_dated_and_retried_once_after_the_session_expires() -> None:
+    sent: list[httpx.Request] = []
+    with JeluClient(BASE, "mt", "pw", token="stale", transport=_writes(sent, True)) as c:
+        c.add_reading_event("b-1", "CURRENTLY_READING", "2026-11-16T05:14:20Z")
+        c.add_reading_event("b-1", "FINISHED")
+        assert c.token == "fresh"
+    assert [json.loads(r.content) for r in sent] == [
+        {
+            "eventType": "CURRENTLY_READING",
+            "bookId": "b-1",
+            "eventDate": "2026-11-16T05:14:20Z",
+            "startDate": "2026-11-16T05:14:20Z",
+        },
+        {"eventType": "FINISHED", "bookId": "b-1"},
+    ]
+    assert all(r.headers["X-Auth-Token"] == "fresh" for r in sent)
