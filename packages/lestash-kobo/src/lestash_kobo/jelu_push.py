@@ -43,6 +43,7 @@ CONFLICT = "conflict"  # Jelu says something the Kobo can't move forward
 WEAK = "weak match"  # a title match without a shared author
 LEFT_OUT = "left out"  # not a book: no ISBN, not in Jelu, not asked for
 REJECTED = "rejected"  # you rejected the link: not the same book
+SAME_BOOK = "same book"  # another Kobo title is the same book, and sends its status
 
 
 @dataclass
@@ -384,7 +385,38 @@ def plan(
         action, sent = _event_for(title.status, book.last_event)
         when = event_time(title, book, sent) if sent else None
         result.steps.append(Step(action, title, book, how, sent, when))
+    _one_change_per_book(result)
     return result
+
+
+def _book_key(step: Step) -> str:
+    if step.jelu is not None:
+        return f"jelu:{step.jelu.book_id}"
+    if step.kobo.isbn13:
+        return f"isbn:{step.kobo.isbn13}"
+    return f"title:{title_key(step.kobo.title)}:{sorted(_surnames(step.kobo.authors))}"
+
+
+def _one_change_per_book(todo: Plan) -> None:
+    """Two Kobo titles of one book (two copies, or one ISBN twice) send one change.
+
+    The furthest status wins (finished over reading), then the latest read; the other
+    becomes SAME_BOOK, so no book is created twice and no event is sent twice.
+    """
+    rank = {READING: 1, FINISHED: 2}
+    best: dict[str, Step] = {}
+    for step in todo.changes:
+        key = _book_key(step)
+        kept = best.get(key)
+        if kept is None:
+            best[key] = step
+            continue
+        mine = (rank.get(step.event or "", 0), step.when or datetime.min.replace(tzinfo=UTC))
+        theirs = (rank.get(kept.event or "", 0), kept.when or datetime.min.replace(tzinfo=UTC))
+        loser = kept if mine > theirs else step
+        if loser is kept:
+            best[key] = step
+        loser.action = SAME_BOOK
 
 
 def when_text(when: datetime | None) -> str | None:
@@ -418,7 +450,7 @@ def apply(conn: sqlite3.Connection, client: Any, todo: Plan) -> tuple[int, int, 
             except Exception as e:  # report it and carry on with the next book
                 errors.append(f"{step.kobo.title}: {e}")
                 continue
-        if step.action in (START, FINISH, NOTHING, CONFLICT) and link_match(conn, step):
+        if step.action in (START, FINISH, NOTHING, CONFLICT, SAME_BOOK) and link_match(conn, step):
             links += 1
     conn.commit()
     return created, events, links, errors

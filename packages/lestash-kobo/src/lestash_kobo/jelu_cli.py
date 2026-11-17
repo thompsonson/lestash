@@ -29,6 +29,7 @@ SECTIONS = (
     ("conflict", "Conflicts: Jelu's status is left as it is"),
     ("weak match", "Weak matches, by title only: not acted on"),
     ("rejected", "Pairs you rejected as not the same book"),
+    ("same book", "Another Kobo title of the same book sends its status"),
 )
 
 

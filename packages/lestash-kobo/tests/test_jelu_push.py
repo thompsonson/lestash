@@ -259,6 +259,31 @@ def test_one_failed_book_doesnt_stop_the_rest(test_db) -> None:
     assert errors == ["New: Jelu said no"]
 
 
+def test_two_kobo_titles_of_one_new_book_create_it_once(test_db) -> None:
+    jelu = FakeJelu()
+    early = _title(content_id="epub", last_read=datetime(2026, 1, 1, tzinfo=UTC))
+    late = _title(content_id="pdf", status="finished", last_read=datetime(2026, 2, 1, tzinfo=UTC))
+    todo = _plan(test_db, jelu, early, late)
+    assert [(s.kobo.content_id, s.action) for s in todo.steps] == [
+        ("epub", push.SAME_BOOK),
+        ("pdf", push.CREATE),
+    ]
+    with get_connection(test_db) as conn:
+        created, events, _, _ = push.apply(conn, jelu, todo)
+    assert (created, events) == (1, 1)
+    assert jelu.events[0][1] == push.FINISHED
+
+
+def test_two_kobo_titles_of_one_jelu_book_send_one_event(test_db) -> None:
+    jelu = FakeJelu()
+    jelu.add("Neural Networks for Beginners", ["Brian Murray"], "9798224814305")
+    todo = _plan(test_db, jelu, _title(content_id="a"), _title(content_id="b"))
+    assert sorted(s.action for s in todo.steps) == [push.SAME_BOOK, push.START]
+    with get_connection(test_db) as conn:
+        push.apply(conn, jelu, todo)
+    assert len(jelu.events) == 1
+
+
 # --- links in LeStash ---
 
 
