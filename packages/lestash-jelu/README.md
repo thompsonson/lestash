@@ -4,6 +4,9 @@
 the books you track in Jelu, so they're searchable next to everything else. Jelu stays the
 source of truth for what you've read.
 
+The sync only reads. The one thing that writes to Jelu is `lestash kobo push-jelu` (#203),
+which adds the Kobo's reading and finished books as reading events; see the Kobo README.
+
 ## What gets imported
 
 | Item | `source_id` | Parent |

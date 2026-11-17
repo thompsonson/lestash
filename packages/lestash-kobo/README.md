@@ -106,6 +106,27 @@ lestash kobo eject                                    # eject, so the Kobo leave
 - Each run is logged as `kobo-notes` in Settings → Sources.
 - The text under a note, and reading handwriting, come later (#200).
 
+## Reading status to Jelu (#203)
+
+Jelu is the tracker of record for all reading, ebooks included.
+`lestash kobo push-jelu` sends the Kobo's reading and finished books to Jelu as reading events.
+
+- It reads the newest snapshot and your Jelu library, and shows what it would change.
+- `--apply` makes the changes. No timer runs it.
+- **Which titles:** reading or finished on the Kobo, and only books: a title with an ISBN, or one already in Jelu.
+  Papers and documents are listed as left out; `--title <item id>` pushes one anyway.
+- **Matching:** ISBN first (ISBN-10 read as 13), else the same title with an author surname in common.
+  A title match without a shared author is listed as weak and never acted on.
+- **Status only moves forward:** nothing, then reading, then finished.
+  A book Jelu shows as dropped, or finished while the Kobo says reading, is listed as a conflict and left alone.
+- **Never changed in Jelu:** nothing is updated in place or deleted. Percent read isn't sent,
+  since Jelu's update call clears the fields it isn't given.
+- **New books:** a Kobo book with an ISBN that Jelu lacks is created; a Jelu book with that ISBN is used first.
+- **Links:** each match becomes an `alternate_of` link in LeStash once both items exist.
+  A rejected link means "not the same book", and the pair is never matched again.
+- **Record:** each `--apply` run is logged in the sync log as `kobo-jelu`, with a log line per change.
+- A rerun changes nothing.
+
 ## Config (`~/.config/lestash/config.toml`)
 
 ```toml
