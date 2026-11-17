@@ -523,6 +523,25 @@ def relate(
 
 
 @app.command()
+def themes() -> None:
+    """Suggest themes: groups of related items across sources (#266).
+
+    Runs after `lestash db relate`; each run replaces the last one's suggestions.
+    """
+    from lestash.core.config import Config
+    from lestash.core.database import get_connection
+    from lestash.core.themes import find_themes
+
+    with get_connection(Config.load()) as conn:
+        counts = find_themes(conn)
+        conn.commit()
+    console.print(
+        f"{counts.suggested} theme(s) suggested; {counts.skipped} left out as like one "
+        "you kept or dismissed."
+    )
+
+
+@app.command()
 def agents() -> None:
     """Record who made, voiced, published or received each item, from the identifiers
     its source gives: YouTube channels, LinkedIn members, arXiv authors, chat roles.

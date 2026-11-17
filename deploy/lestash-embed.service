@@ -8,4 +8,6 @@ Nice=10
 ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash embeddings refresh --budget 1800
 # Then related items for those whose vector changed (#219); a failed refresh skips it
 ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash db relate
+# Then themes from the related items (#266)
+ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash db themes
 WorkingDirectory=%h/Projects/thompsonson/lestash

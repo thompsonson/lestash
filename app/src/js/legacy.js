@@ -15,6 +15,7 @@ import { koboSectionHtml, loadKobo } from './objects/item/kobo.js';
 import { relatedSectionHtml, loadRelated } from './objects/item/related.js';
 import { renderCollectionCard } from './objects/collection/card.js';
 import { renderCollectionPage } from './objects/collection/page.js';
+import { loadThemes } from './objects/theme/list.js';
 import { startTimeline, redrawTimeline } from './places/timeline.js';
 import { startPeople, redrawPeople } from './places/people.js';
 import { startLibrary, redrawLibrary } from './places/library.js';
@@ -235,7 +236,7 @@ function showTab(tab) {
     notes: () => [loadSavedNotes(), checkSttModel()],
     sources: () => [loadSources(), loadGoogleAuth(), loadAudibleAuth(), loadLinkedInAuth()],
     stats: () => [loadStats()],
-    collections: () => [loadCollections()],
+    collections: () => [loadCollections(), loadThemes(showToast)],
     debug: () => [renderDebugInfo(), renderDebugLog()],
   };
   return Promise.allSettled((loads[tab] || (() => []))());

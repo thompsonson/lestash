@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 33
+SCHEMA_VERSION = 34
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -766,6 +766,24 @@ MIGRATIONS = [
             model TEXT NOT NULL,
             scanned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        """,
+    ),
+    (
+        34,
+        "Add themes: suggested groups of related items, kept or dismissed (#266)",
+        # docs/ux-object-model-design.md, "Themes are not a shelf". item_ids is a JSON
+        # list; a kept or dismissed row stays, so a like group isn't suggested again.
+        """
+        CREATE TABLE IF NOT EXISTS themes (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            item_ids TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'suggested',
+            collection_id INTEGER REFERENCES collections(id) ON DELETE SET NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            decided_at DATETIME
+        );
+        CREATE INDEX IF NOT EXISTS idx_themes_status ON themes(status);
         """,
     ),
 ]

@@ -488,6 +488,24 @@ Show the collection on the Kobo, or take it off (#315). The Kobo is written at i
 
 ---
 
+## Themes
+
+Suggested themes (#266): groups of related items across sources, found by `lestash db themes` after each embeddings refresh.
+
+### `GET /api/themes`
+
+The suggested themes, largest first: `id`, `name`, `sources` (most items first) and `items` (`id`, `source_type`, `kind`, `title`), in the theme's order. Items deleted since are left out.
+
+### `POST /api/themes/{theme_id}/keep`
+
+Make a collection of the theme's items. Optional body `{"name": "..."}`; the theme's name by default. Returns `201` with `{"collection_id": 12}`; `404` if the theme isn't suggested now.
+
+### `POST /api/themes/{theme_id}/dismiss`
+
+Never suggest this theme again, nor a group with half or more of its items in it. Returns `{"status": "dismissed"}`; `404` if the theme isn't suggested now.
+
+---
+
 ## Sources
 
 ### `GET /api/sources`

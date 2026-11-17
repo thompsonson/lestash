@@ -21,6 +21,7 @@ from lestash_server.routes import (
     profiles,
     sources,
     stats,
+    themes,
     timeline,
     voice,
 )
@@ -72,6 +73,7 @@ def create_app(static_dir: str | None = None) -> FastAPI:
     app.include_router(imports.router)
     app.include_router(voice.router)
     app.include_router(collections.router)
+    app.include_router(themes.router)
     app.include_router(embeddings.router)
     app.include_router(media.router)
     app.include_router(enrich.router)

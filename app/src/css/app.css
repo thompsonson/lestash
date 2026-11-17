@@ -1014,3 +1014,10 @@ body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
 .copy-form-actions { display: flex; gap: 0.5rem; margin-top: 0.3rem; }
 .item-short-link { font-family: var(--font-mono, monospace); font-size: 0.8em; }
 
+
+/* Suggested themes (#266) */
+.theme-card { display: block; }
+.theme-items { margin: 0.4rem 0; font-size: 0.85rem; }
+.theme-items ul { margin: 0.3rem 0 0; padding-left: 1.2rem; max-height: 16rem; overflow-y: auto; }
+.theme-items li { padding: 0.1rem 0; }
+.theme-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
