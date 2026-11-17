@@ -115,8 +115,8 @@ Jelu is the tracker of record for all reading, ebooks included.
 - `--apply` makes the changes. No timer runs it.
 - **Which titles:** reading or finished on the Kobo, and only books: a title with an ISBN, or one already in Jelu.
   Papers and documents are listed as left out; `--title <item id>` pushes one anyway.
-- **Matching:** ISBN first (ISBN-10 read as 13), else the same title with an author surname in common.
-  A title match without a shared author is listed as weak and never acted on.
+- **Matching:** ISBN first (ISBN-10 read as 13), else the whole title, subtitle included, with an author surname in common.
+  Any other title match is listed as weak and never acted on: one missing the other's subtitle, or one without a shared author.
 - **Status only moves forward:** nothing, then reading, then finished.
   A book Jelu shows as dropped, or finished while the Kobo says reading, is listed as a conflict and left alone.
 - **Never changed in Jelu:** nothing is updated in place or deleted. Percent read isn't sent,

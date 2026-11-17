@@ -5,8 +5,9 @@ books are being read and which are finished; this sends that to Jelu as reading 
 
 - Only titles the Kobo shows as reading or finished, and only books: a title with an
   ISBN, one already in Jelu, or one asked for by item id.
-- A Kobo book matches a Jelu book by ISBN, else by title with an author surname in
-  common. A title match without a shared author is weak: listed, never acted on.
+- A Kobo book matches a Jelu book by ISBN, else by its whole title with an author
+  surname in common. Any other title match is weak: listed, never acted on. That
+  includes a title missing the other's subtitle, and one without a shared author.
 - A status is only ever moved forward (nothing, reading, finished). Nothing in Jelu is
   updated in place, moved back or deleted. Progress (percent read) is not sent: Jelu's
   update call clears the fields it isn't given.
@@ -287,7 +288,10 @@ def match(title: KoboTitle, books: list[JeluBook]) -> tuple[JeluBook | None, str
     if not same:
         return None, None
     surnames = _surnames(title.authors)
-    strong = [b for b in same if surnames & _surnames(b.authors)]
+    # Only the whole title counts at once: "Dune" may be "Dune: The Butlerian Jihad" by
+    # a Herbert, or may not, so a match missing a subtitle stays weak (round 4, #203)
+    exact = [b for b in same if full_key(b.title) == full_key(title.title)]
+    strong = [b for b in exact if surnames & _surnames(b.authors)]
     if len(strong) == 1:
         return strong[0], "title and author"
     if not surnames:
@@ -298,7 +302,7 @@ def match(title: KoboTitle, books: list[JeluBook]) -> tuple[JeluBook | None, str
             return bare[0], "title, no authors"
         if not any(full_key(b.title) == full_key(title.title) for b in same):
             return None, None  # only "Part 1" for "Part 2": not this one
-    return same[0], "title only"
+    return (exact or same)[0], "title only"
 
 
 # --- LeStash links ---
