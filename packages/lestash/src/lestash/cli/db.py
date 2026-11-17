@@ -13,13 +13,13 @@ from rich.table import Table
 from lestash.core.db_admin import (
     BACKUP_GLOB,
     _format_bytes,
+    backup_kind,
     count_fk_violations,
     count_history_before,
     create_backup,
     find_backup,
     get_history_stats,
     get_status_summary,
-    is_labelled,
     list_backups,
     prune_backups,
     purge_history,
@@ -501,7 +501,7 @@ def backup_prune(
 
     db_path = get_db_path()
     kind = "labelled" if labelled else "scheduled"
-    backups = [b for b in list_backups(db_path) if is_labelled(b["filename"]) == labelled]
+    backups = [b for b in list_backups(db_path) if backup_kind(b["filename"]) == kind]
     to_delete_count = max(0, len(backups) - keep)
 
     if to_delete_count == 0:

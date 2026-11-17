@@ -26,7 +26,7 @@ LeStash backs up its own database. sysbak, or any file backup, copies those back
 - A copy that fails its integrity check is deleted, and `create` exits 1 before it prunes.
 - Scheduled (unlabelled) and labelled backups are pruned apart: the schedule's `--keep` never deletes a labelled copy.
 - Labelled copies stay until `prune --labelled` removes them; the sysbak drive holds them for weeks after.
-- Other files in the folder, made by hand, are never pruned; delete them yourself.
+- Only `lestash-backup-<time>.db` and `lestash-backup-<time>-<label>.db` are pruned. A file under any other name, such as one made by hand, never is; delete it yourself.
 
 ## The schedule
 

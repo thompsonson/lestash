@@ -519,12 +519,25 @@ def verify_backup(backup_path: Path) -> dict:
     return result
 
 
-_UNLABELLED = re.compile(rf"^{BACKUP_PREFIX}\d{{8}}-\d{{6}}\.db$")
+_SCHEDULED = re.compile(rf"^{BACKUP_PREFIX}\d{{8}}-\d{{6}}\.db$")
+_LABELLED = re.compile(rf"^{BACKUP_PREFIX}\d{{8}}-\d{{6}}-[a-z0-9][a-z0-9-]*\.db$")
+
+
+def backup_kind(filename: str) -> str | None:
+    """``scheduled`` (no label), ``labelled`` (made before a change), or None.
+
+    None is a file under some other name, such as one made by hand: never pruned.
+    """
+    if _SCHEDULED.match(filename):
+        return "scheduled"
+    if _LABELLED.match(filename):
+        return "labelled"
+    return None
 
 
 def is_labelled(filename: str) -> bool:
-    """A labelled backup was made before a change; an unlabelled one, by the schedule."""
-    return not _UNLABELLED.match(filename)
+    """A labelled backup was made before a change, under ``create --label``."""
+    return backup_kind(filename) == "labelled"
 
 
 def prune_backups(
@@ -533,11 +546,11 @@ def prune_backups(
     """Delete the oldest backups of one kind beyond the keep count. Returns deleted paths.
 
     Scheduled (unlabelled) and labelled backups are counted apart, so the schedule's
-    pruning never deletes a copy made before a change.
+    pruning never deletes a copy made before a change. A file under any other name is
+    never pruned.
     """
-    backups = [
-        b for b in list_backups(db_path, backup_dir) if is_labelled(b["filename"]) == labelled
-    ]
+    kind = "labelled" if labelled else "scheduled"
+    backups = [b for b in list_backups(db_path, backup_dir) if backup_kind(b["filename"]) == kind]
     to_delete = backups[keep:]  # already sorted newest-first
     deleted = []
     for b in to_delete:

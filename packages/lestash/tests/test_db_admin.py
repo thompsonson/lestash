@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from lestash.core.database import get_connection, get_db_path, upsert_item
 from lestash.core.db_admin import (
+    backup_kind,
     count_fk_violations,
     count_history_before,
     create_backup,
@@ -416,6 +417,15 @@ class TestCli:
         names = [b["filename"] for b in list_backups(db_path)]
         (left,) = [n for n in names if is_labelled(n)]
         assert left.endswith("-pre-test.db")
+
+    def test_a_backup_under_another_name_is_never_pruned(self, runner, cli_app, test_db):
+        db_path = get_db_path(test_db)
+        odd = db_path.parent / "lestash-backup-by-hand.db"
+        odd.write_bytes(db_path.read_bytes())
+        assert backup_kind(odd.name) is None
+        for flags in (["--keep", "0"], ["--labelled", "--keep", "0"]):
+            runner.invoke(cli_app, ["backup", "prune", *flags, "--confirm"])
+        assert odd.exists()
 
     def test_backup_create_refuses_a_bad_label(self, runner, cli_app):
         result = runner.invoke(cli_app, ["backup", "create", "--label", "Bad Label"])
