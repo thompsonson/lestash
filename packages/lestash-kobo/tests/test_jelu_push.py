@@ -284,6 +284,18 @@ def test_two_kobo_titles_of_one_jelu_book_send_one_event(test_db) -> None:
     assert len(jelu.events) == 1
 
 
+def test_documents_sharing_the_start_of_a_title_are_both_pushed(test_db) -> None:
+    a = _title(content_id="a", title="Kernel Ontology - part 1", isbn13=None, authors=[])
+    b = _title(content_id="b", title="Kernel Ontology - part 2", isbn13=None, authors=[])
+    todo = _plan(test_db, FakeJelu(), a, b, also={"a", "b"})
+    assert [s.action for s in todo.steps] == [push.CREATE, push.CREATE]
+    # Once part 1 is in Jelu, part 2 still isn't taken for it
+    jelu = FakeJelu()
+    jelu.add("Kernel Ontology - part 1", [])
+    steps = _plan(test_db, jelu, a, b, also={"a", "b"}).steps
+    assert [(s.kobo.content_id, s.action) for s in steps] == [("a", push.START), ("b", push.CREATE)]
+
+
 # --- links in LeStash ---
 
 

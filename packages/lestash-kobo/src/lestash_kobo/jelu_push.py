@@ -240,6 +240,11 @@ def title_key(title: str) -> str:
     return text
 
 
+def whole_title(title: str) -> str:
+    """The whole title, subtitle and all, with only case and punctuation set aside."""
+    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+
+
 def _surnames(authors: Iterable[str]) -> set[str]:
     out = set()
     for name in authors:
@@ -273,7 +278,8 @@ def match(title: KoboTitle, books: list[JeluBook]) -> tuple[JeluBook | None, str
     if not surnames:
         # Neither names an author, as with a paper pushed with --title: the title is all
         # there is on both sides
-        bare = [b for b in same if not b.authors]
+        whole = whole_title(title.title)
+        bare = [b for b in same if not b.authors and whole_title(b.title) == whole]
         if len(bare) == 1:
             return bare[0], "title, no authors"
     return same[0], "title only"
@@ -394,7 +400,9 @@ def _book_key(step: Step) -> str:
         return f"jelu:{step.jelu.book_id}"
     if step.kobo.isbn13:
         return f"isbn:{step.kobo.isbn13}"
-    return f"title:{title_key(step.kobo.title)}:{sorted(_surnames(step.kobo.authors))}"
+    # The whole title, subtitle and all: a paper pushed with --title has no ISBN, and two
+    # documents may share the start of their titles
+    return f"title:{whole_title(step.kobo.title)}:{sorted(_surnames(step.kobo.authors))}"
 
 
 def _one_change_per_book(todo: Plan) -> None:
