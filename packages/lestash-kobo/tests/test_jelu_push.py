@@ -158,6 +158,16 @@ def test_a_title_needs_a_shared_author_to_count(test_db) -> None:
     assert push.match(_title(isbn13=None, authors=["Someone Else"]), books)[1] == "title only"
 
 
+def test_volumes_by_one_author_are_different_books(test_db) -> None:
+    jelu = FakeJelu()
+    jelu.add("Dune: The Butlerian Jihad", ["Brian Herbert", "Kevin J. Anderson"])
+    books = push.jelu_books(jelu.userbooks(), jelu.books())
+    other = _title(isbn13=None, title="Dune: The Machine Crusade", authors=["Brian Herbert"])
+    assert push.match(other, books) == (None, None)
+    short = _title(isbn13=None, title="Dune", authors=["Brian Herbert"])
+    assert push.match(short, books)[1] == "title and author"
+
+
 # --- the plan ---
 
 

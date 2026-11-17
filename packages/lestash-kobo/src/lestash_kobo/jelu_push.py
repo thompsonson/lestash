@@ -230,19 +230,35 @@ def event_time(title: KoboTitle, book: JeluBook | None, event: str) -> datetime 
 # --- matching ---
 
 
-def title_key(title: str) -> str:
-    """Case, accents, punctuation, a leading article and the subtitle set aside."""
-    text = re.sub(r"['’]", "", title)  # "Schrödinger’s" and "Schrodingers" alike
+def _norm(text: str) -> str:
+    """Case, accents, apostrophes, punctuation and a leading article set aside."""
+    text = re.sub(r"['’]", "", text)  # "Schrödinger’s" and "Schrodingers" alike
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
-    text = re.split(r"\s*[:(]|\s+[-–—]\s+", text, maxsplit=1)[0]
     text = re.sub(r"[^a-z0-9 ]+", " ", text)
-    text = re.sub(r"^(the|a|an) ", "", re.sub(r"\s+", " ", text).strip())
-    return text
+    return re.sub(r"^(the|a|an) ", "", re.sub(r"\s+", " ", text).strip())
 
 
-def whole_title(title: str) -> str:
-    """The whole title, subtitle and all, with only case and punctuation set aside."""
-    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+def title_key(title: str) -> str:
+    """The main title: as ``_norm``, with the subtitle (after ``:``, ``(`` or `` - ``) dropped."""
+    return _norm(re.split(r"\s*[:(]|\s+[-–—]\s+", title, maxsplit=1)[0])
+
+
+def full_key(title: str) -> str:
+    """The whole title, subtitle and all, as ``_norm``."""
+    return _norm(title)
+
+
+def same_title(a: str, b: str) -> bool:
+    """The same title, or the same main title where one of the two has no subtitle.
+
+    "The Alignment Problem" is "The Alignment Problem: Machine Learning and Human
+    Values"; "Dune: The Machine Crusade" is not "Dune: The Butlerian Jihad".
+    """
+    if full_key(a) == full_key(b):
+        return True
+    if title_key(a) != title_key(b):
+        return False
+    return full_key(a) == title_key(a) or full_key(b) == title_key(b)
 
 
 def _surnames(authors: Iterable[str]) -> set[str]:
@@ -265,10 +281,9 @@ def match(title: KoboTitle, books: list[JeluBook]) -> tuple[JeluBook | None, str
             # Your own copy first, if Jelu holds the same ISBN twice
             by_isbn.sort(key=lambda b: b.userbook_id is None)
             return by_isbn[0], "isbn"
-    key = title_key(title.title)
-    if not key:
+    if not title_key(title.title):
         return None, None
-    same = [b for b in books if title_key(b.title) == key]
+    same = [b for b in books if same_title(title.title, b.title)]
     if not same:
         return None, None
     surnames = _surnames(title.authors)
@@ -276,12 +291,13 @@ def match(title: KoboTitle, books: list[JeluBook]) -> tuple[JeluBook | None, str
     if len(strong) == 1:
         return strong[0], "title and author"
     if not surnames:
-        # Neither names an author, as with a paper pushed with --title: the title is all
-        # there is on both sides
-        whole = whole_title(title.title)
-        bare = [b for b in same if not b.authors and whole_title(b.title) == whole]
+        # Neither names an author, as with a paper pushed with --title: the whole title
+        # is all there is on both sides
+        bare = [b for b in same if not b.authors and full_key(b.title) == full_key(title.title)]
         if len(bare) == 1:
             return bare[0], "title, no authors"
+        if not any(full_key(b.title) == full_key(title.title) for b in same):
+            return None, None  # only "Part 1" for "Part 2": not this one
     return same[0], "title only"
 
 
@@ -402,7 +418,7 @@ def _book_key(step: Step) -> str:
         return f"isbn:{step.kobo.isbn13}"
     # The whole title, subtitle and all: a paper pushed with --title has no ISBN, and two
     # documents may share the start of their titles
-    return f"title:{whole_title(step.kobo.title)}:{sorted(_surnames(step.kobo.authors))}"
+    return f"title:{full_key(step.kobo.title)}:{sorted(_surnames(step.kobo.authors))}"
 
 
 def _one_change_per_book(todo: Plan) -> None:
