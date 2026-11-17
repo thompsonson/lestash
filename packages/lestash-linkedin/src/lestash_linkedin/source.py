@@ -16,6 +16,7 @@ from typing import Annotated, Any
 
 import httpx
 import typer
+from lestash.core.config import get_config_dir
 from lestash.core.database import mark_recent_history, max_history_id
 from lestash.core.logging import get_plugin_logger
 from lestash.models.item import ItemCreate
@@ -424,7 +425,7 @@ class LinkedInSource(SourcePlugin):
                 console.print("[red]No credentials found.[/red]")
                 console.print(
                     "Run with --client-id and --client-secret, or create "
-                    "~/.config/lestash/linkedin_credentials.json"
+                    f"{get_config_dir() / 'linkedin_credentials.json'}"
                 )
                 raise typer.Exit(1)
             else:

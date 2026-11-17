@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+from lestash.core import paths
 from lestash.core.config import Config, GeneralConfig
 from lestash.core.database import get_connection, init_database
 from lestash.core.sync import SyncStore
@@ -60,4 +61,4 @@ def test_sync_uses_the_callers_database_not_the_default(tmp_path: Path, monkeypa
     assert searched == ["agents"]  # the tracked query, read from the caller's database
     assert checked == [["2401.00001"]]  # its saved paper, checked for updates
     assert {i.source_id for i in items} == {"2401.00001", "2402.00002"}
-    assert not (Path.home() / ".config" / "lestash").exists()
+    assert not paths.legacy_dir().exists() and not paths.data_dir().exists()

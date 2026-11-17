@@ -5,7 +5,7 @@ W2 (#217): one store for every file LeStash keeps.
 ## Layout
 
 - Files live at `<root>/blobs/ab/abcdef…`, each stored once and named by its SHA-256.
-- The root is `~/.local/share/lestash` for the default database; sysbak backs it up with `~/.local`.
+- The root is `~/.local/share/lestash` (`paths.store_dir()`) for the default database; sysbak backs it up with `~/.local`. See [`folders.md`](folders.md).
 - Any other database gets a `store` folder beside it, so a test environment never writes into the real store.
 - `general.store_path` in `config.toml` overrides the root.
 - A file is copied to a temporary name, checked, and renamed, so an interrupted copy leaves no half-written blob.

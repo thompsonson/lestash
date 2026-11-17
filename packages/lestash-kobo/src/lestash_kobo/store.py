@@ -37,7 +37,9 @@ logger = logging.getLogger(__name__)
 
 def default_root() -> Path:
     """The store's default folder, under the home folder at the time of the call."""
-    return Path("~/.local/share/lestash/kobo").expanduser()
+    from lestash.core import paths
+
+    return paths.kobo_dir()
 
 
 DB_PATH = ".kobo/KoboReader.sqlite"

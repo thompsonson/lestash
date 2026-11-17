@@ -3,8 +3,8 @@
 See #217 (W2). Files live at ``<root>/blobs/ab/abcdef…``; the ``blobs`` table records
 each one's size and type, and ``item_media.sha256`` points a media row at its file.
 
-The root is ``~/.local/share/lestash`` (backed up with ``~/.local``) for the default
-database, and a ``store`` folder beside any other database, so a test environment
+The root is ``lestash.core.paths.store_dir()`` (``~/.local/share/lestash``) for the
+default database, and a ``store`` folder beside any other database, so a test environment
 never writes into the real store. ``general.store_path`` in the config overrides it.
 
 A file is written to a temporary name and renamed when complete, so an interrupted
@@ -24,11 +24,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from lestash.core.config import Config, get_database_path
+from lestash.core import paths
+from lestash.core.config import Config, custom_db_dir
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ROOT = "~/.local/share/lestash"
 CHUNK = 1 << 20
 
 
@@ -37,10 +37,8 @@ def store_root(config: Config | None = None) -> Path:
     config = config or Config.load()
     if config.general.store_path:
         return Path(config.general.store_path).expanduser()
-    db_path = Path(config.general.database_path).expanduser()
-    if db_path.resolve() == get_database_path().resolve():
-        return Path(DEFAULT_ROOT).expanduser()
-    return db_path.parent / "store"
+    custom = custom_db_dir(config)
+    return paths.store_dir() if custom is None else custom / "store"
 
 
 def sha_file(path: Path) -> str:
@@ -308,11 +306,11 @@ def prune_media(
     db_path = Path(config.general.database_path).expanduser()
     from lestash.core.db_admin import BACKUP_GLOB
 
+    # Another database in this folder may share the media folder
     backups = set(db_path.parent.glob(BACKUP_GLOB))  # older copies of this database
     others = [p for p in db_path.parent.glob("*.db") if p.name != db_path.name and p not in backups]
     if others:
-        # The media folder is <db dir>/media: another database there shares it, and
-        # its rows are not ours to read
+        # Its rows are not ours to read
         logger.warning("Not pruning %s: shared with %s", media_dir, others[0])
         counts.shared_with = others[0]
         return counts

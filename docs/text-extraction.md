@@ -22,7 +22,7 @@ W3 (#218): searchable text for files that have none.
 
 ### Where it runs
 
-- With no `[transcribe]` table, the worker runs here: one recording at a time, on 4 threads. Its models go to `~/.local/share/lestash/whisper-models` (the folder `lestash-voice` uses) and `~/.local/share/lestash/speaker-models`.
+- With no `[transcribe]` table, the worker runs here: one recording at a time, on 4 threads. Its models go to `~/.cache/lestash/whisper-models` (the folder `lestash-voice` uses) and `~/.cache/lestash/speaker-models`; until the move (#304), the old folders in `~/.local/share/lestash`.
 - With a host set, recordings go there in batches over ssh:
 
   ```toml

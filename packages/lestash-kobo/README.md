@@ -60,8 +60,8 @@ You manage collections in LeStash; the Kobo shows the ones you switch on.
   - The Kobo saves its database, and imports new books, only when it leaves USB mode.
   - An unmount alone left it on its Connected screen for 30 hours, with nothing saved.
   - Ejecting without root needs the polkit grant from `sudo deploy/install-root.sh`.
-  - To keep the Kobo connected, create `~/.config/lestash/kobo-no-eject`.
-- To pause collection writes, create `~/.config/lestash/kobo-writes-paused`; snapshots and imports still run.
+  - To keep the Kobo connected, create `kobo-no-eject` in LeStash's config folder (`~/.config/lestash`).
+- To pause collection writes, create `kobo-writes-paused` in the same folder; snapshots and imports still run.
 
 
 ```bash

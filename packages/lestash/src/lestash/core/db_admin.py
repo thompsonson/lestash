@@ -422,6 +422,11 @@ BACKUP_GLOB = f"{BACKUP_PREFIX}*.db"
 
 
 def _backup_dir(db_path: Path, backup_dir: Path | None = None) -> Path:
+    """``paths.backups_dir()`` for the default database; beside any other (#304)."""
+    from lestash.core import paths
+
+    if backup_dir is None and db_path.resolve() == paths.database_path().resolve():
+        backup_dir = paths.backups_dir()
     d = backup_dir or db_path.parent
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -445,11 +450,28 @@ def create_backup(db_path: Path, backup_dir: Path | None = None) -> Path:
     return dest_path
 
 
+def _backup_dirs(db_path: Path, backup_dir: Path | None = None) -> list[Path]:
+    """Where backups are looked for: the backup folder, and beside the database too,
+    where backups of the default database were made before #304."""
+    dest_dir = _backup_dir(db_path, backup_dir)
+    if backup_dir is None and dest_dir != db_path.parent and db_path.parent.is_dir():
+        return [dest_dir, db_path.parent]
+    return [dest_dir]
+
+
+def find_backup(db_path: Path, filename: str) -> Path:
+    """A managed backup by its file name; in the backup folder if none is found."""
+    for d in _backup_dirs(db_path):
+        if (d / filename).is_file():
+            return d / filename
+    return _backup_dir(db_path) / filename
+
+
 def list_backups(db_path: Path, backup_dir: Path | None = None) -> list[dict]:
     """List managed backups sorted newest-first."""
-    dest_dir = _backup_dir(db_path, backup_dir)
+    found = [p for d in _backup_dirs(db_path, backup_dir) for p in d.glob(BACKUP_GLOB)]
     backups = []
-    for p in sorted(dest_dir.glob(BACKUP_GLOB), reverse=True):
+    for p in sorted(found, key=lambda p: p.name, reverse=True):
         backups.append(
             {
                 "path": str(p),

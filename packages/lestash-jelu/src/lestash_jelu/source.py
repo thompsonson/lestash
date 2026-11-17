@@ -240,7 +240,8 @@ class JeluSource(SourcePlugin):
             ],
             username: Annotated[str, typer.Option("--username", "-u", help="Jelu login")],
         ) -> None:
-            """Sign in to Jelu and save the login to ~/.config/lestash/jelu.json (mode 600).
+            """Sign in to Jelu and save the login to jelu.json in LeStash's config
+            folder (mode 600).
 
             The password is only ever prompted for: on the command line it would end up in
             shell history and ``ps`` output.

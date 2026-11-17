@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from faster_whisper import WhisperModel
+from lestash.core import paths
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "base.en"
-MODEL_DIR = Path.home() / ".local" / "share" / "lestash" / "whisper-models"
 
 
 @dataclass
@@ -24,9 +24,10 @@ class TranscriptionResult:
 
 
 def get_model_path() -> Path:
-    """Return the model cache directory, creating it if needed."""
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    return MODEL_DIR
+    """Return the model cache directory (``paths.whisper_models_dir()``), creating it."""
+    model_dir = paths.whisper_models_dir()
+    model_dir.mkdir(parents=True, exist_ok=True)
+    return model_dir
 
 
 @functools.lru_cache(maxsize=4)

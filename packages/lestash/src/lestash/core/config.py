@@ -9,12 +9,20 @@ from pathlib import Path
 from typing import Any, Literal
 
 import tomli_w
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+
+from lestash.core import paths
 
 
 def get_config_dir() -> Path:
-    """Get the configuration directory path."""
-    config_dir = Path.home() / ".config" / "lestash"
+    """The folder of ``config.toml`` and the credential files (``lestash.core.paths``)."""
+    return paths.settings_dir()
+
+
+def secrets_dir() -> Path:
+    """The config folder, made readable only by you if it is made here (#189)."""
+    config_dir = get_config_dir()
+    config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     return config_dir
 
 
@@ -24,13 +32,13 @@ def get_config_path() -> Path:
 
 
 def get_database_path() -> Path:
-    """Get the default database path."""
-    return get_config_dir() / "lestash.db"
+    """The default database: ``~/.local/share/lestash/lestash.db``, or the legacy one."""
+    return paths.database_path()
 
 
 def get_log_path() -> Path:
-    """Get the default log file path."""
-    return get_config_dir() / "logs" / "lestash.log"
+    """The default log file: ``~/.local/state/lestash/logs/``, or the legacy one."""
+    return paths.logs_dir() / "lestash.log"
 
 
 class GeneralConfig(BaseModel):
@@ -145,6 +153,37 @@ def as_bool(value: object) -> bool:
     return bool(value)
 
 
+# Environment variables that override a config.toml setting, after Twelve-Factor III
+# (config in the environment) and IV (a backing service, here the database, named by
+# config alone). Precedence: the variable, then config.toml, then the default
+# (``lestash.core.paths``). Applied by ``Config.load`` and never saved to the file.
+ENV_OVERRIDES: dict[str, tuple[str, str]] = {
+    "LESTASH_DATABASE_PATH": ("general", "database_path"),
+    "LESTASH_STORE_PATH": ("general", "store_path"),
+    "LESTASH_LOG_FILE": ("logging", "file_path"),
+}
+
+
+def _drop_pinned_defaults(data: dict[str, Any]) -> dict[str, Any]:
+    """Drop a database or log path that an older save pinned to its old default.
+
+    Before #304, saving wrote every default, so a config.toml may name
+    the legacy database (``paths.legacy_dir()``) only because it was the default then. Read as
+    unset, it follows the default: the old place until the move, the new one after.
+    """
+    legacy = paths.legacy_dir()
+    pinned = {
+        ("general", "database_path"): legacy / paths.DB_NAME,
+        ("logging", "file_path"): legacy / "logs" / "lestash.log",
+    }
+    for (section, key), old_default in pinned.items():
+        table = data.get(section)
+        value = table.get(key) if isinstance(table, dict) else None
+        if isinstance(value, str) and value and Path(value).expanduser() == old_default:
+            del table[key]  # type: ignore[union-attr]
+    return data
+
+
 class Config(BaseModel):
     """Application configuration.
 
@@ -158,15 +197,25 @@ class Config(BaseModel):
     # at the time of loading
     general: GeneralConfig = Field(default_factory=GeneralConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    # The values the environment replaced, as (section, key) -> the value before it
+    _overridden: dict[tuple[str, str], Any] = PrivateAttr(default_factory=dict)
 
     @classmethod
     def load(cls) -> "Config":
-        """Load configuration from file."""
+        """Load config.toml, then apply ``ENV_OVERRIDES``: the environment wins."""
         config_path = get_config_path()
         if config_path.exists():
             with config_path.open("rb") as f:
-                return cls(**tomllib.load(f))
-        return cls()
+                config = cls(**_drop_pinned_defaults(tomllib.load(f)))
+        else:
+            config = cls()
+        for variable, (section, key) in ENV_OVERRIDES.items():
+            value = os.environ.get(variable, "")
+            if value:
+                part = getattr(config, section)
+                config._overridden[(section, key)] = getattr(part, key)
+                setattr(part, key, value)
+        return config
 
     def save(self) -> None:
         """Save configuration to file, only if ``load`` reads it back the same.
@@ -178,16 +227,35 @@ class Config(BaseModel):
             ValueError: the config can't be written as TOML that ``load`` reads back
                 unchanged. The file is left as it was.
         """
-        data = self.model_dump()
+        data = self.user_settings()
         try:
             text = tomli_w.dumps(data)
-            reloaded = tomli_w.dumps(type(self)(**tomllib.loads(text)).model_dump())
+            reloaded = tomli_w.dumps(type(self)(**tomllib.loads(text)).user_settings())
         except Exception as e:
             raise ValueError(f"not saved: the config would not load again ({e!r})") from e
         # Compared as text, so a nan setting (nan != nan) doesn't block every save
         if reloaded != text:
             raise ValueError("not saved: the config would not load back the same")
         _replace_file(get_config_path(), text)
+
+    def user_settings(self) -> dict[str, Any]:
+        """The settings to save: every value but the defaults of ``[general]`` and ``[logging]``.
+
+        A default is left out, so the file never pins one. The default database and
+        log paths change with the folder layout (#304); a saved copy would hold the old
+        place for good. A value set by the environment (``ENV_OVERRIDES``) is saved as
+        it was before, so the file never holds it. Plugin tables are kept whole.
+        """
+        data = self.model_dump()
+        for (section, key), before in self._overridden.items():
+            data[section][key] = before
+        for name, defaults in (("general", GeneralConfig()), ("logging", LoggingConfig())):
+            given = data.pop(name)
+            fresh = defaults.model_dump()
+            kept = {key: value for key, value in given.items() if value != fresh.get(key)}
+            if kept:
+                data[name] = kept
+        return data
 
     def get_plugin_config(self, plugin_name: str) -> dict[str, Any]:
         """The plugin's ``[plugin_name]`` table, or ``{}`` when it has none.
@@ -196,6 +264,19 @@ class Config(BaseModel):
         """
         section = (self.model_extra or {}).get(plugin_name)
         return copy.deepcopy(section) if isinstance(section, dict) else {}
+
+
+def custom_db_dir(config: Config) -> Path | None:
+    """The database's folder when ``database_path`` is not the default, else None.
+
+    The rule for derived places (#304): with the default database, its media, store,
+    post cache, sync locks and backups are where ``lestash.core.paths`` says. A database
+    set elsewhere keeps them beside itself, so a second database never shares them.
+    """
+    db_path = Path(config.general.database_path).expanduser()
+    if db_path.resolve() == get_database_path().resolve():
+        return None
+    return db_path.parent
 
 
 def init_config() -> Config:

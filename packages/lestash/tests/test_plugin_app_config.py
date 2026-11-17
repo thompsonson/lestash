@@ -7,6 +7,7 @@ from pathlib import Path
 
 import typer
 from lestash.cli import sources as sources_cli
+from lestash.core import paths
 from lestash.core.config import Config
 from lestash.core.database import get_connection
 from lestash.models.item import ItemCreate
@@ -33,7 +34,7 @@ class _ReadsItsDatabase(SourcePlugin):
 
 
 def _default_db() -> Path:
-    return Path.home() / ".config" / "lestash" / "lestash.db"
+    return paths.database_path()
 
 
 def test_app_config_is_the_default_until_set(test_db, monkeypatch) -> None:

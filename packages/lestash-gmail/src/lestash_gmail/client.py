@@ -14,6 +14,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from lestash.core.config import secrets_dir
+
 # Gmail limits API "units per minute per user"; on hitting it, wait for the next minute.
 RATE_LIMIT_REASONS = frozenset({"rateLimitExceeded", "userRateLimitExceeded"})
 RATE_LIMIT_TEXT = ("Quota exceeded", "rateLimitExceeded", "userRateLimitExceeded")
@@ -62,9 +64,7 @@ def find_gws(configured: str | None = None) -> str | None:
 
 
 def get_config_path() -> Path:
-    config_dir = Path.home() / ".config" / "lestash"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    return config_dir / "gmail.json"
+    return secrets_dir() / "gmail.json"
 
 
 def load_config() -> dict[str, Any]:

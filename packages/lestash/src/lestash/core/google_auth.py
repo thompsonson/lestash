@@ -13,7 +13,8 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-from lestash.core.config import write_secret
+from lestash.core import paths
+from lestash.core.config import secrets_dir, write_secret
 
 # Default scopes — callers can request additional scopes
 DEFAULT_SCOPES = [
@@ -27,9 +28,7 @@ CLIENT_SECRETS_FILE = "google_client_secrets.json"
 
 def get_config_dir() -> Path:
     """Get lestash config directory."""
-    config_dir = Path.home() / ".config" / "lestash"
-    config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return config_dir
+    return secrets_dir()
 
 
 def get_client_secrets_path() -> Path:
@@ -273,7 +272,7 @@ def download_drive_file(file_id: str, output_dir: Path | None = None) -> Path:
 
     # Prepare output path
     if output_dir is None:
-        output_dir = get_config_dir() / "cache"
+        output_dir = paths.downloads_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / file_name
 
