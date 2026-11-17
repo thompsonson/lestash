@@ -273,6 +273,25 @@ class ItemLinkListResponse(BaseModel):
     links: list[ItemLink]
 
 
+class RelatedSuggestion(BaseModel):
+    """An item from another source whose vector is close to this one's (#219)."""
+
+    item: ItemResponse
+    score: float  # cosine similarity of the two vectors
+
+
+class RelatedSuggestionsResponse(BaseModel):
+    """An item's suggested related items, best first."""
+
+    suggestions: list[RelatedSuggestion]
+
+
+class RelatedDecision(BaseModel):
+    """Confirm or reject that two items are related."""
+
+    status: Literal["confirmed", "rejected"]
+
+
 class ItemVersionLink(BaseModel):
     """Make this item the next version of ``older_id`` (a ``revision_of`` link, #338)."""
 

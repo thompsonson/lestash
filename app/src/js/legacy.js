@@ -12,6 +12,7 @@ import {
 } from './objects/item/picker.js';
 import { renderCard } from './objects/item/card.js';
 import { koboSectionHtml, loadKobo } from './objects/item/kobo.js';
+import { relatedSectionHtml, loadRelated } from './objects/item/related.js';
 import { renderCollectionCard } from './objects/collection/card.js';
 import { renderCollectionPage } from './objects/collection/page.js';
 import { startTimeline, redrawTimeline } from './places/timeline.js';
@@ -526,13 +527,8 @@ function renderItemView(item) {
     }</div>
   </div>`;
 
-  // Similar items (held parent items only: a stub has no text to compare)
-  if (!item.parent_id && item.held !== false) {
-    html += `<div class="item-view-children" style="margin-top:1rem">
-      <div class="item-view-children-title">Similar items</div>
-      <div class="item-list" id="similar-list"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
-    </div>`;
-  }
+  // Related items: suggestions, then similar ones (#219; whole held items only)
+  html += relatedSectionHtml(item);
 
   // Its place on the Kobo, and its versions (#338; hidden unless it has either)
   html += koboSectionHtml(item);
@@ -1069,25 +1065,8 @@ function renderItemView(item) {
   loadLinks(item.id);
   loadKobo(item, showToast);
 
-  // Load similar items (held parent items only)
-  if (!item.parent_id && item.held !== false) {
-    api(`/api/embeddings/similar/${item.id}?limit=5`).then(data => {
-      const list = document.getElementById('similar-list');
-      if (!list || location.pathname !== `/items/${item.id}`) return;
-      if (!data.length) {
-        list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">No embeddings yet — run rebuild</span>';
-        return;
-      }
-      list.innerHTML = '';
-      data.forEach(sim => {
-        const card = renderCard(sim);
-        list.appendChild(card);
-      });
-    }).catch(() => {
-      const list = document.getElementById('similar-list');
-      if (list && location.pathname === `/items/${item.id}`) list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Unavailable</span>';
-    });
-  }
+  // Related and similar items, each with "Related" and "Not related" (#219)
+  loadRelated(item, showToast, () => loadLinks(item.id));
 }
 
 const ACTIVITY_SHOWN = 20;
@@ -1170,6 +1149,7 @@ const LINK_LABELS = {
   in_reply_to: ['Reply to', 'Replies'],
   alternate_of: ['Same as', 'Same as'],
   revision_of: ['Newer version of', 'Older version of'],
+  related: ['Related to', 'Related to'],
 };
 
 // Children come newest first, a page at a time: load every page, so a long chat

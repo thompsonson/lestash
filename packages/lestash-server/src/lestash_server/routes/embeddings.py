@@ -17,6 +17,7 @@ from lestash.core.embeddings import (
     search_similar,
     stored_vector,
 )
+from lestash.core.related import rejected_with
 from lestash.models.item import Item
 from pydantic import BaseModel
 
@@ -157,10 +158,12 @@ def find_similar(item_id: int, limit: int = 10):
         # this item's own family, as related items compare whole items
         family = item.parent_id if item.parent_id is not None else item_id
         results = search_similar(conn, query_emb, limit=limit * 8 + 1)
+        # A pair you said isn't related isn't shown as similar either (#219)
+        rejected = rejected_with(conn, family)
 
         items = []
         for rid, _distance in results:
-            if rid == family:
+            if rid == family or rid in rejected:
                 continue
             r = conn.execute(
                 "SELECT * FROM items WHERE id = ? AND parent_id IS NULL", (rid,)

@@ -214,7 +214,8 @@ def reject_link(conn: sqlite3.Connection, from_id: int, to_id: int, kind: str) -
     """Mark a link rejected, so it stops showing and the linker never adds it again.
     Returns False if there is no such link. The caller commits."""
     cursor = conn.execute(
-        "UPDATE item_links SET status = 'rejected' WHERE from_id = ? AND to_id = ? AND kind = ?",
+        "UPDATE item_links SET status = 'rejected', decided_at = CURRENT_TIMESTAMP "
+        "WHERE from_id = ? AND to_id = ? AND kind = ?",
         (from_id, to_id, kind),
     )
     return cursor.rowcount > 0

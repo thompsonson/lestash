@@ -56,6 +56,9 @@ from lestash_server.models import (
     ItemVersionLink,
     ItemVersionsResponse,
     KindFacet,
+    RelatedDecision,
+    RelatedSuggestion,
+    RelatedSuggestionsResponse,
     TagAddRequest,
     TagListResponse,
 )
@@ -742,6 +745,42 @@ def list_item_links(item_id: int):
         if not conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
         return ItemLinkListResponse(links=[ItemLink(**link) for link in links_of(conn, item_id)])
+
+
+@router.get("/{item_id}/related", response_model=RelatedSuggestionsResponse)
+def list_related_suggestions(item_id: int, limit: int = Query(5, ge=1, le=50)):
+    """Items from other sources suggested as related, by their vectors (#219).
+    Confirmed ones are links, listed by ``/links``."""
+    from lestash.core.related import suggestions_for
+
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        return RelatedSuggestionsResponse(
+            suggestions=[
+                RelatedSuggestion(item=enrich_item(conn, Item.from_row(row)), score=score)
+                for row, score in suggestions_for(conn, item_id, limit)
+            ]
+        )
+
+
+@router.put("/{item_id}/related/{other_id}", response_model=RelatedDecision)
+def decide_related(item_id: int, other_id: int, body: RelatedDecision):
+    """Confirm or reject that two items are related, suggested or not. A rejected
+    pair is never suggested again, nor listed as similar."""
+    from lestash.core.related import decide
+
+    if item_id == other_id:
+        raise HTTPException(status_code=400, detail="An item can't be related to itself")
+    with get_db() as conn:
+        found = conn.execute(
+            "SELECT COUNT(*) FROM items WHERE id IN (?, ?)", (item_id, other_id)
+        ).fetchone()[0]
+        if found < 2:
+            raise HTTPException(status_code=404, detail="Item not found")
+        decide(conn, item_id, other_id, body.status)
+        conn.commit()
+    return body
 
 
 def _versions(conn, item_id: int) -> ItemVersionsResponse:

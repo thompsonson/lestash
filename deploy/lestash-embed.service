@@ -6,4 +6,6 @@ Type=oneshot
 Nice=10
 # The first run embeds everything and may stop at the budget; the next sync's run goes on
 ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash embeddings refresh --budget 1800
+# Then related items for those whose vector changed (#219); a failed refresh skips it
+ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash db relate
 WorkingDirectory=%h/Projects/thompsonson/lestash

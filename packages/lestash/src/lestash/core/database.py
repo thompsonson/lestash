@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 32
+SCHEMA_VERSION = 33
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -752,6 +752,22 @@ MIGRATIONS = [
         # means dropping the column (and its index) and adding it again.
         "",
     ),
+    (
+        33,
+        "Add related_scans, and item_links.decided_at: related items from vectors (#219)",
+        # docs/content-and-activity-ontology-design.md, "Related items". A scan row
+        # holds the vector it used, so an item is scanned again when its vector
+        # changes. decided_at is added in apply_migrations: SQLite has no ADD COLUMN IF
+        # NOT EXISTS.
+        """
+        CREATE TABLE IF NOT EXISTS related_scans (
+            item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+            embedded_at TEXT,
+            model TEXT NOT NULL,
+            scanned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+    ),
 ]
 
 
@@ -1042,6 +1058,9 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                     f" GENERATED ALWAYS AS ({KIND_SQL}) VIRTUAL"
                 )
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_items_kind ON items(kind, parent_id)")
+            if version == 33 and not _column_exists(conn, "item_links", "decided_at"):
+                # When you confirmed or rejected a link: null for one never decided
+                conn.execute("ALTER TABLE item_links ADD COLUMN decided_at DATETIME")
             if version == 25 and not _column_exists(conn, "people", "short_name"):
                 conn.execute("ALTER TABLE people ADD COLUMN short_name TEXT")
             if version == 28 and not _column_exists(conn, "collection_items", "position"):
