@@ -1,0 +1,10 @@
+[Unit]
+Description=Back up the LeStash database 10 minutes before each sysbak snapshot
+
+[Timer]
+# sysbak's rsnapshot alpha runs at 00:00, 04:00, 08:00 … (every 4 hours).
+OnCalendar=*-*-* 03,07,11,15,19,23:50:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

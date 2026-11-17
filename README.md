@@ -196,6 +196,21 @@ just server-logs
 just server-restart
 ```
 
+### Database backups
+
+LeStash makes its own consistent copies of the database; a file backup copies those, never the live `lestash.db`.
+
+```bash
+lestash db backup create                          # copy, check, keep only if it passes
+lestash db backup create --label pre-deploy-355   # before a deploy, migration or cleanup
+lestash db backup list                            # newest first
+lestash db backup verify                          # check the newest; exits 1 if it fails
+lestash db backup prune --keep 6                  # keep the newest 6
+```
+
+`lestash-backup.timer` runs `create --keep 6` every 4 hours, 10 minutes before sysbak.
+See [`docs/backups.md`](docs/backups.md) for the schedule, the sysbak excludes and how to restore.
+
 ## Desktop App
 
 A Tauri v2 desktop app wraps the web UI for native access.

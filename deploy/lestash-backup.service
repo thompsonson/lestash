@@ -1,0 +1,10 @@
+[Unit]
+Description=Back up the LeStash database (a consistent copy, checked, then pruned)
+
+[Service]
+Type=oneshot
+# SQLite's online backup API copies the database safely while it is in use; sysbak
+# then copies this file, never the live lestash.db, -wal or -shm. See docs/backups.md.
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash db backup create --keep 6

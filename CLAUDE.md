@@ -40,9 +40,19 @@ cd app && npx tauri dev    # Run desktop app
   - Code still in the old single file moves out one waypoint at a time (#268); new screens go in modules, never back into it
   - Screens use the object names from the design doc (Item, Person, Channel, Activity, File, Topic, Collection)
 
+## Database backups
+
+- Before a deploy, migration or data cleanup: `lestash db backup create --label pre-<what>`, e.g. `pre-deploy-355`.
+- Never back up with `sqlite3 .backup`, `cp` or a hand-picked name; the command checks, names and prunes copies.
+- `create` exits 1 if the copy fails its integrity check; stop the change if it does.
+- `lestash-backup.timer` runs `create --keep 6` every 4 hours, before sysbak's snapshot.
+- sysbak copies `~/.local/share/lestash/backups/`, never the live `lestash.db`, `-wal` or `-shm`.
+- Details, the sysbak excludes and the restore steps: [`docs/backups.md`](docs/backups.md).
+
 ## Documentation
 
 - [`docs/api.md`](docs/api.md) — REST API reference (all endpoints)
+- [`docs/backups.md`](docs/backups.md) — database backups: commands, schedule, sysbak excludes, restore
 - [`docs/content-and-activity-ontology-design.md`](docs/content-and-activity-ontology-design.md) — the ontology: items, links, people, activities
 - [`docs/ux-object-model-design.md`](docs/ux-object-model-design.md) — the app's objects, navigation and wireframes; roadmap #268
 - [`extensions/chrome/README.md`](extensions/chrome/README.md) — Chrome extension usage and architecture

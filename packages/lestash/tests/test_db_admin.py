@@ -1,5 +1,8 @@
 """Tests for database administration and maintenance."""
 
+import sqlite3
+from pathlib import Path
+
 import pytest
 from lestash.core.database import get_connection, get_db_path, upsert_item
 from lestash.core.db_admin import (
@@ -268,6 +271,41 @@ class TestBackup:
         remaining = list_backups(db_path)
         assert len(remaining) == 2
 
+    def test_a_label_goes_in_the_name_and_is_checked(self, test_db):
+        db_path = get_db_path(test_db)
+        dest = create_backup(db_path, label="pre-deploy-355")
+        assert dest.name.endswith("-pre-deploy-355.db")
+        assert list_backups(db_path)[0]["filename"] == dest.name
+        with pytest.raises(ValueError):
+            create_backup(db_path, label="../escape")
+
+    def test_a_failed_copy_leaves_no_backup(self, test_db, monkeypatch):
+        db_path = get_db_path(test_db)
+
+        class Broken:
+            def __init__(self, conn):
+                self.conn = conn
+
+            def backup(self, dest):
+                raise sqlite3.OperationalError("disk full")
+
+            def close(self):
+                self.conn.close()
+
+        real = sqlite3.connect
+        calls = []
+
+        def connect(path, *a, **k):
+            calls.append(path)
+            conn = real(path, *a, **k)
+            return Broken(conn) if len(calls) == 1 else conn
+
+        monkeypatch.setattr("lestash.core.db_admin.sqlite3.connect", connect)
+        with pytest.raises(sqlite3.OperationalError):
+            create_backup(db_path)
+        folder = Path(calls[1]).parent
+        assert list(folder.glob("lestash-backup-*")) == []
+
 
 class TestHistory:
     def _trigger_history(self, conn):
@@ -351,6 +389,41 @@ class TestCli:
         result = runner.invoke(cli_app, ["history"])
         assert result.exit_code == 0
         assert "Item History" in result.output
+
+    def test_backup_create_checks_labels_and_prunes(self, runner, cli_app, test_db):
+        import shutil
+
+        db_path = get_db_path(test_db)
+        for i in range(3):
+            shutil.copy2(db_path, db_path.parent / f"lestash-backup-20260101-00000{i}.db")
+        result = runner.invoke(cli_app, ["backup", "create", "--label", "pre-test", "--keep", "2"])
+        assert result.exit_code == 0, result.output
+        assert "pre-test.db" in result.output
+        assert "Pruned 2 older backup(s), keeping 2" in result.output
+        names = [b["filename"] for b in list_backups(db_path)]
+        assert len(names) == 2 and names[0].endswith("-pre-test.db")
+
+    def test_backup_create_refuses_a_bad_label(self, runner, cli_app):
+        result = runner.invoke(cli_app, ["backup", "create", "--label", "Bad Label"])
+        assert result.exit_code == 2
+
+    def test_backup_create_deletes_a_copy_that_fails_its_check(
+        self, runner, cli_app, test_db, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "lestash.cli.db.verify_backup", lambda p: {"valid": False, "integrity": "bad page"}
+        )
+        db_path = get_db_path(test_db)
+        result = runner.invoke(cli_app, ["backup", "create", "--keep", "1"])
+        assert result.exit_code == 1
+        assert "failed its integrity check" in result.output
+        assert list_backups(db_path) == []
+
+    def test_backup_verify_exits_1_on_a_bad_backup(self, runner, cli_app, test_db):
+        db_path = get_db_path(test_db)
+        (db_path.parent / "lestash-backup-20260101-000000.db").write_text("not a database")
+        result = runner.invoke(cli_app, ["backup", "verify"])
+        assert result.exit_code == 1
 
     def test_backup_list_empty(self, runner, cli_app):
         result = runner.invoke(cli_app, ["backup", "list"])

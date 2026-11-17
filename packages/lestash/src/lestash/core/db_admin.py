@@ -8,6 +8,7 @@ and API layers to format.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -432,19 +433,35 @@ def _backup_dir(db_path: Path, backup_dir: Path | None = None) -> Path:
     return d
 
 
-def create_backup(db_path: Path, backup_dir: Path | None = None) -> Path:
-    """Create a timestamped backup using SQLite's online backup API."""
+_LABEL = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def create_backup(db_path: Path, backup_dir: Path | None = None, label: str | None = None) -> Path:
+    """Create a timestamped backup using SQLite's online backup API.
+
+    The copy is consistent while the database is in use. It is written under a
+    temporary name and renamed when complete, so a copy in progress never counts as
+    a backup. ``label`` (lower case, digits, hyphens) says why, e.g. ``pre-deploy-355``.
+    """
+    if label is not None and not _LABEL.match(label):
+        raise ValueError(f"label must be lower case letters, digits and hyphens: {label!r}")
     dest_dir = _backup_dir(db_path, backup_dir)
     ts = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
-    dest_path = dest_dir / f"{BACKUP_PREFIX}{ts}.db"
+    dest_path = dest_dir / f"{BACKUP_PREFIX}{ts}{'-' + label if label else ''}.db"
+    partial = dest_path.with_name(dest_path.name + ".partial")
 
     source_conn = sqlite3.connect(db_path)
-    dest_conn = sqlite3.connect(dest_path)
+    dest_conn = sqlite3.connect(partial)
     try:
         source_conn.backup(dest_conn)
+    except BaseException:
+        dest_conn.close()
+        partial.unlink(missing_ok=True)
+        raise
     finally:
         dest_conn.close()
         source_conn.close()
+    partial.rename(dest_path)
 
     logger.info(f"Backup created: {dest_path} ({dest_path.stat().st_size} bytes)")
     return dest_path

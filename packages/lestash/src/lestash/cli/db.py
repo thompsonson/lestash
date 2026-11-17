@@ -391,14 +391,42 @@ def optimize(
 
 
 @backup_app.command("create")
-def backup_create() -> None:
-    """Create a timestamped database backup."""
+def backup_create(
+    label: str = typer.Option(
+        None, "--label", help="Why the copy was made, e.g. pre-deploy-355 (a-z, 0-9, -)."
+    ),
+    keep: int = typer.Option(
+        None, "--keep", min=1, help="Then prune to the newest N backups, this one included."
+    ),
+) -> None:
+    """Create a timestamped database backup, then check its integrity.
+
+    A copy that fails the check is deleted, and the command exits 1, so a broken copy
+    never replaces a good one when ``--keep`` prunes.
+    """
     from lestash.core.database import get_db_path
 
     db_path = get_db_path()
-    dest = create_backup(db_path)
+    try:
+        dest = create_backup(db_path, label=label)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from e
+    result = verify_backup(dest)
+    if not result["valid"]:
+        dest.unlink(missing_ok=True)
+        err = result.get("error", result.get("integrity", "unknown"))
+        console.print(f"[red]Backup failed its integrity check, deleted:[/red] {err}")
+        raise typer.Exit(1)
     size = dest.stat().st_size
-    console.print(f"[green]Backup created:[/green] {dest.name} ({_format_bytes(size)})")
+    console.print(
+        f"[green]Backup created:[/green] {dest.name} ({_format_bytes(size)}), "
+        f"schema v{result['schema_version']}, {result['item_count']:,} items"
+    )
+    if keep is not None:
+        deleted = prune_backups(db_path, keep=keep)
+        if deleted:
+            console.print(f"Pruned {len(deleted)} older backup(s), keeping {keep}.")
 
 
 @backup_app.command("list")
@@ -450,6 +478,7 @@ def backup_verify(
     else:
         err = result.get("error", result.get("integrity", "unknown"))
         console.print(f"[red]Invalid:[/red] {err}")
+        raise typer.Exit(1)
 
 
 @backup_app.command("prune")

@@ -15,6 +15,10 @@ cp "$SCRIPT_DIR/lestash-sync.timer" "$DEST/"
 cp "$SCRIPT_DIR/lestash-extract.service" "$DEST/"  # started by the sync, not enabled
 cp "$SCRIPT_DIR/lestash-embed.service" "$DEST/"  # started after the extract, not enabled
 
+# Deploy database backup timer (a consistent copy before each sysbak snapshot)
+cp "$SCRIPT_DIR/lestash-backup.service" "$DEST/"
+cp "$SCRIPT_DIR/lestash-backup.timer" "$DEST/"
+
 # Deploy TLS cert renewal timer
 cp "$SCRIPT_DIR/lestash-cert.service" "$DEST/"
 cp "$SCRIPT_DIR/lestash-cert.timer" "$DEST/"
@@ -31,13 +35,16 @@ systemctl --user enable --now lestash-server.service
 # Enable and start sync timer
 systemctl --user enable --now lestash-sync.timer
 
+# Enable database backup timer
+systemctl --user enable --now lestash-backup.timer
+
 # Enable cert renewal timer
 systemctl --user enable --now lestash-cert.timer
 
 echo "Deployed services:"
 systemctl --user status lestash-server.service --no-pager || true
 echo ""
-systemctl --user list-timers lestash-sync.timer lestash-cert.timer --no-pager
+systemctl --user list-timers lestash-sync.timer lestash-backup.timer lestash-cert.timer --no-pager
 
 # The Kobo plug-in sync also needs fstab lines, a udev rule and a polkit grant (root).
 # install-root.sh does both; say when it is due (missing, or the rule changed).
