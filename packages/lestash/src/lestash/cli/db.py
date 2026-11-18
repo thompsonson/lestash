@@ -416,6 +416,9 @@ def backup_create(
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(2) from e
+    except FileExistsError as e:
+        console.print(f"[red]{e}; try again in a second.[/red]")
+        raise typer.Exit(1) from e
     result = verify_backup(dest)
     if not result["valid"]:
         dest.unlink(missing_ok=True)

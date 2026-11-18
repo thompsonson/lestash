@@ -308,6 +308,82 @@ class TestBackup:
         folder = Path(calls[1]).parent
         assert list(folder.glob("lestash-backup-*")) == []
 
+    def test_a_backup_of_the_same_name_is_never_replaced(self, test_db, monkeypatch):
+        import lestash.core.db_admin as d
+
+        db_path = get_db_path(test_db)
+        fixed = d.datetime(2026, 11, 18, 0, 0, 0, tzinfo=d.UTC)
+
+        class Frozen(d.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed
+
+        monkeypatch.setattr(d, "datetime", Frozen)
+        first = create_backup(db_path)
+        inode = first.stat().st_ino
+        with pytest.raises(FileExistsError):
+            create_backup(db_path)
+        assert first.stat().st_ino == inode
+        assert list(first.parent.glob("*.partial")) == []
+
+    def test_a_backup_is_one_file(self, test_db):
+        db_path = get_db_path(test_db)
+        with sqlite3.connect(db_path) as conn:
+            assert conn.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        dest = create_backup(db_path)
+        assert verify_backup(dest)["valid"]
+        with sqlite3.connect(dest) as conn:
+            assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        assert sorted(p.name for p in dest.parent.glob(dest.name + "*")) == [dest.name]
+
+    def test_verify_never_creates_a_missing_file(self, tmp_path):
+        missing = tmp_path / "lestash-backup-20990101-000000.db"
+        result = verify_backup(missing)
+        assert result["valid"] is False and "no such file" in result["error"]
+        assert not missing.exists()
+
+    def test_a_stale_partial_is_removed_and_a_fresh_one_kept(self, test_db):
+        import os
+
+        db_path = get_db_path(test_db)
+        folder = create_backup(db_path).parent
+        stale = folder / "lestash-backup-20200101-000000.db.partial"
+        fresh = folder / "lestash-backup-20990101-000000.db.partial"
+        stale.write_text("x")
+        fresh.write_text("x")
+        os.utime(stale, (0, 0))
+        create_backup(db_path, label="next")
+        assert not stale.exists() and fresh.exists()
+
+    def test_the_source_closes_when_the_copy_cant_be_opened(self, test_db, monkeypatch):
+        db_path = get_db_path(test_db)
+        real = sqlite3.connect
+        opened = []
+
+        def connect(path, *a, **k):
+            if str(path).endswith(".partial"):
+                raise sqlite3.OperationalError("cannot open")
+            conn = real(path, *a, **k)
+            opened.append(conn)
+            return conn
+
+        monkeypatch.setattr("lestash.core.db_admin.sqlite3.connect", connect)
+        with pytest.raises(sqlite3.OperationalError):
+            create_backup(db_path)
+        with pytest.raises(sqlite3.ProgrammingError):
+            opened[0].execute("SELECT 1")
+
+    def test_prune_removes_a_backups_sidecar_files(self, test_db):
+        db_path = get_db_path(test_db)
+        old = db_path.parent / "lestash-backup-20200101-000000.db"
+        old.write_bytes(db_path.read_bytes())
+        for sidecar in ("-wal", "-shm"):
+            old.with_name(old.name + sidecar).write_text("")
+        create_backup(db_path)
+        prune_backups(db_path, keep=1)
+        assert list(db_path.parent.glob("lestash-backup-20200101-000000*")) == []
+
 
 class TestHistory:
     def _trigger_history(self, conn):

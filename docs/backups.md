@@ -22,7 +22,11 @@ LeStash backs up its own database. sysbak, or any file backup, copies those back
 | `lestash db backup prune --labelled --keep N` | Deletes all but the newest N labelled backups |
 
 - Backups are `~/.local/share/lestash/backups/lestash-backup-<UTC time>[-<label>].db`.
-- A copy is written as `….db.partial` and renamed once complete, so a half-made copy is never counted.
+- A copy is one file: no `-wal` or `-shm` beside it.
+- A copy is written as `….db.partial` and moved into place once complete, so a half-made copy is never counted.
+- A `.partial` over an hour old was cut short; the next `create` removes it.
+- `create` refuses to replace a backup of the same name, made in the same second.
+- `verify` opens a backup read-only, and reports a missing file without creating one.
 - A copy that fails its integrity check is deleted, and `create` exits 1 before it prunes.
 - Scheduled (unlabelled) and labelled backups are pruned apart: the schedule's `--keep` never deletes a labelled copy.
 - Labelled copies stay until `prune --labelled` removes them; the sysbak drive holds them for weeks after.
@@ -57,8 +61,11 @@ exclude_patterns=(
 
 ## Restore
 
-1. Stop what writes: `systemctl --user stop lestash-server lestash-sync.timer lestash-backup.timer`.
-2. Check the copy: `lestash db backup verify <file>`.
-3. Keep the current database aside: `mv lestash.db lestash.db.before-restore`, and the same for `-wal` and `-shm`.
-4. Copy the backup in: `cp backups/<file> lestash.db`.
-5. Start again: `systemctl --user start lestash-server lestash-sync.timer lestash-backup.timer`.
+1. Stop everything that writes:
+   `systemctl --user stop lestash-server lestash-sync.timer lestash-backup.timer lestash-sync lestash-extract lestash-embed lestash-backup lestash-kobo 'lestash-kobo-sync@*'`.
+2. Check nothing still has the database open: `fuser ~/.local/share/lestash/lestash.db*` prints nothing.
+3. Check the copy: `lestash db backup verify <file>`.
+4. Keep the current database aside: `mv lestash.db lestash.db.before-restore`, and the same for `-wal` and `-shm`.
+5. Copy the backup in: `cp backups/<file> lestash.db`.
+6. Start again: `systemctl --user start lestash-server lestash-sync.timer lestash-backup.timer`.
+   The Kobo services start on the next plug-in.
