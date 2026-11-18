@@ -329,3 +329,46 @@ def test_migration_29_makes_linkedin_reactions_other_than_like_reacted(test_db) 
         assert apply_migrations(conn) == SCHEMA_VERSION - 28
         verbs = conn.execute("SELECT verb FROM activities ORDER BY occurred_at").fetchall()
         assert [v[0] for v in verbs] == ["liked", "reacted", "liked", "liked"]
+
+
+def test_migration_35_saves_each_earlier_share_once(test_db) -> None:
+    """A share is dated by created_at; a shared video, whose created_at is its upload
+    date, by fetched_at. Other items get nothing, and a rerun adds nothing (#357)."""
+    with get_connection(test_db) as conn:
+        conn.execute("PRAGMA user_version = 34")
+        rows = [
+            ("share", "share-1", "2026-08-24 12:54:10.222728+00:00", "2026-08-24 12:54:10", None),
+            (
+                "youtube",
+                "shared:V1",
+                "2023-03-10 14:00:05+00:00",
+                "2026-06-28 10:06:04",
+                json.dumps({"source_subtype": "shared"}),
+            ),
+            (
+                "youtube",
+                "liked:V2",
+                "2023-03-10 14:00:05+00:00",
+                "2026-06-28 10:06:04",
+                json.dumps({"source_subtype": "liked"}),
+            ),
+        ]
+        conn.executemany(
+            "INSERT INTO items (source_type, source_id, content, created_at, fetched_at, metadata)"
+            " VALUES (?, ?, '', ?, ?, ?)",
+            rows,
+        )
+        assert apply_migrations(conn) == SCHEMA_VERSION - 34
+        saved = conn.execute(
+            "SELECT i.source_id, a.occurred_at, a.source FROM activities a"
+            " JOIN items i ON i.id = a.item_id WHERE a.verb = 'saved' ORDER BY i.source_id"
+        ).fetchall()
+        assert [tuple(r) for r in saved] == [
+            ("share-1", "2026-08-24T12:54:10.223Z", "app:share"),
+            ("shared:V1", "2026-06-28T10:06:04.000Z", "app:share"),
+        ]
+        conn.execute("PRAGMA user_version = 34")
+        apply_migrations(conn)
+        assert (
+            conn.execute("SELECT count(*) FROM activities WHERE verb = 'saved'").fetchone()[0] == 2
+        )

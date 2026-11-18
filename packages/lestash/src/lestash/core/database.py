@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 34
+SCHEMA_VERSION = 35
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -785,6 +785,31 @@ MIGRATIONS = [
             decided_at DATETIME
         );
         CREATE INDEX IF NOT EXISTS idx_themes_status ON themes(status);
+        """,
+    ),
+    (
+        35,
+        "Backfill 'saved' activities for items shared into LeStash before #357",
+        # A share is dated when it reached LeStash. A generic share's created_at is that
+        # time; a shared video's is its upload date, so its fetched_at stands in.
+        """
+        INSERT INTO activities (verb, item_id, occurred_at, source)
+        SELECT 'saved', i.id,
+               strftime('%Y-%m-%dT%H:%M:%fZ',
+                        CASE WHEN i.source_type = 'share' THEN i.created_at
+                             ELSE i.fetched_at END),
+               'app:share'
+        FROM items i
+        WHERE (i.source_type = 'share'
+               OR (i.source_type = 'youtube' AND json_valid(i.metadata)
+                   AND json_extract(i.metadata, '$.source_subtype') = 'shared'))
+          AND strftime('%Y-%m-%dT%H:%M:%fZ',
+                       CASE WHEN i.source_type = 'share' THEN i.created_at
+                            ELSE i.fetched_at END) IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM activities a
+              WHERE a.verb = 'saved' AND a.item_id = i.id AND a.source = 'app:share'
+          );
         """,
     ),
 ]

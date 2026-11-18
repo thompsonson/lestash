@@ -4,6 +4,7 @@ import logging
 import re
 
 from fastapi import APIRouter, HTTPException
+from lestash.core.activities import record_saved
 from lestash.core.database import upsert_item
 from pydantic import BaseModel
 
@@ -126,6 +127,9 @@ def import_video(body: ImportVideoRequest):
         # Dedup: reuse an existing video item for this id, regardless of subtype.
         existing_id = find_video_item(conn, video_id)
         if existing_id is not None:
+            # Shared again: a new time on the Timeline (#357)
+            record_saved(conn, existing_id)
+            conn.commit()
             row = conn.execute("SELECT title FROM items WHERE id = ?", (existing_id,)).fetchone()
             return ImportVideoResponse(
                 item_id=existing_id,
@@ -145,6 +149,8 @@ def import_video(body: ImportVideoRequest):
 
     with get_db() as conn:
         item_id = upsert_item(conn, item)
+        record_saved(conn, item_id)
+        conn.commit()
 
     return ImportVideoResponse(
         item_id=item_id,

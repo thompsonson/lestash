@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile
+from lestash.core.activities import record_saved
 from lestash.core.agents import agents_for
 from lestash.core.blobs import adopt_media
 from lestash.core.database import (
@@ -563,6 +564,10 @@ def create_item(body: ItemCreateRequest):
                 "SELECT * FROM items WHERE source_type = ? AND source_id = ?",
                 (body.source_type, source_id),
             ).fetchone()
+        if body.source_type == "share":
+            # Shared into LeStash: on the Timeline at the time it was saved (#357)
+            record_saved(conn, row["id"])
+            conn.commit()
         return enrich_item(conn, Item.from_row(row))
 
 

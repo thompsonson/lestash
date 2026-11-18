@@ -520,6 +520,7 @@ Google My Activity bundles a day by product; activity-feed guidance keys groups 
 - **Groups by service:** busy verbs, and more than three things you made of one kind, fold per service ("GitHub · AtomicGuard wrote 4 notes").
 - **Day summary:** counts by kind under the date, each a filter; their dots carry the kind colours the landmark edges use.
 - **Swipe:** left for the next day with activity, right for the one before. Swipes from the screen edge (system Back), mostly upright swipes and swipes over an open item are ignored.
+- **Refresh:** pull down from the top of the list to fetch the day again. Coming back to the app after 30 seconds away, or saving a share, fetches it too (#357).
 
 ## Post icon (12 Nov 2026)
 

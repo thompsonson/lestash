@@ -998,6 +998,42 @@ class TestTags:
         assert resp.status_code == 404
 
 
+def _saved(config, item_id: int) -> int:
+    from lestash.core.database import get_connection
+
+    with get_connection(config) as conn:
+        return conn.execute(
+            "SELECT count(*) FROM activities WHERE verb = 'saved' AND item_id = ?"
+            " AND source = 'app:share'",
+            (item_id,),
+        ).fetchone()[0]
+
+
+class TestSharedCapture:
+    """A share saved through POST /api/items is a 'saved' activity (#357)."""
+
+    def test_a_share_is_saved_now(self, client, test_config):
+        resp = client.post(
+            "/api/items",
+            json={
+                "source_type": "share",
+                "source_id": "share-1",
+                "url": "https://example.com/a",
+                "content": "a page",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        assert _saved(test_config, resp.json()["id"]) == 1
+
+    def test_other_items_record_nothing(self, client, test_config):
+        resp = client.post(
+            "/api/items",
+            json={"source_type": "note", "source_id": "note-1", "content": "a note"},
+        )
+        assert resp.status_code == 201, resp.text
+        assert _saved(test_config, resp.json()["id"]) == 0
+
+
 class TestImportVideo:
     """Test POST /api/youtube/import-video."""
 
@@ -1038,6 +1074,8 @@ class TestImportVideo:
         assert data["created"] is False
         assert data["item_id"] == existing_id
         assert data["title"] == "Existing Video"
+        # Shared again: saved now, so it shows on today's Timeline (#357)
+        assert _saved(test_config, existing_id) == 1
 
     def test_mints_new_video(self, client, test_config, monkeypatch):
         import lestash_youtube.client as yt_client
@@ -1083,6 +1121,22 @@ class TestImportVideo:
             ).fetchone()
         assert row[0] == f"shared:{self.VID}"
         assert json.loads(row[1])["notes"] == "great explainer"
+        assert _saved(test_config, data["item_id"]) == 1
+
+        # It shows on today's Timeline, though its own date is 2025
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        timeline = client.get(
+            "/api/timeline",
+            params={
+                "start": (now - timedelta(hours=1)).isoformat(),
+                "end": (now + timedelta(hours=1)).isoformat(),
+            },
+        ).json()
+        assert [(e["verb"], e["item"]["id"]) for e in timeline["entries"]] == [
+            ("saved", data["item_id"])
+        ]
 
     def test_missing_video_returns_404(self, client, monkeypatch):
         import lestash_youtube.client as yt_client
