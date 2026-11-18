@@ -2366,15 +2366,13 @@ async function saveLink() {
     // Incrementally update the current detail view (matches save-note pattern)
     const container = document.getElementById('item-view-content');
     const list = container?.querySelector('#children-list');
+    const parent = cachedItem(parentId);
+    if (parent) parent.child_count = (parent.child_count || 0) + 1;
     // Only the parts of the item it was linked to, if that item is still shown
     if (list && list.dataset.itemId === String(parentId)) {
-      addPart(list, linked, cachedItem(parentId));
-      const shown = cachedItem(parentId);
+      addPart(list, linked, parent);
       const titleEl = container.querySelector('#parts-title');
-      if (shown && titleEl) {
-        shown.child_count = (shown.child_count || 0) + 1;
-        titleEl.textContent = partsTitle(shown);
-      }
+      if (parent && titleEl) titleEl.textContent = partsTitle(parent);
     }
   } catch (e) {
     showToast('Link failed: ' + e.message, 'error');
