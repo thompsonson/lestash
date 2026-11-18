@@ -91,20 +91,78 @@ def test_database_logging_during_a_migration_does_not_hang(test_db):
     assert "Migration 36 complete" in messages
 
 
-def test_migrating_one_database_does_not_hold_another_database_s_logs(test_db, tmp_path):
-    from lestash.core.config import Config, GeneralConfig
-    from lestash.core.database import _migrating_here, init_database
+def test_a_thread_logging_while_another_migrates_does_not_deadlock(test_db, monkeypatch):
     from lestash.core.logging import DatabaseHandler
 
-    other = Config(general=GeneralConfig(database_path=str(tmp_path / "other.db")))
-    init_database(other)
-    handler = DatabaseHandler(other)
-    record = logging.LogRecord("lestash.test", logging.INFO, __file__, 1, "kept", None, None)
-    active = _migrating_here()
-    active.add(str(get_db_path(test_db).resolve()))
+    db_path = get_db_path(test_db)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA user_version = 35")
+    logger = logging.getLogger("lestash.test.deadlock")
+    handler = DatabaseHandler(test_db)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    started = threading.Event()
+
+    def slow_fold(conn):
+        started.set()
+        for _ in range(5):
+            logger.info("migrating")  # holds the write lock, then the handler's lock
+            time.sleep(0.1)
+        return 0
+
+    monkeypatch.setattr(youtube_videos, "fold_video_copies", slow_fold)
+
+    def migrate():
+        with get_connection(test_db):
+            pass
+
+    def log_meanwhile():
+        started.wait(10)
+        for _ in range(5):
+            logger.info("meanwhile")
+            time.sleep(0.05)
+
+    threads = [threading.Thread(target=f, daemon=True) for f in (migrate, log_meanwhile)]
     try:
-        handler.emit(record)
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(20)
+        assert not any(t.is_alive() for t in threads), "deadlocked"
+        handler.flush()
     finally:
-        active.clear()
-    with sqlite3.connect(get_db_path(other)) as conn:
-        assert [m for (m,) in conn.execute("SELECT message FROM log_entries")] == ["kept"]
+        logger.removeHandler(handler)
+    with sqlite3.connect(db_path) as conn:
+        messages = [m for (m,) in conn.execute("SELECT message FROM log_entries")]
+    assert messages.count("migrating") == 5
+    assert messages.count("meanwhile") == 5
+
+
+def test_records_the_database_is_too_busy_for_are_written_with_the_next(test_db):
+    from lestash.core.logging import DatabaseHandler
+
+    db_path = get_db_path(test_db)
+    handler = DatabaseHandler(test_db)
+
+    def record(msg):
+        return logging.LogRecord("lestash.test", logging.INFO, __file__, 1, msg, None, None)
+
+    busy = sqlite3.connect(db_path)
+    busy.execute("BEGIN IMMEDIATE")
+    handler.emit(record("first"))
+    busy.rollback()
+    busy.close()
+    handler.emit(record("second"))
+    with sqlite3.connect(db_path) as conn:
+        messages = [m for (m,) in conn.execute("SELECT message FROM log_entries ORDER BY id")]
+    assert messages == ["first", "second"]
+
+
+def test_logging_before_the_database_exists_does_not_create_it(tmp_path):
+    from lestash.core.config import Config, GeneralConfig
+    from lestash.core.logging import DatabaseHandler
+
+    config = Config(general=GeneralConfig(database_path=str(tmp_path / "new.db")))
+    handler = DatabaseHandler(config)
+    handler.emit(logging.LogRecord("lestash.test", logging.INFO, __file__, 1, "x", None, None))
+    assert not (tmp_path / "new.db").exists()

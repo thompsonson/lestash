@@ -10,7 +10,6 @@ import fcntl
 import json
 import logging
 import sqlite3
-import threading
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -1100,10 +1099,10 @@ def _migration_lock_path(conn: sqlite3.Connection) -> Path | None:
     ``migrate.lock`` in ``paths.locks_dir()`` for the default database, and
     ``<database>.migrate.lock`` beside any other; None for one in memory.
     """
-    db_file = _main_db_file(conn)
+    db_file = next((row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main"), "")
     if not db_file:
         return None
-    if Path(db_file) == paths.database_path().resolve():
+    if Path(db_file).resolve() == paths.database_path().resolve():
         locks = paths.locks_dir()
         locks.mkdir(parents=True, exist_ok=True)
         return locks / "migrate.lock"
@@ -1120,45 +1119,12 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
     Returns:
         Number of migrations applied.
     """
-    db_file = _main_db_file(conn)
-    if db_file and migrating(db_file):
-        # A connection opened while this thread migrates this database, e.g. by the
-        # database log handler: the lock is ours already, and waiting again would hang
-        return 0
-    active = _migrating_here()
-    if db_file:
-        active.add(db_file)
-    try:
-        lock_path = _migration_lock_path(conn)
-        if lock_path is None:
-            return _apply_pending_migrations(conn)
-        with lock_path.open("ab") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)  # released when the file closes
-            return _apply_pending_migrations(conn)
-    finally:
-        active.discard(db_file)
-
-
-_migration_state = threading.local()
-
-
-def _migrating_here() -> set[str]:
-    """The databases this thread is migrating, by resolved path."""
-    if not hasattr(_migration_state, "dbs"):
-        _migration_state.dbs = set()
-    dbs: set[str] = _migration_state.dbs
-    return dbs
-
-
-def _main_db_file(conn: sqlite3.Connection) -> str:
-    """The resolved path of the connection's database file; "" for one in memory."""
-    db_file = next((row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main"), "")
-    return str(Path(db_file).resolve()) if db_file else ""
-
-
-def migrating(db_path: str | Path) -> bool:
-    """Whether this thread is applying migrations to the database at db_path."""
-    return str(Path(db_path).expanduser().resolve()) in _migrating_here()
+    lock_path = _migration_lock_path(conn)
+    if lock_path is None:
+        return _apply_pending_migrations(conn)
+    with lock_path.open("ab") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # released when the file closes
+        return _apply_pending_migrations(conn)
 
 
 def _apply_pending_migrations(conn: sqlite3.Connection) -> int:

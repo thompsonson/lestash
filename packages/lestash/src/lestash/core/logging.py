@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -92,49 +93,61 @@ class JsonFormatter(logging.Formatter):
 class DatabaseHandler(logging.Handler):
     """Log to SQLite database for queryable history.
 
-    This handler writes log entries to the log_entries table.
+    This handler writes log entries to the log_entries table. It opens a plain
+    connection, never one that migrates, and never waits for a lock: a migration logs
+    while holding the write lock and the handler's lock, so waiting on either would
+    deadlock (#371). Records it cannot write yet are held and written with the next.
     """
+
+    # Records held while the database is busy; the oldest go first past this many
+    MAX_HELD = 10_000
 
     def __init__(self, config: Config) -> None:
         super().__init__()
         self._config = config
-        # Records made while this database migrates, written once it is done
         self._held: list[tuple[str, str, str, str, str | None]] = []
 
     def emit(self, record: logging.LogRecord) -> None:
-        from lestash.core.database import get_db_path, migrating
-
         try:
             extra_data = getattr(record, "extra", None)
-            row = (
-                datetime.now(UTC).isoformat(),
-                record.levelname,
-                record.name,
-                record.getMessage(),
-                json.dumps(extra_data) if extra_data else None,
+            self._held.append(
+                (
+                    datetime.now(UTC).isoformat(),
+                    record.levelname,
+                    record.name,
+                    record.getMessage(),
+                    json.dumps(extra_data) if extra_data else None,
+                )
             )
-            self._held.append(row)
-            if migrating(get_db_path(self._config)):
-                # The migration holds the write lock, so a write now would wait on it
-                return
+            del self._held[: -self.MAX_HELD]
             self.flush()
         except Exception:
             self.handleError(record)
 
     def flush(self) -> None:
-        """Write the held records, oldest first."""
-        from lestash.core.database import get_connection, get_db_path, migrating
+        """Write the held records, oldest first; keep them if the database is busy."""
+        from lestash.core.database import get_db_path
 
-        if not self._held or migrating(get_db_path(self._config)):
+        if not self._held:
             return
-        rows, self._held = self._held, []
-        with get_connection(self._config) as conn:
-            conn.executemany(
-                "INSERT INTO log_entries (timestamp, level, logger, message, extra)"
-                " VALUES (?, ?, ?, ?, ?)",
-                rows,
-            )
-            conn.commit()
+        self.acquire()
+        try:
+            uri = get_db_path(self._config).absolute().as_uri() + "?mode=rw"
+            conn = sqlite3.connect(uri, uri=True, timeout=0)
+            try:
+                with conn:
+                    conn.executemany(
+                        "INSERT INTO log_entries (timestamp, level, logger, message, extra)"
+                        " VALUES (?, ?, ?, ?, ?)",
+                        self._held,
+                    )
+                self._held = []
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            pass  # busy, or not made yet: kept for the next record
+        finally:
+            self.release()
 
 
 def setup_logging(config: Config | None = None) -> None:
