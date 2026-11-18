@@ -4,7 +4,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile
-from lestash.core.activities import record_activities
+from lestash.core.activities import record_activities, record_saved
 from lestash.core.agents import link_agents
 from lestash.core.database import resolve_parent_id
 from lestash.core.links import link_items
@@ -90,8 +90,11 @@ async def import_file(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
 
+    # A single page you shared or uploaded is something you saved (#357); a bulk
+    # .zip or .json import is not, so it doesn't fill the Timeline
+    one_page = filename.endswith((".html", ".htm"))
     with get_db() as conn:
-        items_added, import_errors = _insert_items_with_parents(conn, items)
+        items_added, import_errors = _insert_items_with_parents(conn, items, saved=one_page)
         errors.extend(import_errors)
 
     return ImportResponse(
@@ -163,8 +166,11 @@ def _upsert_item(conn, item, parent_id=None):
     return item_id
 
 
-def _insert_items_with_parents(conn, items):
-    """Two-pass insert: parents first, then children with resolved parent_id."""
+def _insert_items_with_parents(conn, items, saved: bool = False):
+    """Two-pass insert: parents first, then children with resolved parent_id.
+
+    With ``saved``, each top-level item gets a 'saved' activity now (#357).
+    """
     parents = []
     children = []
     for item in items:
@@ -182,6 +188,8 @@ def _insert_items_with_parents(conn, items):
     for item in parents:
         try:
             row_id = _upsert_item(conn, item)
+            if row_id and saved:
+                record_saved(conn, row_id)
             if row_id:
                 # Use the effective source_id (same logic as _upsert_item)
                 effective_id = item.source_id or item.url or ""
@@ -239,6 +247,8 @@ def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse
 
     with get_db() as conn:
         added = add_pdf(conn, get_config(), data, filename)
+        # Saved now, also when the file was held already (#357)
+        record_saved(conn, added.item_id)
         conn.commit()
     items_added = 1 if added.new else 0
     enrich_item_id = added.item_id if added.new else None

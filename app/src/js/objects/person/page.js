@@ -13,7 +13,7 @@ const ROLE_WORDS = {
 const VERB_WORDS = {
   watched: 'You watched', viewed: 'You viewed', liked: 'You liked', reacted: 'You reacted to', disliked: 'You disliked',
   shared: 'You shared', prompted: 'You prompted', searched: 'You searched', listened: 'You listened to',
-  annotated: 'You annotated',
+  annotated: 'You annotated', saved: 'You saved',
 };
 const PLURALS = {
   video: 'videos', post: 'posts', book: 'books', paper: 'papers', chat: 'chats', comment: 'replies',

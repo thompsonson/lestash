@@ -3,7 +3,7 @@
 // notes, chats and notebooks stand out. It replaces the Feed: "/" opens today.
 
 import { api } from '../api.js';
-import { route, navigate } from '../router.js';
+import { route, navigate, render } from '../router.js';
 import { escHtml, sourceLabel } from '../util.js';
 import { kindIcon } from '../objects/item/kinds.js';
 import { openFiltersWhenWide } from '../util.js';
@@ -16,6 +16,7 @@ const FOLD_AT = 3;
 const VERB_WORDS = {
   watched: 'watched', viewed: 'viewed', liked: 'liked', reacted: 'reacted to', disliked: 'disliked', shared: 'shared',
   searched: 'searched for', prompted: 'prompted', listened: 'listened to', read: 'read', annotated: 'annotated',
+  saved: 'saved',
 };
 const MADE_WORDS = {
   post: 'posted', comment: 'replied', note: 'wrote a note', chat: 'chatted', notebook: 'made a notebook',
@@ -30,6 +31,7 @@ const PLURALS = {
 const VERB_FILTERS = [
   ['', 'Everything'], ['made', 'Made by you'], ['watched', 'Watched'], ['viewed', 'Viewed'],
   ['liked', 'Liked'], ['reacted', 'Reacted'], ['prompted', 'Prompted'], ['searched', 'Searched'], ['shared', 'Shared'],
+  ['saved', 'Saved'],
 ];
 const KIND_FILTERS = [
   ['', 'All kinds'], ['video', 'Videos'], ['post', 'Posts'], ['chat', 'Chats'], ['notebook', 'Notebooks'],
@@ -76,6 +78,8 @@ function shell() {
     <div class="timeline-list" aria-live="polite"></div>`;
   openFiltersWhenWide(tab);
   swipeDays(tab);
+  pullToRefresh(tab);
+  refreshOnReturn(tab);
   tab.querySelector('.timeline-search').addEventListener('submit', e => {
     e.preventDefault();
     const q = e.target.q.value.trim();
@@ -155,6 +159,73 @@ function swipeDays(tab) {
     navigate(href);
   }, { passive: true });
   area.addEventListener('touchcancel', () => { start = null; }, { passive: true });
+}
+
+// The Timeline is the page shown, with no item open over it
+function onTimeline(tab) {
+  const path = location.pathname;
+  return tab.classList.contains('active') && !document.body.classList.contains('sheet-open')
+    && (path === '/' || path.startsWith('/day/'));
+}
+
+// Fetch the day shown again: after a pull, or time away. The router puts back the
+// scroll position kept with the address, so keep the current one there first.
+function refresh() {
+  const main = document.querySelector('main');
+  history.replaceState({ ...(history.state || {}), scrollY: main ? main.scrollTop : 0 }, '', location.href);
+  shown = null;
+  render();
+}
+
+// Pull down from the top of the list to fetch the day again (#357). Only from the top,
+// and only a mostly upright pull, so scrolling and the day swipes are left alone.
+const PULL_AT = 80;
+function pullToRefresh(tab) {
+  const area = tab.closest('main') || tab;
+  const hint = document.createElement('div');
+  hint.className = 'pull-hint';
+  hint.setAttribute('aria-hidden', 'true');
+  tab.prepend(hint);
+  let start = null, dy = 0;
+  const reset = () => { start = null; dy = 0; hint.style.height = ''; hint.textContent = ''; hint.classList.remove('ready'); };
+  area.addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    const typing = e.target.closest('input, select, textarea');
+    start = tab.classList.contains('active') && area.scrollTop <= 0 && e.touches.length === 1
+      && !typing && !document.body.classList.contains('sheet-open')
+      ? { x: t.clientX, y: t.clientY } : null;
+    dy = 0;
+  }, { passive: true });
+  area.addEventListener('touchmove', e => {
+    if (!start) return;
+    const t = e.touches[0];
+    dy = t.clientY - start.y;
+    const dx = t.clientX - start.x;
+    if (dy <= 0 || Math.abs(dx) > dy || area.scrollTop > 0) { hint.style.height = ''; hint.textContent = ''; return; }
+    hint.style.height = `${Math.min(dy / 2, 48)}px`;
+    const ready = dy >= PULL_AT;
+    hint.classList.toggle('ready', ready);
+    hint.textContent = ready ? 'Release to refresh' : 'Pull to refresh';
+  }, { passive: true });
+  area.addEventListener('touchend', () => {
+    const go = start && dy >= PULL_AT && onTimeline(tab);
+    reset();
+    if (go) refresh();
+  }, { passive: true });
+  area.addEventListener('touchcancel', reset, { passive: true });
+}
+
+// Coming back to the app after a while fetches the day again, so a share made from
+// another app, or a sync meanwhile, shows without a pull
+const AWAY_MS = 30 * 1000;
+function refreshOnReturn(tab) {
+  let hiddenAt = null;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    const away = hiddenAt !== null && Date.now() - hiddenAt >= AWAY_MS;
+    hiddenAt = null;
+    if (away && onTimeline(tab)) refresh();
+  });
 }
 
 // What a stub stands for, for its wording: a LinkedIn post or reply not held (#320)

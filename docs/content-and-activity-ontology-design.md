@@ -550,6 +550,7 @@ An activity is something someone did, at a time, usually to an item.
 | `listened` | an Audible book | `ListenAction` | `Listen` |
 | `disliked` | a video | `DislikeAction` | `Dislike` |
 | `read` | a Kobo book (planned, #201) | `ReadAction` | `Read` |
+| `saved` | anything you shared into LeStash or captured in the app, at the time you did (#357); source `app:share`. Not `shared`, which is sharing a video with others | — | `Add` |
 
 ### Proposed table
 

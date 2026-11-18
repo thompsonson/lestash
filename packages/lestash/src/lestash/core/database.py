@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 34
+SCHEMA_VERSION = 35
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -785,6 +785,35 @@ MIGRATIONS = [
             decided_at DATETIME
         );
         CREATE INDEX IF NOT EXISTS idx_themes_status ON themes(status);
+        """,
+    ),
+    (
+        35,
+        "Backfill 'saved' activities for items shared into LeStash before #357",
+        # What the app's share and capture paths made: a share or image (dated by
+        # created_at, the time it was saved), an uploaded PDF (fetched_at, as its
+        # created_at may be when it was written) and a shared video (its created_at
+        # is its upload date, so fetched_at). Web items are left out: those held came
+        # from session imports, not shares.
+        """
+        INSERT INTO activities (verb, item_id, occurred_at, source)
+        SELECT 'saved', s.id, s.at, 'app:share'
+        FROM (
+            SELECT i.id,
+                   strftime('%Y-%m-%dT%H:%M:%fZ',
+                            CASE WHEN i.source_type IN ('share', 'image') THEN i.created_at
+                                 ELSE i.fetched_at END) AS at
+            FROM items i
+            WHERE i.source_type IN ('share', 'image')
+               OR (i.source_type = 'pdf' AND i.parent_id IS NULL)
+               OR (i.source_type = 'youtube' AND json_valid(i.metadata)
+                   AND json_extract(i.metadata, '$.source_subtype') = 'shared')
+        ) AS s
+        WHERE s.at IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM activities a
+              WHERE a.verb = 'saved' AND a.item_id = s.id AND a.source = 'app:share'
+          );
         """,
     ),
 ]

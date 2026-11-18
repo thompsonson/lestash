@@ -12,6 +12,11 @@ from datetime import UTC, datetime
 
 from lestash.models.item import ActivityCreate
 
+# You added something to LeStash: shared it from another app, or captured it (#357).
+# Not "shared", which is sharing a video with others (YouTube history).
+SAVED = "saved"
+SHARE_SOURCE = "app:share"
+
 
 def activity_time(when: datetime) -> str:
     """A time as ``activities.occurred_at`` holds it: UTC to the millisecond, such as
@@ -59,3 +64,15 @@ def stored_times(conn: sqlite3.Connection, item_id: int, verb: str) -> list[date
         (item_id, verb),
     ).fetchall()
     return [datetime.fromisoformat(row[0]) for row in rows]
+
+
+def record_saved(conn: sqlite3.Connection, item_id: int, when: datetime | None = None) -> int:
+    """Record that you saved item ``item_id`` into LeStash now (or at ``when``).
+
+    Each share is a time of its own, so sharing an item again shows it again on the
+    Timeline. Returns how many were added (0 or 1).
+    """
+    activity = ActivityCreate(
+        verb=SAVED, occurred_at=when or datetime.now(tz=UTC), source=SHARE_SOURCE
+    )
+    return record_activities(conn, item_id, [activity])
