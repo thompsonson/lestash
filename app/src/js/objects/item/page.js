@@ -317,9 +317,9 @@ export function sortParts(children, order) {
 
 const groupLabel = c => c.kind === 'artifact' ? 'Generated' : (KIND_PLURALS[c.kind] || c.kind_label || c.kind);
 
-// What the open item shows: the kind it is filtered to, and the groups opened with
-// "show all". Another item starts with All, folded.
-let shownKind = { itemId: null, label: null, open: new Set() };
+// What a drawn list of parts shows: the kind it is filtered to, and the groups opened
+// with "show all". Kept on the list, so each item page starts with All, folded.
+const viewOf = list => list._view || (list._view = { label: null, open: new Set() });
 // While the order menu is open: the listener that closes it on a tap elsewhere
 let closeOnTapAway = null;
 
@@ -336,10 +336,11 @@ export function addPart(list, child, item) {
     return;
   }
   const state = list._parts || { item: item || { id: Number(list.dataset.itemId) }, children: [] };
-  // A filter that would hide the new part is lifted, so you see it
-  if (shownKind.itemId === state.item.id && shownKind.label && shownKind.label !== groupLabel(child)) {
-    shownKind.label = null;
-  }
+  // You see the new part: a filter that would hide it is lifted, and its group opened
+  const view = viewOf(list);
+  const label = groupLabel(child);
+  if (view.label && view.label !== label) view.label = null;
+  view.open.add(label);
   state.children.push(child);
   renderParts(state.item, state.children, list);
 }
@@ -365,7 +366,7 @@ export function renderParts(item, children, list) {
     list.appendChild(thread(children));
     return;
   }
-  if (shownKind.itemId !== item.id) shownKind = { itemId: item.id, label: null, open: new Set() };
+  const view = viewOf(list);
   const order = partsOrder(item.id);
   const byLabel = new Map();
   for (const c of sortParts(children, order)) {
@@ -378,7 +379,7 @@ export function renderParts(item, children, list) {
   if (generated) generated.sort((a, b) => String(a.kind_detail).localeCompare(String(b.kind_detail)));
   // Largest group first, so the chips and groups stay put when the order changes
   const groups = new Map([...byLabel].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])));
-  if (!groups.has(shownKind.label)) shownKind.label = null;
+  if (!groups.has(view.label)) view.label = null;
   const redraw = () => renderParts(item, children, list);
 
   if (head) {
@@ -402,21 +403,21 @@ export function renderParts(item, children, list) {
     const chips = document.createElement('div');
     chips.className = 'chips parts-chips';
     const chip = (label, n) =>
-      `<button type="button" class="chip${shownKind.label === label ? ' on' : ''}" aria-pressed="${shownKind.label === label}"`
+      `<button type="button" class="chip${view.label === label ? ' on' : ''}" aria-pressed="${view.label === label}"`
       + ` data-kind="${escHtml(label ?? '')}">${escHtml(label ?? 'All')} <span class="chip-count">${n}</span></button>`;
     chips.innerHTML = chip(null, children.length) + [...groups].map(([label, items]) => chip(label, items.length)).join('');
     chips.addEventListener('click', e => {
       const btn = e.target.closest('[data-kind]');
       if (!btn) return;
-      shownKind.label = btn.dataset.kind || null;
+      view.label = btn.dataset.kind || null;
       redraw();
     });
     list.appendChild(chips);
   }
   const card = c => renderCard(c, { within: item });
-  if (shownKind.label) {
+  if (view.label) {
     // One kind: every part of it, without a group heading
-    groups.get(shownKind.label).forEach(c => list.appendChild(card(c)));
+    groups.get(view.label).forEach(c => list.appendChild(card(c)));
     return;
   }
   for (const [label, items] of groups) {
@@ -424,7 +425,7 @@ export function renderParts(item, children, list) {
     h.className = 'parts-group-title';
     h.textContent = `${label} (${items.length})`;
     list.appendChild(h);
-    const folded = items.length > GROUP_SHOWN && !shownKind.open.has(label);
+    const folded = items.length > GROUP_SHOWN && !view.open.has(label);
     (folded ? items.slice(0, GROUP_SHOWN) : items).forEach(c => list.appendChild(card(c)));
     if (folded) {
       const more = document.createElement('button');
@@ -432,7 +433,7 @@ export function renderParts(item, children, list) {
       more.className = 'parts-more';
       more.textContent = `+ ${items.length - GROUP_SHOWN} more ${label.toLowerCase()} · show all`;
       more.addEventListener('click', () => {
-        shownKind.open.add(label);
+        view.open.add(label);
         redraw();
       });
       list.appendChild(more);
