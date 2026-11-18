@@ -520,6 +520,10 @@ def suggest_items(
     return AttachSuggestions(same_link=same_link, worked_on=worked_on)
 
 
+# What the app's share and capture dialogs create: something you saved (#357)
+SAVED_SOURCES = ("share", "image")
+
+
 @router.post("", response_model=ItemResponse, status_code=201)
 def create_item(body: ItemCreateRequest):
     """Create a single item."""
@@ -564,8 +568,8 @@ def create_item(body: ItemCreateRequest):
                 "SELECT * FROM items WHERE source_type = ? AND source_id = ?",
                 (body.source_type, source_id),
             ).fetchone()
-        if body.source_type == "share":
-            # Shared into LeStash: on the Timeline at the time it was saved (#357)
+        if body.source_type in SAVED_SOURCES:
+            # Shared into LeStash, or an image captured: on the Timeline when saved (#357)
             record_saved(conn, row["id"])
             conn.commit()
         return enrich_item(conn, Item.from_row(row))

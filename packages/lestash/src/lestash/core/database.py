@@ -790,25 +790,28 @@ MIGRATIONS = [
     (
         35,
         "Backfill 'saved' activities for items shared into LeStash before #357",
-        # A share is dated when it reached LeStash. A generic share's created_at is that
-        # time; a shared video's is its upload date, so its fetched_at stands in.
+        # What the app's share and capture paths made: a share or image (dated by
+        # created_at, the time it was saved), a web page or PDF (fetched_at, as a
+        # page's created_at may be when it was published) and a shared video (its
+        # created_at is its upload date, so fetched_at).
         """
         INSERT INTO activities (verb, item_id, occurred_at, source)
-        SELECT 'saved', i.id,
-               strftime('%Y-%m-%dT%H:%M:%fZ',
-                        CASE WHEN i.source_type = 'share' THEN i.created_at
-                             ELSE i.fetched_at END),
-               'app:share'
-        FROM items i
-        WHERE (i.source_type = 'share'
+        SELECT 'saved', s.id, s.at, 'app:share'
+        FROM (
+            SELECT i.id,
+                   strftime('%Y-%m-%dT%H:%M:%fZ',
+                            CASE WHEN i.source_type IN ('share', 'image') THEN i.created_at
+                                 ELSE i.fetched_at END) AS at
+            FROM items i
+            WHERE i.source_type IN ('share', 'image')
+               OR (i.source_type IN ('web', 'pdf') AND i.parent_id IS NULL)
                OR (i.source_type = 'youtube' AND json_valid(i.metadata)
-                   AND json_extract(i.metadata, '$.source_subtype') = 'shared'))
-          AND strftime('%Y-%m-%dT%H:%M:%fZ',
-                       CASE WHEN i.source_type = 'share' THEN i.created_at
-                            ELSE i.fetched_at END) IS NOT NULL
+                   AND json_extract(i.metadata, '$.source_subtype') = 'shared')
+        ) AS s
+        WHERE s.at IS NOT NULL
           AND NOT EXISTS (
               SELECT 1 FROM activities a
-              WHERE a.verb = 'saved' AND a.item_id = i.id AND a.source = 'app:share'
+              WHERE a.verb = 'saved' AND a.item_id = s.id AND a.source = 'app:share'
           );
         """,
     ),

@@ -641,6 +641,34 @@ class TestImport:
         assert result["items_added"] == 2
         assert result["source_type"] == "json"
 
+    def test_a_bulk_import_saves_nothing(self, client, test_config):
+        from lestash.core.database import get_connection
+
+        data = json.dumps([{"source_type": "note", "content": "bulk"}]).encode()
+        client.post("/api/import", files={"file": ("b.json", io.BytesIO(data), "application/json")})
+        with get_connection(test_config) as conn:
+            assert (
+                conn.execute("SELECT count(*) FROM activities WHERE verb = 'saved'").fetchone()[0]
+                == 0
+            )
+
+    def test_a_web_page_imported_is_saved(self, client, test_config):
+        from lestash.core.database import get_connection
+
+        page = b"<html><head><title>A page</title></head><body><p>Words to keep.</p></body></html>"
+        resp = client.post(
+            "/api/import",
+            files={"file": ("page.html", io.BytesIO(page), "text/html")},
+            data={"source_url": "https://example.com/page"},
+        )
+        assert resp.status_code == 200, resp.text
+        with get_connection(test_config) as conn:
+            rows = conn.execute(
+                "SELECT i.parent_id FROM activities a JOIN items i ON i.id = a.item_id"
+                " WHERE a.verb = 'saved' AND a.source = 'app:share'"
+            ).fetchall()
+        assert [r[0] for r in rows] == [None]
+
     def test_import_empty_json(self, client):
         resp = client.post(
             "/api/import",
@@ -710,6 +738,7 @@ class TestImport:
             saved = get_media_dir(test_config) / media["local_path"]
             assert saved.is_file()
             assert saved.read_bytes() == pdf_bytes
+        assert _saved(test_config, row["id"]) == 1
 
     def test_import_pdf_docling_failure_keeps_original(self, client, test_config):
         """If Docling returns nothing, the item is still created with a
@@ -1021,6 +1050,14 @@ class TestSharedCapture:
                 "url": "https://example.com/a",
                 "content": "a page",
             },
+        )
+        assert resp.status_code == 201, resp.text
+        assert _saved(test_config, resp.json()["id"]) == 1
+
+    def test_an_image_captured_is_saved_now(self, client, test_config):
+        resp = client.post(
+            "/api/items",
+            json={"source_type": "image", "source_id": "image-1", "content": "[Image]"},
         )
         assert resp.status_code == 201, resp.text
         assert _saved(test_config, resp.json()["id"]) == 1

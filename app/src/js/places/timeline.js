@@ -161,8 +161,11 @@ function swipeDays(tab) {
   area.addEventListener('touchcancel', () => { start = null; }, { passive: true });
 }
 
-// Fetch the day shown again: after a share, a sync, or time away
+// Fetch the day shown again: after a pull, or time away. The router puts back the
+// scroll position kept with the address, so keep the current one there first.
 function refresh() {
+  const main = document.querySelector('main');
+  history.replaceState({ ...(history.state || {}), scrollY: main ? main.scrollTop : 0 }, '', location.href);
   shown = null;
   render();
 }
