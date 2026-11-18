@@ -8,7 +8,10 @@ and API layers to format.
 from __future__ import annotations
 
 import logging
+import os
+import re
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -432,19 +435,57 @@ def _backup_dir(db_path: Path, backup_dir: Path | None = None) -> Path:
     return d
 
 
-def create_backup(db_path: Path, backup_dir: Path | None = None) -> Path:
-    """Create a timestamped backup using SQLite's online backup API."""
-    dest_dir = _backup_dir(db_path, backup_dir)
-    ts = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
-    dest_path = dest_dir / f"{BACKUP_PREFIX}{ts}.db"
+_LABEL = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
-    source_conn = sqlite3.connect(db_path)
-    dest_conn = sqlite3.connect(dest_path)
+
+PARTIAL_SUFFIX = ".partial"
+_STALE_PARTIAL_SECONDS = 3600  # a copy takes seconds; an hour-old one was cut short
+
+
+def _remove_stale_partials(dest_dir: Path) -> None:
+    """Remove copies a killed process left half-made. A copy still being made is newer."""
+    cutoff = datetime.now(tz=UTC).timestamp() - _STALE_PARTIAL_SECONDS
+    for p in dest_dir.glob(f"{BACKUP_PREFIX}*{PARTIAL_SUFFIX}"):
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+                logger.info(f"Removed a half-made backup: {p}")
+        except FileNotFoundError:
+            pass
+
+
+def create_backup(db_path: Path, backup_dir: Path | None = None, label: str | None = None) -> Path:
+    """Create a timestamped backup using SQLite's online backup API.
+
+    The copy is consistent while the database is in use, and is one file: its journal
+    mode is set to DELETE, so no ``-wal`` or ``-shm`` sits beside it. It is written under
+    a temporary name and moved into place when complete, so a copy in progress never
+    counts as a backup. ``label`` (lower case, digits, hyphens) says why, e.g.
+    ``pre-deploy-355``. Raises FileExistsError rather than replace a backup of the
+    same name, made in the same second.
+    """
+    if label is not None and not _LABEL.match(label):
+        raise ValueError(f"label must be lower case letters, digits and hyphens: {label!r}")
+    dest_dir = _backup_dir(db_path, backup_dir)
+    _remove_stale_partials(dest_dir)
+    ts = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
+    dest_path = dest_dir / f"{BACKUP_PREFIX}{ts}{'-' + label if label else ''}.db"
+    if dest_path.exists():
+        raise FileExistsError(f"a backup named {dest_path.name} exists already")
+    partial = dest_path.with_name(dest_path.name + PARTIAL_SUFFIX)
+
     try:
-        source_conn.backup(dest_conn)
+        # The source closes even when the copy's file can't be opened.
+        with (
+            closing(sqlite3.connect(db_path)) as source_conn,
+            closing(sqlite3.connect(partial)) as dest_conn,
+        ):
+            source_conn.backup(dest_conn)
+            dest_conn.execute("PRAGMA journal_mode = DELETE")
+        # A hard link fails if the name was taken meanwhile; rename would replace it.
+        os.link(partial, dest_path)
     finally:
-        dest_conn.close()
-        source_conn.close()
+        partial.unlink(missing_ok=True)
 
     logger.info(f"Backup created: {dest_path} ({dest_path.stat().st_size} bytes)")
     return dest_path
@@ -467,11 +508,21 @@ def find_backup(db_path: Path, filename: str) -> Path:
     return _backup_dir(db_path) / filename
 
 
+def _backup_time(p: Path) -> str:
+    """When a backup was made, as ``YYYYMMDD-HHMMSS`` UTC: from its name, else its file time.
+
+    So a file under another name sorts by when it was written, not above every backup.
+    """
+    if backup_kind(p.name) is not None:
+        return p.name[len(BACKUP_PREFIX) : len(BACKUP_PREFIX) + 15]
+    return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).strftime("%Y%m%d-%H%M%S")
+
+
 def list_backups(db_path: Path, backup_dir: Path | None = None) -> list[dict]:
     """List managed backups sorted newest-first."""
     found = [p for d in _backup_dirs(db_path, backup_dir) for p in d.glob(BACKUP_GLOB)]
     backups = []
-    for p in sorted(found, key=lambda p: p.name, reverse=True):
+    for p in sorted(found, key=_backup_time, reverse=True):
         backups.append(
             {
                 "path": str(p),
@@ -486,8 +537,12 @@ def list_backups(db_path: Path, backup_dir: Path | None = None) -> list[dict]:
 def verify_backup(backup_path: Path) -> dict:
     """Verify a backup file's integrity."""
     result: dict = {"path": str(backup_path), "valid": False}
+    if not backup_path.is_file():
+        result["error"] = f"no such file: {backup_path}"
+        return result
     try:
-        conn = sqlite3.connect(backup_path)
+        # Read-only: checking a backup never changes it, or creates a file.
+        conn = sqlite3.connect(f"{backup_path.resolve().as_uri()}?mode=ro", uri=True)
         try:
             rows = conn.execute("PRAGMA integrity_check").fetchall()
             integrity = rows[0][0] if len(rows) == 1 else "\n".join(r[0] for r in rows)
@@ -502,14 +557,45 @@ def verify_backup(backup_path: Path) -> dict:
     return result
 
 
-def prune_backups(db_path: Path, keep: int = 5, backup_dir: Path | None = None) -> list[Path]:
-    """Delete oldest managed backups beyond the keep count. Returns deleted paths."""
-    backups = list_backups(db_path, backup_dir)
+_SCHEDULED = re.compile(rf"^{BACKUP_PREFIX}\d{{8}}-\d{{6}}\.db$")
+_LABELLED = re.compile(rf"^{BACKUP_PREFIX}\d{{8}}-\d{{6}}-[a-z0-9][a-z0-9-]*\.db$")
+
+
+def backup_kind(filename: str) -> str | None:
+    """``scheduled`` (no label), ``labelled`` (made before a change), or None.
+
+    None is a file under some other name, such as one made by hand: never pruned.
+    """
+    if _SCHEDULED.match(filename):
+        return "scheduled"
+    if _LABELLED.match(filename):
+        return "labelled"
+    return None
+
+
+def is_labelled(filename: str) -> bool:
+    """A labelled backup was made before a change, under ``create --label``."""
+    return backup_kind(filename) == "labelled"
+
+
+def prune_backups(
+    db_path: Path, keep: int = 5, backup_dir: Path | None = None, labelled: bool = False
+) -> list[Path]:
+    """Delete the oldest backups of one kind beyond the keep count. Returns deleted paths.
+
+    Scheduled (unlabelled) and labelled backups are counted apart, so the schedule's
+    pruning never deletes a copy made before a change. A file under any other name is
+    never pruned.
+    """
+    kind = "labelled" if labelled else "scheduled"
+    backups = [b for b in list_backups(db_path, backup_dir) if backup_kind(b["filename"]) == kind]
     to_delete = backups[keep:]  # already sorted newest-first
     deleted = []
     for b in to_delete:
         p = Path(b["path"])
         p.unlink()
+        for sidecar in ("-wal", "-shm", "-journal"):  # left by copies made in WAL mode
+            p.with_name(p.name + sidecar).unlink(missing_ok=True)
         deleted.append(p)
         logger.info(f"Deleted backup: {p}")
     return deleted

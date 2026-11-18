@@ -1,8 +1,12 @@
 """Tests for database administration and maintenance."""
 
+import sqlite3
+from pathlib import Path
+
 import pytest
 from lestash.core.database import get_connection, get_db_path, upsert_item
 from lestash.core.db_admin import (
+    backup_kind,
     count_fk_violations,
     count_history_before,
     create_backup,
@@ -18,6 +22,7 @@ from lestash.core.db_admin import (
     get_status_summary,
     get_sync_health,
     get_table_stats,
+    is_labelled,
     list_backups,
     prune_backups,
     purge_history,
@@ -268,6 +273,117 @@ class TestBackup:
         remaining = list_backups(db_path)
         assert len(remaining) == 2
 
+    def test_a_label_goes_in_the_name_and_is_checked(self, test_db):
+        db_path = get_db_path(test_db)
+        dest = create_backup(db_path, label="pre-deploy-355")
+        assert dest.name.endswith("-pre-deploy-355.db")
+        assert list_backups(db_path)[0]["filename"] == dest.name
+        with pytest.raises(ValueError):
+            create_backup(db_path, label="../escape")
+
+    def test_a_failed_copy_leaves_no_backup(self, test_db, monkeypatch):
+        db_path = get_db_path(test_db)
+
+        class Broken:
+            def __init__(self, conn):
+                self.conn = conn
+
+            def backup(self, dest):
+                raise sqlite3.OperationalError("disk full")
+
+            def close(self):
+                self.conn.close()
+
+        real = sqlite3.connect
+        calls = []
+
+        def connect(path, *a, **k):
+            calls.append(path)
+            conn = real(path, *a, **k)
+            return Broken(conn) if len(calls) == 1 else conn
+
+        monkeypatch.setattr("lestash.core.db_admin.sqlite3.connect", connect)
+        with pytest.raises(sqlite3.OperationalError):
+            create_backup(db_path)
+        folder = Path(calls[1]).parent
+        assert list(folder.glob("lestash-backup-*")) == []
+
+    def test_a_backup_of_the_same_name_is_never_replaced(self, test_db, monkeypatch):
+        import lestash.core.db_admin as d
+
+        db_path = get_db_path(test_db)
+        fixed = d.datetime(2026, 11, 18, 0, 0, 0, tzinfo=d.UTC)
+
+        class Frozen(d.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed
+
+        monkeypatch.setattr(d, "datetime", Frozen)
+        first = create_backup(db_path)
+        inode = first.stat().st_ino
+        with pytest.raises(FileExistsError):
+            create_backup(db_path)
+        assert first.stat().st_ino == inode
+        assert list(first.parent.glob("*.partial")) == []
+
+    def test_a_backup_is_one_file(self, test_db):
+        db_path = get_db_path(test_db)
+        with sqlite3.connect(db_path) as conn:
+            assert conn.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        dest = create_backup(db_path)
+        assert verify_backup(dest)["valid"]
+        with sqlite3.connect(dest) as conn:
+            assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        assert sorted(p.name for p in dest.parent.glob(dest.name + "*")) == [dest.name]
+
+    def test_verify_never_creates_a_missing_file(self, tmp_path):
+        missing = tmp_path / "lestash-backup-20990101-000000.db"
+        result = verify_backup(missing)
+        assert result["valid"] is False and "no such file" in result["error"]
+        assert not missing.exists()
+
+    def test_a_stale_partial_is_removed_and_a_fresh_one_kept(self, test_db):
+        import os
+
+        db_path = get_db_path(test_db)
+        folder = create_backup(db_path).parent
+        stale = folder / "lestash-backup-20200101-000000.db.partial"
+        fresh = folder / "lestash-backup-20990101-000000.db.partial"
+        stale.write_text("x")
+        fresh.write_text("x")
+        os.utime(stale, (0, 0))
+        create_backup(db_path, label="next")
+        assert not stale.exists() and fresh.exists()
+
+    def test_the_source_closes_when_the_copy_cant_be_opened(self, test_db, monkeypatch):
+        db_path = get_db_path(test_db)
+        real = sqlite3.connect
+        opened = []
+
+        def connect(path, *a, **k):
+            if str(path).endswith(".partial"):
+                raise sqlite3.OperationalError("cannot open")
+            conn = real(path, *a, **k)
+            opened.append(conn)
+            return conn
+
+        monkeypatch.setattr("lestash.core.db_admin.sqlite3.connect", connect)
+        with pytest.raises(sqlite3.OperationalError):
+            create_backup(db_path)
+        with pytest.raises(sqlite3.ProgrammingError):
+            opened[0].execute("SELECT 1")
+
+    def test_prune_removes_a_backups_sidecar_files(self, test_db):
+        db_path = get_db_path(test_db)
+        old = db_path.parent / "lestash-backup-20200101-000000.db"
+        old.write_bytes(db_path.read_bytes())
+        for sidecar in ("-wal", "-shm"):
+            old.with_name(old.name + sidecar).write_text("")
+        create_backup(db_path)
+        prune_backups(db_path, keep=1)
+        assert list(db_path.parent.glob("lestash-backup-20200101-000000*")) == []
+
 
 class TestHistory:
     def _trigger_history(self, conn):
@@ -351,6 +467,74 @@ class TestCli:
         result = runner.invoke(cli_app, ["history"])
         assert result.exit_code == 0
         assert "Item History" in result.output
+
+    def test_backup_create_checks_labels_and_prunes(self, runner, cli_app, test_db):
+        import shutil
+
+        db_path = get_db_path(test_db)
+        for i in range(3):
+            shutil.copy2(db_path, db_path.parent / f"lestash-backup-20260101-00000{i}.db")
+        (db_path.parent / "lestash-backup-20250101-000000-pre-deploy-1.db").write_bytes(
+            db_path.read_bytes()
+        )
+        result = runner.invoke(cli_app, ["backup", "create", "--keep", "2"])
+        assert result.exit_code == 0, result.output
+        assert "Pruned 2 older scheduled backup(s), keeping 2" in result.output
+        names = [b["filename"] for b in list_backups(db_path)]
+        assert len(names) == 3  # 2 scheduled, and the labelled one is never pruned by --keep
+        assert "lestash-backup-20250101-000000-pre-deploy-1.db" in names
+        result = runner.invoke(cli_app, ["backup", "create", "--label", "pre-test"])
+        assert result.exit_code == 0, result.output
+        assert "pre-test.db" in result.output
+        result = runner.invoke(
+            cli_app, ["backup", "prune", "--labelled", "--keep", "1", "--confirm"]
+        )
+        assert "Pruned 1 labelled backup(s)" in result.output
+        names = [b["filename"] for b in list_backups(db_path)]
+        (left,) = [n for n in names if is_labelled(n)]
+        assert left.endswith("-pre-test.db")
+
+    def test_a_backup_under_another_name_is_never_pruned(self, runner, cli_app, test_db):
+        db_path = get_db_path(test_db)
+        odd = db_path.parent / "lestash-backup-by-hand.db"
+        odd.write_bytes(db_path.read_bytes())
+        assert backup_kind(odd.name) is None
+        for flags in (["--keep", "0"], ["--labelled", "--keep", "0"]):
+            runner.invoke(cli_app, ["backup", "prune", *flags, "--confirm"])
+        assert odd.exists()
+
+    def test_a_backup_under_another_name_sorts_by_its_file_time(self, test_db):
+        import os
+
+        db_path = get_db_path(test_db)
+        odd = db_path.parent / "lestash-backup-by-hand.db"
+        odd.write_bytes(db_path.read_bytes())
+        os.utime(odd, (0, 0))  # written in 1970
+        newest = create_backup(db_path)
+        names = [b["filename"] for b in list_backups(db_path)]
+        assert names == [newest.name, odd.name]
+
+    def test_backup_create_refuses_a_bad_label(self, runner, cli_app):
+        result = runner.invoke(cli_app, ["backup", "create", "--label", "Bad Label"])
+        assert result.exit_code == 2
+
+    def test_backup_create_deletes_a_copy_that_fails_its_check(
+        self, runner, cli_app, test_db, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "lestash.cli.db.verify_backup", lambda p: {"valid": False, "integrity": "bad page"}
+        )
+        db_path = get_db_path(test_db)
+        result = runner.invoke(cli_app, ["backup", "create", "--keep", "1"])
+        assert result.exit_code == 1
+        assert "failed its integrity check" in result.output
+        assert list_backups(db_path) == []
+
+    def test_backup_verify_exits_1_on_a_bad_backup(self, runner, cli_app, test_db):
+        db_path = get_db_path(test_db)
+        (db_path.parent / "lestash-backup-20260101-000000.db").write_text("not a database")
+        result = runner.invoke(cli_app, ["backup", "verify"])
+        assert result.exit_code == 1
 
     def test_backup_list_empty(self, runner, cli_app):
         result = runner.invoke(cli_app, ["backup", "list"])

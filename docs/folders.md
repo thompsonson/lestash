@@ -7,8 +7,8 @@ LeStash follows the XDG layout (#304). One module names every folder: `packages/
 | Folder | Variable | Holds | Backed up |
 |---|---|---|---|
 | `~/.config/lestash` | `XDG_CONFIG_HOME` | `config.toml`, client secrets, OAuth tokens, `jelu.json`, `gmail.json`, the Kobo switch files | yes |
-| `~/.local/share/lestash` | `XDG_DATA_HOME` | `lestash.db`, the file store (`blobs/`), the Kobo store (`kobo/`), `media/` | yes |
-| `~/.local/share/lestash/backups` | | LeStash's own copies of the database, made before a change | no: exclude it |
+| `~/.local/share/lestash` | `XDG_DATA_HOME` | `lestash.db`, the file store (`blobs/`), the Kobo store (`kobo/`), `media/` | yes, but not the live `lestash.db`, `-wal` or `-shm`: see [backups](backups.md) |
+| `~/.local/share/lestash/backups` | | LeStash's own consistent copies of the database: [backups](backups.md) | yes: the database is backed up through these |
 | `~/.cache/lestash` | `XDG_CACHE_HOME` | Drive downloads (`downloads/`, Takeout zips too), `drive/`, `voice/`, `posts/`, speech models | no |
 | `~/.local/state/lestash` | `XDG_STATE_HOME` | `logs/`, sync `locks/`, `bluesky_session.json` | no |
 

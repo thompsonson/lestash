@@ -13,6 +13,7 @@ from rich.table import Table
 from lestash.core.db_admin import (
     BACKUP_GLOB,
     _format_bytes,
+    backup_kind,
     count_fk_violations,
     count_history_before,
     create_backup,
@@ -391,14 +392,48 @@ def optimize(
 
 
 @backup_app.command("create")
-def backup_create() -> None:
-    """Create a timestamped database backup."""
+def backup_create(
+    label: str = typer.Option(
+        None, "--label", help="Why the copy was made, e.g. pre-deploy-355 (a-z, 0-9, -)."
+    ),
+    keep: int = typer.Option(
+        None,
+        "--keep",
+        min=1,
+        help="Then prune to the newest N scheduled (unlabelled) backups; labelled ones stay.",
+    ),
+) -> None:
+    """Create a timestamped database backup, then check its integrity.
+
+    A copy that fails the check is deleted, and the command exits 1, so a broken copy
+    never replaces a good one when ``--keep`` prunes.
+    """
     from lestash.core.database import get_db_path
 
     db_path = get_db_path()
-    dest = create_backup(db_path)
+    try:
+        dest = create_backup(db_path, label=label)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from e
+    except FileExistsError as e:
+        console.print(f"[red]{e}; try again in a second.[/red]")
+        raise typer.Exit(1) from e
+    result = verify_backup(dest)
+    if not result["valid"]:
+        dest.unlink(missing_ok=True)
+        err = result.get("error", result.get("integrity", "unknown"))
+        console.print(f"[red]Backup failed its integrity check, deleted:[/red] {err}")
+        raise typer.Exit(1)
     size = dest.stat().st_size
-    console.print(f"[green]Backup created:[/green] {dest.name} ({_format_bytes(size)})")
+    console.print(
+        f"[green]Backup created:[/green] {dest.name} ({_format_bytes(size)}), "
+        f"schema v{result['schema_version']}, {result['item_count']:,} items"
+    )
+    if keep is not None:
+        deleted = prune_backups(db_path, keep=keep, labelled=False)
+        if deleted:
+            console.print(f"Pruned {len(deleted)} older scheduled backup(s), keeping {keep}.")
 
 
 @backup_app.command("list")
@@ -450,29 +485,37 @@ def backup_verify(
     else:
         err = result.get("error", result.get("integrity", "unknown"))
         console.print(f"[red]Invalid:[/red] {err}")
+        raise typer.Exit(1)
 
 
 @backup_app.command("prune")
 def backup_prune(
-    keep: int = typer.Option(5, "--keep", help="Number of backups to keep."),
+    keep: int = typer.Option(5, "--keep", min=0, help="Number of backups to keep."),
+    labelled: bool = typer.Option(
+        False, "--labelled", help="Prune the labelled (pre-change) backups instead."
+    ),
     confirm: bool = typer.Option(False, "--confirm", help="Skip confirmation prompt."),
 ) -> None:
-    """Delete old managed backups, keeping the newest N."""
+    """Delete old backups of one kind, keeping the newest N.
+
+    Scheduled (unlabelled) backups by default; labelled ones with ``--labelled``.
+    """
     from lestash.core.database import get_db_path
 
     db_path = get_db_path()
-    backups = list_backups(db_path)
+    kind = "labelled" if labelled else "scheduled"
+    backups = [b for b in list_backups(db_path) if backup_kind(b["filename"]) == kind]
     to_delete_count = max(0, len(backups) - keep)
 
     if to_delete_count == 0:
-        console.print(f"Nothing to prune ({len(backups)} backups, keeping {keep}).")
+        console.print(f"Nothing to prune ({len(backups)} {kind} backups, keeping {keep}).")
         return
 
     if not confirm:
-        typer.confirm(f"Delete {to_delete_count} backup(s)?", abort=True)
+        typer.confirm(f"Delete {to_delete_count} {kind} backup(s)?", abort=True)
 
-    deleted = prune_backups(db_path, keep=keep)
-    console.print(f"[green]Pruned {len(deleted)} backup(s).[/green]")
+    deleted = prune_backups(db_path, keep=keep, labelled=labelled)
+    console.print(f"[green]Pruned {len(deleted)} {kind} backup(s).[/green]")
 
 
 # --------------------------------------------------------------------------- #
