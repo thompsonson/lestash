@@ -161,6 +161,13 @@ function swipeDays(tab) {
   area.addEventListener('touchcancel', () => { start = null; }, { passive: true });
 }
 
+// The Timeline is the page shown, with no item open over it
+function onTimeline(tab) {
+  const path = location.pathname;
+  return tab.classList.contains('active') && !document.body.classList.contains('sheet-open')
+    && (path === '/' || path.startsWith('/day/'));
+}
+
 // Fetch the day shown again: after a pull, or time away. The router puts back the
 // scroll position kept with the address, so keep the current one there first.
 function refresh() {
@@ -201,7 +208,7 @@ function pullToRefresh(tab) {
     hint.textContent = ready ? 'Release to refresh' : 'Pull to refresh';
   }, { passive: true });
   area.addEventListener('touchend', () => {
-    const go = start && dy >= PULL_AT && tab.classList.contains('active');
+    const go = start && dy >= PULL_AT && onTimeline(tab);
     reset();
     if (go) refresh();
   }, { passive: true });
@@ -217,7 +224,7 @@ function refreshOnReturn(tab) {
     if (document.hidden) { hiddenAt = Date.now(); return; }
     const away = hiddenAt !== null && Date.now() - hiddenAt >= AWAY_MS;
     hiddenAt = null;
-    if (away && tab.classList.contains('active')) refresh();
+    if (away && onTimeline(tab)) refresh();
   });
 }
 

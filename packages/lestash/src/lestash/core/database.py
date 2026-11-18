@@ -791,9 +791,10 @@ MIGRATIONS = [
         35,
         "Backfill 'saved' activities for items shared into LeStash before #357",
         # What the app's share and capture paths made: a share or image (dated by
-        # created_at, the time it was saved), a web page or PDF (fetched_at, as a
-        # page's created_at may be when it was published) and a shared video (its
-        # created_at is its upload date, so fetched_at).
+        # created_at, the time it was saved), an uploaded PDF (fetched_at, as its
+        # created_at may be when it was written) and a shared video (its created_at
+        # is its upload date, so fetched_at). Web items are left out: those held came
+        # from session imports, not shares.
         """
         INSERT INTO activities (verb, item_id, occurred_at, source)
         SELECT 'saved', s.id, s.at, 'app:share'
@@ -804,7 +805,7 @@ MIGRATIONS = [
                                  ELSE i.fetched_at END) AS at
             FROM items i
             WHERE i.source_type IN ('share', 'image')
-               OR (i.source_type IN ('web', 'pdf') AND i.parent_id IS NULL)
+               OR (i.source_type = 'pdf' AND i.parent_id IS NULL)
                OR (i.source_type = 'youtube' AND json_valid(i.metadata)
                    AND json_extract(i.metadata, '$.source_subtype') = 'shared')
         ) AS s
