@@ -166,3 +166,33 @@ def test_logging_before_the_database_exists_does_not_create_it(tmp_path):
     handler = DatabaseHandler(config)
     handler.emit(logging.LogRecord("lestash.test", logging.INFO, __file__, 1, "x", None, None))
     assert not (tmp_path / "new.db").exists()
+
+
+def test_a_record_that_cannot_be_written_does_not_block_the_rest(test_db):
+    from lestash.core.logging import DatabaseHandler
+
+    handler = DatabaseHandler(test_db)
+
+    def record(msg):
+        return logging.LogRecord("lestash.test", logging.INFO, __file__, 1, msg, None, None)
+
+    handler.emit(record("bad \udc80"))  # a lone surrogate: SQLite cannot store it
+    handler.emit(record("after"))
+    with sqlite3.connect(get_db_path(test_db)) as conn:
+        messages = [m for (m,) in conn.execute("SELECT message FROM log_entries")]
+    assert messages == ["after"]
+    assert handler._held == []
+
+
+def test_a_record_waits_briefly_for_a_busy_database(test_db):
+    from lestash.core.logging import DatabaseHandler
+
+    db_path = get_db_path(test_db)
+    handler = DatabaseHandler(test_db)
+    busy = sqlite3.connect(db_path, check_same_thread=False)
+    busy.execute("BEGIN IMMEDIATE")
+    threading.Timer(0.3, busy.rollback).start()
+    handler.emit(logging.LogRecord("lestash.test", logging.INFO, __file__, 1, "x", None, None))
+    busy.close()
+    with sqlite3.connect(db_path) as conn:
+        assert [m for (m,) in conn.execute("SELECT message FROM log_entries")] == ["x"]

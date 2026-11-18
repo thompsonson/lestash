@@ -94,13 +94,18 @@ class DatabaseHandler(logging.Handler):
     """Log to SQLite database for queryable history.
 
     This handler writes log entries to the log_entries table. It opens a plain
-    connection, never one that migrates, and never waits for a lock: a migration logs
-    while holding the write lock and the handler's lock, so waiting on either would
-    deadlock (#371). Records it cannot write yet are held and written with the next.
+    connection, never one that migrates, and waits at most WAIT_S for the write lock: a
+    migration logs while holding the write lock and the handler's lock, so a longer wait
+    stalls it, and a migrating connection would deadlock (#371). Records it cannot write
+    yet are held and written with the next record, or at exit.
     """
 
     # Records held while the database is busy; the oldest go first past this many
     MAX_HELD = 10_000
+    WAIT_S = 1.0
+    _INSERT = (
+        "INSERT INTO log_entries (timestamp, level, logger, message, extra) VALUES (?, ?, ?, ?, ?)"
+    )
 
     def __init__(self, config: Config) -> None:
         super().__init__()
@@ -125,7 +130,11 @@ class DatabaseHandler(logging.Handler):
             self.handleError(record)
 
     def flush(self) -> None:
-        """Write the held records, oldest first; keep them if the database is busy."""
+        """Write the held records, oldest first.
+
+        A busy or missing database keeps them all for later. A record that cannot be
+        written for any other reason is dropped, so it never blocks the rest.
+        """
         from lestash.core.database import get_db_path
 
         if not self._held:
@@ -133,21 +142,34 @@ class DatabaseHandler(logging.Handler):
         self.acquire()
         try:
             uri = get_db_path(self._config).absolute().as_uri() + "?mode=rw"
-            conn = sqlite3.connect(uri, uri=True, timeout=0)
+            conn = sqlite3.connect(uri, uri=True, timeout=self.WAIT_S)
             try:
-                with conn:
-                    conn.executemany(
-                        "INSERT INTO log_entries (timestamp, level, logger, message, extra)"
-                        " VALUES (?, ?, ?, ?, ?)",
-                        self._held,
-                    )
-                self._held = []
+                try:
+                    with conn:
+                        conn.executemany(self._INSERT, self._held)
+                    self._held = []
+                except sqlite3.OperationalError:
+                    raise
+                except Exception:
+                    self._write_one_by_one(conn)
             finally:
                 conn.close()
-        except sqlite3.Error:
+        except sqlite3.OperationalError:
             pass  # busy, or not made yet: kept for the next record
         finally:
             self.release()
+
+    def _write_one_by_one(self, conn: sqlite3.Connection) -> None:
+        """Write the held records singly, dropping any that cannot be written."""
+        while self._held:
+            try:
+                with conn:
+                    conn.execute(self._INSERT, self._held[0])
+            except sqlite3.OperationalError:
+                raise  # busy: keep this one and the rest
+            except Exception:
+                pass  # this record can never be written
+            self._held.pop(0)
 
 
 def setup_logging(config: Config | None = None) -> None:
