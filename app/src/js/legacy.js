@@ -954,11 +954,12 @@ function renderItemView(item) {
         if (micBtn) delete micBtn.dataset.transcribedItemId;
         const addBtn = container.querySelector('[data-action="show-note-form"]');
         if (addBtn) addBtn.style.display = '';
-        // The new note among the parts, in the chosen order
+        // The new note among the parts, in the chosen order, if this item is still shown
         const list = document.getElementById('children-list');
-        if (list) addPart(list, note, item);
+        const shown = list && list.dataset.itemId === String(item.id);
+        if (shown) addPart(list, note, item);
         item.child_count = (item.child_count || 0) + 1;
-        const title = container.querySelector('#parts-title');
+        const title = shown && container.querySelector('#parts-title');
         if (title) title.textContent = partsTitle(item);
         showToast('Note added');
       } catch (err) {
@@ -2365,7 +2366,8 @@ async function saveLink() {
     // Incrementally update the current detail view (matches save-note pattern)
     const container = document.getElementById('item-view-content');
     const list = container?.querySelector('#children-list');
-    if (list) {
+    // Only the parts of the item it was linked to, if that item is still shown
+    if (list && list.dataset.itemId === String(parentId)) {
       addPart(list, linked, cachedItem(parentId));
       const shown = cachedItem(parentId);
       const titleEl = container.querySelector('#parts-title');
