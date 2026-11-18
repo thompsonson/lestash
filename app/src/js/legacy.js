@@ -1079,7 +1079,7 @@ function renderItemView(item) {
         thread.className = 'chat-thread';
         children.slice().reverse().forEach(child => thread.appendChild(renderChatBubble(child)));
         list.appendChild(thread);
-        missed.forEach(c => list.appendChild(renderCard(c)));  // after the thread, as addPart does
+        missed.forEach(c => addPart(list, c, item));  // after the thread, each once
       } else {
         renderParts(item, [...children, ...missed], list);
       }
@@ -2363,9 +2363,6 @@ async function saveLink() {
     const linked = await api(`/api/items/${childId}`);
     showToast('Item linked', 'ok');
     closeLinkDialog();
-    // Incrementally update the current detail view (matches save-note pattern)
-    const container = document.getElementById('item-view-content');
-    const list = container?.querySelector('#children-list');
     // The parent's part count from the server: linking a part it already has adds none
     let parent = cachedItem(parentId);
     try {
@@ -2377,6 +2374,9 @@ async function saveLink() {
         parent = fresh;
       }
     } catch { /* the count catches up when the item is next opened */ }
+    // The detail view as it is now, after the wait (matches save-note pattern)
+    const container = document.getElementById('item-view-content');
+    const list = container?.querySelector('#children-list');
     // Only the parts of the item it was linked to, if that item is still shown
     if (list && list.dataset.itemId === String(parentId)) {
       addPart(list, linked, parent);

@@ -340,8 +340,13 @@ export function clearParts(list) {
 // A part added while the item is open (a note, a linked item): drawn in its place
 // among the others, keeping what is open. A chat's turns are appended, as before.
 export function addPart(list, child, item) {
+  if (!list.isConnected) return;  // the page has moved on
   if (list.querySelector(':scope > .chat-thread')) {
-    list.appendChild(renderCard(child));
+    // Each appended once: a part linked again replaces its card
+    const card = renderCard(child);
+    card.dataset.partId = String(child.id);
+    const drawn = list.querySelector(`:scope > [data-part-id="${child.id}"]`);
+    if (drawn) drawn.replaceWith(card); else list.appendChild(card);
     return;
   }
   const state = list._parts || { item: item || { id: Number(list.dataset.itemId) }, children: [] };
