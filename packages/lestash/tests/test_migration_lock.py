@@ -248,3 +248,19 @@ def test_records_a_database_can_never_take_are_dropped(test_db):
     handler.emit(logging.LogRecord("lestash.test", logging.INFO, __file__, 1, "x", None, None))
     assert handler._held == []
     assert handler._retry is None
+
+
+def test_records_for_a_database_that_never_opens_are_dropped_in_the_end(tmp_path):
+    from lestash.core.config import Config, GeneralConfig
+    from lestash.core.logging import DatabaseHandler
+
+    config = Config(general=GeneralConfig(database_path=str(tmp_path / "never.db")))
+    handler = DatabaseHandler(config)
+    handler.RETRY_S = 0.05
+    handler.MAX_TRIES = 3
+    handler.emit(logging.LogRecord("lestash.test", logging.INFO, __file__, 1, "x", None, None))
+    deadline = time.monotonic() + 10
+    while (handler._held or handler._retry) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert handler._held == []
+    assert handler._retry is None

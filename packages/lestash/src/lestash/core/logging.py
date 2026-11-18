@@ -105,6 +105,8 @@ class DatabaseHandler(logging.Handler):
     MAX_HELD = 10_000
     WAIT_S = 1.0
     RETRY_S = 5.0
+    # Tries in a row that may fail before the held records are dropped (about a minute)
+    MAX_TRIES = 12
     _INSERT = (
         "INSERT INTO log_entries (timestamp, level, logger, message, extra) VALUES (?, ?, ?, ?, ?)"
     )
@@ -115,6 +117,7 @@ class DatabaseHandler(logging.Handler):
         self._held: list[tuple[str, str, str, str, str | None]] = []
         self._retry: threading.Timer | None = None
         self._closed = False
+        self._failed_tries = 0
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -136,9 +139,10 @@ class DatabaseHandler(logging.Handler):
     def flush(self) -> None:
         """Write the held records, oldest first.
 
-        A busy, locked or missing database keeps them all for later. Any other error
-        drops them: a record that cannot be written, or a database that cannot take
-        any (read-only, full, broken), would otherwise be held and retried for good.
+        A busy, locked or missing database keeps them all for later, for up to
+        MAX_TRIES tries in a row. Any other error drops them: a record that cannot be
+        written, or a database that cannot take any (read-only, full, broken), would
+        otherwise be held and retried for good.
         """
         from lestash.core.database import get_db_path
 
@@ -162,8 +166,11 @@ class DatabaseHandler(logging.Handler):
             finally:
                 conn.close()
         except sqlite3.Error as e:
-            if not _passing(e):
-                self._held = []  # the database cannot take them
+            self._failed_tries += 1
+            if not _passing(e) or self._failed_tries >= self.MAX_TRIES:
+                self._held = []  # the database cannot take them, or not soon
+        else:
+            self._failed_tries = 0
         finally:
             if self._held:
                 self._schedule_retry()
