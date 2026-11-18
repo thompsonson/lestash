@@ -2149,8 +2149,10 @@ async function saveNewLink() {
     if (_isYouTubeUrl(url)) {
       btn.textContent = 'Importing video...';
       const video = await post('/api/youtube/import-video', { url, note: notes || null, parent_id: parent.id });
-      saved = true;
-      message = video.created ? 'Video saved' : `Already in LeStash, left where it is: ${video.title}`;
+      // A video already held stays where it is; the link and its notes are saved here
+      saved = video.created;
+      message = video.created ? 'Video saved' : 'Saved here as a link; the video was already in LeStash';
+      if (!video.created && !title) document.getElementById('capture-title').value = video.title;
       if (video.created && document.getElementById('capture-fetch-transcript').checked) {
         btn.textContent = 'Fetching transcript...';
         try {
@@ -2160,7 +2162,9 @@ async function saveNewLink() {
           message = 'Video saved (transcript unavailable)';
         }
       }
-    } else if (_isDriveOrDocsUrl(url) && document.getElementById('capture-drive-import').checked) {
+    } else if (_isDriveOrDocsUrl(url) && !/\/folders\//.test(url)
+        && document.getElementById('capture-drive-import').checked) {
+      // One document; a folder link is saved as a link
       btn.textContent = 'Importing from Drive...';
       try {
         const result = await post('/api/import/drive/sync', { urls: [url], parent_id: parent.id });
@@ -2174,7 +2178,7 @@ async function saveNewLink() {
         source_type: 'share',
         source_id: 'share-' + Date.now(),
         url,
-        title: title || null,
+        title: document.getElementById('capture-title').value.trim() || null,
         content: notes,
         is_own_content: false,
         parent_id: parent.id,

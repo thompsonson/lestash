@@ -1007,7 +1007,6 @@ body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
 .item-menu-list:has(small) { min-width: 15rem; }
 .item-menu-sep { border: 0; border-top: 1px solid var(--border); margin: 0.25rem 0; }
 #add-to-coll-select { font-size: 0.75rem; padding: 0.25rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
-||||||| 690264e
 
 /* Attach picker (#324): sections before you type, kind chips while you do */
 .picker-heading { padding: 0.35rem 0.6rem 0.15rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }

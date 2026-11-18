@@ -1289,3 +1289,38 @@ def test_a_drive_file_goes_under_the_item_it_was_added_to(client, test_config, m
         ).fetchone()
     assert parent_id == parent
     assert _saved(test_config, item_id) == 1
+
+
+def test_a_drive_file_already_held_is_not_moved(client, test_config, monkeypatch):
+    import lestash.core.google_drive as gd
+    from lestash.core.database import get_connection
+    from lestash.models.item import ItemCreate
+
+    monkeypatch.setattr(gd, "classify_drive_url", lambda url: ("file", "F2"))
+    monkeypatch.setattr(
+        gd,
+        "sync_single_file",
+        lambda file_id: (
+            ItemCreate(source_type="google-drive", source_id="drive:F2", title="Held", content="t"),
+            None,
+            None,
+        ),
+    )
+    with get_connection(test_config) as conn:
+        held = conn.execute(
+            "INSERT INTO items (source_type, source_id, content)"
+            " VALUES ('google-drive', 'drive:F2', 't')"
+        ).lastrowid
+        parent = conn.execute(
+            "INSERT INTO items (source_type, source_id, content) VALUES ('note', 'p3', 'x')"
+        ).lastrowid
+        conn.commit()
+    resp = client.post(
+        "/api/import/drive/sync",
+        json={"urls": ["https://docs.google.com/document/d/F2/edit"], "parent_id": parent},
+    )
+    assert resp.status_code == 200, resp.text
+    with get_connection(test_config) as conn:
+        assert (
+            conn.execute("SELECT parent_id FROM items WHERE id = ?", (held,)).fetchone()[0] is None
+        )
