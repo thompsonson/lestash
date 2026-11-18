@@ -380,3 +380,16 @@ def test_an_item_under_a_note_under_a_copy_takes_the_copys_place(test_db) -> Non
         parents = dict(conn.execute("SELECT id, parent_id FROM items").fetchall())
         assert parents[video] == page
         assert parents[note] == video
+
+
+def test_a_place_under_a_copy_not_yet_folded_makes_no_loop(test_db) -> None:
+    with get_connection(test_db) as conn:
+        page = _item(conn, "note-1", "a page", source_type="note")
+        video = _item(conn, f"history:{VID}", "", {"source": "takeout"})
+        outer = _item(conn, f"shared:{VID}", "d", parent_id=page)
+        note = _item(conn, "note-2", "a note", parent_id=outer, source_type="note")
+        _item(conn, f"liked:{VID}", "d", parent_id=note)
+        _migrate(conn)
+        parents = dict(conn.execute("SELECT id, parent_id FROM items").fetchall())
+        assert parents[video] == page
+        assert parents[note] == video

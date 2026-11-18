@@ -78,15 +78,15 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
         kept = next((r for r in items if r[1] == VIDEO + video_id), items[0])
         kept_id = kept[0]
         metadata = _metadata(kept[6])
-        title, content, parent_id = kept[3], kept[4], kept[2]
+        title, content = kept[3], kept[4]
         own = {r[0] for r in items}
-        chain = _ancestors(conn, kept_id)
-        if own.intersection(chain):
-            # Under a copy, maybe through other items: the copy's parts become the kept
-            # item's, so it takes the place above the highest copy
-            top = max(i for i, ancestor in enumerate(chain) if ancestor in own)
-            parent_id = chain[top + 1] if top + 1 < len(chain) else None
-            conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, kept_id))
+        # Where the kept item goes, decided before the merges move anything: its own
+        # place, else the first place a copy had. Each is the place above the video's
+        # highest item in that chain, since the copies' parts become the kept item's.
+        places = [_place(conn, kept_id, own)]
+        places += [_place(conn, r[0], own) for r in items if r[0] != kept_id]
+        if kept[2] is not None:
+            conn.execute("UPDATE items SET parent_id = NULL WHERE id = ?", (kept_id,))
         description = metadata.get("description")
         liked_at: list[str] = []
         for copy in items:
@@ -103,17 +103,15 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
                 metadata.pop("unavailable")
             for key, value in copy_metadata.items():
                 metadata.setdefault(key, value)
-            if parent_id is None:
-                # The copy was added under an item: the kept item takes its place there
-                parent_id = _outside_parent(conn, copy[0], own)
-                if parent_id is not None and _within(conn, parent_id, kept_id):
-                    parent_id = None  # under one of the item's own parts: a loop
-                if parent_id is not None:
-                    conn.execute(
-                        "UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, kept_id)
-                    )
             merge_item(conn, copy[0], kept_id)
             folded += 1
+        # Every copy is folded now, so this check sees where things finally stand: a
+        # place now under the kept item would make a loop
+        parent_id = next(
+            (p for p in places if p is not None and not _within(conn, p, kept_id)), None
+        )
+        if parent_id is not None:
+            conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, kept_id))
         if metadata.get("liked_at"):
             liked_at.append(metadata["liked_at"])
 
@@ -136,19 +134,12 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
     return folded
 
 
-def _outside_parent(conn: sqlite3.Connection, item_id: int, own: set[int]) -> int | None:
-    """The nearest container of ``item_id`` that is not one of the video's own items.
-
-    Read now, not from the first query: a merge moves children, so a copy nested under
-    another copy has that copy's parent by the time it is folded."""
-    seen = {item_id}
-    row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (item_id,)).fetchone()
-    parent = row[0] if row else None
-    while parent in own and parent not in seen:
-        seen.add(parent)
-        row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (parent,)).fetchone()
-        parent = row[0] if row else None
-    return None if parent in own else parent
+def _place(conn: sqlite3.Connection, item_id: int, own: set[int]) -> int | None:
+    """Where ``item_id`` sits, above the highest of the video's own items in its chain."""
+    chain = _ancestors(conn, item_id)
+    tops = [i for i, ancestor in enumerate(chain) if ancestor in own]
+    rest = chain[tops[-1] + 1 :] if tops else chain
+    return rest[0] if rest else None
 
 
 def _ancestors(conn: sqlite3.Connection, item_id: int) -> list[int]:
