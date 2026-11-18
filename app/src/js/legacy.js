@@ -1077,7 +1077,11 @@ function renderItemView(item) {
         clearParts(list);  // a part added while these loaded may have drawn the order menu
         const thread = document.createElement('div');
         thread.className = 'chat-thread';
-        children.slice().reverse().forEach(child => thread.appendChild(renderChatBubble(child)));
+        children.slice().reverse().forEach(child => {
+          const bubble = renderChatBubble(child);
+          bubble.dataset.partId = String(child.id);  // so addPart doesn't draw it again
+          thread.appendChild(bubble);
+        });
         list.appendChild(thread);
         missed.forEach(c => addPart(list, c, item));  // after the thread, each once
       } else {

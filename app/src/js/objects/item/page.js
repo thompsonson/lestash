@@ -342,10 +342,11 @@ export function clearParts(list) {
 export function addPart(list, child, item) {
   if (!list.isConnected) return;  // the page has moved on
   if (list.querySelector(':scope > .chat-thread')) {
-    // Each appended once: a part linked again replaces its card
+    // Each drawn once: a turn already in the thread stays; a card added before is replaced
+    const drawn = list.querySelector(`[data-part-id="${child.id}"]`);
+    if (drawn?.closest('.chat-thread')) return;
     const card = renderCard(child);
     card.dataset.partId = String(child.id);
-    const drawn = list.querySelector(`:scope > [data-part-id="${child.id}"]`);
     if (drawn) drawn.replaceWith(card); else list.appendChild(card);
     return;
   }
