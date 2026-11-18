@@ -2106,6 +2106,17 @@ function addingTo(prefix, attachTo) {
   }
 }
 
+// Added from an item page: redraw it with the new parts. Apart from the save, so a
+// failed reload never reads as a failed save; drawn only if that page is still shown.
+async function showNewParts(parentId) {
+  try {
+    const fresh = cacheItem(await api(`/api/items/${parentId}?include_children=true`));
+    if (location.pathname === `/items/${parentId}`) renderItemView(fresh);
+  } catch (e) {
+    showToast('Saved; reopen the item to see it', 'ok');
+  }
+}
+
 // From the New item form: pick screenshots or images instead, each a new item
 function pickImagesInstead() {
   closeCaptureDialog();
@@ -2204,10 +2215,7 @@ async function saveCaptureItem() {
     closeCaptureDialog();
     refreshTimeline();
     loadRecent();
-    // Added from an item page: show the new part there
-    if (from && parentId && location.pathname === `/items/${parentId}`) {
-      renderItemView(cacheItem(await api(`/api/items/${parentId}?include_children=true`)));
-    }
+    if (from && parentId) showNewParts(parentId);
   } catch (e) {
     showToast('Save failed: ' + e.message, 'error');
   } finally {
@@ -2529,10 +2537,7 @@ async function saveMultiImageCapture() {
     closeMultiImageCaptureDialog();
     refreshTimeline();
     loadRecent();
-    // Added from an item page: show the new parts there
-    if (from && location.pathname === `/items/${parentId}`) {
-      renderItemView(cacheItem(await api(`/api/items/${parentId}?include_children=true`)));
-    }
+    if (from) showNewParts(parentId);
   } catch (e) {
     showToast('Save failed: ' + e.message, 'error');
   } finally {
