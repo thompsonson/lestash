@@ -216,3 +216,22 @@ def test_records_held_while_the_database_is_busy_are_retried_on_their_own(test_d
         time.sleep(0.1)
     with sqlite3.connect(db_path) as conn:
         assert [m for (m,) in conn.execute("SELECT message FROM log_entries")] == ["x"]
+
+
+def test_a_closed_handler_stops_retrying(test_db):
+    from lestash.core.logging import DatabaseHandler
+
+    db_path = get_db_path(test_db)
+    handler = DatabaseHandler(test_db)
+    handler.WAIT_S = 0
+    handler.RETRY_S = 0.1
+    busy = sqlite3.connect(db_path)
+    busy.execute("BEGIN IMMEDIATE")
+    try:
+        handler.emit(logging.LogRecord("lestash.test", logging.INFO, __file__, 1, "x", None, None))
+        handler.close()  # still busy: the last try fails
+        time.sleep(0.3)
+        assert handler._retry is None
+    finally:
+        busy.rollback()
+        busy.close()

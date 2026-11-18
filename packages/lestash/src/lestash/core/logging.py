@@ -114,6 +114,7 @@ class DatabaseHandler(logging.Handler):
         self._config = config
         self._held: list[tuple[str, str, str, str, str | None]] = []
         self._retry: threading.Timer | None = None
+        self._closed = False
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -166,7 +167,7 @@ class DatabaseHandler(logging.Handler):
 
     def _schedule_retry(self) -> None:
         """Try the held records again later, once at a time."""
-        if self._retry is not None:
+        if self._retry is not None or self._closed:
             return
         self._retry = threading.Timer(self.RETRY_S, self._retry_flush)
         self._retry.daemon = True  # never keeps the process alive; exit flushes
@@ -176,15 +177,21 @@ class DatabaseHandler(logging.Handler):
         self.acquire()
         try:
             self._retry = None  # so a retry that fails schedules the next
-            self.flush()
+            if not self._closed:
+                self.flush()
         finally:
             self.release()
 
     def close(self) -> None:
-        if self._retry is not None:
-            self._retry.cancel()
-            self._retry = None
-        self.flush()
+        self.acquire()
+        try:
+            self._closed = True  # no more retries; this flush is the last try
+            if self._retry is not None:
+                self._retry.cancel()
+                self._retry = None
+            self.flush()
+        finally:
+            self.release()
         super().close()
 
     def _write_one_by_one(self, conn: sqlite3.Connection) -> None:
