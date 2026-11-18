@@ -387,7 +387,7 @@ Every relationship with a count must be visible on both objects' pages.
 
 | Relationship | From the first object | From the second | Gap |
 |---|---|---|---|
-| Item has parts / part of | ✓ parts grouped by kind | ✓ up link | — |
+| Item has parts / part of | ✓ parts grouped by kind, largest group first; newest first, or oldest first kept per item on this device; chips show one kind; a group over 4 folds behind "show all" (#365) | ✓ up link | — |
 | Item replies to / replies | ✓ thread on a post | ✓ up link | Names in a thread open the reply, not the person |
 | Item references / referenced by | ✓ Links section | ✓ Links section | Below the fold on every page |
 | Item made by / Person made | ✓ People section | ✓ person page, by kind | Kobo and Audible authors are in the byline, not linked (the walkthrough's book had an empty People section) |

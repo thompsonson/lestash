@@ -26,7 +26,7 @@ import {
 } from './objects/item/actions.js';
 import {
   itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
-  renderParts, PARTS_QUERY, titleOnce,
+  renderParts, addPart, clearParts, PARTS_QUERY, PARTS_LOAD_FAILED, titleOnce,
 } from './objects/item/page.js';
 import { selfName, selfReady } from './objects/person/self.js';
 import { setSheet, onSheetClose } from './sheet.js';
@@ -522,7 +522,7 @@ function renderItemView(item) {
 
   // Children section (always shown so new notes appear immediately)
   html += `<div class="item-view-children">
-    <div class="item-view-children-title" id="parts-title">${partsTitle(item)}</div>
+    <div class="parts-head"><div class="item-view-children-title" id="parts-title">${partsTitle(item)}</div><div class="parts-order-slot"></div></div>
     <div class="item-list" id="children-list" data-item-id="${item.id}">${item.child_count - (item.reaction_count || 0) > 0
       ? '<span class="parts-placeholder" style="color:var(--muted);font-size:0.8rem">Loading...</span>'
       : '<span class="parts-placeholder" style="color:var(--muted);font-size:0.8rem">No notes yet</span>'
@@ -954,15 +954,12 @@ function renderItemView(item) {
         if (micBtn) delete micBtn.dataset.transcribedItemId;
         const addBtn = container.querySelector('[data-action="show-note-form"]');
         if (addBtn) addBtn.style.display = '';
-        // Append the new note to the children list
+        // The new note among the parts, in the chosen order, if this item is still shown
         const list = document.getElementById('children-list');
-        if (list) {
-          const placeholder = list.querySelector(':scope > .parts-placeholder');
-          if (placeholder) list.innerHTML = '';
-          list.appendChild(renderCard(note));
-        }
+        const shown = list && list.dataset.itemId === String(item.id);
+        if (shown) addPart(list, note, item);
         item.child_count = (item.child_count || 0) + 1;
-        const title = container.querySelector('#parts-title');
+        const title = shown && container.querySelector('#parts-title');
         if (title) title.textContent = partsTitle(item);
         showToast('Note added');
       } catch (err) {
@@ -1071,20 +1068,36 @@ function renderItemView(item) {
       const list = document.getElementById('children-list');
       // The user may have opened another item while the pages loaded
       if (!list || list.dataset.itemId !== String(item.id)) return;
+      // Parts added while these loaded (a note just saved) stay, if the load missed them
+      const fetched = new Set(children.map(c => c.id));
+      const missed = (list._parts?.children || []).filter(c => !fetched.has(c.id));
       list.innerHTML = '';
       const isChat = children.length > 0 && CHAT_ROLES.has(getChatRole(children[0]));
       if (isChat) {
+        clearParts(list);  // a part added while these loaded may have drawn the order menu
         const thread = document.createElement('div');
         thread.className = 'chat-thread';
-        children.slice().reverse().forEach(child => thread.appendChild(renderChatBubble(child)));
+        children.slice().reverse().forEach(child => {
+          const bubble = renderChatBubble(child);
+          bubble.dataset.partId = String(child.id);  // so addPart doesn't draw it again
+          thread.appendChild(bubble);
+        });
         list.appendChild(thread);
+        missed.forEach(c => addPart(list, c, item));  // after the thread, each once
       } else {
-        renderParts(item, children, list);
+        renderParts(item, [...children, ...missed], list);
       }
     }).catch(() => {
       const list = document.getElementById('children-list');
       if (list && list.dataset.itemId === String(item.id)) {
-        list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Could not load these items</span>';
+        // Parts added while loading stay shown, under the message; renderParts keeps it
+        list._loadFailed = true;
+        const added = list._parts?.children || [];
+        if (added.length) {
+          renderParts(item, added, list);
+        } else {
+          list.innerHTML = PARTS_LOAD_FAILED;
+        }
       }
     });
   }
@@ -2354,19 +2367,25 @@ async function saveLink() {
     const linked = await api(`/api/items/${childId}`);
     showToast('Item linked', 'ok');
     closeLinkDialog();
-    // Incrementally update the current detail view (matches save-note pattern)
+    // The parent's part count from the server: linking a part it already has adds none
+    let parent = cachedItem(parentId);
+    try {
+      const fresh = await api(`/api/items/${parentId}`);
+      if (parent) {
+        parent.child_count = fresh.child_count;
+        parent.reaction_count = fresh.reaction_count;
+      } else {
+        parent = fresh;
+      }
+    } catch { /* the count catches up when the item is next opened */ }
+    // The detail view as it is now, after the wait (matches save-note pattern)
     const container = document.getElementById('item-view-content');
     const list = container?.querySelector('#children-list');
-    if (list) {
-      const placeholder = list.querySelector(':scope > .parts-placeholder');
-      if (placeholder) list.innerHTML = '';
-      list.appendChild(renderCard(linked));
-      const shown = cachedItem(parentId);
+    // Only the parts of the item it was linked to, if that item is still shown
+    if (list && list.dataset.itemId === String(parentId)) {
+      addPart(list, linked, parent);
       const titleEl = container.querySelector('#parts-title');
-      if (shown && titleEl) {
-        shown.child_count = (shown.child_count || 0) + 1;
-        titleEl.textContent = partsTitle(shown);
-      }
+      if (parent && titleEl) titleEl.textContent = partsTitle(parent);
     }
   } catch (e) {
     showToast('Link failed: ' + e.message, 'error');

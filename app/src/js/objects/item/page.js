@@ -273,29 +273,191 @@ function linkify(escaped) {
 // The children request: reactions are a count on the post, never cards
 export const PARTS_QUERY = '&exclude_kind=reaction';
 
-// A post's replies as a thread, oldest first; other items' parts grouped by kind
+// ── Parts: order and filter (#365) ──
+// Newest first by default. "Oldest first" is kept per item, on this device; the kind
+// filter lasts while the item stays open. Long groups show their first few parts.
+
+// The items shown oldest first, the latest choice last; newest first is the default,
+// so it needs no entry
+const ORDER_KEY = 'lestash-parts-oldest-first';
+const ORDERS_KEPT = 500;  // items whose order is kept; the oldest choice goes first
+const GROUP_SHOWN = 4;
+
+function oldestFirst() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(ORDER_KEY) || '[]');
+    return Array.isArray(ids) ? ids : [];
+  } catch { return []; }
+}
+
+export function partsOrder(itemId) {
+  return oldestFirst().includes(itemId) ? 'oldest' : 'newest';
+}
+
+function keepOrder(itemId, order) {
+  const ids = oldestFirst().filter(id => id !== itemId);
+  if (order === 'oldest') ids.push(itemId);
+  try { localStorage.setItem(ORDER_KEY, JSON.stringify(ids.slice(-ORDERS_KEPT))); } catch { /* private mode */ }
+}
+
+// A part's time as a number; one with no time sorts last either way
+function when(c) {
+  const t = Date.parse(String(c.created_at || '').replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1'));
+  return Number.isNaN(t) ? null : t;
+}
+
+export function sortParts(children, order) {
+  const sign = order === 'oldest' ? 1 : -1;
+  return children.slice().sort((a, b) => {
+    const ta = when(a), tb = when(b);
+    if (ta === null || tb === null) return (ta === null) - (tb === null);
+    return sign * (ta - tb) || sign * (a.id - b.id);
+  });
+}
+
+const groupLabel = c => c.kind === 'artifact' ? 'Generated' : (KIND_PLURALS[c.kind] || c.kind_label || c.kind);
+
+// What a drawn list of parts shows: the kind it is filtered to, and the groups opened
+// with "show all". Kept on the list, so each item page starts with All, folded.
+const viewOf = list => list._view || (list._view = { label: null, open: new Set() });
+// While the order menu is open: the listener that closes it on a tap elsewhere
+let closeOnTapAway = null;
+
+function stopTapAway() {
+  if (closeOnTapAway) document.removeEventListener('click', closeOnTapAway, true);
+  closeOnTapAway = null;
+}
+
+// A list drawn otherwise (a chat's thread): no order menu, and no parts kept for it
+export function clearParts(list) {
+  stopTapAway();
+  delete list._parts;
+  delete list._view;
+  const head = list.closest('.item-view-children')?.querySelector('.parts-order-slot');
+  if (head) head.innerHTML = '';
+}
+
+// A part added while the item is open (a note, a linked item): drawn in its place
+// among the others, keeping what is open. A chat's turns are appended, as before.
+export function addPart(list, child, item) {
+  if (!list.isConnected) return;  // the page has moved on
+  if (list.querySelector(':scope > .chat-thread')) {
+    // Each drawn once: a turn already in the thread stays; a card added before is replaced
+    const drawn = list.querySelector(`[data-part-id="${child.id}"]`);
+    if (drawn?.closest('.chat-thread')) return;
+    const card = renderCard(child);
+    card.dataset.partId = String(child.id);
+    if (drawn) drawn.replaceWith(card); else list.appendChild(card);
+    return;
+  }
+  const state = list._parts || { item: item || { id: Number(list.dataset.itemId) }, children: [] };
+  // You see the new part: a filter that would hide it is lifted, and its group opened
+  const view = viewOf(list);
+  const label = groupLabel(child);
+  if (view.label && view.label !== label) view.label = null;
+  view.open.add(label);
+  // A part already shown (linked again) is replaced, not added twice
+  const at = state.children.findIndex(c => c.id === child.id);
+  if (at >= 0) state.children[at] = child; else state.children.push(child);
+  renderParts(state.item, state.children, list);
+}
+
+function orderMenu(order) {
+  const opt = (value, text) =>
+    `<button type="button" data-parts-order="${value}"${value === order ? ' aria-current="true"' : ''}>${value === order ? '✓ ' : ''}${text}</button>`;
+  return `<details class="item-menu parts-order"><summary>${order === 'oldest' ? 'Oldest first' : 'Newest first'} ▾</summary>`
+    + `<div class="item-menu-list to-left">${opt('newest', 'Newest first')}${opt('oldest', 'Oldest first')}`
+    + '<hr class="item-menu-sep"><small class="parts-order-note">Kept for this item</small></div></details>';
+}
+
+// A post's replies as a thread, oldest first; other items' parts grouped by kind,
+// newest or oldest first, with chips to show one kind
+export const PARTS_LOAD_FAILED = '<span class="parts-load-failed" style="color:var(--muted);font-size:0.8rem">Could not load these items</span>';
+
 export function renderParts(item, children, list) {
-  list.innerHTML = '';
+  // A failed load is said above whatever parts were added since
+  list.innerHTML = list._loadFailed ? PARTS_LOAD_FAILED : '';
+  list._parts = { item, children };
+  stopTapAway();
+  const head = list.closest('.item-view-children')?.querySelector('.parts-order-slot');
+  if (head) head.innerHTML = '';
   if (!children.length) return;
   if (children.every(c => c.kind === 'comment')) {
     list.appendChild(thread(children));
     return;
   }
-  const groups = new Map();
-  for (const c of children) {
-    const label = c.kind === 'artifact' ? 'Generated' : (KIND_PLURALS[c.kind] || c.kind_label || c.kind);
-    if (!groups.has(label)) groups.set(label, []);
-    groups.get(label).push(c);
+  const view = viewOf(list);
+  const order = partsOrder(item.id);
+  const byLabel = new Map();
+  for (const c of sortParts(children, order)) {
+    const label = groupLabel(c);
+    if (!byLabel.has(label)) byLabel.set(label, []);
+    byLabel.get(label).push(c);
+  }
+  // Generated parts go by type (audio, slides …), each in the chosen order
+  const generated = byLabel.get('Generated');
+  if (generated) generated.sort((a, b) => String(a.kind_detail).localeCompare(String(b.kind_detail)));
+  // Largest group first, so the chips and groups stay put when the order changes
+  const groups = new Map([...byLabel].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])));
+  if (!groups.has(view.label)) view.label = null;
+  const redraw = () => renderParts(item, children, list);
+
+  if (head) {
+    head.innerHTML = orderMenu(order);
+    const menu = head.querySelector('details');
+    // A tap anywhere else closes it; one listener, only while it is open
+    menu.addEventListener('toggle', () => {
+      stopTapAway();
+      if (!menu.open) return;
+      closeOnTapAway = e => { if (!menu.contains(e.target)) menu.open = false; };
+      document.addEventListener('click', closeOnTapAway, true);
+    });
+    head.querySelector('.item-menu-list').addEventListener('click', e => {
+      const value = e.target.closest('[data-parts-order]')?.dataset.partsOrder;
+      if (!value) return;
+      keepOrder(item.id, value);
+      redraw();
+    });
+  }
+  if (groups.size > 1) {
+    const chips = document.createElement('div');
+    chips.className = 'chips parts-chips';
+    const chip = (label, n) =>
+      `<button type="button" class="chip${view.label === label ? ' on' : ''}" aria-pressed="${view.label === label}"`
+      + ` data-kind="${escHtml(label ?? '')}">${escHtml(label ?? 'All')} <span class="chip-count">${n}</span></button>`;
+    chips.innerHTML = chip(null, children.length) + [...groups].map(([label, items]) => chip(label, items.length)).join('');
+    chips.addEventListener('click', e => {
+      const btn = e.target.closest('[data-kind]');
+      if (!btn) return;
+      view.label = btn.dataset.kind || null;
+      redraw();
+    });
+    list.appendChild(chips);
+  }
+  const card = c => renderCard(c, { within: item });
+  if (view.label) {
+    // One kind: every part of it, without a group heading
+    groups.get(view.label).forEach(c => list.appendChild(card(c)));
+    return;
   }
   for (const [label, items] of groups) {
     const h = document.createElement('div');
     h.className = 'parts-group-title';
     h.textContent = `${label} (${items.length})`;
     list.appendChild(h);
-    const sorted = label === 'Generated'
-      ? items.slice().sort((a, b) => String(a.kind_detail).localeCompare(String(b.kind_detail)))
-      : items;
-    sorted.forEach(c => list.appendChild(renderCard(c, { within: item })));
+    const folded = items.length > GROUP_SHOWN && !view.open.has(label);
+    (folded ? items.slice(0, GROUP_SHOWN) : items).forEach(c => list.appendChild(card(c)));
+    if (folded) {
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'parts-more';
+      more.textContent = `+ ${items.length - GROUP_SHOWN} more ${label.toLowerCase()} · show all`;
+      more.addEventListener('click', () => {
+        view.open.add(label);
+        redraw();
+      });
+      list.appendChild(more);
+    }
   }
 }
 
