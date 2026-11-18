@@ -640,6 +640,8 @@ Upload a media attachment (multipart/form-data, max 50MB).
 **Form field:** `file`
 **Response:** `MediaResponse` (status 201)
 
+An `image` item is dated when the picture was taken, from the image's EXIF time (with its offset, in UTC), so images added together sort in the order they were taken.
+
 ---
 
 ### `DELETE /api/media/{media_id}`
@@ -699,7 +701,15 @@ Import from an uploaded file (multipart/form-data, max 50MB).
 **Supported formats:**
 - `.json` — JSON array of items
 - `.zip` — auto-detects: Google Keep Takeout, Gemini Takeout, NotebookLM, Mistral Le Chat, generic JSON
+- `.html` — one saved web page; a page that gives no date is dated when saved.
 - `.pdf` — one `pdf` item with the file, text extracted for search. A file already held is not added again: `items_added` is 0 (#338). The CLI does the same: `lestash pdf add FILE… [--collection NAME] [--revision-of ID]`.
+- `.txt`, `.md` — one `file` item holding the text (kind "document"). Keyed by its bytes like a PDF: a file already held is not added again.
+
+**Optional form fields:**
+- `parent_id` — put a single `.html`, `.pdf`, `.txt` or `.md` under that item (+ Add → File). A new item goes under it; one already held is not moved. 404 if the item doesn't exist; 400 for a `.zip` or `.json`.
+- `page_type`, `source_url`, `notes` — for `.html` pages.
+
+A single page or file is recorded as `saved` now, also when held already (#357).
 
 **Response:**
 ```json
@@ -707,9 +717,12 @@ Import from an uploaded file (multipart/form-data, max 50MB).
   "status": "completed",
   "source_type": "gemini",
   "items_added": 25, "items_updated": 0,
-  "errors": []
+  "errors": [],
+  "item_id": null, "items_held": 0
 }
 ```
+
+`item_id` names the item holding a single page or file; `items_held` is 1 when it was held already.
 
 Parent-child relationships are resolved automatically (two-pass insertion).
 

@@ -402,6 +402,9 @@ class ImportResponse(BaseModel):
     items_added: int
     items_updated: int
     errors: list[str]
+    # A single page or file: the item that holds it, and 1 if it was held already
+    item_id: int | None = None
+    items_held: int = 0
 
 
 class DriveImportRequest(BaseModel):

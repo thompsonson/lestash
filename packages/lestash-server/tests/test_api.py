@@ -794,6 +794,185 @@ class TestImport:
             assert rows["n"] == 1
 
 
+class TestAddFileUnderAnItem:
+    """+ Add → File: one or more pages or files under an item."""
+
+    def _parent(self, client, sid="p"):
+        resp = client.post(
+            "/api/items", json={"source_type": "note", "source_id": sid, "content": "x"}
+        )
+        return resp.json()["id"]
+
+    def _row(self, test_config, item_id):
+        from lestash.core.database import get_connection
+
+        with get_connection(test_config) as conn:
+            return conn.execute(
+                "SELECT source_type, title, content, parent_id, kind, metadata"
+                " FROM items WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+
+    def test_a_markdown_file_is_kept_as_its_text(self, client, test_config):
+        resp = client.post(
+            "/api/import",
+            files={
+                "file": (
+                    "Reading notes.md",
+                    io.BytesIO(b"\xef\xbb\xbf# Notes\n\n- one"),
+                    "text/markdown",
+                )
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert (body["items_added"], body["items_held"], body["source_type"]) == (1, 0, "file")
+        row = self._row(test_config, body["item_id"])
+        assert (row["source_type"], row["title"], row["content"]) == (
+            "file",
+            "Reading notes",
+            "# Notes\n\n- one",
+        )
+        assert row["kind"] == "document"
+        assert json.loads(row["metadata"])["format"] == "markdown"
+        assert row["parent_id"] is None
+        assert _saved(test_config, body["item_id"]) == 1
+
+    def test_a_text_file_goes_under_the_item(self, client, test_config):
+        parent = self._parent(client)
+        resp = client.post(
+            "/api/import",
+            files={"file": ("a.txt", io.BytesIO(b"plain words"), "text/plain")},
+            data={"parent_id": str(parent)},
+        )
+        assert resp.status_code == 200, resp.text
+        row = self._row(test_config, resp.json()["item_id"])
+        assert (row["parent_id"], json.loads(row["metadata"])["format"]) == (parent, "text")
+
+    def test_a_file_held_already_is_not_moved(self, client, test_config):
+        first, second = self._parent(client, "p1"), self._parent(client, "p2")
+        files = lambda: {"file": ("a.txt", io.BytesIO(b"same bytes"), "text/plain")}  # noqa: E731
+        one = client.post("/api/import", files=files(), data={"parent_id": str(first)}).json()
+        two = client.post("/api/import", files=files(), data={"parent_id": str(second)}).json()
+        assert two["item_id"] == one["item_id"]
+        assert (two["items_added"], two["items_held"]) == (0, 1)
+        assert self._row(test_config, one["item_id"])["parent_id"] == first
+        assert _saved(test_config, one["item_id"]) == 2  # saved again, as a share is
+
+    def test_a_pdf_goes_under_the_item(self, client, test_config):
+        parent = self._parent(client)
+        with patch("lestash.core.text_extract.convert_to_markdown", return_value="# md"):
+            resp = client.post(
+                "/api/import",
+                files={"file": ("r.pdf", io.BytesIO(b"%PDF-1.4 under"), "application/pdf")},
+                data={"parent_id": str(parent)},
+            )
+        assert resp.status_code == 200, resp.text
+        assert self._row(test_config, resp.json()["item_id"])["parent_id"] == parent
+
+    def test_a_web_page_goes_under_the_item(self, client, test_config):
+        parent = self._parent(client)
+        page = b"<html><head><title>Kept</title></head><body><p>Words to keep.</p></body></html>"
+        resp = client.post(
+            "/api/import",
+            files={"file": ("page.html", io.BytesIO(page), "text/html")},
+            data={"parent_id": str(parent), "source_url": "https://example.com/kept"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert (body["items_added"], body["items_held"]) == (1, 0)
+        assert self._row(test_config, body["item_id"])["parent_id"] == parent
+        # Dated when saved, as the page gives no date, so it sorts among the parts
+        from lestash.core.database import get_connection
+
+        with get_connection(test_config) as conn:
+            when = conn.execute(
+                "SELECT created_at FROM items WHERE id = ?", (body["item_id"],)
+            ).fetchone()[0]
+        assert when
+        again = client.post(
+            "/api/import",
+            files={"file": ("page.html", io.BytesIO(page), "text/html")},
+            data={
+                "parent_id": str(self._parent(client, "p2")),
+                "source_url": "https://example.com/kept",
+            },
+        ).json()
+        assert again["items_held"] == 1
+        assert self._row(test_config, body["item_id"])["parent_id"] == parent
+
+    def test_an_unknown_parent_is_refused(self, client):
+        resp = client.post(
+            "/api/import",
+            files={"file": ("a.txt", io.BytesIO(b"x"), "text/plain")},
+            data={"parent_id": "999999"},
+        )
+        assert resp.status_code == 404
+
+    def test_a_bulk_import_cannot_go_under_an_item(self, client):
+        resp = client.post(
+            "/api/import",
+            files={"file": ("b.json", io.BytesIO(b"[]"), "application/json")},
+            data={"parent_id": str(self._parent(client))},
+        )
+        assert resp.status_code == 400
+
+
+def _png(taken: str | None = None, offset: str | None = None) -> bytes:
+    from PIL import Image
+
+    img = Image.new("RGB", (4, 4))
+    exif = Image.Exif()
+    if taken:
+        # The EXIF sub-IFD; Pillow writes it only when set whole
+        exif[0x8769] = {36867: taken, **({36881: offset} if offset else {})}
+    out = io.BytesIO()
+    img.save(out, format="PNG", exif=exif)
+    return out.getvalue()
+
+
+class TestImageTakenAt:
+    """An image item is dated when the picture was taken (#362)."""
+
+    def _image(self, client, sid):
+        body = {"source_type": "image", "source_id": sid, "content": "[Image]"}
+        return client.post("/api/items", json=body).json()
+
+    def _created(self, test_config, item_id):
+        from lestash.core.database import get_connection
+
+        with get_connection(test_config) as conn:
+            return conn.execute("SELECT created_at FROM items WHERE id = ?", (item_id,)).fetchone()[
+                0
+            ]
+
+    def test_the_exif_time_dates_the_image(self, client, test_config):
+        item = self._image(client, "i1")
+        png = _png("2026:11:18 01:50:40", "+01:00")
+        resp = client.post(
+            f"/api/items/{item['id']}/media", files={"file": ("2689.png", png, "image/png")}
+        )
+        assert resp.status_code == 201, resp.text
+        assert self._created(test_config, item["id"]) == "2026-11-18T00:50:40+00:00"
+
+    def test_an_image_without_exif_keeps_its_date(self, client, test_config):
+        item = self._image(client, "i2")
+        before = self._created(test_config, item["id"])
+        client.post(
+            f"/api/items/{item['id']}/media", files={"file": ("a.png", _png(), "image/png")}
+        )
+        assert self._created(test_config, item["id"]) == before
+
+    def test_only_an_image_item_is_redated(self, client, test_config):
+        note = client.post(
+            "/api/items", json={"source_type": "note", "source_id": "n", "content": "x"}
+        ).json()
+        before = self._created(test_config, note["id"])
+        png = _png("2020:01:01 00:00:00")
+        client.post(f"/api/items/{note['id']}/media", files={"file": ("a.png", png, "image/png")})
+        assert self._created(test_config, note["id"]) == before
+
+
 class TestVoiceRefine:
     """Test POST /api/voice/refine endpoint."""
 

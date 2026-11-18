@@ -26,6 +26,7 @@ dependencies = [
     "tomli-w>=1.0",
     "networkx>=3.0",  # suggested themes (#266); torch brings it too
     "numpy>=1.26",  # related items (#219); sentence-transformers brings it too
+    "pillow>=10.0",  # when an image was taken, from its EXIF data; docling brings it too
 ]
 
 [project.scripts]

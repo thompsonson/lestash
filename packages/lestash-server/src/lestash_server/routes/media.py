@@ -13,6 +13,7 @@ from lestash.core.database import (
     delete_item_media,
     save_media_file,
 )
+from lestash.core.exif import taken_at
 
 from lestash_server.deps import get_config, get_db
 from lestash_server.models import MediaResponse
@@ -73,7 +74,7 @@ def serve_media(media_id: int):
 def upload_media(item_id: int, file: UploadFile):
     """Upload a media attachment to an item."""
     with get_db() as conn:
-        row = conn.execute("SELECT id FROM items WHERE id = ?", (item_id,)).fetchone()
+        row = conn.execute("SELECT source_type FROM items WHERE id = ?", (item_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
 
@@ -97,6 +98,10 @@ def upload_media(item_id: int, file: UploadFile):
             mime_type=mime,
             source_origin="upload",
         )
+        # An image item is dated when the picture was taken, so images added together
+        # sort in the order they were taken, not the order their uploads finished
+        if row[0] == "image" and media_type == "image" and (taken := taken_at(data)):
+            conn.execute("UPDATE items SET created_at = ? WHERE id = ?", (taken, item_id))
         conn.commit()
         try:
             adopt_media(conn, get_config(), ids=[media_id])  # into the file store
