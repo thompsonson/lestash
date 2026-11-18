@@ -79,6 +79,10 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
         kept_id = kept[0]
         metadata = _metadata(kept[6])
         title, content, parent_id = kept[3], kept[4], kept[2]
+        own = {r[0] for r in items}
+        if parent_id in own:
+            parent_id = _outside_parent(conn, kept_id, own)
+            conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, kept_id))
         description = metadata.get("description")
         liked_at: list[str] = []
         for copy in items:
@@ -95,10 +99,13 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
                 metadata.pop("unavailable")
             for key, value in copy_metadata.items():
                 metadata.setdefault(key, value)
-            if parent_id == copy[0] or (parent_id is None and copy[2] not in (None, kept_id)):
-                # Nested under the copy, or the copy was added under an item: take its place
-                parent_id = copy[2]
-                conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, kept_id))
+            if parent_id is None:
+                # The copy was added under an item: the kept item takes its place there
+                parent_id = _outside_parent(conn, copy[0], own)
+                if parent_id is not None:
+                    conn.execute(
+                        "UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, kept_id)
+                    )
             merge_item(conn, copy[0], kept_id)
             folded += 1
         if metadata.get("liked_at"):
@@ -121,6 +128,21 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
         _record_like(conn, kept_id, liked_at)
     _drop_stale_markers(conn)
     return folded
+
+
+def _outside_parent(conn: sqlite3.Connection, item_id: int, own: set[int]) -> int | None:
+    """The nearest container of ``item_id`` that is not one of the video's own items.
+
+    Read now, not from the first query: a merge moves children, so a copy nested under
+    another copy has that copy's parent by the time it is folded."""
+    seen = {item_id}
+    row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (item_id,)).fetchone()
+    parent = row[0] if row else None
+    while parent in own and parent not in seen:
+        seen.add(parent)
+        row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (parent,)).fetchone()
+        parent = row[0] if row else None
+    return None if parent in own else parent
 
 
 def _record_like(conn: sqlite3.Connection, item_id: int, liked_at: list[str]) -> None:

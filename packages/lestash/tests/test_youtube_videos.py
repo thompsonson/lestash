@@ -338,3 +338,19 @@ def test_a_status_decided_on_the_copy_survives(test_db) -> None:
         _migrate(conn)
         rows = conn.execute("SELECT item_id, status FROM item_mentions").fetchall()
         assert [tuple(r) for r in rows] == [(video, "rejected")]
+
+
+def test_a_copy_nested_under_another_copy_leaves_no_dangling_parent(test_db) -> None:
+    with get_connection(test_db) as conn:
+        page = _item(conn, "note-9", "a note", source_type="note")
+        shared = _item(conn, f"shared:{VID}", "desc", parent_id=page)
+        _item(conn, f"liked:{VID}", "desc", parent_id=shared)
+        video = _item(conn, f"history:{VID}", "", {"source": "takeout"}, parent_id=shared)
+        _migrate(conn)
+        assert (
+            conn.execute("SELECT count(*) FROM items WHERE source_type = 'youtube'").fetchone()[0]
+            == 1
+        )
+        row = _row(conn, video)
+        assert row is not None
+        assert row["parent_id"] == page
