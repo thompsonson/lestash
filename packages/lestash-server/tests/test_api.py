@@ -901,6 +901,28 @@ class TestAddFileUnderAnItem:
         assert again["items_held"] == 1
         assert self._row(test_config, body["item_id"])["parent_id"] == parent
 
+    def test_an_upper_case_page_name_is_taken(self, client, test_config):
+        parent = self._parent(client)
+        page = b"<html><head><title>Upper</title></head><body><p>Words.</p></body></html>"
+        resp = client.post(
+            "/api/import",
+            files={"file": ("PAGE.HTML", io.BytesIO(page), "text/html")},
+            data={"parent_id": str(parent), "source_url": "https://example.com/upper"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert self._row(test_config, body["item_id"])["parent_id"] == parent
+        assert _saved(test_config, body["item_id"]) == 1
+
+    def test_a_page_held_already_is_not_counted_as_added(self, client):
+        page = b"<html><head><title>Twice</title></head><body><p>Words.</p></body></html>"
+        post = lambda: client.post(  # noqa: E731
+            "/api/import",
+            files={"file": ("page.html", io.BytesIO(page), "text/html")},
+            data={"source_url": "https://example.com/twice"},
+        ).json()
+        assert (post()["items_added"], post()["items_added"]) == (1, 0)
+
     def test_an_unknown_parent_is_refused(self, client):
         resp = client.post(
             "/api/import",

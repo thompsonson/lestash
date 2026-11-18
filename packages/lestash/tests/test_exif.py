@@ -1,6 +1,7 @@
 """When an image was taken, from its EXIF data."""
 
 import io
+import time
 
 from lestash.core.exif import taken_at
 from PIL import Image
@@ -31,12 +32,21 @@ def test_a_negative_offset():
     assert taken_at(_image("JPEG", "2026:11:18 01:50:40", "-05:30")) == "2026-11-18T07:20:40+00:00"
 
 
-def test_a_time_without_an_offset_is_taken_as_utc():
-    assert taken_at(_image("JPEG", "2026:11:18 01:50:40")) == "2026-11-18T01:50:40+00:00"
+def test_a_time_without_an_offset_is_taken_as_local_time(monkeypatch):
+    # EXIF times are the camera's wall clock; without an offset, the machine's zone
+    monkeypatch.setenv("TZ", "Europe/Paris")
+    time.tzset()
+    try:
+        assert taken_at(_image("JPEG", "2026:11:18 01:50:40")) == "2026-11-18T00:50:40+00:00"
+    finally:
+        monkeypatch.undo()
+        time.tzset()
 
 
 def test_datetime_is_used_when_there_is_no_original():
-    assert taken_at(_image("PNG", base="2025:01:02 03:04:05")) == "2025-01-02T03:04:05+00:00"
+    assert taken_at(_image("PNG", "", "+00:00", base="2025:01:02 03:04:05")) == (
+        "2025-01-02T03:04:05+00:00"
+    )
 
 
 def test_no_exif_gives_none():

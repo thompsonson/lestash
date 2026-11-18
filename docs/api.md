@@ -640,7 +640,7 @@ Upload a media attachment (multipart/form-data, max 50MB).
 **Form field:** `file`
 **Response:** `MediaResponse` (status 201)
 
-An `image` item is dated when the picture was taken, from the image's EXIF time (with its offset, in UTC), so images added together sort in the order they were taken.
+An `image` item is dated when the picture was taken, from the image's EXIF time, stored in UTC (with no offset in the EXIF data, the server's local time zone is assumed), so images added together sort in the order they were taken.
 
 ---
 
@@ -701,7 +701,7 @@ Import from an uploaded file (multipart/form-data, max 50MB).
 **Supported formats:**
 - `.json` — JSON array of items
 - `.zip` — auto-detects: Google Keep Takeout, Gemini Takeout, NotebookLM, Mistral Le Chat, generic JSON
-- `.html` — one saved web page; a page that gives no date is dated when saved.
+- `.html` — one saved web page; a page that gives no date is dated when saved. A page held already is refreshed from the upload, and `items_added` is 0.
 - `.pdf` — one `pdf` item with the file, text extracted for search. A file already held is not added again: `items_added` is 0 (#338). The CLI does the same: `lestash pdf add FILE… [--collection NAME] [--revision-of ID]`.
 - `.txt`, `.md` — one `file` item holding the text (kind "document"). Keyed by its bytes like a PDF: a file already held is not added again.
 

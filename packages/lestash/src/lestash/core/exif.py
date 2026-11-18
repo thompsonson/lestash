@@ -14,8 +14,9 @@ _DATE_TIME = 306
 def taken_at(data: bytes) -> str | None:
     """The time an image was taken, in UTC ISO 8601, or None if it doesn't say.
 
-    Uses DateTimeOriginal, else DateTime, with OffsetTimeOriginal when given. A time
-    without an offset is taken as UTC.
+    Uses DateTimeOriginal, else DateTime, with OffsetTimeOriginal when given. EXIF
+    times are the camera's wall clock, so a time without an offset is taken as this
+    machine's local time.
     """
     try:
         from PIL import Image
@@ -33,7 +34,7 @@ def taken_at(data: bytes) -> str | None:
         when = datetime.strptime(raw.strip().rstrip("\x00"), "%Y:%m:%d %H:%M:%S")
     except ValueError:
         return None
-    tz = UTC
+    tz = None
     if isinstance(offset, str) and len(offset) == 6 and offset[0] in "+-":
         try:
             hours, minutes = int(offset[1:3]), int(offset[4:6])
@@ -42,4 +43,6 @@ def taken_at(data: bytes) -> str | None:
         else:
             sign = 1 if offset[0] == "+" else -1
             tz = timezone(sign * timedelta(hours=hours, minutes=minutes))
-    return when.replace(tzinfo=tz).astimezone(UTC).isoformat()
+    # astimezone() reads a naive time as local time
+    local = when.replace(tzinfo=tz) if tz else when.astimezone()
+    return local.astimezone(UTC).isoformat()

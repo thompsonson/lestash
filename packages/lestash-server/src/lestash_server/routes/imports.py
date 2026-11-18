@@ -61,11 +61,12 @@ async def import_file(
         raise HTTPException(status_code=413, detail="File too large (max 50MB)")
 
     filename = file.filename or ""
+    name = filename.lower()  # suffixes match in any case: PAGE.HTML is a page
     if parent_id is not None:
         with get_db() as conn:
             if not conn.execute("SELECT 1 FROM items WHERE id = ?", (parent_id,)).fetchone():
                 raise HTTPException(status_code=404, detail=f"Item {parent_id} not found")
-        if not filename.lower().endswith((".html", ".htm", ".pdf")) and not text_format(filename):
+        if not name.endswith((".html", ".htm", ".pdf")) and not text_format(filename):
             raise HTTPException(
                 status_code=400, detail="Only a single page or file can go under an item"
             )
@@ -74,12 +75,12 @@ async def import_file(
     errors: list[str] = []
 
     try:
-        if filename.endswith(".json"):
+        if name.endswith(".json"):
             items = parse_json_items(data)
             source_type = "json"
-        elif filename.endswith(".zip"):
+        elif name.endswith(".zip"):
             items, source_type = parse_zip(data)
-        elif filename.endswith((".html", ".htm")):
+        elif name.endswith((".html", ".htm")):
             from lestash_server.parsers.html_page import parse_html_page
 
             html_text = data.decode("utf-8", errors="replace")
@@ -89,7 +90,7 @@ async def import_file(
                 source_url=source_url,
                 notes=notes,
             )
-        elif filename.lower().endswith(".pdf"):
+        elif name.endswith(".pdf"):
             return _import_pdf(data, filename, errors, parent_id)
         elif text_format(filename):
             return _import_text(data, filename, parent_id)
@@ -111,7 +112,7 @@ async def import_file(
 
     # A single page you shared or uploaded is something you saved (#357); a bulk
     # .zip or .json import is not, so it doesn't fill the Timeline
-    one_page = filename.endswith((".html", ".htm"))
+    one_page = name.endswith((".html", ".htm"))
     if one_page:
         # A page that gives no date is dated when saved, so it sorts among an item's
         # parts and on its day, as a share does
@@ -127,7 +128,8 @@ async def import_file(
     return ImportResponse(
         status="completed",
         source_type=source_type,
-        items_added=items_added,
+        # A page held already is refreshed from the upload, not added again
+        items_added=sum(1 for _, held in placed if not held) if one_page else items_added,
         items_updated=0,
         errors=errors,
         item_id=placed[0][0] if one_page and placed else None,
@@ -248,7 +250,7 @@ def _insert_items_with_parents(
     # Pass 1: insert parents
     for item in parents:
         try:
-            held = parent_id is not None and _held(conn, item)
+            held = (parent_id is not None or placed is not None) and _held(conn, item)
             under = None if held or parent_id is None else parent_id
             row_id = _upsert_item(conn, item, parent_id=under)
             if row_id and placed is not None:
