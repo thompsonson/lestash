@@ -701,7 +701,7 @@ Import from an uploaded file (multipart/form-data, max 50MB).
 **Supported formats:**
 - `.json` — JSON array of items
 - `.zip` — auto-detects: Google Keep Takeout, Gemini Takeout, NotebookLM, Mistral Le Chat, generic JSON
-- `.html` — one saved web page; a page that gives no date is dated when saved. A page held already is refreshed from the upload, and `items_added` is 0.
+- `.html` — one saved web page; a page that gives no date is dated when saved. A page held already is refreshed from the upload; it and its turns, if held, are not counted in `items_added`.
 - `.pdf` — one `pdf` item with the file, text extracted for search. A file already held is not added again: `items_added` is 0 (#338). The CLI does the same: `lestash pdf add FILE… [--collection NAME] [--revision-of ID]`.
 - `.txt`, `.md` — one `file` item holding the text (kind "document"). Keyed by its bytes like a PDF: a file already held is not added again.
 

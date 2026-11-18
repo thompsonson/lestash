@@ -119,7 +119,8 @@ async def import_file(
         now = datetime.now(UTC)
         items = [i if i.created_at else i.model_copy(update={"created_at": now}) for i in items]
     with get_db() as conn:
-        placed: list[tuple[int, bool]] = []
+        # A bulk .zip or .json import counts every item it stores, as before
+        placed: list[tuple[int, bool]] | None = [] if one_page else None
         items_added, import_errors = _insert_items_with_parents(
             conn, items, saved=one_page, parent_id=parent_id if one_page else None, placed=placed
         )
@@ -128,13 +129,11 @@ async def import_file(
     return ImportResponse(
         status="completed",
         source_type=source_type,
-        # A page held already is refreshed from the upload, not added again; its turns,
-        # if any, still count
-        items_added=items_added - sum(1 for _, held in placed if held),
+        items_added=items_added,
         items_updated=0,
         errors=errors,
-        item_id=placed[0][0] if one_page and placed else None,
-        items_held=sum(1 for _, held in placed if held) if one_page else 0,
+        item_id=placed[0][0] if placed else None,
+        items_held=sum(1 for _, held in placed if held) if placed else 0,
     )
 
 
@@ -234,7 +233,8 @@ def _insert_items_with_parents(
     With ``saved``, each top-level item gets a 'saved' activity now (#357). With
     ``parent_id``, each new top-level item goes under that item; one already held is
     not moved. ``placed``, when given, gets each top-level item stored, as
-    (id, held already). Returns the count added and the errors.
+    (id, held already), and the count then leaves out items held already, turns
+    included: they are refreshed, not added. Returns the count added and the errors.
     """
     parents = []
     children = []
@@ -262,7 +262,8 @@ def _insert_items_with_parents(
                 # Use the effective source_id (same logic as _upsert_item)
                 effective_id = item.source_id or item.url or ""
                 parent_id_map[effective_id] = row_id
-                items_added += 1
+                if not (placed is not None and held):
+                    items_added += 1
         except Exception as e:
             errors.append(f"Failed to import parent: {e}")
 
@@ -275,8 +276,9 @@ def _insert_items_with_parents(
                 # Parent from an earlier import or sync (e.g. a liked YouTube video)
                 resolve_parent_id(conn, item)
                 resolved_parent_id = item.parent_id
+            held = placed is not None and _held(conn, item)
             row_id = _upsert_item(conn, item, parent_id=resolved_parent_id)
-            if row_id:
+            if row_id and not held:
                 items_added += 1
         except Exception as e:
             errors.append(f"Failed to import child: {e}")

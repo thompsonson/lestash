@@ -935,14 +935,28 @@ class TestAddFileUnderAnItem:
                 metadata={"_parent_source_id": "chat-1"},
             ),
         ]
-        with patch(
-            "lestash_server.parsers.html_page.parse_html_page", return_value=(chat, "gemini")
-        ):
-            body = client.post(
-                "/api/import",
-                files={"file": ("chat.html", io.BytesIO(b"<html></html>"), "text/html")},
-            ).json()
-        assert body["items_added"] == 2
+
+        def post():
+            with patch(
+                "lestash_server.parsers.html_page.parse_html_page",
+                return_value=([i.model_copy() for i in chat], "gemini"),
+            ):
+                return client.post(
+                    "/api/import",
+                    files={"file": ("chat.html", io.BytesIO(b"<html></html>"), "text/html")},
+                ).json()
+
+        first, again = post(), post()
+        assert (first["items_added"], first["items_held"]) == (2, 0)
+        # Held already: refreshed, not added, turns included
+        assert (again["items_added"], again["items_held"]) == (0, 1)
+
+    def test_a_bulk_import_counts_items_held_already(self, client):
+        data = json.dumps([{"source_type": "note", "source_id": "b1", "content": "x"}]).encode()
+        post = lambda: client.post(  # noqa: E731
+            "/api/import", files={"file": ("b.json", io.BytesIO(data), "application/json")}
+        ).json()
+        assert (post()["items_added"], post()["items_added"]) == (1, 1)
 
     def test_an_unknown_parent_is_refused(self, client):
         resp = client.post(
