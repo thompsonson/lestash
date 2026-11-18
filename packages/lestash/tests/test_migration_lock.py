@@ -235,3 +235,16 @@ def test_a_closed_handler_stops_retrying(test_db):
     finally:
         busy.rollback()
         busy.close()
+
+
+def test_records_a_database_can_never_take_are_dropped(test_db):
+    from lestash.core.logging import DatabaseHandler
+
+    db_path = get_db_path(test_db)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP TABLE log_entries")
+    handler = DatabaseHandler(test_db)
+    handler.RETRY_S = 0.1
+    handler.emit(logging.LogRecord("lestash.test", logging.INFO, __file__, 1, "x", None, None))
+    assert handler._held == []
+    assert handler._retry is None

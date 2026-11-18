@@ -136,8 +136,9 @@ class DatabaseHandler(logging.Handler):
     def flush(self) -> None:
         """Write the held records, oldest first.
 
-        A busy or missing database keeps them all for later. A record that cannot be
-        written for any other reason is dropped, so it never blocks the rest.
+        A busy, locked or missing database keeps them all for later. Any other error
+        drops them: a record that cannot be written, or a database that cannot take
+        any (read-only, full, broken), would otherwise be held and retried for good.
         """
         from lestash.core.database import get_db_path
 
@@ -152,14 +153,17 @@ class DatabaseHandler(logging.Handler):
                     with conn:
                         conn.executemany(self._INSERT, self._held)
                     self._held = []
-                except sqlite3.OperationalError:
-                    raise
+                except sqlite3.Error as e:
+                    if _passing(e):
+                        raise
+                    self._write_one_by_one(conn)
                 except Exception:
                     self._write_one_by_one(conn)
             finally:
                 conn.close()
-        except sqlite3.OperationalError:
-            pass  # busy, or not made yet: kept and retried
+        except sqlite3.Error as e:
+            if not _passing(e):
+                self._held = []  # the database cannot take them
         finally:
             if self._held:
                 self._schedule_retry()
@@ -200,11 +204,22 @@ class DatabaseHandler(logging.Handler):
             try:
                 with conn:
                     conn.execute(self._INSERT, self._held[0])
-            except sqlite3.OperationalError:
-                raise  # busy: keep this one and the rest
+            except sqlite3.Error as e:
+                if _passing(e):
+                    raise  # busy: keep this one and the rest
             except Exception:
                 pass  # this record can never be written
             self._held.pop(0)
+
+
+# SQLite errors that pass: the database is busy, locked, or not made yet
+_PASSING_ERRORS = {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_CANTOPEN}
+
+
+def _passing(e: sqlite3.Error) -> bool:
+    """Whether a write that failed with e may work later."""
+    code = getattr(e, "sqlite_errorcode", None)
+    return code is not None and code & 0xFF in _PASSING_ERRORS
 
 
 def setup_logging(config: Config | None = None) -> None:
