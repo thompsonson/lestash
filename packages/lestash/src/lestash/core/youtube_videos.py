@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import suppress
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from lestash.core.activities import record_activities, stored_times
@@ -21,6 +21,22 @@ from lestash.models.item import ActivityCreate
 VIDEO = "history:"
 COPIES = ("liked:", "shared:")
 API_SOURCE = "youtube"  # activities.source of a like the API sync recorded
+# Takeout and the API sync record one like up to a second apart (672 pairs, 18 Nov 2026)
+LIKE_WINDOW = timedelta(minutes=1)
+
+
+def known_like(conn: sqlite3.Connection, item_id: int, when: datetime, source: str) -> bool:
+    """Whether item ``item_id`` has a like from another source within LIKE_WINDOW of
+    ``when``: the same like, as another writer recorded it."""
+    for (stored,) in conn.execute(
+        "SELECT occurred_at FROM activities WHERE item_id = ? AND verb = 'liked' AND source != ?",
+        (item_id, source),
+    ):
+        with suppress(ValueError, TypeError):
+            other = datetime.fromisoformat(stored)
+            if abs(other - when) <= LIKE_WINDOW:
+                return True
+    return False
 
 
 def _metadata(text: str | None) -> dict[str, Any]:
@@ -38,7 +54,10 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
       the kept item (``merge_item``), and the copy is deleted.
     - A copy's metadata fills keys the kept item lacks; the API description is kept as
       ``description`` and in the content.
-    - A copy's ``liked_at`` becomes a ``liked`` activity, unless the item has a like.
+    - A copy's ``liked_at`` becomes a ``liked`` activity, unless Takeout recorded it.
+    - The kept item takes a copy's parent when it has none of its own.
+    - A ``_parent_source_id`` naming a ``liked:`` or ``shared:`` item, which no longer
+      exists, is removed from every item, or renamed to ``history:`` for a child.
 
     Returns how many items were folded away. The caller commits.
     """
@@ -76,8 +95,8 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
                 metadata.pop("unavailable")
             for key, value in copy_metadata.items():
                 metadata.setdefault(key, value)
-            if parent_id == copy[0]:
-                # The Takeout item was nested under the copy: it takes the copy's place
+            if parent_id == copy[0] or (parent_id is None and copy[2] not in (None, kept_id)):
+                # Nested under the copy, or the copy was added under an item: take its place
                 parent_id = copy[2]
                 conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, kept_id))
             merge_item(conn, copy[0], kept_id)
@@ -100,19 +119,34 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
             (VIDEO + video_id, title, content, json.dumps(metadata), kept_id),
         )
         _record_like(conn, kept_id, liked_at)
+    _drop_stale_markers(conn)
     return folded
 
 
 def _record_like(conn: sqlite3.Connection, item_id: int, liked_at: list[str]) -> None:
-    """A ``liked`` activity at the earliest ``liked_at``, unless the item has a like."""
-    if conn.execute(
-        "SELECT 1 FROM activities WHERE item_id = ? AND verb = 'liked'", (item_id,)
-    ).fetchone():
-        return
+    """A ``liked`` activity at the earliest ``liked_at``, unless Takeout recorded it."""
     times = []
     for value in liked_at:
         with suppress(ValueError, TypeError, AttributeError):
             times.append(datetime.fromisoformat(value.replace("Z", "+00:00")))
-    if times:
+    if times and not known_like(conn, item_id, min(times), API_SOURCE):
         like = ActivityCreate(verb="liked", occurred_at=min(times), source=API_SOURCE)
         record_activities(conn, item_id, [like])
+
+
+def _drop_stale_markers(conn: sqlite3.Connection) -> None:
+    """Takeout's videos named their ``liked:`` copy as parent; transcripts and comments
+    did too. The video's marker goes; a child's names the ``history:`` item."""
+    marker = "json_extract(metadata, '$._parent_source_id')"
+    stale = (
+        f"source_type = 'youtube' AND json_valid(metadata) "
+        f"AND ({marker} GLOB 'liked:*' OR {marker} GLOB 'shared:*')"
+    )
+    conn.execute(
+        f"UPDATE items SET metadata = json_remove(metadata, '$._parent_source_id') "
+        f"WHERE source_id GLOB 'history:*' AND {stale}"
+    )
+    conn.execute(
+        f"UPDATE items SET metadata = json_set(metadata, '$._parent_source_id', "
+        f"'history:' || substr({marker}, instr({marker}, ':') + 1)) WHERE {stale}"
+    )

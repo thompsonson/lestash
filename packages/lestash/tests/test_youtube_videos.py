@@ -247,3 +247,79 @@ def test_a_like_two_writers_know_of_is_kept_once(test_db) -> None:
         )
         assert merge_with_stored(conn, again)
         assert again.activities == [like("takeout:youtube", 0)]  # its own: stored once by key
+        later = ItemCreate(
+            source_type="youtube",
+            source_id=f"history:{VID}",
+            content="desc",
+            activities=[
+                ActivityCreate(
+                    verb="liked", occurred_at=datetime(2026, 3, 1, tzinfo=UTC), source="youtube"
+                )
+            ],
+        )
+        assert merge_with_stored(conn, later)
+        assert len(later.activities or []) == 1  # liked again, weeks later: another like
+
+
+def test_a_like_at_another_time_than_takeouts_is_kept(test_db) -> None:
+    with get_connection(test_db) as conn:
+        liked = _item(conn, f"liked:{VID}", "d", {"liked_at": "2026-03-01T00:00:00Z"})
+        video = _item(conn, f"history:{VID}", "", {"source": "takeout"}, parent_id=liked)
+        conn.execute(
+            "INSERT INTO activities (verb, item_id, occurred_at, source) "
+            "VALUES ('liked', ?, '2026-01-20T14:00:00.000Z', 'takeout:youtube')",
+            (video,),
+        )
+        _migrate(conn)
+        assert _activities(conn, video) == [
+            ("liked", "takeout:youtube", "2026-01-20T14:00:00.000Z"),
+            ("liked", "youtube", "2026-03-01T00:00:00.000Z"),
+        ]
+
+
+def test_a_copy_added_under_an_item_keeps_that_place(test_db) -> None:
+    with get_connection(test_db) as conn:
+        page = _item(conn, "note-9", "a note", source_type="note")
+        video = _item(conn, f"history:{VID}", "", {"source": "takeout"})
+        _item(conn, f"shared:{VID}", "desc", parent_id=page)
+        _migrate(conn)
+        row = _row(conn, video)
+        assert row is not None
+        assert row["parent_id"] == page
+
+
+def test_stale_markers_go_from_every_video_and_child(test_db) -> None:
+    with get_connection(test_db) as conn:
+        alone = _item(
+            conn,
+            f"history:{OTHER}",
+            "",
+            {"source": "takeout", "_parent_source_id": f"liked:{OTHER}"},
+        )
+        transcript = _item(
+            conn, f"transcript:{OTHER}", "words", {"_parent_source_id": f"liked:{OTHER}"}
+        )
+        _migrate(conn)
+        alone_row, transcript_row = _row(conn, alone), _row(conn, transcript)
+        assert alone_row is not None and transcript_row is not None
+        assert "_parent_source_id" not in json.loads(alone_row["metadata"])
+        assert json.loads(transcript_row["metadata"])["_parent_source_id"] == f"history:{OTHER}"
+
+
+def test_mentions_move_with_the_copy(test_db) -> None:
+    with get_connection(test_db) as conn:
+        liked = _item(conn, f"liked:{VID}", "d")
+        video = _item(conn, f"history:{VID}", "", {"source": "takeout"}, parent_id=liked)
+        person = conn.execute("INSERT INTO people (name, kind) VALUES ('Ann', 'person')").lastrowid
+        conn.execute(
+            "INSERT INTO item_mentions (item_id, person_id, status, origin) "
+            "VALUES (?, ?, 'confirmed', 'test')",
+            (liked, person),
+        )
+        _migrate(conn)
+        assert (
+            conn.execute(
+                "SELECT item_id FROM item_mentions WHERE person_id = ?", (person,)
+            ).fetchone()[0]
+            == video
+        )

@@ -60,8 +60,8 @@ def merge_stub(conn: sqlite3.Connection, stub_id: int, item_id: int) -> list[int
 def merge_item(
     conn: sqlite3.Connection, from_id: int, item_id: int, *, stub_only: bool = False
 ) -> list[int]:
-    """Move an item's links, activities, children, tags, collections, people and media
-    onto another that stands for the same thing, then delete it and its embedding.
+    """Move an item's links, activities, children, tags, collections, people, mentions and
+    media onto another that stands for the same thing, then delete it and its embedding.
 
     A link, activity, tag, collection entry or person the item already has stays as it is; the
     merged copy's goes with it. A link between the two becomes a link to itself, and
@@ -86,7 +86,7 @@ def merge_item(
             "UPDATE items SET parent_id = ? WHERE parent_id = ? RETURNING id", (item_id, from_id)
         ).fetchall()
     ]
-    for table in ("item_tags", "collection_items", "item_agents"):
+    for table in ("item_tags", "collection_items", "item_agents", "item_mentions"):
         conn.execute(
             f"UPDATE OR IGNORE {table} SET item_id = ? WHERE item_id = ?", (item_id, from_id)
         )
