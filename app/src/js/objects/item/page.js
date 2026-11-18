@@ -317,8 +317,9 @@ export function sortParts(children, order) {
 
 const groupLabel = c => c.kind === 'artifact' ? 'Generated' : (KIND_PLURALS[c.kind] || c.kind_label || c.kind);
 
-// Which kind each open item is filtered to; another item starts with All
-let shownKind = { itemId: null, label: null };
+// What the open item shows: the kind it is filtered to, and the groups opened with
+// "show all". Another item starts with All, folded.
+let shownKind = { itemId: null, label: null, open: new Set() };
 // While the order menu is open: the listener that closes it on a tap elsewhere
 let closeOnTapAway = null;
 
@@ -328,16 +329,19 @@ function stopTapAway() {
 }
 
 // A part added while the item is open (a note, a linked item): drawn in its place
-// among the others, or appended where the parts aren't drawn by renderParts
-export function addPart(list, child) {
-  const state = list._parts;
-  if (state) {
-    state.children.push(child);
-    renderParts(state.item, state.children, list);
+// among the others, keeping what is open. A chat's turns are appended, as before.
+export function addPart(list, child, item) {
+  if (list.querySelector(':scope > .chat-thread')) {
+    list.appendChild(renderCard(child));
     return;
   }
-  list.querySelector(':scope > .parts-placeholder')?.remove();
-  list.appendChild(renderCard(child));
+  const state = list._parts || { item: item || { id: Number(list.dataset.itemId) }, children: [] };
+  // A filter that would hide the new part is lifted, so you see it
+  if (shownKind.itemId === state.item.id && shownKind.label && shownKind.label !== groupLabel(child)) {
+    shownKind.label = null;
+  }
+  state.children.push(child);
+  renderParts(state.item, state.children, list);
 }
 
 function orderMenu(order) {
@@ -361,7 +365,7 @@ export function renderParts(item, children, list) {
     list.appendChild(thread(children));
     return;
   }
-  if (shownKind.itemId !== item.id) shownKind = { itemId: item.id, label: null };
+  if (shownKind.itemId !== item.id) shownKind = { itemId: item.id, label: null, open: new Set() };
   const order = partsOrder(item.id);
   const byLabel = new Map();
   for (const c of sortParts(children, order)) {
@@ -420,16 +424,16 @@ export function renderParts(item, children, list) {
     h.className = 'parts-group-title';
     h.textContent = `${label} (${items.length})`;
     list.appendChild(h);
-    items.slice(0, GROUP_SHOWN).forEach(c => list.appendChild(card(c)));
-    if (items.length > GROUP_SHOWN) {
-      const rest = items.slice(GROUP_SHOWN);
+    const folded = items.length > GROUP_SHOWN && !shownKind.open.has(label);
+    (folded ? items.slice(0, GROUP_SHOWN) : items).forEach(c => list.appendChild(card(c)));
+    if (folded) {
       const more = document.createElement('button');
       more.type = 'button';
       more.className = 'parts-more';
-      more.textContent = `+ ${rest.length} more ${label.toLowerCase()} · show all`;
+      more.textContent = `+ ${items.length - GROUP_SHOWN} more ${label.toLowerCase()} · show all`;
       more.addEventListener('click', () => {
-        rest.forEach(c => more.before(card(c)));
-        more.remove();
+        shownKind.open.add(label);
+        redraw();
       });
       list.appendChild(more);
     }

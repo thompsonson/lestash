@@ -956,7 +956,7 @@ function renderItemView(item) {
         if (addBtn) addBtn.style.display = '';
         // The new note among the parts, in the chosen order
         const list = document.getElementById('children-list');
-        if (list) addPart(list, note);
+        if (list) addPart(list, note, item);
         item.child_count = (item.child_count || 0) + 1;
         const title = container.querySelector('#parts-title');
         if (title) title.textContent = partsTitle(item);
@@ -2354,7 +2354,7 @@ async function saveLink() {
     const container = document.getElementById('item-view-content');
     const list = container?.querySelector('#children-list');
     if (list) {
-      addPart(list, linked);
+      addPart(list, linked, cachedItem(parentId));
       const shown = cachedItem(parentId);
       const titleEl = container.querySelector('#parts-title');
       if (shown && titleEl) {
