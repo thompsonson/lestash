@@ -6,6 +6,7 @@
 
 import { api } from '../../api.js';
 import { escHtml } from '../../util.js';
+import { FILE_TYPES } from './add-files.js';
 
 const pad = n => String(n).padStart(2, '0');
 
@@ -130,6 +131,7 @@ export function actionsHtml(item) {
     hinted('show-note-form', 'Note', 'your own text, under this item'),
     hinted('add-link', 'New link', 'a page or video not yet in LeStash'),
     hinted('add-images', 'Images', 'one or more, each its own item'),
+    hinted('add-files', 'File', 'PDF, web page, text or Markdown'),
     '<hr class="item-menu-sep">',
     hinted('link-item', 'Link to an item', 'one already in LeStash', item.id),
     action('focus-tag', 'Tag'),
@@ -154,7 +156,8 @@ export function actionsHtml(item) {
     ${mainAction(item)}${add}${go}${more}
     <select id="add-to-coll-select" style="display:none" onchange="confirmAddToCollection(this)"></select>
   </div>
-  <input type="file" id="add-images-input" accept="image/*" multiple hidden>`;
+  <input type="file" id="add-images-input" accept="image/*" multiple hidden>
+  <input type="file" id="add-files-input" accept="${FILE_TYPES}" multiple hidden>`;
 }
 
 // A top-level reply's post, once its reply link has loaded

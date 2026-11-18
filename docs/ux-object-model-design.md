@@ -85,7 +85,7 @@ What this means for screens:
 
 | Object | Actions |
 |---|---|
-| Item | ✓ open; ✓ one main action by kind: a reply opens the post it answers, a video plays, else open original (#323); ✓ Add: note, new link (a page or video not yet in LeStash; a YouTube link becomes the video; a Drive document is imported under the link), images (each its own item, one caption for all) — both under it and saved like a share (#357), link to item, tag, collection; ✓ Go: the post it answers or its parent, its day, the original; ✓ More: edit, history, copy text, copy link, share to Micro.blog (your own, not replies); ✗ play from a transcript time |
+| Item | ✓ open; ✓ one main action by kind: a reply opens the post it answers, a video plays, else open original (#323); ✓ Add: note, new link (a page or video not yet in LeStash; a YouTube link becomes the video; a Drive document is imported under the link), images (each its own item, one caption for all, dated when taken), files (PDF, web page, text or Markdown, one or more, each its own item, saved in the order shown) — all under it and saved like a share (#357), link to item, tag, collection; ✓ Go: the post it answers or its parent, its day, the original; ✓ More: edit, history, copy text, copy link, share to Micro.blog (your own, not replies); ✗ play from a transcript time |
 | Person | ✗ open; ✗ see their items by role; ✗ see your activity with them; ✗ name an unnamed account; ✗ merge two that are the same; ✓ open profile (only for you) |
 | Activity | ✗ open the day; ✗ filter by verb; ✓ (indirect) open the item |
 | File | ✓ play or open; ✗ download; ✗ jump to a slide; ✗ see which items share it |
@@ -411,7 +411,7 @@ Every relationship with a count must be visible on both objects' pages.
 | | Tag | item page | ✓ |
 | | Add to a collection | item page; a card's menu | ◐ item page only |
 | | See which collections hold it | item page | ✗ |
-| | Add a note, a new link or images under it, link to an item | item page | ✓ |
+| | Add a note, a new link, images or files under it, link to an item | item page | ✓ |
 | | Edit, see and restore history | item page | ✓ |
 | | Play, seek from a transcript time | audio and video pages | ✓ |
 | | Open the original | item page | ✓ |

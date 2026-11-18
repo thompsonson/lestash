@@ -2,6 +2,7 @@
 
 import json
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile
 from lestash.core.activities import record_activities, record_saved
@@ -9,6 +10,8 @@ from lestash.core.agents import link_agents
 from lestash.core.database import resolve_parent_id
 from lestash.core.links import link_items
 from lestash.core.sync import dedupe_notebooks
+from lestash.core.text_files import SOURCE_TYPE as TEXT_SOURCE
+from lestash.core.text_files import add_text_file, text_format
 from lestash.importers import merge_with_stored, parse_json_items, parse_zip
 
 from lestash_server.deps import get_config, get_db
@@ -34,6 +37,7 @@ async def import_file(
     page_type: str = Form("auto"),
     source_url: str | None = Form(None),
     notes: str | None = Form(None),
+    parent_id: int | None = Form(None),
 ):
     """Import items from an uploaded file.
 
@@ -42,6 +46,10 @@ async def import_file(
     - ZIP files with known structures (Google Takeout, Claude export)
     - HTML pages with auto-detection (Gemini, etc.)
     - PDF documents (text extracted via Docling, original saved as media)
+    - Text and Markdown files (.txt, .md), kept as their text
+
+    With ``parent_id``, a single page or file goes under that item (+ Add → File); one
+    already held stays where it is. ``item_id`` in the reply names it.
 
     Optional form fields for HTML imports:
     - page_type: "auto", "gemini", "chatgpt", "article", or "unknown"
@@ -53,17 +61,26 @@ async def import_file(
         raise HTTPException(status_code=413, detail="File too large (max 50MB)")
 
     filename = file.filename or ""
+    name = filename.lower()  # suffixes match in any case: PAGE.HTML is a page
+    if parent_id is not None:
+        with get_db() as conn:
+            if not conn.execute("SELECT 1 FROM items WHERE id = ?", (parent_id,)).fetchone():
+                raise HTTPException(status_code=404, detail=f"Item {parent_id} not found")
+        if not name.endswith((".html", ".htm", ".pdf")) and not text_format(filename):
+            raise HTTPException(
+                status_code=400, detail="Only a single page or file can go under an item"
+            )
     items = []
     source_type = "import"
     errors: list[str] = []
 
     try:
-        if filename.endswith(".json"):
+        if name.endswith(".json"):
             items = parse_json_items(data)
             source_type = "json"
-        elif filename.endswith(".zip"):
+        elif name.endswith(".zip"):
             items, source_type = parse_zip(data)
-        elif filename.endswith((".html", ".htm")):
+        elif name.endswith((".html", ".htm")):
             from lestash_server.parsers.html_page import parse_html_page
 
             html_text = data.decode("utf-8", errors="replace")
@@ -73,8 +90,10 @@ async def import_file(
                 source_url=source_url,
                 notes=notes,
             )
-        elif filename.lower().endswith(".pdf"):
-            return _import_pdf(data, filename, errors)
+        elif name.endswith(".pdf"):
+            return _import_pdf(data, filename, errors, parent_id)
+        elif text_format(filename):
+            return _import_text(data, filename, parent_id)
         else:
             # Try JSON first, then fail
             try:
@@ -84,7 +103,8 @@ async def import_file(
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"Unsupported file format: {filename}. Use .json, .zip, .html, or .pdf"
+                        f"Unsupported file format: {filename}. "
+                        "Use .json, .zip, .html, .pdf, .txt or .md"
                     ),
                 ) from None
     except ValueError as e:
@@ -92,9 +112,18 @@ async def import_file(
 
     # A single page you shared or uploaded is something you saved (#357); a bulk
     # .zip or .json import is not, so it doesn't fill the Timeline
-    one_page = filename.endswith((".html", ".htm"))
+    one_page = name.endswith((".html", ".htm"))
+    if one_page:
+        # A page that gives no date is dated when saved, so it sorts among an item's
+        # parts and on its day, as a share does
+        now = datetime.now(UTC)
+        items = [i if i.created_at else i.model_copy(update={"created_at": now}) for i in items]
     with get_db() as conn:
-        items_added, import_errors = _insert_items_with_parents(conn, items, saved=one_page)
+        # A bulk .zip or .json import counts every item it stores, as before
+        placed: list[tuple[int, bool]] | None = [] if one_page else None
+        items_added, import_errors = _insert_items_with_parents(
+            conn, items, saved=one_page, parent_id=parent_id if one_page else None, placed=placed
+        )
         errors.extend(import_errors)
 
     return ImportResponse(
@@ -103,6 +132,32 @@ async def import_file(
         items_added=items_added,
         items_updated=0,
         errors=errors,
+        item_id=placed[0][0] if placed else None,
+        items_held=sum(1 for _, held in placed if held) if placed else 0,
+    )
+
+
+def _place(conn, item_id: int, parent_id: int | None, new: bool) -> None:
+    """Put a newly added item under ``parent_id``; one already held is not moved."""
+    if parent_id is not None and new and item_id != parent_id:
+        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, item_id))
+
+
+def _import_text(data: bytes, filename: str, parent_id: int | None) -> ImportResponse:
+    """Import a .txt or .md file as one item holding its text."""
+    with get_db() as conn:
+        added = add_text_file(conn, data, filename)
+        _place(conn, added.item_id, parent_id, added.new)
+        record_saved(conn, added.item_id)  # saved now, also when held already (#357)
+        conn.commit()
+    return ImportResponse(
+        status="completed",
+        source_type=TEXT_SOURCE,
+        items_added=1 if added.new else 0,
+        items_updated=0,
+        errors=[],
+        item_id=added.item_id,
+        items_held=0 if added.new else 1,
     )
 
 
@@ -166,10 +221,20 @@ def _upsert_item(conn, item, parent_id=None):
     return item_id
 
 
-def _insert_items_with_parents(conn, items, saved: bool = False):
+def _insert_items_with_parents(
+    conn,
+    items,
+    saved: bool = False,
+    parent_id: int | None = None,
+    placed: list[tuple[int, bool]] | None = None,
+):
     """Two-pass insert: parents first, then children with resolved parent_id.
 
-    With ``saved``, each top-level item gets a 'saved' activity now (#357).
+    With ``saved``, each top-level item gets a 'saved' activity now (#357). With
+    ``parent_id``, each new top-level item goes under that item; one already held is
+    not moved. ``placed``, when given, gets each top-level item stored, as
+    (id, held already), and the count then leaves out items held already, turns
+    included: they are refreshed, not added. Returns the count added and the errors.
     """
     parents = []
     children = []
@@ -180,21 +245,27 @@ def _insert_items_with_parents(conn, items, saved: bool = False):
             parents.append(item)
 
     items_added = 0
+    stored = 0  # added or refreshed: what the steps after the insert look at
     errors: list[str] = []
     # Map source_id → DB id for parent resolution
     parent_id_map: dict[str, int] = {}
-
     # Pass 1: insert parents
     for item in parents:
         try:
-            row_id = _upsert_item(conn, item)
+            held = (parent_id is not None or placed is not None) and _held(conn, item)
+            under = None if held or parent_id is None else parent_id
+            row_id = _upsert_item(conn, item, parent_id=under)
+            if row_id and placed is not None:
+                placed.append((row_id, held))
             if row_id and saved:
                 record_saved(conn, row_id)
             if row_id:
                 # Use the effective source_id (same logic as _upsert_item)
                 effective_id = item.source_id or item.url or ""
                 parent_id_map[effective_id] = row_id
-                items_added += 1
+                stored += 1
+                if not (placed is not None and held):
+                    items_added += 1
         except Exception as e:
             errors.append(f"Failed to import parent: {e}")
 
@@ -207,8 +278,11 @@ def _insert_items_with_parents(conn, items, saved: bool = False):
                 # Parent from an earlier import or sync (e.g. a liked YouTube video)
                 resolve_parent_id(conn, item)
                 resolved_parent_id = item.parent_id
+            held = placed is not None and _held(conn, item)
             row_id = _upsert_item(conn, item, parent_id=resolved_parent_id)
             if row_id:
+                stored += 1
+            if row_id and not held:
                 items_added += 1
         except Exception as e:
             errors.append(f"Failed to import child: {e}")
@@ -219,9 +293,9 @@ def _insert_items_with_parents(conn, items, saved: bool = False):
         item.source_type == "notebooklm" and (item.metadata or {}).get("type") == "notebook"
         for item in items
     )
-    if items_added and notebooks:
+    if stored and notebooks:
         dedupe_notebooks(conn, "an import")
-    if items_added:
+    if stored:
         # Links are derived: a failure leaves the items stored; the next sync catches up
         try:
             link_items(conn)
@@ -238,7 +312,21 @@ def _insert_items_with_parents(conn, items, saved: bool = False):
     return items_added, errors
 
 
-def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse:
+def _held(conn, item) -> bool:
+    """Whether LeStash already holds this item, by its key."""
+    source_id = item.source_id or item.url
+    return bool(
+        source_id
+        and conn.execute(
+            "SELECT 1 FROM items WHERE source_type = ? AND source_id = ?",
+            (item.source_type, source_id),
+        ).fetchone()
+    )
+
+
+def _import_pdf(
+    data: bytes, filename: str, errors: list[str], parent_id: int | None = None
+) -> ImportResponse:
     """Import a PDF: extract markdown via Docling, save original as media.
 
     A file already held is not added again (#338).
@@ -247,6 +335,7 @@ def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse
 
     with get_db() as conn:
         added = add_pdf(conn, get_config(), data, filename)
+        _place(conn, added.item_id, parent_id, added.new)
         # Saved now, also when the file was held already (#357)
         record_saved(conn, added.item_id)
         conn.commit()
@@ -270,6 +359,8 @@ def _import_pdf(data: bytes, filename: str, errors: list[str]) -> ImportResponse
         items_added=items_added,
         items_updated=0,
         errors=errors,
+        item_id=added.item_id,
+        items_held=0 if added.new else 1,
     )
 
 

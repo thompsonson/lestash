@@ -11,6 +11,7 @@ import {
   attachPickerSuggest, rememberOpened,
 } from './objects/item/picker.js';
 import { renderCard } from './objects/item/card.js';
+import { openAddFiles } from './objects/item/add-files.js';
 import { koboSectionHtml, loadKobo } from './objects/item/kobo.js';
 import { relatedSectionHtml, loadRelated } from './objects/item/related.js';
 import { renderCollectionCard } from './objects/collection/card.js';
@@ -585,6 +586,15 @@ function renderItemView(item) {
       if (files.length) openMultiImageCaptureDialog(files, { id: item.id, title: item.title });
     });
   }
+  // + Add → File: PDFs, web pages, text or Markdown files, each a new item under this one
+  const filesInput = container.querySelector('#add-files-input');
+  if (filesInput) {
+    filesInput.addEventListener('change', () => {
+      const files = [...filesInput.files];
+      filesInput.value = '';
+      if (files.length) openAddFiles(files, { id: item.id, title: item.title }, showNewParts);
+    });
+  }
   wireTranscript(container);
   wireReactions(container, item);
 
@@ -995,6 +1005,9 @@ function renderItemView(item) {
     }
     if (btn.dataset.action === 'add-images') {
       document.getElementById('add-images-input')?.click();
+    }
+    if (btn.dataset.action === 'add-files') {
+      document.getElementById('add-files-input')?.click();
     }
     if (btn.dataset.action === 'fetch-preview') {
       try {
@@ -2607,7 +2620,9 @@ async function saveMultiImageCapture() {
     let done = 0;
     btn.textContent = `Uploading 0/${total}...`;
     const batchId = Date.now();
-    await Promise.all(_pendingMultiImageFiles.map(async (file, i) => {
+    // One at a time, in the order shown, so they're stored in that order (#362); the
+    // server then dates each by when it was taken, if the image says
+    for (const [i, file] of _pendingMultiImageFiles.entries()) {
       const child = await api('/api/items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2633,7 +2648,7 @@ async function saveMultiImageCapture() {
       }
       done++;
       btn.textContent = `Uploading ${done}/${total}...`;
-    }));
+    }
 
     showToast(`Saved ${total} image${total === 1 ? '' : 's'}`, 'ok');
     const from = _multiImageParent;

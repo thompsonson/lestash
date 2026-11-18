@@ -41,7 +41,7 @@ const SOURCE_LABELS = {
   'claude-code': 'Claude Code', claude_code: 'Claude Code', 'claude-project': 'Claude',
   'claude-memory': 'Claude', mistral: 'Mistral', kobo: 'Kobo', audible: 'Audible',
   jelu: 'Jelu', 'google-drive': 'Google Drive', gmail: 'Gmail', email: 'Email',
-  voice: 'Voice note', note: 'Note', web: 'Web', share: 'Shared', pdf: 'PDF', image: 'Image',
+  voice: 'Voice note', note: 'Note', web: 'Web', share: 'Shared', pdf: 'PDF', file: 'File', image: 'Image',
   atomicguard: 'GitHub · AtomicGuard',
 };
 

@@ -399,6 +399,21 @@
     </div>
   </div>
 
+  <!-- + Add → File: PDFs, web pages, text or Markdown files under an item -->
+  <div class="modal-overlay" id="add-files-modal">
+    <div class="modal" style="max-width:540px">
+      <h2>Files</h2>
+      <div id="add-files-adding-to" style="font-size:0.85rem;color:var(--accent-text);margin-bottom:0.75rem"></div>
+      <ul id="add-files-list" class="add-files-list"></ul>
+      <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.75rem"><span id="add-files-count"></span> · <a href="#" id="add-files-more">add more</a></div>
+      <input type="file" id="add-files-more-input" accept="application/pdf,text/html,text/plain,text/markdown,.pdf,.html,.htm,.txt,.md,.markdown" multiple hidden>
+      <div class="modal-actions">
+        <button class="btn-cancel" id="add-files-cancel">Cancel</button>
+        <button class="btn-save" id="add-files-save">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Multi-image capture dialog -->
   <div class="modal-overlay" id="multi-image-capture-modal">
     <div class="modal" style="max-width:540px">
