@@ -2366,8 +2366,17 @@ async function saveLink() {
     // Incrementally update the current detail view (matches save-note pattern)
     const container = document.getElementById('item-view-content');
     const list = container?.querySelector('#children-list');
-    const parent = cachedItem(parentId);
-    if (parent) parent.child_count = (parent.child_count || 0) + 1;
+    // The parent's part count from the server: linking a part it already has adds none
+    let parent = cachedItem(parentId);
+    try {
+      const fresh = await api(`/api/items/${parentId}`);
+      if (parent) {
+        parent.child_count = fresh.child_count;
+        parent.reaction_count = fresh.reaction_count;
+      } else {
+        parent = fresh;
+      }
+    } catch { /* the count catches up when the item is next opened */ }
     // Only the parts of the item it was linked to, if that item is still shown
     if (list && list.dataset.itemId === String(parentId)) {
       addPart(list, linked, parent);

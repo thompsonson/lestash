@@ -350,7 +350,9 @@ export function addPart(list, child, item) {
   const label = groupLabel(child);
   if (view.label && view.label !== label) view.label = null;
   view.open.add(label);
-  state.children.push(child);
+  // A part already shown (linked again) is replaced, not added twice
+  const at = state.children.findIndex(c => c.id === child.id);
+  if (at >= 0) state.children[at] = child; else state.children.push(child);
   renderParts(state.item, state.children, list);
 }
 
