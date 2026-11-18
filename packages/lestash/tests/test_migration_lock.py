@@ -257,10 +257,32 @@ def test_records_for_a_database_that_never_opens_are_dropped_in_the_end(tmp_path
     config = Config(general=GeneralConfig(database_path=str(tmp_path / "never.db")))
     handler = DatabaseHandler(config)
     handler.RETRY_S = 0.05
-    handler.MAX_TRIES = 3
+    handler.GIVE_UP_S = 0.3
     handler.emit(logging.LogRecord("lestash.test", logging.INFO, __file__, 1, "x", None, None))
     deadline = time.monotonic() + 10
     while (handler._held or handler._retry) and time.monotonic() < deadline:
         time.sleep(0.05)
     assert handler._held == []
     assert handler._retry is None
+
+
+def test_many_records_during_a_short_busy_spell_are_all_kept(test_db):
+    from lestash.core.logging import DatabaseHandler
+
+    db_path = get_db_path(test_db)
+    handler = DatabaseHandler(test_db)
+    handler.WAIT_S = 0
+    handler.GIVE_UP_S = 2
+
+    def record(msg):
+        return logging.LogRecord("lestash.test", logging.INFO, __file__, 1, msg, None, None)
+
+    busy = sqlite3.connect(db_path)
+    busy.execute("BEGIN IMMEDIATE")
+    for i in range(50):
+        handler.emit(record(f"r{i}"))
+    busy.rollback()
+    busy.close()
+    handler.emit(record("after"))
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM log_entries").fetchone()[0] == 51

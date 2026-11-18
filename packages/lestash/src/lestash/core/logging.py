@@ -14,6 +14,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -105,8 +106,8 @@ class DatabaseHandler(logging.Handler):
     MAX_HELD = 10_000
     WAIT_S = 1.0
     RETRY_S = 5.0
-    # Tries in a row that may fail before the held records are dropped (about a minute)
-    MAX_TRIES = 12
+    # How long writes may keep failing before the held records are dropped
+    GIVE_UP_S = 60.0
     _INSERT = (
         "INSERT INTO log_entries (timestamp, level, logger, message, extra) VALUES (?, ?, ?, ?, ?)"
     )
@@ -117,7 +118,7 @@ class DatabaseHandler(logging.Handler):
         self._held: list[tuple[str, str, str, str, str | None]] = []
         self._retry: threading.Timer | None = None
         self._closed = False
-        self._failed_tries = 0
+        self._failing_since: float | None = None
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -139,8 +140,8 @@ class DatabaseHandler(logging.Handler):
     def flush(self) -> None:
         """Write the held records, oldest first.
 
-        A busy, locked or missing database keeps them all for later, for up to
-        MAX_TRIES tries in a row. Any other error drops them: a record that cannot be
+        A busy, locked or missing database keeps them all for later, until writes
+        have failed for GIVE_UP_S. Any other error drops them: a record that cannot be
         written, or a database that cannot take any (read-only, full, broken), would
         otherwise be held and retried for good.
         """
@@ -166,11 +167,14 @@ class DatabaseHandler(logging.Handler):
             finally:
                 conn.close()
         except sqlite3.Error as e:
-            self._failed_tries += 1
-            if not _passing(e) or self._failed_tries >= self.MAX_TRIES:
+            now = time.monotonic()
+            if self._failing_since is None:
+                self._failing_since = now
+            if not _passing(e) or now - self._failing_since >= self.GIVE_UP_S:
                 self._held = []  # the database cannot take them, or not soon
+                self._failing_since = None
         else:
-            self._failed_tries = 0
+            self._failing_since = None
         finally:
             if self._held:
                 self._schedule_retry()
