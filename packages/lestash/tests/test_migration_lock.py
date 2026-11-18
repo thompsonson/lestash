@@ -79,8 +79,32 @@ def test_database_logging_during_a_migration_does_not_hang(test_db):
         t = threading.Thread(target=open_connection, daemon=True)
         t.start()
         assert done.wait(20), "migration hung on its own lock"
+        handler.flush()  # as logging does at exit
     finally:
         logger.removeHandler(handler)
         logger.setLevel(old_level)
     with sqlite3.connect(db_path) as conn:
         assert get_schema_version(conn) == SCHEMA_VERSION
+        messages = [m for (m,) in conn.execute("SELECT message FROM log_entries")]
+    # The migration's own lines are kept, written once it was done
+    assert any(m.startswith("Applying migration 36") for m in messages)
+    assert "Migration 36 complete" in messages
+
+
+def test_migrating_one_database_does_not_hold_another_database_s_logs(test_db, tmp_path):
+    from lestash.core.config import Config, GeneralConfig
+    from lestash.core.database import _migrating_here, init_database
+    from lestash.core.logging import DatabaseHandler
+
+    other = Config(general=GeneralConfig(database_path=str(tmp_path / "other.db")))
+    init_database(other)
+    handler = DatabaseHandler(other)
+    record = logging.LogRecord("lestash.test", logging.INFO, __file__, 1, "kept", None, None)
+    active = _migrating_here()
+    active.add(str(get_db_path(test_db).resolve()))
+    try:
+        handler.emit(record)
+    finally:
+        active.clear()
+    with sqlite3.connect(get_db_path(other)) as conn:
+        assert [m for (m,) in conn.execute("SELECT message FROM log_entries")] == ["kept"]

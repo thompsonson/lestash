@@ -98,34 +98,43 @@ class DatabaseHandler(logging.Handler):
     def __init__(self, config: Config) -> None:
         super().__init__()
         self._config = config
+        # Records made while this database migrates, written once it is done
+        self._held: list[tuple[str, str, str, str, str | None]] = []
 
     def emit(self, record: logging.LogRecord) -> None:
-        from lestash.core.database import get_connection, migrating
+        from lestash.core.database import get_db_path, migrating
 
-        if migrating():
-            # The migration holds the write lock; this write would wait on it
-            return
         try:
             extra_data = getattr(record, "extra", None)
-            extra_json = json.dumps(extra_data) if extra_data else None
-
-            with get_connection(self._config) as conn:
-                conn.execute(
-                    """
-                    INSERT INTO log_entries (timestamp, level, logger, message, extra)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        datetime.now(UTC).isoformat(),
-                        record.levelname,
-                        record.name,
-                        record.getMessage(),
-                        extra_json,
-                    ),
-                )
-                conn.commit()
+            row = (
+                datetime.now(UTC).isoformat(),
+                record.levelname,
+                record.name,
+                record.getMessage(),
+                json.dumps(extra_data) if extra_data else None,
+            )
+            self._held.append(row)
+            if migrating(get_db_path(self._config)):
+                # The migration holds the write lock, so a write now would wait on it
+                return
+            self.flush()
         except Exception:
             self.handleError(record)
+
+    def flush(self) -> None:
+        """Write the held records, oldest first."""
+        from lestash.core.database import get_connection, get_db_path, migrating
+
+        if not self._held or migrating(get_db_path(self._config)):
+            return
+        rows, self._held = self._held, []
+        with get_connection(self._config) as conn:
+            conn.executemany(
+                "INSERT INTO log_entries (timestamp, level, logger, message, extra)"
+                " VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+            conn.commit()
 
 
 def setup_logging(config: Config | None = None) -> None:
