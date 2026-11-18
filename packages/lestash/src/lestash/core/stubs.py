@@ -86,6 +86,15 @@ def merge_item(
             "UPDATE items SET parent_id = ? WHERE parent_id = ? RETURNING id", (item_id, from_id)
         ).fetchall()
     ]
+    # A mention both have keeps a status you decided on the copy, if the item's is only
+    # suggested; then the copy's row is dropped with it below
+    conn.execute(
+        "UPDATE item_mentions AS kept SET status = copy.status FROM item_mentions AS copy "
+        "WHERE kept.item_id = :to AND copy.item_id = :from AND kept.status = 'suggested' "
+        "AND copy.status != 'suggested' AND (kept.person_id = copy.person_id "
+        "OR kept.tag_id = copy.tag_id)",
+        {"to": item_id, "from": from_id},
+    )
     for table in ("item_tags", "collection_items", "item_agents", "item_mentions"):
         conn.execute(
             f"UPDATE OR IGNORE {table} SET item_id = ? WHERE item_id = ?", (item_id, from_id)

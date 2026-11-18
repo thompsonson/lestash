@@ -323,3 +323,18 @@ def test_mentions_move_with_the_copy(test_db) -> None:
             ).fetchone()[0]
             == video
         )
+
+
+def test_a_status_decided_on_the_copy_survives(test_db) -> None:
+    with get_connection(test_db) as conn:
+        liked = _item(conn, f"liked:{VID}", "d")
+        video = _item(conn, f"history:{VID}", "", {"source": "takeout"}, parent_id=liked)
+        person = conn.execute("INSERT INTO people (name, kind) VALUES ('Ann', 'person')").lastrowid
+        conn.executemany(
+            "INSERT INTO item_mentions (item_id, person_id, status, origin) "
+            "VALUES (?, ?, ?, 'test')",
+            [(liked, person, "rejected"), (video, person, "suggested")],
+        )
+        _migrate(conn)
+        rows = conn.execute("SELECT item_id, status FROM item_mentions").fetchall()
+        assert [tuple(r) for r in rows] == [(video, "rejected")]
