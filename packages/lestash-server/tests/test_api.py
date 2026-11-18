@@ -1322,7 +1322,7 @@ class TestImportVideo:
 
     VID = "dQw4w9WgXcQ"
 
-    def _insert_video(self, config, subtype="liked"):
+    def _insert_video(self, config, subtype="history"):
         from lestash.core.database import get_connection
 
         with get_connection(config) as conn:
@@ -1402,7 +1402,7 @@ class TestImportVideo:
             row = conn.execute(
                 "SELECT source_id, metadata FROM items WHERE id = ?", (data["item_id"],)
             ).fetchone()
-        assert row[0] == f"shared:{self.VID}"
+        assert row[0] == f"history:{self.VID}"  # one item per video (#368)
         assert json.loads(row[1])["notes"] == "great explainer"
         assert _saved(test_config, data["item_id"]) == 1
 

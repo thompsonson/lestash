@@ -374,10 +374,11 @@ def test_migration_35_saves_each_earlier_share_once(test_db) -> None:
             " JOIN items i ON i.id = a.item_id WHERE a.verb = 'saved' ORDER BY i.source_id"
         ).fetchall()
         assert [tuple(r) for r in saved] == [
+            # Migration 36 then makes the shared video its one history: item (#368)
+            ("history:V1", "2026-06-28T10:06:04.000Z", "app:share"),
             ("image-1", "2026-05-01T08:00:00.000Z", "app:share"),
             ("pdf-1", "2026-07-02T09:00:00.000Z", "app:share"),
             ("share-1", "2026-08-24T12:54:10.223Z", "app:share"),
-            ("shared:V1", "2026-06-28T10:06:04.000Z", "app:share"),
         ]
         conn.execute("PRAGMA user_version = 34")
         apply_migrations(conn)

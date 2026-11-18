@@ -151,6 +151,9 @@ def _merge_youtube(conn: sqlite3.Connection, item: ItemCreate, stored: dict[str,
 
     kind = (item.source_id or "").split(":", 1)[0]
     if kind == "history":
+        _drop_likes_known_elsewhere(conn, item, stored["id"])
+        if str(merged.get("_parent_source_id", "")).startswith(("liked:", "shared:")):
+            merged.pop("_parent_source_id")  # a copy folded away by migration 36 (#368)
         # The API sync stores the description as content; keep it in metadata either way.
         if not new_is_takeout and item.content:
             merged["description"] = item.content
@@ -178,6 +181,23 @@ def _merge_youtube(conn: sqlite3.Connection, item: ItemCreate, stored: dict[str,
         item.content = search_content(merged.get("query") or "", times)
 
     item.metadata = merged
+
+
+def _drop_likes_known_elsewhere(conn: sqlite3.Connection, item: ItemCreate, item_id: int) -> None:
+    """Keep one record of a like when two writers both know of it.
+
+    Takeout's My Activity and the API sync each record a like, up to a second apart.
+    An incoming like is dropped when the stored item has one from another source within
+    a minute of it; a like at another time is another like, and is kept.
+    """
+    from lestash.core.youtube_videos import known_like
+
+    if item.activities:
+        item.activities = [
+            a
+            for a in item.activities
+            if a.verb != "liked" or not known_like(conn, item_id, a.occurred_at, a.source)
+        ]
 
 
 def _union(old: list[Any] | None, new: list[Any] | None) -> list[Any]:

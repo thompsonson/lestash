@@ -60,10 +60,10 @@ def merge_stub(conn: sqlite3.Connection, stub_id: int, item_id: int) -> list[int
 def merge_item(
     conn: sqlite3.Connection, from_id: int, item_id: int, *, stub_only: bool = False
 ) -> list[int]:
-    """Move an item's links, activities, children, tags, collections and media onto
-    another that stands for the same thing, then delete it and its embedding.
+    """Move an item's links, activities, children, tags, collections, people, mentions and
+    media onto another that stands for the same thing, then delete it and its embedding.
 
-    A link, activity, tag or collection entry the item already has stays as it is; the
+    A link, activity, tag, collection entry or person the item already has stays as it is; the
     merged copy's goes with it. A link between the two becomes a link to itself, and
     is dropped. Media move only to an item with none, so a copy's media are not added
     twice. With stub_only, only a stub (held = 0) is deleted. Returns the ids of the
@@ -86,7 +86,16 @@ def merge_item(
             "UPDATE items SET parent_id = ? WHERE parent_id = ? RETURNING id", (item_id, from_id)
         ).fetchall()
     ]
-    for table in ("item_tags", "collection_items"):
+    # A mention both have keeps a status you decided on the copy, if the item's is only
+    # suggested; then the copy's row is dropped with it below
+    conn.execute(
+        "UPDATE item_mentions AS kept SET status = copy.status FROM item_mentions AS copy "
+        "WHERE kept.item_id = :to AND copy.item_id = :from AND kept.status = 'suggested' "
+        "AND copy.status != 'suggested' AND (kept.person_id = copy.person_id "
+        "OR kept.tag_id = copy.tag_id)",
+        {"to": item_id, "from": from_id},
+    )
+    for table in ("item_tags", "collection_items", "item_agents", "item_mentions"):
         conn.execute(
             f"UPDATE OR IGNORE {table} SET item_id = ? WHERE item_id = ?", (item_id, from_id)
         )

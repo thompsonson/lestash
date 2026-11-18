@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 35
+SCHEMA_VERSION = 36
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -816,6 +816,12 @@ MIGRATIONS = [
           );
         """,
     ),
+    (
+        36,
+        "One item per YouTube video: fold liked: and shared: copies into history: (#368)",
+        # Run in apply_migrations (_migrate_36): the fold needs Python.
+        "",
+    ),
 ]
 
 
@@ -923,6 +929,27 @@ def _migrate_26(conn: sqlite3.Connection) -> None:
         # The transaction holds the database: every history row since is this one's
         mark_recent_history(conn, since, "migration 26")
         set_schema_version(conn, 26)
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _migrate_36(conn: sqlite3.Connection) -> None:
+    """Fold each YouTube video's ``liked:`` and ``shared:`` copies into its one item.
+
+    See core/youtube_videos.py. One transaction, with the version; history rows are
+    marked "migration 36"."""
+    from lestash.core.youtube_videos import fold_video_copies
+
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        since = max_history_id(conn)
+        folded = fold_video_copies(conn)
+        logger.info(f"Migration 36: folded {folded} YouTube video copies")
+        mark_recent_history(conn, since, "migration 36")
+        set_schema_version(conn, 36)
     except BaseException:
         conn.rollback()
         raise
@@ -1122,6 +1149,8 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
                 _migrate_21(conn)  # likewise
             elif version == 26:
                 _migrate_26(conn)  # likewise
+            elif version == 36:
+                _migrate_36(conn)  # likewise
             else:
                 conn.executescript(sql)
                 if version == 22:

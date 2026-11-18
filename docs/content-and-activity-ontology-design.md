@@ -530,6 +530,25 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
 - Each artifact and source has no id of its own, so children are still keyed by folder and file name.
 - On a copy of the live database: 16 notebooks merged; 84 of their 87 children merged into their copies; 3 notes only the old export held moved over; a second run finds none.
 
+### One item per thing (#368)
+
+- **The rule:** one thing is one item, however it reached LeStash.
+  - How it arrived (a watch, a like, a share, a sync) is an activity of that item, never a second item.
+  - A writer that can meet a thing already held finds that item by its identifier and adds to it.
+  - A `source_id` names the thing, not the route it came by.
+- **YouTube, before #368:** the API sync's likes made a `liked:{video_id}` item, and Takeout's `history:{video_id}` item nested under it. A share from the app made a `shared:{video_id}` item.
+- **YouTube, as built:**
+  - Every writer uses `history:{video_id}`: Takeout, the API sync and the share path.
+  - A like from the API sync is a `liked` activity (source `youtube`) at its `liked_at`. A like both Takeout and the sync know of is kept once.
+  - A share records `saved`, as before (#357).
+  - Transcripts and comments name `history:` as their parent.
+- **Migration 36** folds the existing copies, with `fold_video_copies` in `core/youtube_videos.py`:
+  - The `history:` item is kept; else the oldest copy becomes it.
+  - A copy's children, links, activities, tags, collections, people and media move with `merge_item`, which now moves people too.
+  - The API description goes into `metadata.description` and the content; the copy's other metadata fills keys the item lacks.
+  - History rows are tagged `migration 36`.
+- On a copy of the live database (18 Nov 2026): 792 copies folded in about 3 s; 789 `liked:` items with a nested `history:` item, 2 `shared:` items with a separate one, and 1 `liked:` beside a `shared:` item. 46 lone `liked:` items became `history:` items; 163 likes became activities.
+
 ## The activity ontology
 
 An activity is something someone did, at a time, usually to an item.

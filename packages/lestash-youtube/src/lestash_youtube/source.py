@@ -16,7 +16,7 @@ from lestash.core.google_auth import (
     get_credentials_path,
 )
 from lestash.core.logging import get_plugin_logger
-from lestash.models.item import ItemCreate, MediaCreate
+from lestash.models.item import ActivityCreate, ItemCreate, MediaCreate
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 from rich.table import Table
@@ -34,6 +34,9 @@ from lestash_youtube.client import (
 
 console = Console()
 logger = get_plugin_logger("youtube")
+
+# activities.source of the likes the API sync records
+API_SOURCE = "youtube"
 
 
 def parse_iso8601_duration(duration: str | None) -> int | None:
@@ -69,9 +72,12 @@ def video_to_item(
 ) -> ItemCreate:
     """Convert YouTube video data to ItemCreate.
 
+    A video is one item, ``history:{video_id}``, however it arrived (#368). A like is a
+    ``liked`` activity of it, at ``liked_at``; a share is recorded by its writer.
+
     Args:
         video: Video data dictionary from API
-        source_subtype: Type of video source ("liked", "history", "shared")
+        source_subtype: How the video arrived ("liked", "history", "shared")
         note: Optional user note to store in metadata (e.g. from a share capture)
 
     Returns:
@@ -112,7 +118,7 @@ def video_to_item(
         "video_id": video_id,
         "channel_id": video.get("channel_id"),
         "channel_title": video.get("channel_title"),
-        "source_subtype": source_subtype,
+        "source_subtype": "history",
         "duration_seconds": duration_seconds,
         "duration_iso": video.get("duration"),
         "definition": video.get("definition"),
@@ -147,9 +153,15 @@ def video_to_item(
     if thumbnail_url:
         media = [MediaCreate(media_type="thumbnail", url=thumbnail_url)]
 
+    activities = []
+    if source_subtype == "liked" and video.get("liked_at"):
+        with suppress(ValueError, AttributeError):
+            liked_at = datetime.fromisoformat(video["liked_at"].replace("Z", "+00:00"))
+            activities.append(ActivityCreate(verb="liked", occurred_at=liked_at, source=API_SOURCE))
+
     return ItemCreate(
         source_type="youtube",
-        source_id=f"{source_subtype}:{video_id}",
+        source_id=f"history:{video_id}",
         url=url,
         title=video.get("title"),
         content=video.get("description") or "",
@@ -158,6 +170,7 @@ def video_to_item(
         is_own_content=False,  # Liked/watched videos are not own content
         metadata=metadata,
         media=media,
+        activities=activities or None,
     )
 
 
@@ -227,21 +240,14 @@ def _extract_video_id(url_or_id: str) -> str | None:
 
 
 def find_video_item(conn: sqlite3.Connection, video_id: str) -> int | None:
-    """Find a canonical YouTube video item (liked:/history:/shared:) by id.
+    """Find the YouTube video item, ``history:{video_id}``, by id.
 
-    Exact-matches the known video-level subtypes to avoid LIKE wildcard
-    pitfalls (video ids may contain '_', which is a LIKE wildcard). Returns the
-    item id, or None if no YouTube video item exists for this id.
+    One item stands for a video however it arrived (#368). Returns the item id, or
+    None if LeStash holds no item for this video.
     """
     row = conn.execute(
-        """
-        SELECT id FROM items
-        WHERE source_type = 'youtube'
-          AND source_id IN ('liked:' || ?, 'history:' || ?, 'shared:' || ?)
-        ORDER BY id
-        LIMIT 1
-        """,
-        (video_id, video_id, video_id),
+        "SELECT id FROM items WHERE source_type = 'youtube' AND source_id = ?",
+        (f"history:{video_id}",),
     ).fetchone()
     return row[0] if row else None
 
@@ -250,8 +256,7 @@ def resolve_transcript_parent(conn: sqlite3.Connection, video_id: str) -> int | 
     """Find the best existing item to parent a transcript for ``video_id`` to.
 
     Preference order:
-      1. A canonical YouTube video item (liked:/history:/shared:), excluding
-         transcripts.
+      1. The YouTube video item (``history:``).
       2. Any item whose URL references the video_id (e.g. a generic ``share``
          capture created from the share sheet).
 
@@ -348,7 +353,7 @@ def transcript_to_item(
             "video_id": video_id,
             "language": transcript.get("language", "en"),
             "segment_count": len(transcript.get("segments", [])),
-            "_parent_source_id": f"liked:{video_id}",
+            "_parent_source_id": f"history:{video_id}",
         },
     )
 
@@ -388,7 +393,7 @@ def comment_to_item(
             "comment_id": comment["id"],
             "like_count": comment.get("like_count", 0),
             "reply_count": comment.get("reply_count", 0),
-            "_parent_source_id": f"liked:{video_id}",
+            "_parent_source_id": f"history:{video_id}",
         },
     )
 
@@ -864,6 +869,7 @@ def _store_item(conn, item: ItemCreate) -> int:
     Returns:
         1 if item was added/updated, 0 otherwise
     """
+    from lestash.core.activities import record_activities
     from lestash.importers import merge_with_stored
 
     # Keep fields another writer stored, e.g. Takeout watch times on history items
@@ -895,4 +901,10 @@ def _store_item(conn, item: ItemCreate) -> int:
             metadata_json,
         ),
     )
+    if item.activities:
+        row = conn.execute(
+            "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+            (item.source_type, item.source_id),
+        ).fetchone()
+        record_activities(conn, row[0], item.activities)
     return 1 if cursor.rowcount > 0 else 0

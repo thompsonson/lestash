@@ -161,6 +161,8 @@ YouTube has deprecated direct API access to watch history for privacy reasons. W
 The `lestash-takeout` plugin imports it from Drive (`lestash sources sync takeout`). You can also
 upload the zip with `POST /api/import`. Each watched video becomes the `history:{video_id}` item,
 with every watch time in its metadata; searches and viewed community posts are imported too.
+A video you like is the same item: `lestash youtube sync` records the like as a `liked` activity
+of it, rather than a second item (#368).
 
 ## Configuration
 

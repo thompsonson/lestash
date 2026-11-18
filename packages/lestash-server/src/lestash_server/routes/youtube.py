@@ -110,10 +110,10 @@ class ImportVideoResponse(BaseModel):
 
 @router.post("/import-video", response_model=ImportVideoResponse)
 def import_video(body: ImportVideoRequest):
-    """Import a YouTube video as a canonical `youtube` item (subtype `shared`).
+    """Import a YouTube video as its one item, ``history:{video_id}`` (#368).
 
-    Dedup-safe: if a YouTube video item for this id already exists (any
-    subtype), returns it instead of creating a duplicate.
+    Dedup-safe: if the video's item already exists, returns it instead of creating a
+    duplicate.
     """
     try:
         from lestash_youtube.client import create_youtube_client, get_video_details
@@ -126,7 +126,7 @@ def import_video(body: ImportVideoRequest):
         raise HTTPException(status_code=400, detail="Could not extract video ID from URL")
 
     with get_db() as conn:
-        # Dedup: reuse an existing video item for this id, regardless of subtype.
+        # Dedup: reuse the video's item
         existing_id = find_video_item(conn, video_id)
         if existing_id is not None:
             # Shared again: a new time on the Timeline (#357)

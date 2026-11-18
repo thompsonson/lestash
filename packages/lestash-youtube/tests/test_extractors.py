@@ -83,7 +83,7 @@ class TestVideoToItem:
 
         assert isinstance(item, ItemCreate)
         assert item.source_type == "youtube"
-        assert item.source_id == "liked:abc123"
+        assert item.source_id == "history:abc123"  # one item per video (#368)
         assert item.title == "My Test Video"
         assert item.content == "This is a test video description"
         assert item.author == "Test Channel"
@@ -144,15 +144,19 @@ class TestVideoToItem:
 
         assert item.is_own_content is False
 
-    def test_includes_source_subtype_in_metadata(self, youtube_video_factory):
-        """Should store source_subtype in metadata."""
+    def test_a_like_is_an_activity_of_the_one_video_item(self, youtube_video_factory):
+        """A liked video is the same history: item, with a liked activity (#368)."""
         video = youtube_video_factory()
+        video["liked_at"] = "2026-01-20T14:00:00Z"
 
         liked_item = video_to_item(video, "liked")
         history_item = video_to_item(video, "history")
 
-        assert liked_item.metadata["source_subtype"] == "liked"
-        assert history_item.metadata["source_subtype"] == "history"
+        assert liked_item.source_id == history_item.source_id == f"history:{video['id']}"
+        assert liked_item.metadata["source_subtype"] == "history"
+        assert [(a.verb, a.source) for a in liked_item.activities] == [("liked", "youtube")]
+        assert liked_item.activities[0].occurred_at.isoformat() == "2026-01-20T14:00:00+00:00"
+        assert history_item.activities is None
 
     def test_shared_subtype_and_note(self, youtube_video_factory):
         """Shared captures carry the subtype and a user note in metadata."""
@@ -162,8 +166,9 @@ class TestVideoToItem:
 
         item = video_to_item(video, "shared", note="great explainer")
 
-        assert item.source_id == f"shared:{video['id']}"
-        assert item.metadata["source_subtype"] == "shared"
+        assert item.source_id == f"history:{video['id']}"
+        assert item.metadata["source_subtype"] == "history"
+        assert item.activities is None  # the share path records its own saved time
         assert item.metadata["notes"] == "great explainer"
         # No action timestamp -> created_at falls back to published_at.
         assert item.created_at is not None
@@ -352,7 +357,7 @@ class TestVideoToItemEdgeCases:
         item = video_to_item(video, "liked")
 
         assert item.url is None
-        assert item.source_id == "liked:None"
+        assert item.source_id == "history:None"
 
 
 class TestSubscriptionToItem:

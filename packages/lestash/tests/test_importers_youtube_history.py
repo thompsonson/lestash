@@ -40,8 +40,8 @@ def test_rewatches_become_one_item_with_all_times() -> None:
     ]
     assert a.metadata["last_at"].startswith("2026-01-22")
     assert a.metadata["source_subtype"] == "history"
-    # Nest under the liked video when there is one
-    assert a.metadata["_parent_source_id"] == "liked:AAAAAAAAAAA"
+    # The one item for the video: never nested under a liked copy (#368)
+    assert "_parent_source_id" not in a.metadata
     assert "Watched 2 times: 2026-01-22, 2025-06-01" in a.content
     assert "Channel: Chan" in a.content
 
