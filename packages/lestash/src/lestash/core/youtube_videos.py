@@ -102,6 +102,8 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
             if parent_id is None:
                 # The copy was added under an item: the kept item takes its place there
                 parent_id = _outside_parent(conn, copy[0], own)
+                if parent_id is not None and _within(conn, parent_id, kept_id):
+                    parent_id = None  # under one of the item's own parts: a loop
                 if parent_id is not None:
                     conn.execute(
                         "UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, kept_id)
@@ -143,6 +145,19 @@ def _outside_parent(conn: sqlite3.Connection, item_id: int, own: set[int]) -> in
         row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (parent,)).fetchone()
         parent = row[0] if row else None
     return None if parent in own else parent
+
+
+def _within(conn: sqlite3.Connection, item_id: int, ancestor_id: int) -> bool:
+    """Whether ``item_id`` is ``ancestor_id`` or sits somewhere under it."""
+    seen: set[int] = set()
+    current: int | None = item_id
+    while current is not None and current not in seen:
+        if current == ancestor_id:
+            return True
+        seen.add(current)
+        row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (current,)).fetchone()
+        current = row[0] if row else None
+    return False
 
 
 def _record_like(conn: sqlite3.Connection, item_id: int, liked_at: list[str]) -> None:

@@ -354,3 +354,17 @@ def test_a_copy_nested_under_another_copy_leaves_no_dangling_parent(test_db) -> 
         row = _row(conn, video)
         assert row is not None
         assert row["parent_id"] == page
+
+
+def test_a_copy_under_one_of_the_items_own_parts_makes_no_loop(test_db) -> None:
+    with get_connection(test_db) as conn:
+        video = _item(conn, f"history:{VID}", "", {"source": "takeout"})
+        note = _item(conn, "note-9", "a note", parent_id=video, source_type="note")
+        _item(conn, f"shared:{VID}", "desc", parent_id=note)
+        _migrate(conn)
+        row = _row(conn, video)
+        assert row is not None
+        assert row["parent_id"] is None
+        assert (
+            conn.execute("SELECT parent_id FROM items WHERE id = ?", (note,)).fetchone()[0] == video
+        )
