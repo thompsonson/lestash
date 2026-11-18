@@ -1067,6 +1067,9 @@ function renderItemView(item) {
       const list = document.getElementById('children-list');
       // The user may have opened another item while the pages loaded
       if (!list || list.dataset.itemId !== String(item.id)) return;
+      // Parts added while these loaded (a note just saved) stay, if the load missed them
+      const fetched = new Set(children.map(c => c.id));
+      (list._parts?.children || []).forEach(c => { if (!fetched.has(c.id)) children.push(c); });
       list.innerHTML = '';
       const isChat = children.length > 0 && CHAT_ROLES.has(getChatRole(children[0]));
       if (isChat) {
@@ -1080,7 +1083,15 @@ function renderItemView(item) {
     }).catch(() => {
       const list = document.getElementById('children-list');
       if (list && list.dataset.itemId === String(item.id)) {
-        list.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Could not load these items</span>';
+        const failed = '<span style="color:var(--muted);font-size:0.8rem">Could not load these items</span>';
+        // Parts added while loading stay shown, under the message
+        const added = list._parts?.children || [];
+        if (added.length) {
+          renderParts(item, added, list);
+          list.insertAdjacentHTML('afterbegin', failed);
+        } else {
+          list.innerHTML = failed;
+        }
       }
     });
   }
