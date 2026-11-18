@@ -196,3 +196,23 @@ def test_a_record_waits_briefly_for_a_busy_database(test_db):
     busy.close()
     with sqlite3.connect(db_path) as conn:
         assert [m for (m,) in conn.execute("SELECT message FROM log_entries")] == ["x"]
+
+
+def test_records_held_while_the_database_is_busy_are_retried_on_their_own(test_db):
+    from lestash.core.logging import DatabaseHandler
+
+    db_path = get_db_path(test_db)
+    handler = DatabaseHandler(test_db)
+    handler.WAIT_S = 0
+    handler.RETRY_S = 0.2
+    busy = sqlite3.connect(db_path)
+    busy.execute("BEGIN IMMEDIATE")
+    handler.emit(logging.LogRecord("lestash.test", logging.INFO, __file__, 1, "x", None, None))
+    time.sleep(0.7)  # the first retries find it still busy, and schedule more
+    busy.rollback()
+    busy.close()
+    deadline = time.monotonic() + 10
+    while handler._held and time.monotonic() < deadline:
+        time.sleep(0.1)
+    with sqlite3.connect(db_path) as conn:
+        assert [m for (m,) in conn.execute("SELECT message FROM log_entries")] == ["x"]

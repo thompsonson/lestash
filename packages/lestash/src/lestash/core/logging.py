@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -97,12 +98,13 @@ class DatabaseHandler(logging.Handler):
     connection, never one that migrates, and waits at most WAIT_S for the write lock: a
     migration logs while holding the write lock and the handler's lock, so a longer wait
     stalls it, and a migrating connection would deadlock (#371). Records it cannot write
-    yet are held and written with the next record, or at exit.
+    yet are held and retried after RETRY_S, with the next record, or at exit.
     """
 
     # Records held while the database is busy; the oldest go first past this many
     MAX_HELD = 10_000
     WAIT_S = 1.0
+    RETRY_S = 5.0
     _INSERT = (
         "INSERT INTO log_entries (timestamp, level, logger, message, extra) VALUES (?, ?, ?, ?, ?)"
     )
@@ -111,6 +113,7 @@ class DatabaseHandler(logging.Handler):
         super().__init__()
         self._config = config
         self._held: list[tuple[str, str, str, str, str | None]] = []
+        self._retry: threading.Timer | None = None
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -155,9 +158,34 @@ class DatabaseHandler(logging.Handler):
             finally:
                 conn.close()
         except sqlite3.OperationalError:
-            pass  # busy, or not made yet: kept for the next record
+            pass  # busy, or not made yet: kept and retried
+        finally:
+            if self._held:
+                self._schedule_retry()
+            self.release()
+
+    def _schedule_retry(self) -> None:
+        """Try the held records again later, once at a time."""
+        if self._retry is not None:
+            return
+        self._retry = threading.Timer(self.RETRY_S, self._retry_flush)
+        self._retry.daemon = True  # never keeps the process alive; exit flushes
+        self._retry.start()
+
+    def _retry_flush(self) -> None:
+        self.acquire()
+        try:
+            self._retry = None  # so a retry that fails schedules the next
+            self.flush()
         finally:
             self.release()
+
+    def close(self) -> None:
+        if self._retry is not None:
+            self._retry.cancel()
+            self._retry = None
+        self.flush()
+        super().close()
 
     def _write_one_by_one(self, conn: sqlite3.Connection) -> None:
         """Write the held records singly, dropping any that cannot be written."""
