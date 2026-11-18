@@ -26,7 +26,7 @@ import {
 } from './objects/item/actions.js';
 import {
   itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
-  renderParts, PARTS_QUERY, titleOnce,
+  renderParts, addPart, PARTS_QUERY, titleOnce,
 } from './objects/item/page.js';
 import { selfName, selfReady } from './objects/person/self.js';
 import { setSheet, onSheetClose } from './sheet.js';
@@ -954,13 +954,9 @@ function renderItemView(item) {
         if (micBtn) delete micBtn.dataset.transcribedItemId;
         const addBtn = container.querySelector('[data-action="show-note-form"]');
         if (addBtn) addBtn.style.display = '';
-        // Append the new note to the children list
+        // The new note among the parts, in the chosen order
         const list = document.getElementById('children-list');
-        if (list) {
-          const placeholder = list.querySelector(':scope > .parts-placeholder');
-          if (placeholder) list.innerHTML = '';
-          list.appendChild(renderCard(note));
-        }
+        if (list) addPart(list, note);
         item.child_count = (item.child_count || 0) + 1;
         const title = container.querySelector('#parts-title');
         if (title) title.textContent = partsTitle(item);
@@ -2358,9 +2354,7 @@ async function saveLink() {
     const container = document.getElementById('item-view-content');
     const list = container?.querySelector('#children-list');
     if (list) {
-      const placeholder = list.querySelector(':scope > .parts-placeholder');
-      if (placeholder) list.innerHTML = '';
-      list.appendChild(renderCard(linked));
+      addPart(list, linked);
       const shown = cachedItem(parentId);
       const titleEl = container.querySelector('#parts-title');
       if (shown && titleEl) {

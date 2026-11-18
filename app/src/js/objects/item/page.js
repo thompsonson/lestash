@@ -277,26 +277,27 @@ export const PARTS_QUERY = '&exclude_kind=reaction';
 // Newest first by default. "Oldest first" is kept per item, on this device; the kind
 // filter lasts while the item stays open. Long groups show their first few parts.
 
-const ORDER_KEY = 'lestash-parts-order';
+// The items shown oldest first, the latest choice last; newest first is the default,
+// so it needs no entry
+const ORDER_KEY = 'lestash-parts-oldest-first';
 const ORDERS_KEPT = 500;  // items whose order is kept; the oldest choice goes first
 const GROUP_SHOWN = 4;
 
-function orders() {
-  try { return JSON.parse(localStorage.getItem(ORDER_KEY) || '{}') || {}; } catch { return {}; }
+function oldestFirst() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(ORDER_KEY) || '[]');
+    return Array.isArray(ids) ? ids : [];
+  } catch { return []; }
 }
 
 export function partsOrder(itemId) {
-  return orders()[itemId] === 'oldest' ? 'oldest' : 'newest';
+  return oldestFirst().includes(itemId) ? 'oldest' : 'newest';
 }
 
 function keepOrder(itemId, order) {
-  const kept = orders();
-  delete kept[itemId];
-  if (order === 'oldest') kept[itemId] = 'oldest';  // newest is the default: nothing to keep
-  const ids = Object.keys(kept);
-  // Keys keep insertion order (they aren't array indexes), so the first is the oldest choice
-  ids.slice(0, Math.max(0, ids.length - ORDERS_KEPT)).forEach(id => delete kept[id]);
-  try { localStorage.setItem(ORDER_KEY, JSON.stringify(kept)); } catch { /* private mode */ }
+  const ids = oldestFirst().filter(id => id !== itemId);
+  if (order === 'oldest') ids.push(itemId);
+  try { localStorage.setItem(ORDER_KEY, JSON.stringify(ids.slice(-ORDERS_KEPT))); } catch { /* private mode */ }
 }
 
 // A part's time as a number; one with no time sorts last either way
@@ -318,6 +319,26 @@ const groupLabel = c => c.kind === 'artifact' ? 'Generated' : (KIND_PLURALS[c.ki
 
 // Which kind each open item is filtered to; another item starts with All
 let shownKind = { itemId: null, label: null };
+// While the order menu is open: the listener that closes it on a tap elsewhere
+let closeOnTapAway = null;
+
+function stopTapAway() {
+  if (closeOnTapAway) document.removeEventListener('click', closeOnTapAway, true);
+  closeOnTapAway = null;
+}
+
+// A part added while the item is open (a note, a linked item): drawn in its place
+// among the others, or appended where the parts aren't drawn by renderParts
+export function addPart(list, child) {
+  const state = list._parts;
+  if (state) {
+    state.children.push(child);
+    renderParts(state.item, state.children, list);
+    return;
+  }
+  list.querySelector(':scope > .parts-placeholder')?.remove();
+  list.appendChild(renderCard(child));
+}
 
 function orderMenu(order) {
   const opt = (value, text) =>
@@ -331,6 +352,8 @@ function orderMenu(order) {
 // newest or oldest first, with chips to show one kind
 export function renderParts(item, children, list) {
   list.innerHTML = '';
+  list._parts = { item, children };
+  stopTapAway();
   const head = list.closest('.item-view-children')?.querySelector('.parts-order-slot');
   if (head) head.innerHTML = '';
   if (!children.length) return;
@@ -346,6 +369,9 @@ export function renderParts(item, children, list) {
     if (!byLabel.has(label)) byLabel.set(label, []);
     byLabel.get(label).push(c);
   }
+  // Generated parts go by type (audio, slides …), each in the chosen order
+  const generated = byLabel.get('Generated');
+  if (generated) generated.sort((a, b) => String(a.kind_detail).localeCompare(String(b.kind_detail)));
   // Largest group first, so the chips and groups stay put when the order changes
   const groups = new Map([...byLabel].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])));
   if (!groups.has(shownKind.label)) shownKind.label = null;
@@ -354,15 +380,12 @@ export function renderParts(item, children, list) {
   if (head) {
     head.innerHTML = orderMenu(order);
     const menu = head.querySelector('details');
-    // A tap anywhere else closes it
+    // A tap anywhere else closes it; one listener, only while it is open
     menu.addEventListener('toggle', () => {
+      stopTapAway();
       if (!menu.open) return;
-      const away = e => {
-        if (menu.contains(e.target)) return;
-        menu.open = false;
-        document.removeEventListener('click', away, true);
-      };
-      document.addEventListener('click', away, true);
+      closeOnTapAway = e => { if (!menu.contains(e.target)) menu.open = false; };
+      document.addEventListener('click', closeOnTapAway, true);
     });
     head.querySelector('.item-menu-list').addEventListener('click', e => {
       const value = e.target.closest('[data-parts-order]')?.dataset.partsOrder;
@@ -397,12 +420,9 @@ export function renderParts(item, children, list) {
     h.className = 'parts-group-title';
     h.textContent = `${label} (${items.length})`;
     list.appendChild(h);
-    const sorted = label === 'Generated'
-      ? items.slice().sort((a, b) => String(a.kind_detail).localeCompare(String(b.kind_detail)))
-      : items;
-    sorted.slice(0, GROUP_SHOWN).forEach(c => list.appendChild(card(c)));
-    if (sorted.length > GROUP_SHOWN) {
-      const rest = sorted.slice(GROUP_SHOWN);
+    items.slice(0, GROUP_SHOWN).forEach(c => list.appendChild(card(c)));
+    if (items.length > GROUP_SHOWN) {
+      const rest = items.slice(GROUP_SHOWN);
       const more = document.createElement('button');
       more.type = 'button';
       more.className = 'parts-more';
