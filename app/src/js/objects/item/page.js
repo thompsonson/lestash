@@ -273,19 +273,124 @@ function linkify(escaped) {
 // The children request: reactions are a count on the post, never cards
 export const PARTS_QUERY = '&exclude_kind=reaction';
 
-// A post's replies as a thread, oldest first; other items' parts grouped by kind
+// ── Parts: order and filter (#365) ──
+// Newest first by default. "Oldest first" is kept per item, on this device; the kind
+// filter lasts while the item stays open. Long groups show their first few parts.
+
+const ORDER_KEY = 'lestash-parts-order';
+const ORDERS_KEPT = 500;  // items whose order is kept; the oldest choice goes first
+const GROUP_SHOWN = 4;
+
+function orders() {
+  try { return JSON.parse(localStorage.getItem(ORDER_KEY) || '{}') || {}; } catch { return {}; }
+}
+
+export function partsOrder(itemId) {
+  return orders()[itemId] === 'oldest' ? 'oldest' : 'newest';
+}
+
+function keepOrder(itemId, order) {
+  const kept = orders();
+  delete kept[itemId];
+  if (order === 'oldest') kept[itemId] = 'oldest';  // newest is the default: nothing to keep
+  const ids = Object.keys(kept);
+  // Keys keep insertion order (they aren't array indexes), so the first is the oldest choice
+  ids.slice(0, Math.max(0, ids.length - ORDERS_KEPT)).forEach(id => delete kept[id]);
+  try { localStorage.setItem(ORDER_KEY, JSON.stringify(kept)); } catch { /* private mode */ }
+}
+
+// A part's time as a number; one with no time sorts last either way
+function when(c) {
+  const t = Date.parse(String(c.created_at || '').replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1'));
+  return Number.isNaN(t) ? null : t;
+}
+
+export function sortParts(children, order) {
+  const sign = order === 'oldest' ? 1 : -1;
+  return children.slice().sort((a, b) => {
+    const ta = when(a), tb = when(b);
+    if (ta === null || tb === null) return (ta === null) - (tb === null);
+    return sign * (ta - tb) || sign * (a.id - b.id);
+  });
+}
+
+const groupLabel = c => c.kind === 'artifact' ? 'Generated' : (KIND_PLURALS[c.kind] || c.kind_label || c.kind);
+
+// Which kind each open item is filtered to; another item starts with All
+let shownKind = { itemId: null, label: null };
+
+function orderMenu(order) {
+  const opt = (value, text) =>
+    `<button type="button" data-parts-order="${value}"${value === order ? ' aria-current="true"' : ''}>${value === order ? '✓ ' : ''}${text}</button>`;
+  return `<details class="item-menu parts-order"><summary>${order === 'oldest' ? 'Oldest first' : 'Newest first'} ▾</summary>`
+    + `<div class="item-menu-list to-left">${opt('newest', 'Newest first')}${opt('oldest', 'Oldest first')}`
+    + '<hr class="item-menu-sep"><small class="parts-order-note">Kept for this item</small></div></details>';
+}
+
+// A post's replies as a thread, oldest first; other items' parts grouped by kind,
+// newest or oldest first, with chips to show one kind
 export function renderParts(item, children, list) {
   list.innerHTML = '';
+  const head = list.closest('.item-view-children')?.querySelector('.parts-order-slot');
+  if (head) head.innerHTML = '';
   if (!children.length) return;
   if (children.every(c => c.kind === 'comment')) {
     list.appendChild(thread(children));
     return;
   }
-  const groups = new Map();
-  for (const c of children) {
-    const label = c.kind === 'artifact' ? 'Generated' : (KIND_PLURALS[c.kind] || c.kind_label || c.kind);
-    if (!groups.has(label)) groups.set(label, []);
-    groups.get(label).push(c);
+  if (shownKind.itemId !== item.id) shownKind = { itemId: item.id, label: null };
+  const order = partsOrder(item.id);
+  const byLabel = new Map();
+  for (const c of sortParts(children, order)) {
+    const label = groupLabel(c);
+    if (!byLabel.has(label)) byLabel.set(label, []);
+    byLabel.get(label).push(c);
+  }
+  // Largest group first, so the chips and groups stay put when the order changes
+  const groups = new Map([...byLabel].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])));
+  if (!groups.has(shownKind.label)) shownKind.label = null;
+  const redraw = () => renderParts(item, children, list);
+
+  if (head) {
+    head.innerHTML = orderMenu(order);
+    const menu = head.querySelector('details');
+    // A tap anywhere else closes it
+    menu.addEventListener('toggle', () => {
+      if (!menu.open) return;
+      const away = e => {
+        if (menu.contains(e.target)) return;
+        menu.open = false;
+        document.removeEventListener('click', away, true);
+      };
+      document.addEventListener('click', away, true);
+    });
+    head.querySelector('.item-menu-list').addEventListener('click', e => {
+      const value = e.target.closest('[data-parts-order]')?.dataset.partsOrder;
+      if (!value) return;
+      keepOrder(item.id, value);
+      redraw();
+    });
+  }
+  if (groups.size > 1) {
+    const chips = document.createElement('div');
+    chips.className = 'chips parts-chips';
+    const chip = (label, n) =>
+      `<button type="button" class="chip${shownKind.label === label ? ' on' : ''}" aria-pressed="${shownKind.label === label}"`
+      + ` data-kind="${escHtml(label ?? '')}">${escHtml(label ?? 'All')} <span class="chip-count">${n}</span></button>`;
+    chips.innerHTML = chip(null, children.length) + [...groups].map(([label, items]) => chip(label, items.length)).join('');
+    chips.addEventListener('click', e => {
+      const btn = e.target.closest('[data-kind]');
+      if (!btn) return;
+      shownKind.label = btn.dataset.kind || null;
+      redraw();
+    });
+    list.appendChild(chips);
+  }
+  const card = c => renderCard(c, { within: item });
+  if (shownKind.label) {
+    // One kind: every part of it, without a group heading
+    groups.get(shownKind.label).forEach(c => list.appendChild(card(c)));
+    return;
   }
   for (const [label, items] of groups) {
     const h = document.createElement('div');
@@ -295,7 +400,19 @@ export function renderParts(item, children, list) {
     const sorted = label === 'Generated'
       ? items.slice().sort((a, b) => String(a.kind_detail).localeCompare(String(b.kind_detail)))
       : items;
-    sorted.forEach(c => list.appendChild(renderCard(c, { within: item })));
+    sorted.slice(0, GROUP_SHOWN).forEach(c => list.appendChild(card(c)));
+    if (sorted.length > GROUP_SHOWN) {
+      const rest = sorted.slice(GROUP_SHOWN);
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'parts-more';
+      more.textContent = `+ ${rest.length} more ${label.toLowerCase()} · show all`;
+      more.addEventListener('click', () => {
+        rest.forEach(c => more.before(card(c)));
+        more.remove();
+      });
+      list.appendChild(more);
+    }
   }
 }
 

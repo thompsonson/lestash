@@ -1033,3 +1033,14 @@ body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
 .add-files-list .add-files-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .add-files-list small { color: var(--muted); white-space: nowrap; }
 .add-files-list button { background: none; border: none; color: var(--muted); font-size: 1rem; cursor: pointer; padding: 0 0.25rem; }
+
+/* Parts: order and kind filter (#365) */
+.parts-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.5rem; }
+.parts-head .item-view-children-title { margin-bottom: 0; }
+.parts-order > summary { color: var(--accent-text); border: 1px solid var(--border); border-radius: 999px; height: auto; min-height: 32px; padding: 0 0.75rem; font-size: 0.8rem; }
+.parts-order .item-menu-list { min-width: 11rem; }
+.parts-order-note { display: block; padding: 0.3rem 0.8rem 0.45rem; color: var(--muted); font-size: 0.72rem; }
+.parts-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.parts-chips .chip { background: var(--surface); white-space: nowrap; cursor: pointer; font: inherit; font-size: 0.8rem; }
+.parts-chips .chip-count { color: var(--muted); margin-left: 0.2rem; }
+.parts-more { background: none; border: 0; color: var(--accent-text); font: inherit; font-size: 0.8rem; padding: 0.25rem 0.1rem 0.5rem; cursor: pointer; }
