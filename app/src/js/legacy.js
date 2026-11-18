@@ -576,6 +576,15 @@ function renderItemView(item) {
       }
     });
   }
+  // + Add → Images: each image a new item under this one, saved like a share (#357)
+  const imagesInput = container.querySelector('#add-images-input');
+  if (imagesInput) {
+    imagesInput.addEventListener('change', () => {
+      const files = [...imagesInput.files];
+      imagesInput.value = '';
+      if (files.length) openMultiImageCaptureDialog(files, { id: item.id, title: item.title });
+    });
+  }
   wireTranscript(container);
   wireReactions(container, item);
 
@@ -980,6 +989,12 @@ function renderItemView(item) {
     }
     if (btn.dataset.action === 'add-screenshot') {
       document.getElementById('copy-image-input').click();
+    }
+    if (btn.dataset.action === 'add-child') {
+      openCaptureDialog({}, { id: item.id, title: item.title });
+    }
+    if (btn.dataset.action === 'add-images') {
+      document.getElementById('add-images-input')?.click();
     }
     if (btn.dataset.action === 'fetch-preview') {
       try {
@@ -2048,7 +2063,12 @@ function _isYouTubeUrl(url) {
   return /youtube\.com\/watch|youtu\.be\//.test(url || '');
 }
 
-function openCaptureDialog(share) {
+let _captureParent = null;  // the item page the new item was added from, if any
+
+// A share from another app, or + Add → Link or text on an item page (attachTo): a
+// new item under that one, with its text typed rather than shared
+function openCaptureDialog(share, attachTo = null) {
+  _captureParent = attachTo;
   const text = share.text || '';
   const urlMatch = text.match(/https?:\/\/[^\s]+/);
   const url = urlMatch ? urlMatch[0] : '';
@@ -2060,13 +2080,20 @@ function openCaptureDialog(share) {
   document.getElementById('capture-fetch-transcript').checked = true;
   document.getElementById('capture-drive-option').style.display = _isDriveOrDocsUrl(url) ? 'block' : 'none';
   document.getElementById('capture-drive-import').checked = true;
-  document.querySelector('input[name="capture-mode"][value="new"]').checked = true;
+  document.querySelector('input[name="capture-mode"][value="' + (attachTo ? 'attach' : 'new') + '"]').checked = true;
+  const contentBox = document.getElementById('capture-content');
+  contentBox.readOnly = !attachTo;
+  contentBox.placeholder = attachTo ? 'Text to keep, if any' : '';
+  document.querySelector('label[for="capture-content"]').textContent = attachTo ? 'Text' : 'Shared content';
+  document.getElementById('capture-heading').textContent = attachTo ? 'Add an item' : 'Save Shared Item';
   attachPickerReset('capture', { url, text });
   toggleAttachMode('capture');
+  if (attachTo) attachPickerSelect('capture', attachTo.id, attachTo.title);
   document.getElementById('capture-modal').classList.add('open');
 }
 
 function closeCaptureDialog() {
+  _captureParent = null;
   document.getElementById('capture-modal').classList.remove('open');
   attachPickerReset('capture');
 }
@@ -2076,7 +2103,7 @@ async function saveCaptureItem() {
   const title = document.getElementById('capture-title').value.trim();
   const notes = document.getElementById('capture-notes').value.trim();
   const content = document.getElementById('capture-content').value.trim();
-  if (!url && !content) { showToast('Nothing to save', 'error'); return; }
+  if (!url && !content && !notes) { showToast('Nothing to save', 'error'); return; }
   const mode = document.querySelector('input[name="capture-mode"]:checked').value;
   const parentId = mode === 'attach' ? attachPickerGetId('capture') : null;
   if (mode === 'attach' && !parentId) {
@@ -2115,7 +2142,7 @@ async function saveCaptureItem() {
           source_id: 'share-' + Date.now(),
           url: url || null,
           title: title || null,
-          content: notes ? notes + '\n\n---\n\n' + content : content,
+          content: [notes, content].filter(Boolean).join('\n\n---\n\n'),
           is_own_content: false,
           parent_id: parentId,
           metadata: notes ? { notes, shared_text: content } : { shared_text: content },
@@ -2153,9 +2180,14 @@ async function saveCaptureItem() {
     } else {
       showToast(savedYouTube ? 'Saved video' : 'Saved', 'ok');
     }
+    const from = _captureParent;
     closeCaptureDialog();
     refreshTimeline();
     loadRecent();
+    // Added from an item page: show the new part there
+    if (from && parentId && location.pathname === `/items/${parentId}`) {
+      renderItemView(cacheItem(await api(`/api/items/${parentId}?include_children=true`)));
+    }
   } catch (e) {
     showToast('Save failed: ' + e.message, 'error');
   } finally {
@@ -2375,8 +2407,11 @@ async function saveImageCapture() {
 let _pendingMultiImageFiles = null;
 let _pendingMultiImageUrls = [];
 
-function openMultiImageCaptureDialog(files) {
+let _multiImageParent = null;  // the item page the images were added from, if any
+
+function openMultiImageCaptureDialog(files, attachTo = null) {
   _pendingMultiImageFiles = files;
+  _multiImageParent = attachTo;
   _pendingMultiImageUrls.forEach(u => URL.revokeObjectURL(u));
   _pendingMultiImageUrls = files.map(f => URL.createObjectURL(f));
 
@@ -2387,15 +2422,17 @@ function openMultiImageCaptureDialog(files) {
   document.getElementById('multi-image-count').textContent = `${files.length} image${files.length === 1 ? '' : 's'} selected`;
   document.getElementById('multi-image-title').value = '';
   document.getElementById('multi-image-notes').value = '';
-  document.querySelector('input[name="multi-image-mode"][value="new"]').checked = true;
+  document.querySelector('input[name="multi-image-mode"][value="' + (attachTo ? 'attach' : 'new') + '"]').checked = true;
   attachPickerReset('multi-image');
   toggleAttachMode('multi-image', true);
+  if (attachTo) attachPickerSelect('multi-image', attachTo.id, attachTo.title);
   document.getElementById('multi-image-save-btn').disabled = false;
   document.getElementById('multi-image-save-btn').textContent = 'Save';
   document.getElementById('multi-image-capture-modal').classList.add('open');
 }
 
 function closeMultiImageCaptureDialog() {
+  _multiImageParent = null;
   document.getElementById('multi-image-capture-modal').classList.remove('open');
   attachPickerReset('multi-image');
   _pendingMultiImageUrls.forEach(u => URL.revokeObjectURL(u));
@@ -2468,10 +2505,15 @@ async function saveMultiImageCapture() {
       btn.textContent = `Uploading ${done}/${total}...`;
     }));
 
-    showToast(`Saved ${total} images`, 'ok');
+    showToast(`Saved ${total} image${total === 1 ? '' : 's'}`, 'ok');
+    const from = _multiImageParent;
     closeMultiImageCaptureDialog();
     refreshTimeline();
     loadRecent();
+    // Added from an item page: show the new parts there
+    if (from && location.pathname === `/items/${parentId}`) {
+      renderItemView(cacheItem(await api(`/api/items/${parentId}?include_children=true`)));
+    }
   } catch (e) {
     showToast('Save failed: ' + e.message, 'error');
   } finally {

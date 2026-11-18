@@ -125,6 +125,8 @@ export function actionsHtml(item) {
   const day = dayOf(item);
   const add = menu('+ Add', [
     action('show-note-form', 'Note'),
+    action('add-child', 'Link or text'),
+    action('add-images', 'Images'),
     action('link-item', 'Link to an item', item.id),
     action('focus-tag', 'Tag'),
     `<button type="button" onclick="addToCollection(${item.id})">Collection</button>`,
@@ -147,7 +149,8 @@ export function actionsHtml(item) {
   return `<div class="item-detail-actions" id="item-detail-actions">
     ${mainAction(item)}${add}${go}${more}
     <select id="add-to-coll-select" style="display:none" onchange="confirmAddToCollection(this)"></select>
-  </div>`;
+  </div>
+  <input type="file" id="add-images-input" accept="image/*" multiple hidden>`;
 }
 
 // A top-level reply's post, once its reply link has loaded

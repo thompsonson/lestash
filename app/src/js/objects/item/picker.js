@@ -194,14 +194,14 @@ export function attachPickerKind(prefix, kind) {
 
 // ── Choosing ───────────────────────────────────────────────────────────────────
 
-export function attachPickerSelect(prefix, itemId) {
+export function attachPickerSelect(prefix, itemId, title = null) {
   stateOf(prefix).selectedId = itemId;
   const results = el(prefix, 'results');
   results.querySelectorAll('.img-attach-result').forEach(r => r.classList.remove('selected'));
   const row = results.querySelector(`[data-id="${itemId}"]`);
   if (row) row.classList.add('selected');
   const label = el(prefix, 'selected');
-  label.textContent = 'Attaching to: ' + (row ? row.dataset.title : `Item #${itemId}`);
+  label.textContent = 'Attaching to: ' + (row ? row.dataset.title : title || `Item #${itemId}`);
   label.style.display = 'block';
 }
 
