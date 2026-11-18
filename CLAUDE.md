@@ -45,7 +45,7 @@ cd app && npx tauri dev    # Run desktop app
 - Before a deploy, migration or data cleanup: `lestash db backup create --label pre-<what>`, e.g. `pre-deploy-355`.
 - Never back up with `sqlite3 .backup`, `cp` or a hand-picked name; the command checks, names and prunes copies.
 - `create` exits 1 if the copy fails its integrity check; stop the change if it does.
-- `lestash-backup.timer` runs `create --keep 6` every 4 hours, before sysbak's snapshot; it prunes only unlabelled copies.
+- `lestash-backup.timer` runs `create --keep 3` daily at 03:50, before sysbak's 04:00 snapshot; it prunes only unlabelled copies.
 - Labelled copies stay until `lestash db backup prune --labelled --keep N`; ask before running it on pop-mini.
 - sysbak copies `~/.local/share/lestash/backups/`, never the live `lestash.db`, `-wal` or `-shm`.
 - Details, the sysbak excludes and the restore steps: [`docs/backups.md`](docs/backups.md).

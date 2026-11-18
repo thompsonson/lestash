@@ -7,4 +7,4 @@ Type=oneshot
 # then copies this file, never the live lestash.db, -wal or -shm. See docs/backups.md.
 Nice=10
 IOSchedulingClass=idle
-ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash db backup create --keep 6
+ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run --project %h/Projects/thompsonson/lestash lestash db backup create --keep 3

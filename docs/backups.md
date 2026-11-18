@@ -15,7 +15,7 @@ LeStash backs up its own database. sysbak, or any file backup, copies those back
 |---|---|
 | `lestash db backup create` | Copies the database, checks its integrity, and keeps it only if it passes |
 | `lestash db backup create --label pre-deploy-355` | The same, with why in the file name |
-| `lestash db backup create --keep 6` | The same, then deletes all but the newest 6 scheduled (unlabelled) backups |
+| `lestash db backup create --keep 3` | The same, then deletes all but the newest 3 scheduled (unlabelled) backups |
 | `lestash db backup list` | Lists the backups, newest first |
 | `lestash db backup verify [file]` | Checks a backup, the newest by default; exits 1 if it fails |
 | `lestash db backup prune --keep N` | Deletes all but the newest N scheduled backups |
@@ -34,9 +34,14 @@ LeStash backs up its own database. sysbak, or any file backup, copies those back
 
 ## The schedule
 
-- `lestash-backup.timer` runs `lestash db backup create --keep 6` at 03:50, 07:50, 11:50, 15:50, 19:50 and 23:50.
-- That is 10 minutes before each 4-hourly sysbak snapshot (00:00, 04:00 …).
-- So the folder holds about a day of copies, and the sysbak drive holds weeks of them.
+- `lestash-backup.timer` runs `lestash db backup create --keep 3` daily at 03:50.
+- That is 10 minutes before sysbak's 04:00 snapshot, which takes the new copy.
+- So the folder holds three days of copies, and the sysbak drive holds weeks of them.
+- Each copy is a new file that snapshots cannot share with older ones.
+- A 4-hourly copy used about six times the space, on this disk and on the sysbak drive.
+- The cost is that a failure can lose up to a day of changes.
+- Synced data can be fetched again; notes, shares and Kobo notes since 03:50 cannot.
+- Make a labelled copy before any risky change during the day.
 - `deploy/install.sh` installs and enables the timer.
 
 ## Before a change
