@@ -951,6 +951,16 @@ class TestAddFileUnderAnItem:
         # Held already: refreshed, not added, turns included
         assert (again["items_added"], again["items_held"]) == (0, 1)
 
+    def test_a_held_page_refreshed_is_linked_again(self, client):
+        page = b"<html><head><title>Again</title></head><body><p>Words.</p></body></html>"
+        files = lambda: {"file": ("page.html", io.BytesIO(page), "text/html")}  # noqa: E731
+        data = {"source_url": "https://example.com/again"}
+        client.post("/api/import", files=files(), data=data)
+        with patch("lestash_server.routes.imports.link_items") as linked:
+            body = client.post("/api/import", files=files(), data=data).json()
+        assert body["items_held"] == 1
+        linked.assert_called_once()
+
     def test_a_bulk_import_counts_items_held_already(self, client):
         data = json.dumps([{"source_type": "note", "source_id": "b1", "content": "x"}]).encode()
         post = lambda: client.post(  # noqa: E731

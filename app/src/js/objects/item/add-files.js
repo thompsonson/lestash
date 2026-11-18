@@ -92,6 +92,8 @@ async function save() {
     form.append('parent_id', String(parentId));
     try {
       const res = await api('/api/import', { method: 'POST', body: form });
+      // A page the server could read nothing from comes back 200 with no item
+      if (!res.item_id) throw new Error((res.errors || []).join('; ') || 'nothing found in it');
       if (res.items_held) held++; else added++;
     } catch (e) {
       failed.push(f);

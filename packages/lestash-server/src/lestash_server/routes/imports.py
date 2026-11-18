@@ -245,6 +245,7 @@ def _insert_items_with_parents(
             parents.append(item)
 
     items_added = 0
+    stored = 0  # added or refreshed: what the steps after the insert look at
     errors: list[str] = []
     # Map source_id → DB id for parent resolution
     parent_id_map: dict[str, int] = {}
@@ -262,6 +263,7 @@ def _insert_items_with_parents(
                 # Use the effective source_id (same logic as _upsert_item)
                 effective_id = item.source_id or item.url or ""
                 parent_id_map[effective_id] = row_id
+                stored += 1
                 if not (placed is not None and held):
                     items_added += 1
         except Exception as e:
@@ -278,6 +280,8 @@ def _insert_items_with_parents(
                 resolved_parent_id = item.parent_id
             held = placed is not None and _held(conn, item)
             row_id = _upsert_item(conn, item, parent_id=resolved_parent_id)
+            if row_id:
+                stored += 1
             if row_id and not held:
                 items_added += 1
         except Exception as e:
@@ -289,9 +293,9 @@ def _insert_items_with_parents(
         item.source_type == "notebooklm" and (item.metadata or {}).get("type") == "notebook"
         for item in items
     )
-    if items_added and notebooks:
+    if stored and notebooks:
         dedupe_notebooks(conn, "an import")
-    if items_added:
+    if stored:
         # Links are derived: a failure leaves the items stored; the next sync catches up
         try:
             link_items(conn)
