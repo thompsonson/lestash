@@ -339,6 +339,8 @@ These counts cover the 10,463 watches held today, and rise with the Takeout impo
 - The role word stays in metadata, and `items.author` stays as display text.
 - Until the people tables land, a Gemini turn's `items.author` stays `user` or `model`.
 - The app's chat view reads that word and shows "You" or "Gemini".
+- Whether an item is shown as a chat follows its kind: a `chat` shows its `turn` parts as a thread (#367).
+  A role word never makes another item a chat, and a note you add carries none.
 
 ### Roles
 
