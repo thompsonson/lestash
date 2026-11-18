@@ -1320,6 +1320,7 @@ def test_a_drive_file_already_held_is_not_moved(client, test_config, monkeypatch
         json={"urls": ["https://docs.google.com/document/d/F2/edit"], "parent_id": parent},
     )
     assert resp.status_code == 200, resp.text
+    assert resp.json()["items_held"] == 1
     with get_connection(test_config) as conn:
         assert (
             conn.execute("SELECT parent_id FROM items WHERE id = ?", (held,)).fetchone()[0] is None

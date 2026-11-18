@@ -2129,8 +2129,9 @@ function closeCaptureDialog() {
 }
 
 // + Add → New link: a page or video not yet in LeStash, under the item it was added
-// from. A YouTube link is saved as a video (its transcript under it); a Drive link,
-// with "Import as document" ticked, as the document; anything else as a link.
+// from. A YouTube link is saved as the video (its transcript under it); anything else,
+// or a video already held or not found, as a link with your title and notes. A Drive
+// document, with "Import as document" ticked, is imported under that link.
 async function saveNewLink() {
   const parent = _captureParent;
   const url = document.getElementById('capture-url').value.trim();
@@ -2148,33 +2149,28 @@ async function saveNewLink() {
     let saved = false;
     if (_isYouTubeUrl(url)) {
       btn.textContent = 'Importing video...';
-      const video = await post('/api/youtube/import-video', { url, note: notes || null, parent_id: parent.id });
-      // A video already held stays where it is; the link and its notes are saved here
-      saved = video.created;
-      message = video.created ? 'Video saved' : 'Saved here as a link; the video was already in LeStash';
-      if (!video.created && !title) document.getElementById('capture-title').value = video.title;
-      if (video.created && document.getElementById('capture-fetch-transcript').checked) {
-        btn.textContent = 'Fetching transcript...';
-        try {
-          const t = await post('/api/youtube/fetch-transcript', { url });
-          message = `Video saved, with its transcript (${t.word_count} words)`;
-        } catch (e) {
-          message = 'Video saved (transcript unavailable)';
-        }
-      }
-    } else if (_isDriveOrDocsUrl(url) && !/\/folders\//.test(url)
-        && document.getElementById('capture-drive-import').checked) {
-      // One document; a folder link is saved as a link
-      btn.textContent = 'Importing from Drive...';
       try {
-        const result = await post('/api/import/drive/sync', { urls: [url], parent_id: parent.id });
-        if (result.items_added > 0) { saved = true; message = 'Document saved'; }
+        const video = await post('/api/youtube/import-video', { url, note: notes || null, parent_id: parent.id });
+        // A video already held stays where it is; the link and its notes are saved here
+        saved = video.created;
+        message = video.created ? 'Video saved' : 'Saved here as a link; the video was already in LeStash';
+        if (!video.created && !title) document.getElementById('capture-title').value = video.title;
+        if (video.created && document.getElementById('capture-fetch-transcript').checked) {
+          btn.textContent = 'Fetching transcript...';
+          try {
+            const t = await post('/api/youtube/fetch-transcript', { url });
+            message = `Video saved, with its transcript (${t.word_count} words)`;
+          } catch (e) {
+            message = 'Video saved (transcript unavailable)';
+          }
+        }
       } catch (e) {
-        // Falls back to saving the link, so nothing is lost
+        message = 'Saved as a link (the video\'s details were unavailable)';
       }
     }
+    let linkId = null;
     if (!saved) {
-      await post('/api/items', {
+      const link = await post('/api/items', {
         source_type: 'share',
         source_id: 'share-' + Date.now(),
         url,
@@ -2184,6 +2180,21 @@ async function saveNewLink() {
         parent_id: parent.id,
         metadata: notes ? { notes } : null,
       });
+      linkId = link.id;
+    }
+    // A Drive document (not a folder): the link keeps your title and notes, and the
+    // document goes under it; one already held stays where it is
+    if (linkId && _isDriveOrDocsUrl(url) && !/\/folders\//.test(url)
+        && document.getElementById('capture-drive-import').checked) {
+      btn.textContent = 'Importing from Drive...';
+      try {
+        const result = await post('/api/import/drive/sync', { urls: [url], parent_id: linkId });
+        if (result.items_held > 0) message = 'Link saved; the document was already in LeStash';
+        else if (result.items_added > 0) message = 'Link saved, with its document';
+        else message = 'Link saved (the document could not be imported)';
+      } catch (e) {
+        message = 'Link saved (the document could not be imported)';
+      }
     }
     showToast(message, 'ok');
     closeCaptureDialog();

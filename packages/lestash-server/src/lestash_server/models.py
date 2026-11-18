@@ -425,6 +425,8 @@ class DriveSyncResponse(BaseModel):
     items_added: int
     items_skipped: int
     errors: list[str]
+    # With parent_id: files already held, left where they were
+    items_held: int = 0
 
 
 class RefineRequest(BaseModel):
