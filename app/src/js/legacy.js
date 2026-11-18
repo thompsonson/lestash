@@ -26,7 +26,7 @@ import {
 } from './objects/item/actions.js';
 import {
   itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
-  renderParts, addPart, PARTS_QUERY, PARTS_LOAD_FAILED, titleOnce,
+  renderParts, addPart, clearParts, PARTS_QUERY, PARTS_LOAD_FAILED, titleOnce,
 } from './objects/item/page.js';
 import { selfName, selfReady } from './objects/person/self.js';
 import { setSheet, onSheetClose } from './sheet.js';
@@ -1073,6 +1073,7 @@ function renderItemView(item) {
       list.innerHTML = '';
       const isChat = children.length > 0 && CHAT_ROLES.has(getChatRole(children[0]));
       if (isChat) {
+        clearParts(list);  // a part added while these loaded may have drawn the order menu
         const thread = document.createElement('div');
         thread.className = 'chat-thread';
         children.slice().reverse().forEach(child => thread.appendChild(renderChatBubble(child)));

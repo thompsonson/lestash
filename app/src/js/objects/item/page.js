@@ -328,6 +328,15 @@ function stopTapAway() {
   closeOnTapAway = null;
 }
 
+// A list drawn otherwise (a chat's thread): no order menu, and no parts kept for it
+export function clearParts(list) {
+  stopTapAway();
+  delete list._parts;
+  delete list._view;
+  const head = list.closest('.item-view-children')?.querySelector('.parts-order-slot');
+  if (head) head.innerHTML = '';
+}
+
 // A part added while the item is open (a note, a linked item): drawn in its place
 // among the others, keeping what is open. A chat's turns are appended, as before.
 export function addPart(list, child, item) {
