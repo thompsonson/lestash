@@ -6,6 +6,7 @@ Each migration is applied once, incrementing the version number.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import sqlite3
@@ -1092,12 +1093,41 @@ def mark_recent_history(
     )
 
 
+def _migration_lock_path(conn: sqlite3.Connection) -> Path | None:
+    """The lock file that lets one connection at a time migrate this database.
+
+    ``migrate.lock`` in ``paths.locks_dir()`` for the default database, and
+    ``<database>.migrate.lock`` beside any other; None for one in memory.
+    """
+    db_file = next((row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main"), "")
+    if not db_file:
+        return None
+    if Path(db_file).resolve() == paths.database_path().resolve():
+        locks = paths.locks_dir()
+        locks.mkdir(parents=True, exist_ok=True)
+        return locks / "migrate.lock"
+    return Path(f"{db_file}.migrate.lock")
+
+
 def apply_migrations(conn: sqlite3.Connection) -> int:
     """Apply any pending migrations.
+
+    One connection at a time: two that start together would otherwise both read the old
+    version and both run each pending migration (#371). The version is read once the
+    lock is held, so the second applies only what the first left.
 
     Returns:
         Number of migrations applied.
     """
+    lock_path = _migration_lock_path(conn)
+    if lock_path is None:
+        return _apply_pending_migrations(conn)
+    with lock_path.open("ab") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # released when the file closes
+        return _apply_pending_migrations(conn)
+
+
+def _apply_pending_migrations(conn: sqlite3.Connection) -> int:
     current_version = get_schema_version(conn)
     applied = 0
 

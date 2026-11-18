@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
+import threading
+import time
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -92,37 +95,142 @@ class JsonFormatter(logging.Formatter):
 class DatabaseHandler(logging.Handler):
     """Log to SQLite database for queryable history.
 
-    This handler writes log entries to the log_entries table.
+    This handler writes log entries to the log_entries table. It opens a plain
+    connection, never one that migrates, and waits at most WAIT_S for the write lock: a
+    migration logs while holding the write lock and the handler's lock, so a longer wait
+    stalls it, and a migrating connection would deadlock (#371). Records it cannot write
+    yet are held and retried after RETRY_S, with the next record, or at exit.
     """
+
+    # Records held while the database is busy; the oldest go first past this many
+    MAX_HELD = 10_000
+    WAIT_S = 1.0
+    RETRY_S = 5.0
+    # How long writes may keep failing before the held records are dropped
+    GIVE_UP_S = 60.0
+    _INSERT = (
+        "INSERT INTO log_entries (timestamp, level, logger, message, extra) VALUES (?, ?, ?, ?, ?)"
+    )
 
     def __init__(self, config: Config) -> None:
         super().__init__()
         self._config = config
+        self._held: list[tuple[str, str, str, str, str | None]] = []
+        self._retry: threading.Timer | None = None
+        self._closed = False
+        self._failing_since: float | None = None
 
     def emit(self, record: logging.LogRecord) -> None:
-        from lestash.core.database import get_connection
-
         try:
             extra_data = getattr(record, "extra", None)
-            extra_json = json.dumps(extra_data) if extra_data else None
-
-            with get_connection(self._config) as conn:
-                conn.execute(
-                    """
-                    INSERT INTO log_entries (timestamp, level, logger, message, extra)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        datetime.now(UTC).isoformat(),
-                        record.levelname,
-                        record.name,
-                        record.getMessage(),
-                        extra_json,
-                    ),
+            self._held.append(
+                (
+                    datetime.now(UTC).isoformat(),
+                    record.levelname,
+                    record.name,
+                    record.getMessage(),
+                    json.dumps(extra_data) if extra_data else None,
                 )
-                conn.commit()
+            )
+            del self._held[: -self.MAX_HELD]
+            self.flush()
         except Exception:
             self.handleError(record)
+
+    def flush(self) -> None:
+        """Write the held records, oldest first.
+
+        A busy, locked or missing database keeps them all for later, until writes
+        have failed for GIVE_UP_S. Any other error drops them: a record that cannot be
+        written, or a database that cannot take any (read-only, full, broken), would
+        otherwise be held and retried for good.
+        """
+        from lestash.core.database import get_db_path
+
+        if not self._held:
+            return
+        self.acquire()
+        try:
+            uri = get_db_path(self._config).absolute().as_uri() + "?mode=rw"
+            conn = sqlite3.connect(uri, uri=True, timeout=self.WAIT_S)
+            try:
+                try:
+                    with conn:
+                        conn.executemany(self._INSERT, self._held)
+                    self._held = []
+                except sqlite3.Error as e:
+                    if _passing(e):
+                        raise
+                    self._write_one_by_one(conn)
+                except Exception:
+                    self._write_one_by_one(conn)
+            finally:
+                conn.close()
+        except sqlite3.Error as e:
+            now = time.monotonic()
+            if self._failing_since is None:
+                self._failing_since = now
+            if not _passing(e) or now - self._failing_since >= self.GIVE_UP_S:
+                self._held = []  # the database cannot take them, or not soon
+                self._failing_since = None
+        else:
+            self._failing_since = None
+        finally:
+            if self._held:
+                self._schedule_retry()
+            self.release()
+
+    def _schedule_retry(self) -> None:
+        """Try the held records again later, once at a time."""
+        if self._retry is not None or self._closed:
+            return
+        self._retry = threading.Timer(self.RETRY_S, self._retry_flush)
+        self._retry.daemon = True  # never keeps the process alive; exit flushes
+        self._retry.start()
+
+    def _retry_flush(self) -> None:
+        self.acquire()
+        try:
+            self._retry = None  # so a retry that fails schedules the next
+            if not self._closed:
+                self.flush()
+        finally:
+            self.release()
+
+    def close(self) -> None:
+        self.acquire()
+        try:
+            self._closed = True  # no more retries; this flush is the last try
+            if self._retry is not None:
+                self._retry.cancel()
+                self._retry = None
+            self.flush()
+        finally:
+            self.release()
+        super().close()
+
+    def _write_one_by_one(self, conn: sqlite3.Connection) -> None:
+        """Write the held records singly, dropping any that cannot be written."""
+        while self._held:
+            try:
+                with conn:
+                    conn.execute(self._INSERT, self._held[0])
+            except sqlite3.Error as e:
+                if _passing(e):
+                    raise  # busy: keep this one and the rest
+            except Exception:
+                pass  # this record can never be written
+            self._held.pop(0)
+
+
+# SQLite errors that pass: the database is busy, locked, or not made yet
+_PASSING_ERRORS = {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_CANTOPEN}
+
+
+def _passing(e: sqlite3.Error) -> bool:
+    """Whether a write that failed with e may work later."""
+    code = getattr(e, "sqlite_errorcode", None)
+    return code is not None and code & 0xFF in _PASSING_ERRORS
 
 
 def setup_logging(config: Config | None = None) -> None:
