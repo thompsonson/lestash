@@ -96,6 +96,8 @@ class ImportVideoRequest(BaseModel):
 
     url: str
     note: str | None = None
+    # A new video goes under this item (+ Add → New link); one already held stays put
+    parent_id: int | None = None
 
 
 class ImportVideoResponse(BaseModel):
@@ -146,6 +148,8 @@ def import_video(body: ImportVideoRequest):
         raise HTTPException(status_code=404, detail="Video not found or not accessible")
 
     item = video_to_item(details, source_subtype="shared", note=body.note)
+    if body.parent_id is not None:
+        item.parent_id = body.parent_id
 
     with get_db() as conn:
         item_id = upsert_item(conn, item)

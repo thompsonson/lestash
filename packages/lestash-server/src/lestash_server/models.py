@@ -414,6 +414,8 @@ class DriveSyncRequest(BaseModel):
     """Request to sync Google Drive files/folders with Docling conversion."""
 
     urls: list[str]
+    # A single file goes under this item, and is saved now (+ Add → New link)
+    parent_id: int | None = None
 
 
 class DriveSyncResponse(BaseModel):

@@ -381,8 +381,12 @@ def sync_from_drive(body: DriveSyncRequest):
                     conn.commit()
             elif url_type == "file":
                 item, pdf_bytes, filename = sync_single_file(file_id)
+                if body.parent_id is not None:
+                    item.parent_id = body.parent_id
                 with get_db() as conn:
                     item_id = upsert_item(conn, item)
+                    if body.parent_id is not None:
+                        record_saved(conn, item_id)
                     conn.commit()
                 items_added += 1
                 if pdf_bytes:

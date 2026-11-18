@@ -1175,6 +1175,57 @@ class TestImportVideo:
             ("saved", data["item_id"])
         ]
 
+    def test_a_new_video_goes_under_the_item_it_was_added_to(
+        self, client, test_config, monkeypatch
+    ):
+        import lestash_youtube.client as yt_client
+        from lestash.core.database import get_connection
+
+        monkeypatch.setattr(yt_client, "create_youtube_client", lambda: object())
+        monkeypatch.setattr(
+            yt_client,
+            "get_video_details",
+            lambda youtube, vid: {
+                "id": vid,
+                "title": "Child video",
+                "channel_title": "C",
+                "published_at": "2025-03-01T00:00:00Z",
+            },
+        )
+        with get_connection(test_config) as conn:
+            parent = conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES ('note', 'p', 'x')"
+            ).lastrowid
+            conn.commit()
+        resp = client.post(
+            "/api/youtube/import-video",
+            json={"url": f"https://youtu.be/{self.VID}", "parent_id": parent},
+        )
+        assert resp.status_code == 200, resp.text
+        with get_connection(test_config) as conn:
+            row = conn.execute(
+                "SELECT parent_id FROM items WHERE id = ?", (resp.json()["item_id"],)
+            ).fetchone()
+        assert row[0] == parent
+        assert _saved(test_config, resp.json()["item_id"]) == 1
+
+    def test_a_video_already_held_is_not_moved(self, client, test_config):
+        existing_id = self._insert_video(test_config)
+        resp = client.post(
+            "/api/youtube/import-video",
+            json={"url": f"https://youtu.be/{self.VID}", "parent_id": 1},
+        )
+        assert resp.json()["created"] is False
+        from lestash.core.database import get_connection
+
+        with get_connection(test_config) as conn:
+            assert (
+                conn.execute("SELECT parent_id FROM items WHERE id = ?", (existing_id,)).fetchone()[
+                    0
+                ]
+                is None
+            )
+
     def test_missing_video_returns_404(self, client, monkeypatch):
         import lestash_youtube.client as yt_client
 
@@ -1201,3 +1252,40 @@ class TestCORS:
             headers={"Origin": "https://pop-mini.monkey-ladon.ts.net:8444"},
         )
         assert "ts.net" in resp.headers.get("access-control-allow-origin", "")
+
+
+def test_a_drive_file_goes_under_the_item_it_was_added_to(client, test_config, monkeypatch):
+    """+ Add → New link with a Drive link: the document under the item, saved now."""
+    import lestash.core.google_drive as gd
+    from lestash.core.database import get_connection
+    from lestash.models.item import ItemCreate
+
+    monkeypatch.setattr(gd, "classify_drive_url", lambda url: ("file", "F1"))
+    monkeypatch.setattr(
+        gd,
+        "sync_single_file",
+        lambda file_id: (
+            ItemCreate(
+                source_type="google-drive", source_id="drive:F1", title="A doc", content="text"
+            ),
+            None,
+            None,
+        ),
+    )
+    with get_connection(test_config) as conn:
+        parent = conn.execute(
+            "INSERT INTO items (source_type, source_id, content) VALUES ('note', 'p2', 'x')"
+        ).lastrowid
+        conn.commit()
+    resp = client.post(
+        "/api/import/drive/sync",
+        json={"urls": ["https://docs.google.com/document/d/F1/edit"], "parent_id": parent},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items_added"] == 1
+    with get_connection(test_config) as conn:
+        (item_id, parent_id) = conn.execute(
+            "SELECT id, parent_id FROM items WHERE source_id = 'drive:F1'"
+        ).fetchone()
+    assert parent_id == parent
+    assert _saved(test_config, item_id) == 1

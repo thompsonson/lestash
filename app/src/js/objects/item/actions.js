@@ -57,6 +57,9 @@ const menu = (label, entries) => {
 };
 const action = (name, text, id) =>
   `<button type="button" data-action="${name}"${id ? ` data-id="${id}"` : ''}>${escHtml(text)}</button>`;
+// An entry with a short line under it saying what it adds
+const hinted = (name, text, hint, id) =>
+  `<button type="button" data-action="${name}"${id ? ` data-id="${id}"` : ''}>${escHtml(text)}<small>${escHtml(hint)}</small></button>`;
 
 // ── A stub: a post LeStash knows only by its address (#322) ──────────────────────
 
@@ -124,9 +127,11 @@ export function actionsHtml(item) {
   if (item.held === false) return stubActionsHtml(item);
   const day = dayOf(item);
   const add = menu('+ Add', [
-    action('show-note-form', 'Note'),
-    action('add-child', 'New item'),
-    action('link-item', 'Link to an item', item.id),
+    hinted('show-note-form', 'Note', 'your own text, under this item'),
+    hinted('add-link', 'New link', 'a page or video not yet in LeStash'),
+    hinted('add-images', 'Images', 'one or more, each its own item'),
+    '<hr class="item-menu-sep">',
+    hinted('link-item', 'Link to an item', 'one already in LeStash', item.id),
     action('focus-tag', 'Tag'),
     `<button type="button" onclick="addToCollection(${item.id})">Collection</button>`,
   ]);

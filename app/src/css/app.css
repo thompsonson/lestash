@@ -1003,6 +1003,9 @@ body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
 .item-menu-list > button, .item-menu-list > a { text-align: left; padding: 0.55rem 0.8rem; background: none; border: 0; color: var(--text); font: inherit; font-size: 0.9rem; text-decoration: none; cursor: pointer; }
 .item-menu-list > button:hover, .item-menu-list > a:hover { background: var(--bg); }
 .item-menu-list > [hidden] { display: none; }
+.item-menu-list > button small { display: block; color: var(--muted); font-size: 0.72rem; }
+.item-menu-list:has(small) { min-width: 15rem; }
+.item-menu-sep { border: 0; border-top: 1px solid var(--border); margin: 0.25rem 0; }
 #add-to-coll-select { font-size: 0.75rem; padding: 0.25rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
 ||||||| 690264e
 
