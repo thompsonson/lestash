@@ -100,8 +100,11 @@ class DatabaseHandler(logging.Handler):
         self._config = config
 
     def emit(self, record: logging.LogRecord) -> None:
-        from lestash.core.database import get_connection
+        from lestash.core.database import get_connection, migrating
 
+        if migrating():
+            # The migration holds the write lock; this write would wait on it
+            return
         try:
             extra_data = getattr(record, "extra", None)
             extra_json = json.dumps(extra_data) if extra_data else None

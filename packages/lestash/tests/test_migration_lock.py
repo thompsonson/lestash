@@ -1,5 +1,6 @@
 """Two connections that start together run each pending migration once (#371)."""
 
+import logging
 import sqlite3
 import threading
 import time
@@ -54,3 +55,32 @@ def test_an_in_memory_database_migrates_without_a_lock():
     conn.executescript(SCHEMA)
     apply_migrations(conn)
     assert get_schema_version(conn) == SCHEMA_VERSION
+
+
+def test_database_logging_during_a_migration_does_not_hang(test_db):
+    from lestash.core.logging import DatabaseHandler
+
+    db_path = get_db_path(test_db)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA user_version = 35")
+
+    logger = logging.getLogger("lestash.core.database")
+    handler = DatabaseHandler(test_db)
+    logger.addHandler(handler)
+    old_level = logger.level
+    logger.setLevel(logging.INFO)
+    done = threading.Event()
+
+    def open_connection():
+        with get_connection(test_db):
+            done.set()
+
+    try:
+        t = threading.Thread(target=open_connection, daemon=True)
+        t.start()
+        assert done.wait(20), "migration hung on its own lock"
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+    with sqlite3.connect(db_path) as conn:
+        assert get_schema_version(conn) == SCHEMA_VERSION

@@ -10,6 +10,7 @@ import fcntl
 import json
 import logging
 import sqlite3
+import threading
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -1119,12 +1120,28 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
     Returns:
         Number of migrations applied.
     """
-    lock_path = _migration_lock_path(conn)
-    if lock_path is None:
-        return _apply_pending_migrations(conn)
-    with lock_path.open("ab") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)  # released when the file closes
-        return _apply_pending_migrations(conn)
+    if migrating():
+        # A connection opened while this thread migrates, e.g. by the database log
+        # handler: the lock is ours already, and waiting on it again would hang
+        return 0
+    _migration_state.active = True
+    try:
+        lock_path = _migration_lock_path(conn)
+        if lock_path is None:
+            return _apply_pending_migrations(conn)
+        with lock_path.open("ab") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)  # released when the file closes
+            return _apply_pending_migrations(conn)
+    finally:
+        _migration_state.active = False
+
+
+_migration_state = threading.local()
+
+
+def migrating() -> bool:
+    """Whether this thread is applying migrations."""
+    return getattr(_migration_state, "active", False)
 
 
 def _apply_pending_migrations(conn: sqlite3.Connection) -> int:
