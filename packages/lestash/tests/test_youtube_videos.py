@@ -368,3 +368,15 @@ def test_a_copy_under_one_of_the_items_own_parts_makes_no_loop(test_db) -> None:
         assert (
             conn.execute("SELECT parent_id FROM items WHERE id = ?", (note,)).fetchone()[0] == video
         )
+
+
+def test_an_item_under_a_note_under_a_copy_takes_the_copys_place(test_db) -> None:
+    with get_connection(test_db) as conn:
+        page = _item(conn, "note-1", "a page", source_type="note")
+        liked = _item(conn, f"liked:{VID}", "d", parent_id=page)
+        note = _item(conn, "note-2", "a note", parent_id=liked, source_type="note")
+        video = _item(conn, f"history:{VID}", "", {"source": "takeout"}, parent_id=note)
+        _migrate(conn)
+        parents = dict(conn.execute("SELECT id, parent_id FROM items").fetchall())
+        assert parents[video] == page
+        assert parents[note] == video

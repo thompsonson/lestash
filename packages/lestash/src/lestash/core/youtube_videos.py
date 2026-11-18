@@ -80,8 +80,12 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
         metadata = _metadata(kept[6])
         title, content, parent_id = kept[3], kept[4], kept[2]
         own = {r[0] for r in items}
-        if parent_id in own:
-            parent_id = _outside_parent(conn, kept_id, own)
+        chain = _ancestors(conn, kept_id)
+        if own.intersection(chain):
+            # Under a copy, maybe through other items: the copy's parts become the kept
+            # item's, so it takes the place above the highest copy
+            top = max(i for i, ancestor in enumerate(chain) if ancestor in own)
+            parent_id = chain[top + 1] if top + 1 < len(chain) else None
             conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, kept_id))
         description = metadata.get("description")
         liked_at: list[str] = []
@@ -145,6 +149,18 @@ def _outside_parent(conn: sqlite3.Connection, item_id: int, own: set[int]) -> in
         row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (parent,)).fetchone()
         parent = row[0] if row else None
     return None if parent in own else parent
+
+
+def _ancestors(conn: sqlite3.Connection, item_id: int) -> list[int]:
+    """The containers of ``item_id``, nearest first; stops at a loop."""
+    chain: list[int] = []
+    row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (item_id,)).fetchone()
+    current = row[0] if row else None
+    while current is not None and current != item_id and current not in chain:
+        chain.append(current)
+        row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (current,)).fetchone()
+        current = row[0] if row else None
+    return chain
 
 
 def _within(conn: sqlite3.Connection, item_id: int, ancestor_id: int) -> bool:
