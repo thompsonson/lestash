@@ -923,6 +923,27 @@ class TestAddFileUnderAnItem:
         ).json()
         assert (post()["items_added"], post()["items_added"]) == (1, 0)
 
+    def test_a_chat_page_counts_its_turns(self, client):
+        from lestash.models.item import ItemCreate
+
+        chat = [
+            ItemCreate(source_type="gemini", source_id="chat-1", title="A chat", content="c"),
+            ItemCreate(
+                source_type="gemini",
+                source_id="turn-1",
+                content="t",
+                metadata={"_parent_source_id": "chat-1"},
+            ),
+        ]
+        with patch(
+            "lestash_server.parsers.html_page.parse_html_page", return_value=(chat, "gemini")
+        ):
+            body = client.post(
+                "/api/import",
+                files={"file": ("chat.html", io.BytesIO(b"<html></html>"), "text/html")},
+            ).json()
+        assert body["items_added"] == 2
+
     def test_an_unknown_parent_is_refused(self, client):
         resp = client.post(
             "/api/import",

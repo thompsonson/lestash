@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 _EXIF_IFD = 0x8769
 _DATE_TIME_ORIGINAL = 36867
+_OFFSET_TIME = 36880
 _OFFSET_TIME_ORIGINAL = 36881
 _DATE_TIME = 306
 
@@ -14,7 +15,7 @@ _DATE_TIME = 306
 def taken_at(data: bytes) -> str | None:
     """The time an image was taken, in UTC ISO 8601, or None if it doesn't say.
 
-    Uses DateTimeOriginal, else DateTime, with OffsetTimeOriginal when given. EXIF
+    Uses DateTimeOriginal with OffsetTimeOriginal, else DateTime with OffsetTime. EXIF
     times are the camera's wall clock, so a time without an offset is taken as this
     machine's local time.
     """
@@ -24,8 +25,11 @@ def taken_at(data: bytes) -> str | None:
         with Image.open(io.BytesIO(data)) as img:
             exif = img.getexif()
             sub = exif.get_ifd(_EXIF_IFD)
-            raw = sub.get(_DATE_TIME_ORIGINAL) or exif.get(_DATE_TIME)
-            offset = sub.get(_OFFSET_TIME_ORIGINAL)
+            # Each time has its own offset tag
+            if sub.get(_DATE_TIME_ORIGINAL):
+                raw, offset = sub.get(_DATE_TIME_ORIGINAL), sub.get(_OFFSET_TIME_ORIGINAL)
+            else:
+                raw, offset = exif.get(_DATE_TIME), sub.get(_OFFSET_TIME)
     except Exception:
         return None
     if not isinstance(raw, str):

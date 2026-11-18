@@ -44,13 +44,27 @@ def test_a_time_without_an_offset_is_taken_as_local_time(monkeypatch):
 
 
 def test_datetime_is_used_when_there_is_no_original():
-    assert taken_at(_image("PNG", "", "+00:00", base="2025:01:02 03:04:05")) == (
-        "2025-01-02T03:04:05+00:00"
-    )
+    img = Image.new("RGB", (4, 4))
+    exif = Image.Exif()
+    exif[306] = "2025:01:02 03:04:05"
+    exif[0x8769] = {36880: "+00:00"}
+    out = io.BytesIO()
+    img.save(out, format="PNG", exif=exif)
+    assert taken_at(out.getvalue()) == "2025-01-02T03:04:05+00:00"
 
 
 def test_no_exif_gives_none():
     assert taken_at(_image("PNG")) is None
+
+
+def test_datetime_takes_its_own_offset():
+    img = Image.new("RGB", (4, 4))
+    exif = Image.Exif()
+    exif[306] = "2025:01:02 03:04:05"
+    exif[0x8769] = {36880: "+02:00", 36881: "-07:00"}  # OffsetTime, OffsetTimeOriginal
+    out = io.BytesIO()
+    img.save(out, format="PNG", exif=exif)
+    assert taken_at(out.getvalue()) == "2025-01-02T01:04:05+00:00"
 
 
 def test_a_malformed_time_gives_none():

@@ -128,8 +128,9 @@ async def import_file(
     return ImportResponse(
         status="completed",
         source_type=source_type,
-        # A page held already is refreshed from the upload, not added again
-        items_added=sum(1 for _, held in placed if not held) if one_page else items_added,
+        # A page held already is refreshed from the upload, not added again; its turns,
+        # if any, still count
+        items_added=items_added - sum(1 for _, held in placed if held),
         items_updated=0,
         errors=errors,
         item_id=placed[0][0] if one_page and placed else None,
