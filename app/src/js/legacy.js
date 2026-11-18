@@ -993,9 +993,6 @@ function renderItemView(item) {
     if (btn.dataset.action === 'add-child') {
       openCaptureDialog({}, { id: item.id, title: item.title });
     }
-    if (btn.dataset.action === 'add-images') {
-      document.getElementById('add-images-input')?.click();
-    }
     if (btn.dataset.action === 'fetch-preview') {
       try {
         await fetchPreview(item.id);
@@ -2087,9 +2084,32 @@ function openCaptureDialog(share, attachTo = null) {
   document.querySelector('label[for="capture-content"]').textContent = attachTo ? 'Text' : 'Shared content';
   document.getElementById('capture-heading').textContent = attachTo ? 'Add an item' : 'Save Shared Item';
   attachPickerReset('capture', { url, text });
-  toggleAttachMode('capture');
-  if (attachTo) attachPickerSelect('capture', attachTo.id, attachTo.title);
+  addingTo('capture', attachTo);
+  document.getElementById('capture-pick-images').hidden = !attachTo;
   document.getElementById('capture-modal').classList.add('open');
+}
+
+// Opened from an item page: the new item goes under that item, so the dialog says
+// so instead of offering "new or attach" and a search for the parent
+function addingTo(prefix, attachTo) {
+  document.getElementById(`${prefix}-mode-choice`).hidden = !!attachTo;
+  const line = document.getElementById(`${prefix}-adding-to`);
+  line.hidden = !attachTo;
+  line.textContent = attachTo ? `Adding to: ${attachTo.title || 'this item'}` : '';
+  if (attachTo) {
+    attachPickerSelect(prefix, attachTo.id, attachTo.title);
+    document.getElementById(`${prefix}-attach-section`).style.display = 'none';
+    const fresh = document.getElementById(`${prefix}-new-section`);
+    if (fresh) fresh.style.display = 'none';
+  } else {
+    toggleAttachMode(prefix, prefix === 'multi-image');
+  }
+}
+
+// From the New item form: pick screenshots or images instead, each a new item
+function pickImagesInstead() {
+  closeCaptureDialog();
+  document.getElementById('add-images-input')?.click();
 }
 
 function closeCaptureDialog() {
@@ -2424,8 +2444,7 @@ function openMultiImageCaptureDialog(files, attachTo = null) {
   document.getElementById('multi-image-notes').value = '';
   document.querySelector('input[name="multi-image-mode"][value="' + (attachTo ? 'attach' : 'new') + '"]').checked = true;
   attachPickerReset('multi-image');
-  toggleAttachMode('multi-image', true);
-  if (attachTo) attachPickerSelect('multi-image', attachTo.id, attachTo.title);
+  addingTo('multi-image', attachTo);
   document.getElementById('multi-image-save-btn').disabled = false;
   document.getElementById('multi-image-save-btn').textContent = 'Save';
   document.getElementById('multi-image-capture-modal').classList.add('open');
@@ -3336,7 +3355,7 @@ Object.assign(window, {
   closeMultiImageCaptureDialog, closeProcessDialog, closeSettings, completeAudibleAuth,
   completeGoogleAuth, confirmAddToCollection, debugTestConnection, escHtml, importDriveUrl,
   openLinkedInCompose, openMicroblogCompose, openNewCollectionDialog,
-  openProcessDialog, reconnect, runProcessDialog, saveCaptureItem, saveHtmlImport,
+  openProcessDialog, pickImagesInstead, reconnect, runProcessDialog, saveCaptureItem, saveHtmlImport,
   saveImageCapture, saveLink, saveMultiImageCapture, saveNewCollection, saveSettingsForm,
   saveVoiceNote, startAudibleAuth, startGoogleAuth, startLinkedInAuth, submitLinkedInPost,
   submitMicroblogPublish, toggleAttachMode, toggleRecording, transcribeRecordedAudio,

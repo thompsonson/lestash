@@ -125,8 +125,7 @@ export function actionsHtml(item) {
   const day = dayOf(item);
   const add = menu('+ Add', [
     action('show-note-form', 'Note'),
-    action('add-child', 'Link or text'),
-    action('add-images', 'Images'),
+    action('add-child', 'New item'),
     action('link-item', 'Link to an item', item.id),
     action('focus-tag', 'Tag'),
     `<button type="button" onclick="addToCollection(${item.id})">Collection</button>`,
