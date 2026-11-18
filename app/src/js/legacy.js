@@ -26,7 +26,7 @@ import {
 } from './objects/item/actions.js';
 import {
   itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
-  renderParts, addPart, PARTS_QUERY, titleOnce,
+  renderParts, addPart, PARTS_QUERY, PARTS_LOAD_FAILED, titleOnce,
 } from './objects/item/page.js';
 import { selfName, selfReady } from './objects/person/self.js';
 import { setSheet, onSheetClose } from './sheet.js';
@@ -1069,7 +1069,7 @@ function renderItemView(item) {
       if (!list || list.dataset.itemId !== String(item.id)) return;
       // Parts added while these loaded (a note just saved) stay, if the load missed them
       const fetched = new Set(children.map(c => c.id));
-      (list._parts?.children || []).forEach(c => { if (!fetched.has(c.id)) children.push(c); });
+      const missed = (list._parts?.children || []).filter(c => !fetched.has(c.id));
       list.innerHTML = '';
       const isChat = children.length > 0 && CHAT_ROLES.has(getChatRole(children[0]));
       if (isChat) {
@@ -1077,20 +1077,20 @@ function renderItemView(item) {
         thread.className = 'chat-thread';
         children.slice().reverse().forEach(child => thread.appendChild(renderChatBubble(child)));
         list.appendChild(thread);
+        missed.forEach(c => list.appendChild(renderCard(c)));  // after the thread, as addPart does
       } else {
-        renderParts(item, children, list);
+        renderParts(item, [...children, ...missed], list);
       }
     }).catch(() => {
       const list = document.getElementById('children-list');
       if (list && list.dataset.itemId === String(item.id)) {
-        const failed = '<span style="color:var(--muted);font-size:0.8rem">Could not load these items</span>';
-        // Parts added while loading stay shown, under the message
+        // Parts added while loading stay shown, under the message; renderParts keeps it
+        list._loadFailed = true;
         const added = list._parts?.children || [];
         if (added.length) {
           renderParts(item, added, list);
-          list.insertAdjacentHTML('afterbegin', failed);
         } else {
-          list.innerHTML = failed;
+          list.innerHTML = PARTS_LOAD_FAILED;
         }
       }
     });

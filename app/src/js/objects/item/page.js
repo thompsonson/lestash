@@ -355,8 +355,11 @@ function orderMenu(order) {
 
 // A post's replies as a thread, oldest first; other items' parts grouped by kind,
 // newest or oldest first, with chips to show one kind
+export const PARTS_LOAD_FAILED = '<span class="parts-load-failed" style="color:var(--muted);font-size:0.8rem">Could not load these items</span>';
+
 export function renderParts(item, children, list) {
-  list.innerHTML = '';
+  // A failed load is said above whatever parts were added since
+  list.innerHTML = list._loadFailed ? PARTS_LOAD_FAILED : '';
   list._parts = { item, children };
   stopTapAway();
   const head = list.closest('.item-view-children')?.querySelector('.parts-order-slot');
