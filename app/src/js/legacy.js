@@ -576,6 +576,15 @@ function renderItemView(item) {
       }
     });
   }
+  // + Add → Images: each image a new item under this one, saved like a share (#357)
+  const imagesInput = container.querySelector('#add-images-input');
+  if (imagesInput) {
+    imagesInput.addEventListener('change', () => {
+      const files = [...imagesInput.files];
+      imagesInput.value = '';
+      if (files.length) openMultiImageCaptureDialog(files, { id: item.id, title: item.title });
+    });
+  }
   wireTranscript(container);
   wireReactions(container, item);
 
@@ -980,6 +989,12 @@ function renderItemView(item) {
     }
     if (btn.dataset.action === 'add-screenshot') {
       document.getElementById('copy-image-input').click();
+    }
+    if (btn.dataset.action === 'add-link') {
+      openCaptureDialog({}, { id: item.id, title: item.title });
+    }
+    if (btn.dataset.action === 'add-images') {
+      document.getElementById('add-images-input')?.click();
     }
     if (btn.dataset.action === 'fetch-preview') {
       try {
@@ -2048,7 +2063,12 @@ function _isYouTubeUrl(url) {
   return /youtube\.com\/watch|youtu\.be\//.test(url || '');
 }
 
-function openCaptureDialog(share) {
+let _captureParent = null;  // the item page the new item was added from, if any
+
+// A share from another app, or + Add → Link or text on an item page (attachTo): a
+// new item under that one, with its text typed rather than shared
+function openCaptureDialog(share, attachTo = null) {
+  _captureParent = attachTo;
   const text = share.text || '';
   const urlMatch = text.match(/https?:\/\/[^\s]+/);
   const url = urlMatch ? urlMatch[0] : '';
@@ -2060,23 +2080,142 @@ function openCaptureDialog(share) {
   document.getElementById('capture-fetch-transcript').checked = true;
   document.getElementById('capture-drive-option').style.display = _isDriveOrDocsUrl(url) ? 'block' : 'none';
   document.getElementById('capture-drive-import').checked = true;
-  document.querySelector('input[name="capture-mode"][value="new"]').checked = true;
+  document.querySelector('input[name="capture-mode"][value="' + (attachTo ? 'attach' : 'new') + '"]').checked = true;
+  // New link (from an item page) has no shared text to show
+  document.getElementById('capture-content').hidden = !!attachTo;
+  document.querySelector('label[for="capture-content"]').hidden = !!attachTo;
+  document.getElementById('capture-title').placeholder = attachTo
+    ? 'Optional; a video\'s comes from YouTube' : 'Page title or description';
+  document.getElementById('capture-heading').textContent = attachTo ? 'New link' : 'Save Shared Item';
   attachPickerReset('capture', { url, text });
-  toggleAttachMode('capture');
+  addingTo('capture', attachTo);
   document.getElementById('capture-modal').classList.add('open');
+  if (attachTo) document.getElementById('capture-url').focus();
 }
 
+// Opened from an item page: the new item goes under that item, so the dialog says
+// so instead of offering "new or attach" and a search for the parent
+function addingTo(prefix, attachTo) {
+  document.getElementById(`${prefix}-mode-choice`).hidden = !!attachTo;
+  const line = document.getElementById(`${prefix}-adding-to`);
+  line.hidden = !attachTo;
+  line.textContent = attachTo ? `Adding to: ${attachTo.title || 'this item'}` : '';
+  if (attachTo) {
+    attachPickerSelect(prefix, attachTo.id, attachTo.title);
+    document.getElementById(`${prefix}-attach-section`).style.display = 'none';
+    const fresh = document.getElementById(`${prefix}-new-section`);
+    if (fresh) fresh.style.display = 'none';
+  } else {
+    toggleAttachMode(prefix, prefix === 'multi-image');
+  }
+}
+
+// Added from an item page: redraw it with the new parts. Apart from the save, so a
+// failed reload never reads as a failed save; drawn only if that page is still shown.
+async function showNewParts(parentId) {
+  try {
+    const fresh = cacheItem(await api(`/api/items/${parentId}?include_children=true`));
+    if (location.pathname === `/items/${parentId}`) renderItemView(fresh);
+  } catch (e) {
+    showToast('Saved; reopen the item to see it', 'ok');
+  }
+}
+
+
 function closeCaptureDialog() {
+  _captureParent = null;
   document.getElementById('capture-modal').classList.remove('open');
   attachPickerReset('capture');
 }
 
+// + Add → New link: a page or video not yet in LeStash, under the item it was added
+// from. A YouTube link is saved as the video (its transcript under it); anything else,
+// or a video already held or not found, as a link with your title and notes. A Drive
+// document, with "Import as document" ticked, is imported under that link.
+async function saveNewLink() {
+  const parent = _captureParent;
+  const url = document.getElementById('capture-url').value.trim();
+  const title = document.getElementById('capture-title').value.trim();
+  const notes = document.getElementById('capture-notes').value.trim();
+  if (!url) { showToast('Add a link', 'error'); return; }
+  const btn = document.getElementById('capture-save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  const post = (path, body) => api(path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  try {
+    let message = 'Link saved';
+    let saved = false;
+    if (_isYouTubeUrl(url)) {
+      btn.textContent = 'Importing video...';
+      try {
+        const video = await post('/api/youtube/import-video', { url, note: notes || null, parent_id: parent.id });
+        // A video already held stays where it is; the link and its notes are saved here
+        saved = video.created;
+        message = video.created ? 'Video saved' : 'Saved here as a link; the video was already in LeStash';
+        if (!video.created && !title) document.getElementById('capture-title').value = video.title;
+        if (video.created && document.getElementById('capture-fetch-transcript').checked) {
+          btn.textContent = 'Fetching transcript...';
+          try {
+            const t = await post('/api/youtube/fetch-transcript', { url });
+            message = `Video saved, with its transcript (${t.word_count} words)`;
+          } catch (e) {
+            message = 'Video saved (transcript unavailable)';
+          }
+        }
+      } catch (e) {
+        message = 'Saved as a link (the video\'s details were unavailable)';
+      }
+    }
+    let linkId = null;
+    if (!saved) {
+      const link = await post('/api/items', {
+        source_type: 'share',
+        source_id: 'share-' + Date.now(),
+        url,
+        title: document.getElementById('capture-title').value.trim() || null,
+        content: notes,
+        is_own_content: false,
+        parent_id: parent.id,
+        metadata: notes ? { notes } : null,
+      });
+      linkId = link.id;
+    }
+    // A Drive document (not a folder): the link keeps your title and notes, and the
+    // document goes under it; one already held stays where it is
+    if (linkId && _isDriveOrDocsUrl(url) && !/\/folders\//.test(url)
+        && document.getElementById('capture-drive-import').checked) {
+      btn.textContent = 'Importing from Drive...';
+      try {
+        const result = await post('/api/import/drive/sync', { urls: [url], parent_id: linkId });
+        if (result.items_held > 0) message = 'Link saved; the document was already in LeStash';
+        else if (result.items_added > 0) message = 'Link saved, with its document';
+        else message = 'Link saved (the document could not be imported)';
+      } catch (e) {
+        message = 'Link saved (the document could not be imported)';
+      }
+    }
+    showToast(message, 'ok');
+    closeCaptureDialog();
+    refreshTimeline();
+    loadRecent();
+    showNewParts(parent.id);
+  } catch (e) {
+    showToast('Save failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save';
+  }
+}
+
 async function saveCaptureItem() {
+  if (_captureParent) return saveNewLink();
   const url = document.getElementById('capture-url').value.trim();
   const title = document.getElementById('capture-title').value.trim();
   const notes = document.getElementById('capture-notes').value.trim();
   const content = document.getElementById('capture-content').value.trim();
-  if (!url && !content) { showToast('Nothing to save', 'error'); return; }
+  if (!url && !content && !notes) { showToast('Nothing to save', 'error'); return; }
   const mode = document.querySelector('input[name="capture-mode"]:checked').value;
   const parentId = mode === 'attach' ? attachPickerGetId('capture') : null;
   if (mode === 'attach' && !parentId) {
@@ -2115,7 +2254,7 @@ async function saveCaptureItem() {
           source_id: 'share-' + Date.now(),
           url: url || null,
           title: title || null,
-          content: notes ? notes + '\n\n---\n\n' + content : content,
+          content: [notes, content].filter(Boolean).join('\n\n---\n\n'),
           is_own_content: false,
           parent_id: parentId,
           metadata: notes ? { notes, shared_text: content } : { shared_text: content },
@@ -2375,27 +2514,54 @@ async function saveImageCapture() {
 let _pendingMultiImageFiles = null;
 let _pendingMultiImageUrls = [];
 
-function openMultiImageCaptureDialog(files) {
-  _pendingMultiImageFiles = files;
-  _pendingMultiImageUrls.forEach(u => URL.revokeObjectURL(u));
-  _pendingMultiImageUrls = files.map(f => URL.createObjectURL(f));
+let _multiImageParent = null;  // the item page the images were added from, if any
 
-  const grid = document.getElementById('multi-image-grid');
-  grid.innerHTML = _pendingMultiImageUrls.map((url, i) =>
-    `<img src="${url}" alt="Image ${i + 1}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;border:1px solid var(--border)">`
-  ).join('');
-  document.getElementById('multi-image-count').textContent = `${files.length} image${files.length === 1 ? '' : 's'} selected`;
+function openMultiImageCaptureDialog(files, attachTo = null) {
+  _pendingMultiImageFiles = files;
+  _multiImageParent = attachTo;
+  _pendingMultiImageUrls.forEach(u => URL.revokeObjectURL(u));
+  _pendingMultiImageUrls = [];
+  drawPickedImages();
+  // + Add → Images: each its own item, with one caption for all, and more can be added
+  document.getElementById('multi-image-heading').textContent = attachTo ? 'Images' : 'Save Images';
+  document.getElementById('multi-image-caption-section').hidden = !attachTo;
+  document.getElementById('multi-image-caption').value = '';
+  document.getElementById('multi-image-more').hidden = !attachTo;
   document.getElementById('multi-image-title').value = '';
   document.getElementById('multi-image-notes').value = '';
-  document.querySelector('input[name="multi-image-mode"][value="new"]').checked = true;
+  document.querySelector('input[name="multi-image-mode"][value="' + (attachTo ? 'attach' : 'new') + '"]').checked = true;
   attachPickerReset('multi-image');
-  toggleAttachMode('multi-image', true);
+  addingTo('multi-image', attachTo);
   document.getElementById('multi-image-save-btn').disabled = false;
-  document.getElementById('multi-image-save-btn').textContent = 'Save';
+  drawPickedImages();
   document.getElementById('multi-image-capture-modal').classList.add('open');
 }
 
+function drawPickedImages() {
+  const files = _pendingMultiImageFiles || [];
+  _pendingMultiImageUrls.forEach(u => URL.revokeObjectURL(u));
+  _pendingMultiImageUrls = files.map(f => URL.createObjectURL(f));
+  document.getElementById('multi-image-grid').innerHTML = _pendingMultiImageUrls.map((url, i) =>
+    `<img src="${url}" alt="Image ${i + 1}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;border:1px solid var(--border)">`
+  ).join('');
+  const n = files.length;
+  document.getElementById('multi-image-count').textContent = _multiImageParent
+    ? `${n} image${n === 1 ? '' : 's'} · each saved as its own item`
+    : `${n} image${n === 1 ? '' : 's'} selected`;
+  const btn = document.getElementById('multi-image-save-btn');
+  if (btn && !btn.disabled) btn.textContent = _multiImageParent ? `Save ${n}` : 'Save';
+}
+
+function addMoreImages(input) {
+  const more = [...input.files];
+  input.value = '';
+  if (!more.length) return;
+  _pendingMultiImageFiles = [...(_pendingMultiImageFiles || []), ...more];
+  drawPickedImages();
+}
+
 function closeMultiImageCaptureDialog() {
+  _multiImageParent = null;
   document.getElementById('multi-image-capture-modal').classList.remove('open');
   attachPickerReset('multi-image');
   _pendingMultiImageUrls.forEach(u => URL.revokeObjectURL(u));
@@ -2411,6 +2577,7 @@ async function saveMultiImageCapture() {
   const title = mode === 'new' ? document.getElementById('multi-image-title').value.trim() : '';
   const notes = mode === 'new' ? document.getElementById('multi-image-notes').value.trim() : '';
   if (mode === 'new' && !title && !notes) { showToast('Add a title or note', 'error'); return; }
+  const caption = _multiImageParent ? document.getElementById('multi-image-caption').value.trim() : '';
 
   const btn = document.getElementById('multi-image-save-btn');
   btn.disabled = true;
@@ -2447,8 +2614,8 @@ async function saveMultiImageCapture() {
         body: JSON.stringify({
           source_type: 'image',
           source_id: `image-${batchId}-${i}`,
-          title: file.name,
-          content: '[Image]',
+          title: caption ? (total > 1 ? `${caption} (${i + 1}/${total})` : caption) : file.name,
+          content: caption || '[Image]',
           is_own_content: false,
           parent_id: parentId,
           metadata: { original_filename: file.name, mime_type: file.type },
@@ -2468,10 +2635,12 @@ async function saveMultiImageCapture() {
       btn.textContent = `Uploading ${done}/${total}...`;
     }));
 
-    showToast(`Saved ${total} images`, 'ok');
+    showToast(`Saved ${total} image${total === 1 ? '' : 's'}`, 'ok');
+    const from = _multiImageParent;
     closeMultiImageCaptureDialog();
     refreshTimeline();
     loadRecent();
+    if (from) showNewParts(parentId);
   } catch (e) {
     showToast('Save failed: ' + e.message, 'error');
   } finally {
@@ -3288,7 +3457,7 @@ setInterval(checkHealth, 30000);
 // Inline handlers (onclick="…") in the markup and in rendered HTML call these by name.
 // A module's functions are not global, so these are; new code uses addEventListener.
 Object.assign(window, {
-  _isYouTubeUrl, addToCollection, attachPickerKind, attachPickerSearch, attachPickerSelect,
+  _isDriveOrDocsUrl, _isYouTubeUrl, addMoreImages, addToCollection, attachPickerKind, attachPickerSearch, attachPickerSelect,
   closeCaptureDialog, closeHtmlImportDialog, closeImageCaptureDialog, closeItemView,
   closeLinkDialog, closeLinkedInCompose, closeMicroblogCompose,
   closeMultiImageCaptureDialog, closeProcessDialog, closeSettings, completeAudibleAuth,

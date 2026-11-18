@@ -360,6 +360,7 @@ def sync_from_drive(body: DriveSyncRequest):
 
     items_added = 0
     items_skipped = 0
+    items_held = 0
     errors: list[str] = []
     pdf_followups: list[tuple[int, bytes, str, str | None]] = []
 
@@ -382,7 +383,20 @@ def sync_from_drive(body: DriveSyncRequest):
             elif url_type == "file":
                 item, pdf_bytes, filename = sync_single_file(file_id)
                 with get_db() as conn:
+                    if body.parent_id is not None:
+                        # A file already held stays where it is; a new one goes under
+                        # the item it was added to (+ Add → New link)
+                        held = conn.execute(
+                            "SELECT id FROM items WHERE source_type = ? AND source_id = ?",
+                            (item.source_type, item.source_id),
+                        ).fetchone()
+                        if held is None:
+                            item.parent_id = body.parent_id
+                        else:
+                            items_held += 1
                     item_id = upsert_item(conn, item)
+                    if body.parent_id is not None:
+                        record_saved(conn, item_id)
                     conn.commit()
                 items_added += 1
                 if pdf_bytes:
@@ -411,4 +425,5 @@ def sync_from_drive(body: DriveSyncRequest):
         items_added=items_added,
         items_skipped=items_skipped,
         errors=errors,
+        items_held=items_held,
     )

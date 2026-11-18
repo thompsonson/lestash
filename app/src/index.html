@@ -300,9 +300,9 @@
   <!-- Capture dialog (text/URL share) -->
   <div class="modal-overlay" id="capture-modal">
     <div class="modal" style="max-width:500px">
-      <h2>Save Shared Item</h2>
+      <h2 id="capture-heading">Save Shared Item</h2>
       <label for="capture-url">URL</label>
-      <input type="url" id="capture-url" placeholder="https://..." oninput="document.getElementById('capture-transcript-option').style.display = _isYouTubeUrl(this.value) ? 'block' : 'none'">
+      <input type="url" id="capture-url" placeholder="https://..." oninput="document.getElementById('capture-transcript-option').style.display = _isYouTubeUrl(this.value) ? 'block' : 'none'; document.getElementById('capture-drive-option').style.display = _isDriveOrDocsUrl(this.value) ? 'block' : 'none'">
       <label for="capture-title">Title</label>
       <input type="text" id="capture-title" placeholder="Page title or description">
       <label for="capture-notes">Notes</label>
@@ -321,7 +321,8 @@
           Import as document (convert to markdown)
         </label>
       </div>
-      <div style="margin-bottom:0.75rem">
+      <div id="capture-adding-to" hidden style="font-size:0.85rem;color:var(--accent-text);margin-bottom:0.75rem"></div>
+      <div id="capture-mode-choice" style="margin-bottom:0.75rem">
         <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer;margin-bottom:0.25rem">
           <input type="radio" name="capture-mode" value="new" checked onchange="toggleAttachMode('capture')"> Save as new item
         </label>
@@ -401,10 +402,16 @@
   <!-- Multi-image capture dialog -->
   <div class="modal-overlay" id="multi-image-capture-modal">
     <div class="modal" style="max-width:540px">
-      <h2>Save Images</h2>
+      <h2 id="multi-image-heading">Save Images</h2>
       <div id="multi-image-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px;margin-bottom:0.75rem;max-height:200px;overflow-y:auto"></div>
-      <div id="multi-image-count" style="font-size:0.75rem;color:var(--muted);margin-bottom:0.75rem"></div>
-      <div style="margin-bottom:0.75rem">
+      <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.75rem"><span id="multi-image-count"></span><span id="multi-image-more" hidden> · <a href="#" onclick="event.preventDefault(); document.getElementById('multi-image-more-input').click()">add more</a></span></div>
+      <input type="file" id="multi-image-more-input" accept="image/*" multiple hidden onchange="addMoreImages(this)">
+      <div id="multi-image-caption-section" hidden>
+        <label for="multi-image-caption">Caption (optional, for all)</label>
+        <input type="text" id="multi-image-caption" placeholder="e.g. slides at 12:30">
+      </div>
+      <div id="multi-image-adding-to" hidden style="font-size:0.85rem;color:var(--accent-text);margin-bottom:0.75rem"></div>
+      <div id="multi-image-mode-choice" style="margin-bottom:0.75rem">
         <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer;margin-bottom:0.25rem">
           <input type="radio" name="multi-image-mode" value="new" checked onchange="toggleAttachMode('multi-image', true)"> New note with images
         </label>
