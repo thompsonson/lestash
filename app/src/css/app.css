@@ -1044,3 +1044,6 @@ body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
 .parts-chips .chip { background: var(--surface); white-space: nowrap; cursor: pointer; font: inherit; font-size: 0.8rem; }
 .parts-chips .chip-count { color: var(--muted); margin-left: 0.2rem; }
 .parts-more { background: none; border: 0; color: var(--accent-text); font: inherit; font-size: 0.8rem; padding: 0.25rem 0.1rem 0.5rem; cursor: pointer; }
+
+/* Parts below a chat thread: notes and anything else that is not a turn (#367) */
+.chat-parts { margin-top: 0.9rem; }

@@ -337,17 +337,26 @@ export function clearParts(list) {
   if (head) head.innerHTML = '';
 }
 
+// The parts below a chat's thread: notes and other parts that aren't turns (#367)
+export function chatParts(list, item) {
+  let box = list.querySelector(':scope > .chat-parts');
+  if (!box) {
+    box = document.createElement('div');
+    box.className = 'item-list chat-parts';
+    box.dataset.itemId = String(item?.id ?? list.dataset.itemId);
+    list.appendChild(box);
+  }
+  return box;
+}
+
 // A part added while the item is open (a note, a linked item): drawn in its place
 // among the others, keeping what is open. A chat's turns are appended, as before.
 export function addPart(list, child, item) {
   if (!list.isConnected) return;  // the page has moved on
   if (list.querySelector(':scope > .chat-thread')) {
-    // Each drawn once: a turn already in the thread stays; a card added before is replaced
-    const drawn = list.querySelector(`[data-part-id="${child.id}"]`);
-    if (drawn?.closest('.chat-thread')) return;
-    const card = renderCard(child);
-    card.dataset.partId = String(child.id);
-    if (drawn) drawn.replaceWith(card); else list.appendChild(card);
+    // A chat: a turn already in the thread stays; anything else joins the parts below it
+    if (list.querySelector(`.chat-thread [data-part-id="${child.id}"]`)) return;
+    addPart(chatParts(list, item), child, item);
     return;
   }
   const state = list._parts || { item: item || { id: Number(list.dataset.itemId) }, children: [] };

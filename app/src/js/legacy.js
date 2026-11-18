@@ -26,7 +26,7 @@ import {
 } from './objects/item/actions.js';
 import {
   itemHeader, cleanContent, itemPlayer, wireTranscript, reactionsLine, wireReactions,
-  renderParts, addPart, clearParts, PARTS_QUERY, PARTS_LOAD_FAILED, titleOnce,
+  renderParts, addPart, clearParts, chatParts, PARTS_QUERY, PARTS_LOAD_FAILED, titleOnce,
 } from './objects/item/page.js';
 import { selfName, selfReady } from './objects/person/self.js';
 import { setSheet, onSheetClose } from './sheet.js';
@@ -253,7 +253,6 @@ document.getElementById('tabs').addEventListener('click', e => {
 /* ── Source badge ── */
 
 
-const CHAT_ROLES = new Set(['user', 'model', 'assistant', 'system', 'human']);
 function getChatRole(item) {
   return item.author || (item.metadata && item.metadata.sender) || null;
 }
@@ -928,8 +927,7 @@ function renderItemView(item) {
               source_type: 'note',
               source_id: 'note-' + Date.now(),
               content: content || '(audio recording)',
-              author: 'user',
-              is_own_content: true,
+              is_own_content: true,  // yours; no chat role word as its author (#367)
               parent_id: item.id,
               metadata: { input_type: isVoice ? 'voice' : 'text' },
             }),
@@ -1072,18 +1070,21 @@ function renderItemView(item) {
       const fetched = new Set(children.map(c => c.id));
       const missed = (list._parts?.children || []).filter(c => !fetched.has(c.id));
       list.innerHTML = '';
-      const isChat = children.length > 0 && CHAT_ROLES.has(getChatRole(children[0]));
-      if (isChat) {
+      // A chat (by its kind, not by what its parts say) shows its turns as a thread,
+      // oldest first; anything else on it, such as your notes, as parts below (#367)
+      const turns = item.kind === 'chat' ? children.filter(c => c.kind === 'turn') : [];
+      if (turns.length) {
         clearParts(list);  // a part added while these loaded may have drawn the order menu
         const thread = document.createElement('div');
         thread.className = 'chat-thread';
-        children.slice().reverse().forEach(child => {
+        turns.slice().reverse().forEach(child => {
           const bubble = renderChatBubble(child);
           bubble.dataset.partId = String(child.id);  // so addPart doesn't draw it again
           thread.appendChild(bubble);
         });
         list.appendChild(thread);
-        missed.forEach(c => addPart(list, c, item));  // after the thread, each once
+        const others = [...children.filter(c => c.kind !== 'turn'), ...missed];
+        if (others.length) renderParts(item, others, chatParts(list, item));
       } else {
         renderParts(item, [...children, ...missed], list);
       }
