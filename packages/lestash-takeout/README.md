@@ -52,8 +52,9 @@ never marks a zip done without its items; the zip is simply imported again.
 Re-importing is safe: items are updated in place, not duplicated.
 
 - **YouTube history:** watch, view and search times are merged with the stored ones, so an
-  export that no longer has old watches (YouTube auto-delete) doesn't erase them. A watched video
-  you also liked nests under its `liked:` item. YouTube Music listens (songs and podcasts) are
+  export that no longer has old watches (YouTube auto-delete) doesn't erase them. A video is one
+  `history:` item, which the YouTube sync's likes and the app's shares also use. YouTube Music
+  listens (songs and podcasts) are
   skipped for now.
 - **YouTube My Activity** (`My Activity/YouTube/My Activity.json`) holds the watches and
   searches too, kept longer than the history files. Its likes, dislikes and shares of a video

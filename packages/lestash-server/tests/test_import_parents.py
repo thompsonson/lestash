@@ -37,34 +37,30 @@ def _post(client) -> None:
     assert resp.status_code == 200, resp.text
 
 
-def _parent(test_config) -> int | None:
+def test_a_watched_video_the_api_liked_stays_one_item(client, test_config) -> None:
+    """Takeout's watch folds into the item the API sync's like made (#368)."""
     with get_connection(test_config) as conn:
-        return conn.execute(
-            "SELECT parent_id FROM items WHERE source_id = ?", (f"history:{VID}",)
-        ).fetchone()[0]
-
-
-def test_watched_video_nests_under_its_liked_video(client, test_config) -> None:
-    with get_connection(test_config) as conn:
-        liked_id = upsert_item(
-            conn, ItemCreate(source_type="youtube", source_id=f"liked:{VID}", content="liked")
+        video_id = upsert_item(
+            conn,
+            ItemCreate(
+                source_type="youtube",
+                source_id=f"history:{VID}",
+                title="Markov blankets explained",
+                content="The API description",
+                metadata={"source_subtype": "history", "video_id": VID},
+            ),
         )
+        conn.commit()
     _post(client)
-    assert _parent(test_config) == liked_id
-    _post(client)  # re-import keeps the link
-    assert _parent(test_config) == liked_id
-
-
-def test_unresolved_parent_marker_is_kept_for_a_later_sync(client, test_config) -> None:
-    _post(client)
-    assert _parent(test_config) is None
+    _post(client)  # a re-import changes nothing
     with get_connection(test_config) as conn:
-        md = json.loads(
-            conn.execute(
-                "SELECT metadata FROM items WHERE source_id = ?", (f"history:{VID}",)
-            ).fetchone()[0]
-        )
-    assert md["_parent_source_id"] == f"liked:{VID}"
+        rows = conn.execute(
+            "SELECT id, parent_id, content, metadata FROM items WHERE url LIKE ?", (f"%{VID}%",)
+        ).fetchall()
+    assert [(r[0], r[1]) for r in rows] == [(video_id, None)]
+    assert "The API description" in rows[0][2]
+    assert "Watched once" in rows[0][2]
+    assert "_parent_source_id" not in json.loads(rows[0][3])
 
 
 def _nb(name: str) -> ItemCreate:

@@ -151,6 +151,7 @@ def _merge_youtube(conn: sqlite3.Connection, item: ItemCreate, stored: dict[str,
 
     kind = (item.source_id or "").split(":", 1)[0]
     if kind == "history":
+        _drop_likes_known_elsewhere(conn, item, stored["id"])
         # The API sync stores the description as content; keep it in metadata either way.
         if not new_is_takeout and item.content:
             merged["description"] = item.content
@@ -178,6 +179,25 @@ def _merge_youtube(conn: sqlite3.Connection, item: ItemCreate, stored: dict[str,
         item.content = search_content(merged.get("query") or "", times)
 
     item.metadata = merged
+
+
+def _drop_likes_known_elsewhere(conn: sqlite3.Connection, item: ItemCreate, item_id: int) -> None:
+    """Keep one record of a like when two writers both know of it.
+
+    Takeout's My Activity and the API sync each record a like, at times seconds apart.
+    An incoming like is dropped when the stored item has one from another source.
+    """
+    sources = {
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT source FROM activities WHERE item_id = ? AND verb = 'liked'",
+            (item_id,),
+        )
+    }
+    if item.activities:
+        item.activities = [
+            a for a in item.activities if a.verb != "liked" or not (sources - {a.source})
+        ]
 
 
 def _union(old: list[Any] | None, new: list[Any] | None) -> list[Any]:

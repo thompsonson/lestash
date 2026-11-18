@@ -885,12 +885,12 @@ The transcript is linked as a child of the video item if one exists (a `liked:`/
 
 ### `POST /api/youtube/import-video`
 
-Import a YouTube video as a canonical `youtube` item (subtype `shared`).
+Import a YouTube video as its one `youtube` item, `history:{video_id}` (#368), and record a `saved` activity.
 
 **Request:** `{ "url": "https://youtube.com/watch?v=...", "note": "optional note" }`
 **Response:** `{ "item_id": 123, "title": "Video Title", "created": true }`
 
-Dedup-safe: if a YouTube video item for this id already exists (any subtype), it is
+Dedup-safe: if the video's item already exists, it gets a new `saved` time and is
 returned (`created: false`) instead of creating a duplicate. Requires `lestash-youtube`
 plugin and YouTube auth to fetch metadata for a new video.
 

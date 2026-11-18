@@ -4,8 +4,8 @@ Takeout's `YouTube and YouTube Music/history/watch-history.json` and `search-his
 (choose JSON for history when creating the export), or `My Activity/YouTube/My Activity.json`,
 which holds both and keeps them longer. One item per video, search query or community post,
 with every time it happened kept as an activity, so "what was I watching in early March"
-works. Videos become the canonical `history:{video_id}` item; a video you also liked is
-nested under its `liked:{video_id}` item instead of appearing twice. Ads and supervised
+works. A video is one item, `history:{video_id}`, which the YouTube sync's likes and the
+app's shares also write to (#368). Ads and supervised
 (children's) accounts are skipped.
 
 My Activity also records likes, dislikes and shares. Those of a video are activities of its
@@ -173,7 +173,6 @@ def parse_watch_history(entries: list[dict[str, Any]]) -> list[ItemCreate]:
             "product": product,
             "source": "takeout",
             **(watches.time_metadata("watched") if watches.entries else {}),
-            "_parent_source_id": f"liked:{video_id}",
         }
         if unavailable:
             metadata["unavailable"] = True

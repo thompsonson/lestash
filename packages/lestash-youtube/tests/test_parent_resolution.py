@@ -50,7 +50,7 @@ def _share_item(video_id: str = VID) -> ItemCreate:
 class TestResolveTranscriptParent:
     def test_matches_liked_video(self, test_db):
         with get_connection(test_db) as conn:
-            vid_id = upsert_item(conn, _video_item("liked"))
+            vid_id = upsert_item(conn, _video_item("history"))
             assert resolve_transcript_parent(conn, VID) == vid_id
 
     def test_matches_history_video(self, test_db):
@@ -66,7 +66,7 @@ class TestResolveTranscriptParent:
     def test_prefers_youtube_item_over_share(self, test_db):
         with get_connection(test_db) as conn:
             upsert_item(conn, _share_item())
-            vid_id = upsert_item(conn, _video_item("liked"))
+            vid_id = upsert_item(conn, _video_item("history"))
             assert resolve_transcript_parent(conn, VID) == vid_id
 
     def test_returns_none_when_no_match(self, test_db):
@@ -75,7 +75,7 @@ class TestResolveTranscriptParent:
 
     def test_ignores_other_videos(self, test_db):
         with get_connection(test_db) as conn:
-            upsert_item(conn, _video_item("liked", video_id="OTHERvideoX"))
+            upsert_item(conn, _video_item("history", video_id="OTHERvideoX"))
             assert resolve_transcript_parent(conn, VID) is None
 
     def test_does_not_match_transcript_itself(self, test_db):
@@ -89,7 +89,7 @@ class TestResolveTranscriptParent:
 class TestResolveYoutubeTranscriptParents:
     def test_backfills_orphan_transcript(self, test_db):
         with get_connection(test_db) as conn:
-            vid_id = upsert_item(conn, _video_item("liked"))
+            vid_id = upsert_item(conn, _video_item("history"))
             t_id = upsert_item(conn, transcript_to_item(VID, TRANSCRIPT))
 
             resolved = resolve_youtube_transcript_parents(conn)
@@ -114,7 +114,7 @@ class TestResolveYoutubeTranscriptParents:
 
     def test_skips_already_parented(self, test_db):
         with get_connection(test_db) as conn:
-            vid_id = upsert_item(conn, _video_item("liked"))
+            vid_id = upsert_item(conn, _video_item("history"))
             transcript = transcript_to_item(VID, TRANSCRIPT)
             transcript.parent_id = vid_id
             upsert_item(conn, transcript)
