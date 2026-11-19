@@ -494,6 +494,7 @@ def test_migration_37_keeps_each_item_standing_for_its_artifact(test_db, tmp_pat
         for key, description in (("Board metadata", five), ("Board metadata(1)", one)):
             metadata = {
                 "type": "artifact",
+                "artifact_type": "infographic",
                 "notebook_sources": [s["sourceId"]["id"] for s in description["sources"]],
                 "options": description["infographic"],
             }
@@ -558,3 +559,60 @@ def test_same_titled_artifacts_keep_the_items_they_made(test_db, tmp_path) -> No
         "Board metadata": [sha["Board.png"]],  # the five-source one, as stored
         "Board metadata(1)": [sha["Board.png(1)"]],
     }
+
+
+def _store_item(conn, key: str, description: dict) -> None:
+    """An artifact item as an earlier import stored it under ``key``."""
+    metadata = {
+        "type": "artifact",
+        "artifact_type": "infographic",
+        "notebook_sources": [s["sourceId"]["id"] for s in description.get("sources", [])],
+        "options": description.get("infographic"),
+    }
+    conn.execute(
+        "INSERT INTO items (source_type, source_id, content, metadata) "
+        "VALUES ('notebooklm', ?, 'x', ?)",
+        (f"{ART}/{key}", json.dumps(metadata)),
+    )
+
+
+def test_an_artifact_keeps_its_item_when_fewer_share_its_title(test_db, tmp_path) -> None:
+    """Review round 4: two "Board"s were stored; the next export has only the second,
+    which Takeout now calls "Board metadata". It keeps its own item, "(1)"; one no item
+    matches keeps its own name."""
+    from lestash.importers.notebooklm_artifacts import stored_identities
+
+    store = BlobStore(store_root(test_db))
+    one, five = _infographic(1), _infographic(5, "describe it")
+    with get_connection(test_db) as conn:
+        _store_item(conn, "Board metadata", one)
+        _store_item(conn, "Board metadata(1)", five)
+        conn.commit()
+        identities = stored_identities(conn)
+    part = _zip(tmp_path / "a.zip", {f"{ART}/Board metadata.json": five, f"{ART}/Board.png": b"5"})
+    artifacts, _ = collect(index_zip(part, store), stored=identities)
+    assert [a.key for a in artifacts] == ["Board metadata(1)"]
+    other = _infographic(2, "something new")
+    part = _zip(tmp_path / "b.zip", {f"{ART}/Board metadata.json": other, f"{ART}/Board.png": b"2"})
+    artifacts, _ = collect(index_zip(part, store), stored=identities)
+    assert [a.key for a in artifacts] == ["Board metadata"]
+
+
+def test_stored_options_that_are_a_string_still_match(test_db, tmp_path) -> None:
+    """Review round 4: json_extract gave a JSON string back bare, so it did not match."""
+    from lestash.importers.notebooklm_artifacts import stored_identities
+
+    store = BlobStore(store_root(test_db))
+    one = {**_infographic(1), "infographic": "plain"}
+    five = {**_infographic(5), "infographic": "[1, 2]"}  # a string that parses as JSON
+    with get_connection(test_db) as conn:
+        _store_item(conn, "Board metadata(1)", one)
+        _store_item(conn, "Board metadata", five)
+        conn.commit()
+        identities = stored_identities(conn)
+    part = _pair(tmp_path / "a.zip", (one, b"one"), (five, b"five"))
+    names = {
+        a.key: len(a.description["sources"])
+        for a in collect(index_zip(part, store), stored=identities)[0]
+    }
+    assert names == {"Board metadata(1)": 1, "Board metadata": 5}

@@ -244,10 +244,10 @@ def _artifacts(
     app_config: "Config | None" = None,
     export: str = "",
     others: dict[str, Any] | None = None,
-) -> tuple[list[ItemCreate], Any, int]:
+) -> tuple[list[ItemCreate], Any, tuple[int, int]]:
     """The export's NotebookLM artifacts with this part read, its index to keep, and
-    how many artifact descriptions and files this part held; no items and None if the
-    export has none so far. ``final``: no other part of the export is still to be
+    how many artifact descriptions and how many artifact files this part held; no items
+    and None if the export has none so far. ``final``: no other part of the export is still to be
     read. A file store that can't be written stops the sync. ``app_config``: the
     database whose file store takes the files (else the default). ``export``: its key;
     ``others``: the other exports' kept indexes, by key."""
@@ -271,9 +271,9 @@ def _artifacts(
     except OSError as e:
         # The store's disk, not this zip: every zip would fail the same way
         raise TakeoutError(f"stopped, file store not writable: {type(e).__name__}: {e}") from e
-    held = len(fresh.descriptions) + len(fresh.files)
-    if not held and not final:
-        return [], None, 0
+    held = (len(fresh.descriptions), len(fresh.files))
+    if not any(held) and not final:
+        return [], None, held
     index = Index.from_json(kept)
     index.descriptions.update(fresh.descriptions)
     index.files.update(fresh.files)
@@ -295,6 +295,7 @@ def _complete(
     from lestash.core.config import Config
     from lestash.core.database import get_connection
     from lestash.importers.notebooklm_artifacts import (
+        StoredItem,
         collect,
         export_time,
         stored_exports,
@@ -302,7 +303,7 @@ def _complete(
         to_items,
     )
 
-    identities: dict[str, str] = {}
+    identities: dict[str, StoredItem] = {}
     if final:
         with get_connection(app_config or Config.load()) as conn:
             identities = stored_identities(conn)
@@ -376,7 +377,7 @@ def import_zip(
     """
     export = export or export_key(file)
     error: Exception | None = None
-    held = 0
+    held = (0, 0)  # this part's artifact descriptions, and files
     with tempfile.TemporaryDirectory(dir=workdir) as tmp:
         try:
             path = download(service, file["id"], Path(tmp) / file["name"])
@@ -417,12 +418,14 @@ def import_zip(
     yield from artifact_items
     if index is not None:
         yield SyncCheckpoint(key=export, value=index)
-    if unrecognized and not held:
+    if unrecognized and not any(held):
         yield SyncCheckpoint(key=file["id"], value=_record(file, "unrecognized", 0, None))
         return
-    record = _record(file, "imported", len(items), source_type or ("notebooklm" if held else None))
-    if held:
-        record["artifact_files"] = held  # this part's, counted as it was read
+    record = _record(
+        file, "imported", len(items), source_type or ("notebooklm" if any(held) else None)
+    )
+    if held[1]:
+        record["artifact_files"] = held[1]  # this part's files, counted as it was read
     if artifact_items:
         record["artifacts"] = len(artifact_items)  # the export's
     yield SyncCheckpoint(key=file["id"], value=record)

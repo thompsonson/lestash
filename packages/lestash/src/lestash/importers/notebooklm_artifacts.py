@@ -249,7 +249,7 @@ def index_zips(zips: list[Path], store: BlobStore) -> Index:
 
 
 def collect(
-    index: Index, final: bool = True, stored: Mapping[str, str] | None = None
+    index: Index, final: bool = True, stored: Mapping[str, StoredItem] | None = None
 ) -> tuple[list[Artifact], list[str]]:
     """The artifacts an index holds, with their files; and the files that belong to no
     description. A file artifact's markdown goes only to a file artifact: else it is a
@@ -257,7 +257,7 @@ def collect(
 
     Before an export's last part (``final=False``) there are none, and every file is
     unmatched: a part not read yet may hold a better description for a file, or another
-    artifact of a title, which changes the names (see _name_by_description). A media
+    artifact of a title, which changes the names (see _name). A media
     row or an item written then could stand for the wrong artifact, so nothing is
     written until the export is read (#375).
 
@@ -283,8 +283,12 @@ def collect(
             owner.files.append(StoredFile(member, sha256, size))
         elif not rest.endswith(".md"):
             unmatched.append(member)
-    for group in _same_named(artifacts):
-        _name_by_description(group, stored or {})
+    held = _stored_by_title(stored or {})
+    for group in _by_title(artifacts):
+        a = group[0]
+        title = (a.notebook, a.stem, a.kind)
+        if len(group) > 1 or held.get(title):
+            _name(group, held.get(title, {}))
     return sorted(artifacts, key=lambda a: a.source_id), unmatched
 
 
@@ -314,12 +318,33 @@ def _owner(artifacts: list[Artifact], rest: str) -> Artifact | None:
     return (exact or sorted(candidates, key=lambda a: -len(a.stem)))[0]
 
 
-def _same_named(artifacts: list[Artifact]) -> list[list[Artifact]]:
-    """The artifacts that share a notebook, title part and type, two or more."""
+def _by_title(artifacts: list[Artifact]) -> list[list[Artifact]]:
+    """The artifacts grouped by notebook, title part and type."""
     groups: dict[tuple[str, str, str], list[Artifact]] = defaultdict(list)
     for a in artifacts:
         groups[(a.notebook, a.stem, str(a.description.get("type")))].append(a)
-    return [g for g in groups.values() if len(g) > 1]
+    return list(groups.values())
+
+
+@dataclass(frozen=True)
+class StoredItem:
+    """What tells a stored artifact item from another of its title."""
+
+    identity: str  # its sources and options: see _identity
+    kind: str  # its artifact type, "infographic"
+
+
+def _stored_by_title(
+    stored: Mapping[str, StoredItem],
+) -> dict[tuple[str, str, str], dict[str, str]]:
+    """The stored items' names (keys) and identities, by notebook, title part and type."""
+    out: dict[tuple[str, str, str], dict[str, str]] = defaultdict(dict)
+    for source_id, item in stored.items():
+        if ARTIFACTS not in source_id:
+            continue
+        notebook, key = source_id.split(ARTIFACTS, 1)
+        out[(notebook, _stem(f"{key}.json"), item.kind)][key] = item.identity
+    return out
 
 
 def _by_description(artifact: Artifact) -> tuple[int, str]:
@@ -328,32 +353,42 @@ def _by_description(artifact: Artifact) -> tuple[int, str]:
     return count, json.dumps(artifact.description, sort_keys=True, default=str)
 
 
-def _name_by_description(group: list[Artifact], stored: Mapping[str, str]) -> None:
-    """Give artifacts of one title their names, so each keeps its item whichever
-    Takeout called "(1)" this time (#375). One whose sources and options are those of
-    an item stored under one of the group's names takes that name. The others take the
-    names left in the order of their descriptions; ones whose descriptions are the same
-    are told apart by their files."""
-    keys = [a.key for a in sorted(group, key=lambda a: a.copy)]
+def _name(group: list[Artifact], held: Mapping[str, str]) -> None:
+    """Give artifacts of one title and type their names, so each keeps its item
+    whichever Takeout called "(1)" this time, and however many there are now (#375).
+
+    One whose sources and options are those of a stored item of its title takes that
+    item's name, whatever names this export has. The others take, in the order of
+    their descriptions (then their files), the names no artifact took: their own
+    first, then the export's other names, then new ones. A stored item no artifact
+    matched is one whose artifact changed: its name is free, so it is updated.
+    ``held``: the stored items' names and identities.
+    """
     identities = [_artifact_identity(a) for a in group]
-    held = {k: stored.get(f"{group[0].notebook}{ARTIFACTS}{k}") for k in keys}
     named: dict[int, str] = {}
     for i, identity in enumerate(identities):
         if identities.count(identity) > 1:
             continue  # the same description twice: no telling which item is which
-        matches = [k for k in keys if held[k] == identity]
-        if len(matches) == 1 and matches[0] not in named.values():
+        matches = [k for k, held_identity in held.items() if held_identity == identity]
+        if len(matches) == 1:
             named[i] = matches[0]
-    left = [k for k in keys if k not in named.values()]
+    taken = set(named.values())
 
     def files(a: Artifact) -> list[str]:
         return [f.sha256 for f in sorted(a.files, key=lambda f: plain_name(f.member))]
 
+    own = [a.key for a in sorted(group, key=lambda a: a.copy)]
     others = sorted(
         (i for i in range(len(group)) if i not in named),
         key=lambda i: (_by_description(group[i]), files(group[i])),
     )
-    named.update(zip(others, left, strict=True))
+    stem = group[0].stem
+    fresh = (f"{stem} metadata({n})" for n in range(1, 10_000))
+    for i in others:
+        free = [k for k in own if k not in taken]
+        key = free[0] if free else next(k for k in fresh if k not in taken and k not in held)
+        named[i] = key
+        taken.add(key)
     for i, key in named.items():
         group[i].key = key
 
@@ -580,26 +615,26 @@ def _artifact_identity(artifact: Artifact) -> str:
     return _identity(_source_ids(description), description.get(_options_key(description)))
 
 
-def stored_identities(conn: Any) -> dict[str, str]:
-    """The identity (sources and options) of each NotebookLM artifact item stored, by
-    source_id: collect() names same-titled artifacts after the items they made."""
+def stored_identities(conn: Any) -> dict[str, StoredItem]:
+    """Each NotebookLM artifact item stored, by source_id, with what tells it from
+    another of its title: collect() names same-titled artifacts after the items they
+    made."""
     rows = conn.execute(
-        "SELECT source_id, json_extract(metadata, '$.notebook_sources'), "
-        "json_extract(metadata, '$.options') FROM items WHERE source_type = 'notebooklm' "
+        "SELECT source_id, metadata FROM items WHERE source_type = 'notebooklm' "
         "AND json_valid(metadata) AND json_extract(metadata, '$.type') = 'artifact'"
     ).fetchall()
     out = {}
-    for source_id, sources, options in rows:
-        try:
-            parsed = [json.loads(v) if isinstance(v, str) else v for v in (sources, options)]
-        except ValueError:
-            continue
-        out[source_id] = _identity(*parsed)
+    for source_id, text in rows:
+        metadata = json.loads(text)
+        out[source_id] = StoredItem(
+            _identity(metadata.get("notebook_sources"), metadata.get("options")),
+            str(metadata.get("artifact_type") or ""),
+        )
     return out
 
 
 def stored_exports(
-    checkpoints: Mapping[str, dict[str, Any]], stored: Mapping[str, str] | None = None
+    checkpoints: Mapping[str, dict[str, Any]], stored: Mapping[str, StoredItem] | None = None
 ) -> list[Export]:
     """The exports whose indexes the Takeout sync kept (``notebooklm:takeout-<time>``),
     oldest first, each collected as it was last read; ``stored`` as for collect()."""

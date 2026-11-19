@@ -755,8 +755,9 @@ def test_a_part_with_only_artifacts_is_imported_not_nothing_to_import(
     _sync()
     record = _state(test_db)["b"]
     assert (record["status"], record["items"], record["artifact_files"]) == ("imported", 0, 1)
-    # Review round 3: each part counts the artifact files it held
-    assert _state(test_db)["a"]["artifact_files"] == 1
+    # Review rounds 3 and 4: each part counts the artifact files it held, not their
+    # descriptions: part a held only one
+    assert "artifact_files" not in _state(test_db)["a"]
     assert source.is_done(record)
     monkeypatch.setattr(source, "list_takeout_zips", lambda svc: service._files)
     from rich.console import Console
