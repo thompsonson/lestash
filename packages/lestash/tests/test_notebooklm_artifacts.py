@@ -648,3 +648,40 @@ def test_a_titles_artifacts_of_two_types_never_share_a_name(test_db, tmp_path) -
     assert names["slides"] != "Talk metadata"
     assert names["audio_overview"] == "Talk metadata(1)"  # its own name, by Takeout
     assert len(set(names.values())) == 2
+
+
+def test_a_files_number_is_its_rank_among_its_types_descriptions(test_db, tmp_path) -> None:
+    """Review round 6: Takeout numbers a title's descriptions across its types (as a
+    deck and a video of one title are "metadata.json" and "metadata(1).json" in the
+    kept indexes), but its files only among files of one name. A deck and two
+    infographics: the infographics are "metadata(1)" and "metadata(2)", and their
+    images "Plan.png" and "Plan.png(1)"."""
+    store = BlobStore(store_root(test_db))
+    deck = {"title": "Plan", "type": "ARTIFACT_TYPE_SLIDES"}
+    first = {"title": "Plan", "type": "ARTIFACT_TYPE_INFOGRAPHIC", "sources": [{}]}
+    second = {"title": "Plan", "type": "ARTIFACT_TYPE_INFOGRAPHIC", "sources": [{}, {}]}
+    part = _zip(
+        tmp_path / "a.zip",
+        {
+            f"{ART}/Plan metadata.json": deck,
+            f"{ART}/Plan metadata(1).json": first,
+            f"{ART}/Plan metadata(2).json": second,
+            f"{ART}/Plan/Plan.pdf": b"%PDF",
+            f"{ART}/Plan.png": b"first",
+            f"{ART}/Plan.png(1)": b"second",
+            f"{ART}/Plan.png(2)": b"no third",  # no description of that rank
+        },
+    )
+    artifacts, unmatched = collect(index_zip(part, store))
+    files = {
+        (a.kind, len(a.description.get("sources", []))): [
+            f.member.rsplit("/", 1)[-1] for f in a.files
+        ]
+        for a in artifacts
+    }
+    assert files == {
+        ("slides", 0): ["Plan.pdf"],
+        ("infographic", 1): ["Plan.png"],
+        ("infographic", 2): ["Plan.png(1)"],
+    }
+    assert unmatched == [f"{ART}/Plan.png(2)"]

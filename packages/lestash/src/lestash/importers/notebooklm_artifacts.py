@@ -294,30 +294,48 @@ def collect(
     return sorted(artifacts, key=lambda a: a.source_id), unmatched
 
 
+def _of_type(artifact: Artifact, kind: str) -> bool:
+    return not kind or artifact.description.get("type") in (kind, None)
+
+
 def _owner(artifacts: list[Artifact], rest: str) -> Artifact | None:
-    """The artifact a file below Artifacts/ belongs to, or None."""
+    """The artifact a file below Artifacts/ belongs to, or None.
+
+    Takeout numbers a title's descriptions across all its artifacts, whatever their
+    types ("X metadata.json" a deck, "X metadata(1).json" a video), but its files
+    only among files of one name ("X.mp4", "X.png", "X.png(1)"). So a file's "(n)"
+    is its rank among the descriptions of its type, in Takeout's order: the n-th
+    infographic of the title gets "X.png(n)", whatever number its description has.
+    A rank with no description is no artifact's file.
+    """
     plain, copy = _file_copy(rest)
     head = _head(plain)
-    # "X.png(1)" is always Takeout's "(1)"; "X(1)/" or "X(1)" may be a title
+    kind = _file_type(plain)
+    # "X.png(1)" is always Takeout's "(1)"; "X(1)/" or "X(1)" may be a title: it is
+    # one unless the title has that many artifacts of the file's type
     if (
         copy
-        and not any(a.copy == copy and a.stem == head for a in artifacts)
         and ("/" in rest or plain_name(rest) == rest)
+        and sum(a.stem == head and _of_type(a, kind) for a in artifacts) <= copy
     ):
         plain, copy, head = rest, 0, _head(rest)
-    kind = _file_type(plain)
+        kind = _file_type(plain)
     named = [a for a in artifacts if head.startswith(a.stem) or a.stem.startswith(head)]
     # Of the right type if any is: a type NotebookLM adds later still finds its files
-    typed = [a for a in named if not kind or a.description.get("type") in (kind, None)]
+    typed = [a for a in named if _of_type(a, kind)]
     if kind == FILE_ARTIFACT:
         named = typed  # a report's markdown: no artifact's file
     candidates = typed or named
-    # The copy Takeout's "(n)" names: n-th others of a title pair within an export
-    candidates = [a for a in candidates if a.copy == copy] or candidates
-    exact = [a for a in candidates if a.stem == head]
-    if not (exact or candidates):
+    if not candidates:
         return None
-    return (exact or sorted(candidates, key=lambda a: -len(a.stem)))[0]
+    # Its own title, else the longest a name cut short begins with
+    stem = (
+        head
+        if any(a.stem == head for a in candidates)
+        else max((a.stem for a in candidates), key=len)
+    )
+    ranked = sorted((a for a in candidates if a.stem == stem), key=lambda a: a.copy)
+    return ranked[copy] if copy < len(ranked) else None
 
 
 def _by_title(artifacts: list[Artifact]) -> list[list[Artifact]]:
