@@ -691,3 +691,28 @@ def test_an_unverified_handle_never_names_an_account(test_db) -> None:
         )
         link_agents(conn)
         assert _agents(conn, item)[0][2] == "did:plc:zed"
+
+
+def test_an_account_named_by_the_placeholder_handle_is_repaired(test_db) -> None:
+    """#379, review round 8: an account made before the fix, with the address and name
+    of 'handle.invalid', takes the real handle's address and name."""
+    with get_connection(test_db) as conn:
+        _item(conn, "bluesky", "b1", "Zed", {"author_did": "did:plc:zed", "author_handle": "z.x"})
+        link_agents(conn)
+        conn.execute(
+            "UPDATE person_identities SET url = 'https://bsky.app/profile/handle.invalid', "
+            "display_name = 'handle.invalid' WHERE identifier = 'did:plc:zed'"
+        )
+        conn.execute(
+            "UPDATE people SET name = 'handle.invalid' WHERE id = (SELECT person_id FROM "
+            "person_identities WHERE identifier = 'did:plc:zed')"
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/z.x"
+        assert (
+            conn.execute(
+                "SELECT p.name FROM people p JOIN person_identities i ON i.person_id = p.id "
+                "WHERE i.identifier = 'did:plc:zed'"
+            ).fetchone()[0]
+            == "z.x"
+        )

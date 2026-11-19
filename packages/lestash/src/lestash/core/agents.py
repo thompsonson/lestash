@@ -453,6 +453,12 @@ class _People:
                     self.name_you(ref)
             if ref.platform in CANONICAL_NAMES and person_id not in (None, self.you(None)):
                 self.rename(key, person_id, ref.name)
+            elif (
+                ref.platform == "bluesky"
+                and self.display.get(key) == BLUESKY_INVALID_HANDLE
+                and person_id not in (None, self.you(None))
+            ):
+                self.rename(key, person_id, ref.name)  # named by the placeholder before
             self.better_url(key, ref.url)
             if person_id in self.unnamed and ref.name != ref.identifier:
                 # Named by its identifier until a source gave a name, as a list's
@@ -498,7 +504,8 @@ class _People:
         platform, identifier = key
         if platform == "bluesky" and identifier in self.bluesky_handles:
             newest, known = self.bluesky_handles[identifier]
-            if old is not None and old != BLUESKY_PROFILE + identifier and old not in known:
+            made = (BLUESKY_PROFILE + identifier, BLUESKY_PROFILE + BLUESKY_INVALID_HANDLE)
+            if old is not None and old not in made and old not in known:
                 return  # set some other way
             url = newest
         elif old is not None:
