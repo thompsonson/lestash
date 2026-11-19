@@ -8,6 +8,10 @@ everything since you joined. This importer reads three of its files:
 - ``Comments.csv``: your comments, with their text and the post each is on. The post's
   own text is not in the export, so a post LeStash doesn't hold gets a stub.
 - ``Articles/Articles/*.html``: your articles, and drafts never published.
+- ``messages.csv``: only the senders' names and profile addresses. The changelog's
+  messages give each sender by member URN alone, so a person first seen there is named
+  by their URN. A row in the same conversation within SAME_MESSAGE_MS of a held
+  message, and with its text when two rows are that close, names its sender.
 
 Reactions, reposts and saved items are only a date and a link to someone else's post,
 so they are left out.
@@ -37,7 +41,7 @@ from typing import Any
 from urllib.parse import unquote
 
 from lestash.core.blobs import BlobStore
-from lestash.core.database import mark_recent_history, max_history_id
+from lestash.core.database import mark_recent_history, max_history_id, upsert_person_profile
 from lestash.core.sync import SyncStore
 from lestash.models.item import ItemCreate
 
@@ -49,6 +53,11 @@ EXPORT = "export"
 PULSE = "https://www.linkedin.com/pulse/"
 # A comment the changelog made within this of the export's time is the same comment
 SAME_COMMENT_MS = 5000
+# The export's message times are cut to the second; the changelog's are to the ms
+SAME_MESSAGE_MS = 2000
+THREAD = "urn:li:messagingThread:"
+# How the export names a member whose account is gone: not a name
+NOT_A_NAME = frozenset({"", "linkedin member"})
 
 
 @dataclass
@@ -63,6 +72,7 @@ class ImportReport:
     articles_updated: int = 0  # held, now with the export's full text
     filled: int = 0  # held items whose missing text the export gave
     skipped: int = 0  # rows without text or a post link
+    people_named: int = 0  # message senders named, who were named by their URN
     media: MediaReport | None = None  # photos and documents, when a file store is given
     files: list[str] = field(default_factory=list)
 
@@ -474,6 +484,89 @@ def parse_article(html: str, filename: str) -> Article | None:
     )
 
 
+@dataclass
+class _ExportMessage:
+    ms: int
+    text: str  # as _norm leaves it
+    sender: tuple[str, str | None]  # name, profile address
+
+
+def _export_messages(zf: zipfile.ZipFile) -> dict[str, list[_ExportMessage]]:
+    """messages.csv's rows by conversation, with a sender named and a time."""
+    found: dict[str, list[_ExportMessage]] = {}
+    for row in _rows(zf, "messages.csv"):
+        name = " ".join((row.get("FROM") or "").split())
+        when = parse_export_time((row.get("DATE") or "").removesuffix(" UTC"))
+        conversation = (row.get("CONVERSATION ID") or "").strip()
+        if name.lower() in NOT_A_NAME or when is None or not conversation:
+            continue
+        url = (row.get("SENDER PROFILE URL") or "").strip() or None
+        found.setdefault(conversation, []).append(
+            _ExportMessage(
+                int(when.timestamp() * 1000), _norm(row.get("CONTENT") or ""), (name, url)
+            )
+        )
+    return found
+
+
+def message_senders(
+    conn: sqlite3.Connection, zf: zipfile.ZipFile
+) -> dict[str, tuple[str, str | None]]:
+    """The name and profile address messages.csv gives each member URN that sent a
+    held message. A sender whose messages give two names is left out."""
+    exported = _export_messages(zf)
+    if not exported:
+        return {}
+    senders: dict[str, set[tuple[str, str | None]]] = {}
+    rows = conn.execute(
+        "SELECT author, metadata FROM items WHERE source_type = 'linkedin' "
+        "AND json_extract(metadata, '$.resource_name') = 'messages' "
+        "AND author LIKE 'urn:li:person:%'"
+    )
+    for author, metadata_json in rows:
+        raw = _dict(_metadata(metadata_json).get("raw"))
+        activity = _dict(raw.get("activity"))
+        if author == raw.get("owner"):
+            continue  # yours
+        thread = activity.get("thread")
+        ms = activity.get("createdAt") or activity.get("deliveredAt")
+        if not isinstance(thread, str) or not isinstance(ms, int):
+            continue
+        close = [
+            m
+            for m in exported.get(thread.removeprefix(THREAD), [])
+            if abs(m.ms - ms) < SAME_MESSAGE_MS
+        ]
+        if len(close) > 1:
+            text = _norm(str(_dict(activity.get("content")).get("fallback") or ""))
+            close = [m for m in close if m.text == text]
+        if len({m.sender for m in close}) == 1:
+            senders.setdefault(author, set()).add(close[0].sender)
+    return {urn: next(iter(found)) for urn, found in senders.items() if len(found) == 1}
+
+
+def name_message_senders(conn: sqlite3.Connection, zf: zipfile.ZipFile) -> int:
+    """Name the people who sent you messages, as messages.csv writes them, while they
+    are named by their URN; give their account its profile address if it has none.
+    A name you set is kept. Returns how many people it named."""
+
+    def name_of(urn: str) -> str | None:
+        row = conn.execute(
+            "SELECT p.name FROM person_identities i JOIN people p ON p.id = i.person_id "
+            "WHERE i.platform = 'linkedin' AND i.identifier = ? AND i.status = 'confirmed'",
+            (urn,),
+        ).fetchone()
+        return row[0] if row else None
+
+    named = 0
+    for urn, (name, url) in sorted(message_senders(conn, zf).items()):
+        before = name_of(urn)
+        upsert_person_profile(conn, urn, profile_url=url, display_name=name, source="mention")
+        if before in (None, urn) and name_of(urn) not in (None, urn):
+            named += 1
+    return named
+
+
 def import_export(
     conn: sqlite3.Connection,
     zip_path: Path,
@@ -495,6 +588,8 @@ def import_export(
     writer.run(items)
     run.fill()
     conn.commit()
+    with zipfile.ZipFile(zip_path) as zf:
+        run.report.people_named = name_message_senders(conn, zf)
     resolve_linkedin_parents(conn)  # comments to their posts; stubs for posts not held
     if store is not None:
         with zipfile.ZipFile(zip_path) as zf:
