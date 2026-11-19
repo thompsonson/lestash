@@ -248,7 +248,9 @@ def index_zips(zips: list[Path], store: BlobStore) -> Index:
     return index
 
 
-def collect(index: Index, final: bool = True) -> tuple[list[Artifact], list[str]]:
+def collect(
+    index: Index, final: bool = True, stored: Mapping[str, str] | None = None
+) -> tuple[list[Artifact], list[str]]:
     """The artifacts an index holds, with their files; and the files that belong to no
     description. A file artifact's markdown goes only to a file artifact: else it is a
     report's, a note.
@@ -258,6 +260,9 @@ def collect(index: Index, final: bool = True) -> tuple[list[Artifact], list[str]
     artifact of a title, which changes the names (see _name_by_description). A media
     row or an item written then could stand for the wrong artifact, so nothing is
     written until the export is read (#375).
+
+    ``stored``: the identities of the artifact items stored already, by source_id (see
+    stored_identities), so each keeps standing for the artifact it was made from.
     """
     if not final:
         return [], sorted(index.files)
@@ -279,7 +284,7 @@ def collect(index: Index, final: bool = True) -> tuple[list[Artifact], list[str]
         elif not rest.endswith(".md"):
             unmatched.append(member)
     for group in _same_named(artifacts):
-        _name_by_description(group)
+        _name_by_description(group, stored or {})
     return sorted(artifacts, key=lambda a: a.source_id), unmatched
 
 
@@ -323,19 +328,34 @@ def _by_description(artifact: Artifact) -> tuple[int, str]:
     return count, json.dumps(artifact.description, sort_keys=True, default=str)
 
 
-def _name_by_description(group: list[Artifact]) -> None:
-    """Give artifacts of one title their names in the order of their descriptions, so
-    each keeps its item whichever Takeout called "(1)" this time (#375). Ones whose
-    descriptions are the same are told apart by their files."""
+def _name_by_description(group: list[Artifact], stored: Mapping[str, str]) -> None:
+    """Give artifacts of one title their names, so each keeps its item whichever
+    Takeout called "(1)" this time (#375). One whose sources and options are those of
+    an item stored under one of the group's names takes that name. The others take the
+    names left in the order of their descriptions; ones whose descriptions are the same
+    are told apart by their files."""
     keys = [a.key for a in sorted(group, key=lambda a: a.copy)]
+    identities = [_artifact_identity(a) for a in group]
+    held = {k: stored.get(f"{group[0].notebook}{ARTIFACTS}{k}") for k in keys}
+    named: dict[int, str] = {}
+    for i, identity in enumerate(identities):
+        if identities.count(identity) > 1:
+            continue  # the same description twice: no telling which item is which
+        matches = [k for k in keys if held[k] == identity]
+        if len(matches) == 1 and matches[0] not in named.values():
+            named[i] = matches[0]
+    left = [k for k in keys if k not in named.values()]
 
     def files(a: Artifact) -> list[str]:
         return [f.sha256 for f in sorted(a.files, key=lambda f: plain_name(f.member))]
 
-    for artifact, key in zip(
-        sorted(group, key=lambda a: (_by_description(a), files(a))), keys, strict=True
-    ):
-        artifact.key = key
+    others = sorted(
+        (i for i in range(len(group)) if i not in named),
+        key=lambda i: (_by_description(group[i]), files(group[i])),
+    )
+    named.update(zip(others, left, strict=True))
+    for i, key in named.items():
+        group[i].key = key
 
 
 def _summary(artifact: Artifact) -> str:
@@ -560,60 +580,29 @@ def _artifact_identity(artifact: Artifact) -> str:
     return _identity(_source_ids(description), description.get(_options_key(description)))
 
 
-def rebind_same_named(conn: Any, exports: Sequence[Export]) -> int:
-    """Rename stored items of same-titled artifacts so each keeps standing for the
-    artifact it was made from, with its tags and notes, now that their names follow
-    their descriptions (#375). An item is matched by the sources and options its
-    metadata holds; a group is left alone unless each stored item matches a different
-    artifact. Returns the items renamed. Does not commit."""
-    renamed = 0
-    seen: set[tuple[str, str, str]] = set()
-    for export in reversed(exports):  # the newest export names a group
-        for group in _same_named(export.artifacts):
-            key = (group[0].notebook, group[0].stem, str(group[0].description.get("type")))
-            if len(group) < 2 or key in seen:
-                continue
-            seen.add(key)
-            by_identity = {_artifact_identity(a): a for a in group}
-            if len(by_identity) < len(group):
-                continue  # the same descriptions: their files tell them apart
-            ids = [a.source_id for a in group]
-            rows = conn.execute(
-                "SELECT id, source_id, metadata FROM items WHERE source_type = 'notebooklm' "
-                f"AND source_id IN ({','.join('?' * len(ids))})",
-                ids,
-            ).fetchall()
-            moves: dict[int, tuple[str, str]] = {}
-            for item_id, source_id, metadata in rows:
-                try:
-                    meta = json.loads(metadata or "{}")
-                except ValueError:
-                    meta = {}
-                found = by_identity.get(
-                    _identity(meta.get("notebook_sources"), meta.get("options"))
-                )
-                if found is None:
-                    moves = {}
-                    break
-                moves[item_id] = (source_id, found.source_id)
-            targets = [new for _, new in moves.values()]
-            if not moves or len(set(targets)) < len(targets):
-                continue
-            changing = {i: m for i, m in moves.items() if m[0] != m[1]}
-            # Two steps: the names are unique, and the items swap them
-            for item_id, (old, _) in changing.items():
-                conn.execute(
-                    "UPDATE items SET source_id = ? WHERE id = ?", (f"{old}#rebinding", item_id)
-                )
-            for item_id, (_, new) in changing.items():
-                conn.execute("UPDATE items SET source_id = ? WHERE id = ?", (new, item_id))
-            renamed += len(changing)
-    return renamed
+def stored_identities(conn: Any) -> dict[str, str]:
+    """The identity (sources and options) of each NotebookLM artifact item stored, by
+    source_id: collect() names same-titled artifacts after the items they made."""
+    rows = conn.execute(
+        "SELECT source_id, json_extract(metadata, '$.notebook_sources'), "
+        "json_extract(metadata, '$.options') FROM items WHERE source_type = 'notebooklm' "
+        "AND json_valid(metadata) AND json_extract(metadata, '$.type') = 'artifact'"
+    ).fetchall()
+    out = {}
+    for source_id, sources, options in rows:
+        try:
+            parsed = [json.loads(v) if isinstance(v, str) else v for v in (sources, options)]
+        except ValueError:
+            continue
+        out[source_id] = _identity(*parsed)
+    return out
 
 
-def stored_exports(checkpoints: Mapping[str, dict[str, Any]]) -> list[Export]:
+def stored_exports(
+    checkpoints: Mapping[str, dict[str, Any]], stored: Mapping[str, str] | None = None
+) -> list[Export]:
     """The exports whose indexes the Takeout sync kept (``notebooklm:takeout-<time>``),
-    oldest first, each collected as it was last read."""
+    oldest first, each collected as it was last read; ``stored`` as for collect()."""
     checkpoints = dict(checkpoints)
     for key, (value, replaced) in merge_split_exports(checkpoints).items():
         # Final if each half was: then nothing of the request is unread
@@ -626,7 +615,8 @@ def stored_exports(checkpoints: Mapping[str, dict[str, Any]]) -> list[Export]:
         when = export_time(key) if key.startswith("notebooklm:") else None
         if when is None or not value:
             continue
-        artifacts, _ = collect(Index.from_json(value), final=bool(value.get("final", True)))
+        final = bool(value.get("final", True))
+        artifacts, _ = collect(Index.from_json(value), final, stored)
         exports.append(Export(when, artifacts))
     return sorted(exports, key=lambda e: e.seen_at)
 
@@ -635,14 +625,12 @@ def refile_stored_exports(conn: Any, exports: Iterable[Export]) -> tuple[int, in
     """Put each stored artifact's files where the exports say (#375, #376): versions
     dated by export, so an older file is superseded; a file on the wrong artifact or
     with the wrong type removed. Only items already stored; their text is rebuilt.
-    Same-titled items are first renamed to the artifact each stands for
-    (rebind_same_named). Returns (items changed or renamed, rows removed). Does not
-    commit."""
+    Collect ``exports`` with stored_identities, so each same-titled item keeps its
+    artifact. Returns (items changed, rows removed). Does not commit."""
     from lestash.core.database import add_item_media
     from lestash.core.extract import refresh_item
 
     exports = list(exports)
-    renamed = rebind_same_named(conn, exports)
     wanted: dict[str, dict[tuple[Any, ...], MediaCreate]] = defaultdict(dict)
     places: dict[str, set[tuple[str, int, str | None]]] = defaultdict(set)
     for i, export in enumerate(exports):
@@ -654,7 +642,7 @@ def refile_stored_exports(conn: Any, exports: Iterable[Export]) -> tuple[int, in
             for m in _media(artifact):
                 places[artifact.source_id].add((m.media_type, m.position, m.sha256))
     known = {sha for item_places in places.values() for _, _, sha in item_places}
-    changed, removed = renamed, 0
+    changed = removed = 0
     for source_id, by_key in sorted(wanted.items()):
         # Oldest first at each place, so versions are numbered as they came
         media = sorted(by_key.values(), key=lambda m: (m.media_type, m.position, m.seen_at or ""))

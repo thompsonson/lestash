@@ -244,13 +244,13 @@ def _artifacts(
     app_config: "Config | None" = None,
     export: str = "",
     others: dict[str, Any] | None = None,
-) -> tuple[list[ItemCreate], Any, bool]:
+) -> tuple[list[ItemCreate], Any, int]:
     """The export's NotebookLM artifacts with this part read, its index to keep, and
-    whether this part held any artifact; no items and None if the export has none so
-    far. ``final``: no other part of the export is still to be read. A file store that
-    can't be written stops the sync. ``app_config``: the database whose file store takes
-    the files (else the default). ``export``: its key; ``others``: the other exports'
-    kept indexes, by key."""
+    how many artifact descriptions and files this part held; no items and None if the
+    export has none so far. ``final``: no other part of the export is still to be
+    read. A file store that can't be written stops the sync. ``app_config``: the
+    database whose file store takes the files (else the default). ``export``: its key;
+    ``others``: the other exports' kept indexes, by key."""
     from lestash.core.blobs import BlobStore, store_root
     from lestash.core.config import Config
     from lestash.importers.notebooklm_artifacts import Index, index_zip
@@ -271,44 +271,59 @@ def _artifacts(
     except OSError as e:
         # The store's disk, not this zip: every zip would fail the same way
         raise TakeoutError(f"stopped, file store not writable: {type(e).__name__}: {e}") from e
-    held = bool(fresh.descriptions or fresh.files)
+    held = len(fresh.descriptions) + len(fresh.files)
     if not held and not final:
-        return [], None, False
+        return [], None, 0
     index = Index.from_json(kept)
     index.descriptions.update(fresh.descriptions)
     index.files.update(fresh.files)
     if not index.descriptions and not index.files:
         return [], None, held
-    return (*_complete(index, final, export, others), held)
+    return (*_complete(index, final, export, others, app_config), held)
 
 
 def _complete(
-    index: Any, final: bool, export: str = "", others: dict[str, Any] | None = None
+    index: Any,
+    final: bool,
+    export: str = "",
+    others: dict[str, Any] | None = None,
+    app_config: "Config | None" = None,
 ) -> tuple[list[ItemCreate], dict[str, Any]]:
     """The export's artifacts as items, and its index to keep. Its files are dated by
-    the export's request time, with their versions from the ``others`` (#376)."""
+    the export's request time, with their versions from the ``others`` (#376).
+    Same-titled artifacts keep the items stored in ``app_config``'s database (#375)."""
+    from lestash.core.config import Config
+    from lestash.core.database import get_connection
     from lestash.importers.notebooklm_artifacts import (
         collect,
         export_time,
         stored_exports,
+        stored_identities,
         to_items,
     )
 
-    artifacts, unmatched = collect(index, final=final)
+    identities: dict[str, str] = {}
+    if final:
+        with get_connection(app_config or Config.load()) as conn:
+            identities = stored_identities(conn)
+    artifacts, unmatched = collect(index, final, identities)
     if unmatched:
         verb = "have no description" if final else "wait for the export's last part"
         logger.info(f"{len(unmatched)} NotebookLM file(s) {verb}")
     seen_at = export_time(export)
-    items = to_items(artifacts, seen_at, stored_exports(others or {}) if seen_at else ())
+    history = stored_exports(others or {}, identities) if seen_at and final else ()
+    items = to_items(artifacts, seen_at, history)
     return items, {**index.to_json(), "final": final}
 
 
 def finish_exports(
-    listed: list[dict[str, Any]], state: dict[str, dict[str, Any]]
+    listed: list[dict[str, Any]],
+    state: dict[str, dict[str, Any]],
+    app_config: "Config | None" = None,
 ) -> Iterator[ItemCreate | SyncCheckpoint]:
     """Complete each export whose parts are all settled but whose last read was not
     final: its last part was given up, or a listed part left Drive. Its files are in
-    the store already, so no zip is read."""
+    the store already, so no zip is read. ``app_config``: the database synced into."""
     from lestash.importers.notebooklm_artifacts import Index
 
     keys = export_keys(listed, state)
@@ -325,7 +340,8 @@ def finish_exports(
             or not all(settled(state.get(f["id"])) for f in listed_parts)
         ):
             continue
-        items, value = _complete(Index.from_json(kept), True, export, _other_exports(state, export))
+        others = _other_exports(state, export)
+        items, value = _complete(Index.from_json(kept), True, export, others, app_config)
         yield from items
         state[export] = value
         yield SyncCheckpoint(key=export, value=value)
@@ -360,7 +376,7 @@ def import_zip(
     """
     export = export or export_key(file)
     error: Exception | None = None
-    held = False
+    held = 0
     with tempfile.TemporaryDirectory(dir=workdir) as tmp:
         try:
             path = download(service, file["id"], Path(tmp) / file["name"])
@@ -405,8 +421,10 @@ def import_zip(
         yield SyncCheckpoint(key=file["id"], value=_record(file, "unrecognized", 0, None))
         return
     record = _record(file, "imported", len(items), source_type or ("notebooklm" if held else None))
+    if held:
+        record["artifact_files"] = held  # this part's, counted as it was read
     if artifact_items:
-        record["artifacts"] = len(artifact_items)  # the export's, so far
+        record["artifacts"] = len(artifact_items)  # the export's
     yield SyncCheckpoint(key=file["id"], value=record)
     logger.info(f"{file['name']}: {len(items)} items, {len(artifact_items)} artifacts")
 
@@ -465,7 +483,12 @@ class TakeoutSource(SourcePlugin):
                 elif seen.get("status") == "failed":
                     status = describe_failure(seen)
                 else:
-                    artifacts = f", {seen['artifacts']} artifacts" if seen.get("artifacts") else ""
+                    if seen.get("artifact_files"):
+                        artifacts = f", {seen['artifact_files']} artifact files"
+                    elif seen.get("artifacts"):  # recorded before the count per part
+                        artifacts = f", {seen['artifacts']} artifacts"
+                    else:
+                        artifacts = ""
                     status = f"{seen['items']} items{artifacts}, {seen['imported_at'][:10]}"
                 table.add_row(
                     f["name"],
@@ -553,7 +576,7 @@ class TakeoutSource(SourcePlugin):
                     ):
                         problems.append(f"{file['name']} ({describe_failure(obj.value or {})})")
                     yield obj
-            yield from finish_exports(listed, state)
+            yield from finish_exports(listed, state, app_config)
         except TakeoutError as e:  # sign-in, network, Drive or disk: the rest would fail too
             logger.warning(f"Takeout sync stopped: {e}")
             problems.insert(0, str(e))

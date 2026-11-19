@@ -292,22 +292,25 @@ def notebooklm(
         export_time,
         index_zips,
         stored_exports,
+        stored_identities,
         to_items,
     )
 
     config = Config.load()
     store = BlobStore(store_root(config))
     index = index_zips(zips, store)
-    artifacts, unmatched = collect(index)
     seen_at = export_time(zips[0].name) if zips else None
     new_blobs = index.new_blobs
     with get_connection(config) as conn:
+        # Same-titled artifacts keep the items they made (#375)
+        identities = stored_identities(conn)
+        artifacts, unmatched = collect(index, stored=identities)
         others = []
         if seen_at is not None:
             # The Takeout sync's indexes, but not this export's own: its parts' names
             # can be a second apart (#378)
             mine = datetime.fromisoformat(seen_at)
-            stored = stored_exports(get_checkpoints(conn, "takeout"))
+            stored = stored_exports(get_checkpoints(conn, "takeout"), identities)
             others = [
                 e for e in stored if abs(datetime.fromisoformat(e.seen_at) - mine) > SAME_REQUEST
             ]

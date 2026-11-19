@@ -968,16 +968,19 @@ def _migrate_37(conn: sqlite3.Connection) -> None:
     (#375); a file changed between exports leaves its older version superseded (#376).
     See notebooklm_artifacts.refile_stored_exports. One transaction, with the version;
     history rows are marked "migration 37"."""
-    from lestash.importers.notebooklm_artifacts import refile_stored_exports, stored_exports
+    from lestash.importers.notebooklm_artifacts import (
+        refile_stored_exports,
+        stored_exports,
+        stored_identities,
+    )
 
     if conn.in_transaction:
         conn.commit()
     conn.execute("BEGIN IMMEDIATE")
     try:
         since = max_history_id(conn)
-        changed, removed = refile_stored_exports(
-            conn, stored_exports(get_checkpoints(conn, "takeout"))
-        )
+        exports = stored_exports(get_checkpoints(conn, "takeout"), stored_identities(conn))
+        changed, removed = refile_stored_exports(conn, exports)
         logger.info(
             f"Migration 37: re-filed {changed} NotebookLM artifacts, {removed} files removed"
         )

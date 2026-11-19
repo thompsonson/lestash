@@ -473,8 +473,9 @@ def test_merging_one_requests_two_kept_indexes() -> None:
 
 
 def test_migration_37_keeps_each_item_standing_for_its_artifact(test_db, tmp_path) -> None:
-    """Review round 1: an item made before #375 under the name its artifact no longer
-    has is renamed, with its tags, rather than given the other artifact's files."""
+    """Review rounds 1 and 3: an item made before #375 under a name the description
+    order would give the other artifact keeps that name, and its tags, with its own
+    artifact's files."""
     from lestash.core.database import add_tag, apply_migrations, save_checkpoint
 
     store = BlobStore(store_root(test_db))
@@ -512,8 +513,8 @@ def test_migration_37_keeps_each_item_standing_for_its_artifact(test_db, tmp_pat
             "WHERE i.id = ? GROUP BY i.id",
             (ids["Board metadata"],),
         ).fetchone()
-    # The five-source item is now "(1)", the name its artifact has, with its own image
-    assert tuple(rows) == (f"{ART}/Board metadata(1)", sha["Board.png"], "five")
+    # The five-source item keeps its name, its tag and its own image
+    assert tuple(rows) == (f"{ART}/Board metadata", sha["Board.png"], "five")
 
 
 def test_nothing_is_written_before_an_exports_last_part(test_db, tmp_path) -> None:
@@ -526,3 +527,34 @@ def test_nothing_is_written_before_an_exports_last_part(test_db, tmp_path) -> No
         {f"{ART}/Board metadata.json": _infographic(5, "describe it"), f"{ART}/Board.png": b"5"},
     )
     assert collect(index_zip(part, store), final=False) == ([], [f"{ART}/Board.png"])
+
+
+def test_same_titled_artifacts_keep_the_items_they_made(test_db, tmp_path) -> None:
+    """Review round 3: an export names same-titled artifacts after the stored items
+    whose sources and options they have, the order of their descriptions only for one
+    no item matches; so a later export can't make an item stand for the other one."""
+    from lestash.importers.notebooklm_artifacts import stored_identities
+
+    store = BlobStore(store_root(test_db))
+    one, five = _infographic(1), _infographic(5, "describe it")
+    index = index_zip(_pair(tmp_path / "a.zip", (five, b"five"), (one, b"one")), store)
+    sha = {f.rsplit("/", 1)[-1]: s for f, (s, _) in index.files.items()}
+    # By description order alone, the one-source infographic is named first
+    assert _files_by_key(index)["Board metadata"] == [sha["Board.png(1)"]]
+    with get_connection(test_db) as conn:
+        # An item the five-source one made under the first name
+        (made,) = [
+            i
+            for i in to_items(collect(index)[0])
+            if len((i.metadata or {})["notebook_sources"]) == 5
+        ]
+        item = made.model_copy(update={"source_id": f"{ART}/Board metadata", "media": []})
+        SyncStore(conn, "notebooklm").run([item])
+        identities = stored_identities(conn)
+    assert list(identities) == [f"{ART}/Board metadata"]
+    artifacts, _ = collect(index, stored=identities)
+    files = {a.key: [f.sha256 for f in a.files] for a in artifacts}
+    assert files == {
+        "Board metadata": [sha["Board.png"]],  # the five-source one, as stored
+        "Board metadata(1)": [sha["Board.png(1)"]],
+    }

@@ -754,13 +754,18 @@ def test_a_part_with_only_artifacts_is_imported_not_nothing_to_import(
     )
     _sync()
     record = _state(test_db)["b"]
-    assert (record["status"], record["items"], record["artifacts"]) == ("imported", 0, 1)
+    assert (record["status"], record["items"], record["artifact_files"]) == ("imported", 0, 1)
+    # Review round 3: each part counts the artifact files it held
+    assert _state(test_db)["a"]["artifact_files"] == 1
     assert source.is_done(record)
     monkeypatch.setattr(source, "list_takeout_zips", lambda svc: service._files)
+    from rich.console import Console
+
+    monkeypatch.setattr(source, "console", Console(width=250))  # no wrapped cells
     commands = typer.main.get_command(source.TakeoutSource().get_commands())
     commands.main(["list"], standalone_mode=False)
     out = capsys.readouterr().out
-    assert "nothing to import" not in out and "0 items, 1 artifacts" in out
+    assert "nothing to import" not in out and "0 items, 1 artifact files" in out
 
 
 def test_a_request_kept_as_two_exports_before_378_is_merged(test_db, tmp_path, monkeypatch) -> None:
