@@ -19,10 +19,12 @@ W3 (#218): searchable text for files that have none.
 - Each sentence goes to one voice: the one heard for most of its words (#381).
 - A diarizer turn's edge often falls a word or two off, and a short blip of the other voice can sit inside a turn; given a voice word by word, phrases were split between speakers.
 - A sentence keeps two voices only when each speaks at least 16 words of it: whisper ran two sentences together without a full stop.
-- Over the 25 overviews stored before the change, half the speaker changes fell mid-sentence; grouped by sentence, 11 in 1,828 do.
-- An abbreviation ("Dr.", "Mr."), an initial ("B.") or a dotted acronym ("U.S.", "e.g.") does not end a sentence.
+- Over the 25 overviews stored before the change, half the speaker changes fell mid-sentence; grouped by sentence, 9 in 1,836 do.
+- A title ("Dr.", "Mr.") or "e.g.", "i.e." and "vs." never end a sentence.
+- Another abbreviation, an initial or an acronym ("Inc.", "B.", "U.S.") ends one when the next word starts with a capital. It does not when the next word is lowercase.
 - `lestash enrich regroup-transcripts` groups stored transcripts again from their text, with no recording heard again. `--dry-run` only counts.
-- A regrouped turn that starts with a moved tail takes the next stored turn's start: never before the real start, and late by at most the tail.
+- A regrouped turn starting with words that moved forward into the next stored turn takes that turn's start: never before the real start, and late by at most those words.
+- A turn left after its head moved back keeps its stored start.
 - `base.en` is three times faster than `small.en` but mishears more ("a server out of you" for "a server outage"). Whisper's voice-activity filter skips music and silence, where it otherwise makes up words.
 - ffmpeg turns each recording into 16 kHz mono audio first.
 

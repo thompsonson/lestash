@@ -192,29 +192,40 @@ RUN_ON_WORDS = 16
 Word = tuple[float, str, int]  # (start, text, speaker)
 
 
-# Words whose full stop seldom ends a sentence. Not "etc." or "no.", which often do
+# Titles before a name, and Latin linking words: their full stop never ends a sentence
+NEVER_ENDS = frozenset({"mr", "mrs", "ms", "dr", "prof", "e.g", "i.e", "vs", "cf"})
+# Words whose full stop may or may not end a sentence: "Main St.", "Apple Inc."
 ABBREVIATIONS = frozenset({
-    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "mt", "fig", "approx", "cf",
-    "al", "inc", "ltd", "corp", "dept",
+    "sr", "jr", "st", "mt", "fig", "approx", "al", "inc", "ltd", "corp", "dept", "etc",
+    "a.m", "p.m",
 })  # fmt: skip
-_DOTTED = re.compile(r"(?:[A-Za-z]\.){2,}")  # U.S., B.F., e.g., i.e.
+_DOTTED = re.compile(r"(?:[A-Za-z]\.){2,}")  # U.S., B.F.
+_OPENERS = "\"'([“‘"
+_CLOSERS = "\"')]”’"
 
 
-def _ends_sentence(word: str) -> bool:
-    """Whether a word ends its sentence. An abbreviation, an initial ("B.") or a dotted
-    acronym ("U.S.") does not, though it ends in a full stop: one at the end of a
-    sentence then runs that sentence into the next, which keeps the voice of the
-    longer."""
+def _ends_sentence(word: str, following: str | None = None) -> bool:
+    """Whether a word ends its sentence; ``following`` is the next word, if any.
+
+    A title ("Dr.") or "e.g." never does. Another abbreviation, an initial ("B.") or a
+    dotted acronym ("U.S.") does when the next word starts with a capital, as in "in
+    the U.S. Right.", and not when it is lowercase. So does any word with a stop when
+    nothing follows. A name with an initial, "John B. Watson", is then cut in two:
+    the cost is a voice change that falls there, not a reply joined to the wrong voice.
+    """
     parts = word.split()
-    last = parts[-1].rstrip("\"')]”’") if parts else ""
+    last = parts[-1].rstrip(_CLOSERS) if parts else ""
     if not last.endswith(SENTENCE_END):
         return False
-    if last.endswith("."):
-        stem = last.lstrip("\"'([“‘")
-        if stem[:-1].lower() in ABBREVIATIONS or _DOTTED.fullmatch(stem):
-            return False
-        if len(stem) == 2 and stem[0].isupper():  # an initial
-            return False
+    if not last.endswith("."):
+        return True
+    stem = last.lstrip(_OPENERS)[:-1].lower()
+    if stem in NEVER_ENDS:
+        return False
+    initial = len(stem) == 1 and last.lstrip(_OPENERS)[0].isupper()
+    if stem in ABBREVIATIONS or initial or _DOTTED.fullmatch(stem + "."):
+        nxt = (following or "").strip().lstrip(_OPENERS)
+        return not nxt or not nxt[0].islower()
     return True
 
 
@@ -270,9 +281,9 @@ def group_turns(words: list[Word]) -> list[tuple[int, float, str]]:
                 turns.append((speaker, run[0][0], [w for _, w, _ in run]))
         sentence.clear()
 
-    for word in words:
+    for n, word in enumerate(words):
         sentence.append(word)
-        if _ends_sentence(word[1]):
+        if _ends_sentence(word[1], words[n + 1][1] if n + 1 < len(words) else None):
             flush()
     flush()
     return [(speaker, start, " ".join("".join(ws).split())) for speaker, start, ws in turns]
@@ -309,29 +320,40 @@ def regroup_transcript(text: str) -> str:
     times were not kept. Each word counts as one. Text that is not all turns comes back
     as it is.
 
-    Only each stored turn's start is known. A new turn that starts with a stored turn's
-    first word takes its time. One that starts inside a stored turn takes the start of
-    the next stored turn when it starts in that turn's last ``RUN_ON_WORDS`` words: a
-    tail moved forward ends where the next turn starts, so that time is never before
-    the real one, and late by at most the tail. Any other start, after a short head
-    moved back, takes the stored turn's own start: early by at most that head."""
+    Only each stored turn's start is known. A new turn takes the start of the stored
+    turn its first word comes from, with one exception: when that word now has another
+    voice than in the stored turn, it is part of a tail moved forward into the next
+    stored turn, and the new turn takes that one's start. The tail was said just
+    before it, so that time is never before the real one, and late by at most the
+    tail. A turn left after its head moved back keeps its stored start: early by at
+    most that head."""
     blocks = text.split("\n\n")
     matches = [_TURN.fullmatch(b) for b in blocks]
     if not blocks or not all(matches):
         return text
-    starts = [_seconds(m.group(2)) for m in matches if m]
+    starts: list[float] = []
+    voices: list[int] = []
+    block_of: list[int] = []  # each word's stored turn
     words: list[Word] = []
     for n, m in enumerate(matches):
         assert m is not None
-        speaker, tokens = int(m.group(1)), m.group(3).split()
-        after = starts[n + 1] if n + 1 < len(starts) else starts[n]
-        for i, w in enumerate(tokens):
-            tail = i and len(tokens) - i < RUN_ON_WORDS
-            words.append((after if tail else starts[n], f" {w}", speaker))
+        starts.append(_seconds(m.group(2)))
+        voices.append(int(m.group(1)))
+        for w in m.group(3).split():
+            # The word's number stands in for its start: its turn's time is set below
+            words.append((float(len(words)), f" {w}", voices[n]))
+            block_of.append(n)
+
+    def start(speaker: int, first: float) -> float:
+        n = block_of[int(first)]
+        moved = speaker != voices[n] and n + 1 < len(starts)
+        return starts[n + 1] if moved else starts[n]
+
     names: dict[int, int] = {}
     return "\n\n".join(
-        f"**Speaker {names.setdefault(speaker, len(names) + 1)}** ({clock(start)}): {body}"
-        for speaker, start, body in group_turns(words)
+        f"**Speaker {names.setdefault(speaker, len(names) + 1)}** "
+        f"({clock(start(speaker, first))}): {body}"
+        for speaker, first, body in group_turns(words)
         if body
     )
 

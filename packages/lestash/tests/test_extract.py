@@ -495,15 +495,47 @@ def test_a_regrouped_turn_is_never_timed_before_it_starts() -> None:
     )
 
 
-def test_abbreviations_and_initials_do_not_end_a_sentence() -> None:
-    for word in (" Dr.", "Mr.", "U.S.", "e.g.", "B.", "(i.e.", 'St."'):
-        assert not extract._ends_sentence(word), word
-    for word in (" end.", "why?", "No.", "etc.", 'said."', "I", "a.m"):
-        assert extract._ends_sentence(word) == word.rstrip('"').endswith((".", "?")), word
+def test_titles_never_end_a_sentence_and_other_abbreviations_go_by_the_next_word() -> None:
+    for word in (" Dr.", "Mr.", "(e.g.", "i.e.", "vs."):
+        assert not extract._ends_sentence(word, "Smith"), word
+    # Another abbreviation, an initial or an acronym ends a sentence before a capital
+    for word in ("U.S.", "a.m.", "B.", "C.", "Inc.", 'St."', "etc."):
+        assert extract._ends_sentence(word, "Right."), word
+        assert not extract._ends_sentence(word, "and"), word
+        assert extract._ends_sentence(word), word  # nothing follows
+    for word, following, ends in (
+        (" end.", "and", True),  # a plain word's stop ends it, whatever comes next
+        ("why?", "and", True),
+        ("No.", "Yes", True),
+        ("a.m", "Then", False),
+        ("I", "Then", False),
+    ):
+        assert extract._ends_sentence(word, following) is ends, word
+
+
+def test_a_reply_after_an_acronym_keeps_its_voice() -> None:
+    long_turn = " ".join(["word"] * 20)
+    stored = f"**Speaker 1** (0:00): {long_turn} in the U.S.\n\n**Speaker 2** (0:09): Right."
+    assert extract.regroup_transcript(stored) == stored
     # "Dr." is not the end of a sentence, so the name stays with it
     stored = "**Speaker 1** (0:00): We met Dr.\n\n**Speaker 2** (0:02): Smith today. Yes."
     assert extract.regroup_transcript(stored) == (
         "**Speaker 1** (0:00): We met Dr. Smith today.\n\n**Speaker 2** (0:02): Yes."
+    )
+
+
+def test_a_turn_left_after_its_head_moved_back_keeps_its_own_time() -> None:
+    # A short stored turn: what is left once its head moves back started inside it,
+    # before the next stored turn (review round 2)
+    stored = (
+        "**Speaker 1** (0:00): Is it\n\n"
+        "**Speaker 2** (0:04): late? Yes it is.\n\n"
+        "**Speaker 1** (0:09): Good."
+    )
+    assert extract.regroup_transcript(stored) == (
+        "**Speaker 1** (0:00): Is it late?\n\n"
+        "**Speaker 2** (0:04): Yes it is.\n\n"
+        "**Speaker 1** (0:09): Good."
     )
 
 
@@ -528,8 +560,9 @@ def test_regroup_transcripts_rewrites_the_stored_text_and_its_items(test_db, fak
         again = extract.regroup_transcripts(conn)
     assert (dry.files, dry.items, kept) == (1, 1, split)
     assert (counts.files, counts.items) == (1, 1)
-    assert text == "**Speaker 1** (0:00): Hello there."
-    assert content.endswith(f"{PART}\n\n**Speaker 1** (0:00): Hello there.")
+    # "Hello" moved forward into the second voice's turn: it takes that turn's time
+    assert text == "**Speaker 1** (0:01): Hello there."
+    assert content.endswith(f"{PART}\n\n**Speaker 1** (0:01): Hello there.")
     assert (again.files, again.items) == (0, 0)
 
 
