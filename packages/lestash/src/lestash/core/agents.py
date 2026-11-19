@@ -202,7 +202,12 @@ def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
             "author",
             "bluesky",
             did,
-            str(meta.get("author_display_name") or handle or row.author or did),
+            str(
+                meta.get("author_display_name")
+                or handle
+                or (row.author if row.author != BLUESKY_INVALID_HANDLE else None)
+                or did
+            ),
             "person",
             url=f"{BLUESKY_PROFILE}{handle}" if handle else None,
             is_self=row.is_own,
@@ -381,8 +386,9 @@ class _People:
         self.urls: dict[tuple[str, str], str | None] = {}
         # Each Bluesky DID's handle addresses, as its held posts give them: the one
         # seen last, and all of them. A post holds the handle it had when last synced,
-        # and a sync that changes it leaves an item_history row, so a post's handle
-        # was last seen at its fetch or its latest change, whichever is later. Read up
+        # and a sync that changes it leaves an item_history row holding the old one,
+        # so a post's handle was seen at its fetch or at the latest change of handle,
+        # whichever is later; other changes don't count. Read up
         # front, as the pass reads items in no order. Bluesky's placeholder for an
         # unverified handle is skipped
         self.bluesky_handles: dict[str, tuple[str, set[str]]] = {}
@@ -392,7 +398,9 @@ class _People:
             "WHERE source_type = 'bluesky' AND held = 1 "
             "AND json_extract(metadata, '$.author_handle') NOT IN ('', ?) "
             "ORDER BY max(coalesce(datetime(fetched_at), ''), coalesce(("
-            "SELECT datetime(max(h.changed_at)) FROM item_history h WHERE h.item_id = items.id"
+            "SELECT datetime(max(h.changed_at)) FROM item_history h WHERE h.item_id = items.id "
+            "AND json_extract(h.metadata_old, '$.author_handle') "
+            "IS NOT json_extract(items.metadata, '$.author_handle')"
             "), '')), id",
             (BLUESKY_INVALID_HANDLE,),
         ):

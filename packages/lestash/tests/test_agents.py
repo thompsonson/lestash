@@ -659,3 +659,35 @@ def test_a_resynced_posts_new_handle_wins_over_a_later_fetch(test_db) -> None:
         )
         link_agents(conn)
         assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/b.x"
+
+
+def test_only_a_change_of_handle_counts_as_its_sighting(test_db) -> None:
+    """#379, review round 7: a later edit that leaves the handle alone (a tag, a title)
+    does not make an old handle look newer."""
+    with get_connection(test_db) as conn:
+        old = _item(
+            conn, "bluesky", "b1", "Zed", {"author_did": "did:plc:zed", "author_handle": "a.x"}
+        )
+        new = _item(
+            conn, "bluesky", "b2", "Zed", {"author_did": "did:plc:zed", "author_handle": "b.x"}
+        )
+        conn.execute("UPDATE items SET fetched_at = '2025-01-01 00:00:00' WHERE id = ?", (old,))
+        conn.execute("UPDATE items SET fetched_at = '2026-01-01 00:00:00' WHERE id = ?", (new,))
+        conn.execute("UPDATE items SET title = 'edited' WHERE id = ?", (old,))
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/b.x"
+
+
+def test_an_unverified_handle_never_names_an_account(test_db) -> None:
+    """#379, review round 7: with no display name, items.author holds the handle; the
+    placeholder 'handle.invalid' is not a name."""
+    with get_connection(test_db) as conn:
+        item = _item(
+            conn,
+            "bluesky",
+            "b1",
+            "handle.invalid",
+            {"author_did": "did:plc:zed", "author_handle": "handle.invalid"},
+        )
+        link_agents(conn)
+        assert _agents(conn, item)[0][2] == "did:plc:zed"
