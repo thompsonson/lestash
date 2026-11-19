@@ -574,3 +574,15 @@ def test_a_gapped_reply_not_filled_in_is_updated_as_before(test_db) -> None:
     [reply] = _items(test_db, "author = 'model'")
     assert reply["metadata"].get("takeout_gaps") is True
     assert reply["content"] != "Old."  # replaced by the newer export's text
+
+
+def test_stored_metadata_that_is_not_an_object_reads_as_empty(test_db) -> None:
+    gapped = _prompt("Review it", "2026-11-09T19:37:19.515Z", reply="<ul><li>.</li></ul>")
+    _import(test_db, [gapped])
+    [reply] = _items(test_db, "author = 'model'")
+    with get_connection(test_db) as conn:
+        conn.execute("UPDATE items SET metadata = '[1, 2]' WHERE id = ?", (reply["id"],))
+        conn.commit()
+    _import(test_db, [gapped])  # no AttributeError
+    [after] = _items(test_db, "id = ?", (reply["id"],))
+    assert after["metadata"].get("takeout_gaps") is True

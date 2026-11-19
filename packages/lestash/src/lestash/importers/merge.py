@@ -84,6 +84,8 @@ def _stored(conn: sqlite3.Connection, item: ItemCreate) -> dict[str, Any] | None
         metadata = json.loads(row[3]) if row[3] else {}
     except json.JSONDecodeError:
         metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}  # a list or a string: callers read keys
     return {
         "id": row[0],
         "title": row[1],
