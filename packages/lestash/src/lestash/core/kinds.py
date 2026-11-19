@@ -202,7 +202,7 @@ def kind_detail(kind: str, metadata: Mapping[str, Any] | None) -> str | None:
     return None
 
 
-# Where a label is a plural, the one thing it names, as in "Found in a slide deck"
+# Where a label is a plural, the one thing it names, as in "Found in the slide deck"
 _SINGULAR = {"Slides": "Slide deck"}
 
 

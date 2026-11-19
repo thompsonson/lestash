@@ -391,7 +391,7 @@ def search_items(
                     (part,),
                 ).fetchone() or (None, None, None)
                 enriched.match_id = part
-                # The artifact's type for a generated one, as in "Found in a slide deck"
+                # The artifact's type for a generated one, as in "Found in the slide deck"
                 enriched.match_label = (
                     kind_noun(kind, _json_object(meta)) if isinstance(kind, str) else None
                 )
