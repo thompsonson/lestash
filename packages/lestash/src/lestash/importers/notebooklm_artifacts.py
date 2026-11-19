@@ -15,6 +15,14 @@ into the file store as it is read, and an ``Index`` of the descriptions and stor
 files is kept, so the parts need not be on disk together: the Takeout sync reads one
 at a time. Each artifact becomes a child item of its notebook (``type: artifact``),
 and each file is a media row pointing at its blob.
+
+Two artifacts of one title and type are "<title> metadata.json" and "<title>
+metadata(1).json", with files "<title>.png" and "<title>.png(1)" (#375). Within an
+export the "(1)"s pair, but which artifact gets them changes between exports, so each
+keeps its name by its description, not by Takeout's order.
+
+An export's files are dated by its request time: a file that changed between exports is
+a new version, the older one superseded (#376).
 """
 
 from __future__ import annotations
@@ -24,7 +32,9 @@ import mimetypes
 import re
 import zipfile
 from collections import defaultdict
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -50,8 +60,19 @@ FILE_TYPES = {
 SLIDE_NUMBERED = re.compile(r"_-_Slide_(\d+)$")
 SLIDE_COPY = re.compile(r"_-(?:_Slid?e?)?(?:\((\d+)\))?$")
 # Reports are imported as notes from their markdown already
-SKIPPED_TYPES = frozenset({"ARTIFACT_TYPE_TAILORED_REPORT"})
+REPORT = "ARTIFACT_TYPE_TAILORED_REPORT"
+SKIPPED_TYPES = frozenset({REPORT})
+# A file artifact (an upload NotebookLM keeps) named "notes.md" is "notes.md.md" (#377)
+FILE_ARTIFACT = "ARTIFACT_TYPE_FILE"
 MEDIA_TYPES = {".pdf": "pdf", ".png": "image", ".wav": "audio", ".mp4": "video"}
+# Takeout's "(n)" on the files of the n-th other artifact of a title: "X.png(1)", a
+# deck's folder "X(1)/", an app "X(1)"
+COPY = re.compile(r"\((\d+)\)$")
+# How far apart one request's parts' times can be: "…T100906Z-001.zip" beside
+# "…T100907Z-1-001.zip" (#378)
+SAME_REQUEST = timedelta(seconds=2)
+# The request time in a part's name, "takeout-20261106T100907Z-1-001.zip"
+REQUEST_TIME = re.compile(r"takeout-(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)Z")
 
 
 @dataclass(frozen=True)
@@ -87,6 +108,7 @@ class Artifact:
     description: dict[str, Any]
     files: list[StoredFile] = field(default_factory=list)
     key: str = ""  # the description's name without ".json": unique in its notebook
+    copy: int = 0  # n in "<title> metadata(n).json", the n-th other one of its title
 
     @property
     def source_id(self) -> str:
@@ -107,12 +129,38 @@ def _stem(name: str) -> str:
     return METADATA.sub("", base)
 
 
+def _copy(name: str) -> int:
+    """n in a description's name "<title> metadata(n).json" (or a cut form), else 0."""
+    removed = name.removesuffix(".json")[len(_stem(name)) :]
+    m = re.search(r"\((\d+)", removed)
+    return int(m.group(1)) if m else 0
+
+
+def _file_copy(rest: str) -> tuple[str, int]:
+    """A file's path below Artifacts/ without a "(n)" Takeout added, and n; (rest, 0)
+    if none. A title may end "(2)" itself: collect() decides which it is."""
+    if "/" in rest:
+        folder, inner = rest.split("/", 1)
+        if m := COPY.search(folder):
+            return f"{folder[: m.start()]}/{inner}", int(m.group(1))
+    elif m := COPY.search(rest):
+        return rest[: m.start()], int(m.group(1))
+    return rest, 0
+
+
+def plain_name(name: str) -> str:
+    """A file's name without the "(n)" after its extension: "X.png(1)" is a png."""
+    return re.sub(r"(\.[A-Za-z0-9]+)\(\d+\)$", r"\1", name)
+
+
 def _file_type(rest: str) -> str:
     """The artifact type a file below Artifacts/ fits: see FILE_TYPES."""
     if "/" in rest:
         return FILE_TYPES["folder"]
     name = rest.rsplit("/", 1)[-1]
     suffix = ("." + name.rsplit(".", 1)[1].lower()) if "." in name else ""
+    if suffix == ".md":
+        return FILE_ARTIFACT  # a report's markdown is a note, and not matched
     return FILE_TYPES.get(suffix, "")
 
 
@@ -136,27 +184,58 @@ def _artifact_member(member: str) -> bool:
     return member.startswith(NOTEBOOKLM) and ARTIFACTS in member and not member.endswith("/")
 
 
-def index_zip(path: Path, store: BlobStore, index: Index | None = None) -> Index:
+def _is_description(rest: str) -> bool:
+    return rest.endswith(".json") and "/" not in rest
+
+
+def _a_reports_markdown(member: str, descriptions: Mapping[str, dict[str, Any]]) -> bool:
+    """Whether a markdown file below Artifacts/ is a report's, a note already: the
+    description it best fits is a report's. One no description yet fits may be a file
+    artifact's, so it is kept."""
+    notebook, rest = member.split(ARTIFACTS, 1)
+    head = _head(rest)
+    fits = []
+    for name, description in descriptions.items():
+        nb, desc = name.split(ARTIFACTS, 1)
+        stem = _stem(desc)
+        if nb == notebook and (head.startswith(stem) or stem.startswith(head)):
+            fits.append((stem != head, -len(stem), description.get("type")))
+    return bool(fits) and min(fits)[2] == REPORT
+
+
+def index_zip(
+    path: Path,
+    store: BlobStore,
+    index: Index | None = None,
+    known: Mapping[str, dict[str, Any]] | None = None,
+) -> Index:
     """Add one Takeout part's artifact descriptions to ``index`` (a new one if None),
-    and store its artifact files. Reports' markdown is a note already, so is skipped."""
+    and store its artifact files. A report's markdown is a note already, so is skipped;
+    a file artifact's is kept (#377). ``known``: descriptions from the export's other
+    parts, to tell the two apart."""
     index = index or Index()
     with zipfile.ZipFile(path) as zf:
-        for member in zf.namelist():
-            if not _artifact_member(member):
+        members = [m for m in zf.namelist() if _artifact_member(m)]
+        for member in members:
+            if not _is_description(member.split(ARTIFACTS, 1)[1]):
                 continue
+            try:
+                description = json.loads(zf.read(member))
+            except (ValueError, UnicodeDecodeError):
+                continue
+            if isinstance(description, dict):
+                index.descriptions[member] = description
+        descriptions = {**(known or {}), **index.descriptions}
+        for member in members:
             rest = member.split(ARTIFACTS, 1)[1]
-            if rest.endswith(".json") and "/" not in rest:
-                try:
-                    description = json.loads(zf.read(member))
-                except (ValueError, UnicodeDecodeError):
-                    continue
-                if isinstance(description, dict):
-                    index.descriptions[member] = description
-            elif not rest.endswith(".md"):
-                with zf.open(member) as stream:
-                    blob = store.put_stream(stream)
-                index.new_blobs += blob.new
-                index.files[member] = (blob.sha256, blob.size)
+            if _is_description(rest):
+                continue
+            if rest.endswith(".md") and _a_reports_markdown(member, descriptions):
+                continue
+            with zf.open(member) as stream:
+                blob = store.put_stream(stream)
+            index.new_blobs += blob.new
+            index.files[member] = (blob.sha256, blob.size)
     return index
 
 
@@ -173,8 +252,9 @@ def collect(index: Index, final: bool = True) -> tuple[list[Artifact], list[str]
     description.
 
     Before an export's last part (``final=False``), a file goes only to a description of
-    its own name and type: one that fits better may be in a part not read yet, and a
-    media row once written stays. Until then it is unmatched.
+    its own name, type and copy number: one that fits better may be in a part not read
+    yet, and a media row once written stays. Until then it is unmatched. A file
+    artifact's markdown goes only to a file artifact: else it is a report's, a note.
     """
     by_notebook: dict[str, list[Artifact]] = defaultdict(list)
     artifacts = []
@@ -182,29 +262,90 @@ def collect(index: Index, final: bool = True) -> tuple[list[Artifact], list[str]
         notebook, rest = member.split(ARTIFACTS, 1)
         # Keyed by name: two descriptions can share a title part
         key = rest.removesuffix(".json")
-        artifact = Artifact(notebook, _stem(rest), description, key=key)
+        artifact = Artifact(notebook, _stem(rest), description, key=key, copy=_copy(rest))
         by_notebook[notebook].append(artifact)
         artifacts.append(artifact)
     unmatched = []
     for member, (sha256, size) in sorted(index.files.items()):
         notebook, rest = member.split(ARTIFACTS, 1)
-        head = _head(rest)
-        kind = _file_type(rest)
-        named = [
-            a for a in by_notebook[notebook] if head.startswith(a.stem) or a.stem.startswith(head)
-        ]
-        # Of the right type if any is: a type NotebookLM adds later still finds its files
-        typed = [a for a in named if not kind or a.description.get("type") in (kind, None)]
-        candidates = typed or named
-        exact = [a for a in candidates if a.stem == head]
-        if not final and not any(a.stem == head for a in typed):
-            unmatched.append(member)  # its own description may be in a later part
-        elif exact or candidates:
-            owner = (exact or sorted(candidates, key=lambda a: -len(a.stem)))[0]
+        owner = _owner(by_notebook[notebook], rest, final)
+        if owner is None:
+            if not rest.endswith(".md"):
+                unmatched.append(member)
+        elif owner is not WAIT:
             owner.files.append(StoredFile(member, sha256, size))
         else:
-            unmatched.append(member)
-    return sorted(artifacts, key=lambda a: a.source_id), unmatched
+            unmatched.append(member)  # its own description may be in a later part
+    for group in _same_named(artifacts):
+        unmatched.extend(_name_by_description(group, final))
+    return sorted(artifacts, key=lambda a: a.source_id), sorted(unmatched)
+
+
+WAIT = Artifact("", "", {})  # a file whose own description may be in a later part
+
+
+def _owner(artifacts: list[Artifact], rest: str, final: bool) -> Artifact | None:
+    """The artifact a file below Artifacts/ belongs to; WAIT, or None for none."""
+    plain, copy = _file_copy(rest)
+    head = _head(plain)
+    if not copy or not any(a.copy == copy and a.stem == head for a in artifacts):
+        # No "(n)" Takeout added, or a title that ends "(2)" itself
+        plain, copy, head = rest, 0, _head(rest)
+    kind = _file_type(plain)
+    named = [a for a in artifacts if head.startswith(a.stem) or a.stem.startswith(head)]
+    # Of the right type if any is: a type NotebookLM adds later still finds its files
+    typed = [a for a in named if not kind or a.description.get("type") in (kind, None)]
+    if kind == FILE_ARTIFACT:
+        named = typed  # a report's markdown: no artifact's file
+    candidates = typed or named
+    # The copy Takeout's "(n)" names: n-th others of a title pair within an export
+    candidates = [a for a in candidates if a.copy == copy] or candidates
+    exact = [a for a in candidates if a.stem == head]
+    if not final and not any(a.stem == head and a.copy == copy for a in typed):
+        return WAIT if candidates else None
+    if not (exact or candidates):
+        return None
+    return (exact or sorted(candidates, key=lambda a: -len(a.stem)))[0]
+
+
+def _same_named(artifacts: list[Artifact]) -> list[list[Artifact]]:
+    """The artifacts that share a notebook, title part and type: two or more, or one
+    Takeout numbered "(n)", whose others are in a part not read yet."""
+    groups: dict[tuple[str, str, str], list[Artifact]] = defaultdict(list)
+    for a in artifacts:
+        groups[(a.notebook, a.stem, str(a.description.get("type")))].append(a)
+    return [g for g in groups.values() if len(g) > 1 or g[0].copy]
+
+
+def _by_description(artifact: Artifact) -> tuple[int, str]:
+    sources = artifact.description.get("sources")
+    count = len(sources) if isinstance(sources, list) else 0
+    return count, json.dumps(artifact.description, sort_keys=True, default=str)
+
+
+def _name_by_description(group: list[Artifact], final: bool) -> list[str]:
+    """Give artifacts of one title their names in the order of their descriptions, so
+    each keeps its item whichever Takeout called "(1)" this time (#375). Ones whose
+    descriptions are the same are told apart by their files, all known only once the
+    export is read: before then their files wait, and are returned. So do those of a
+    group whose "(n)"s are not all read yet."""
+    keys = [a.key for a in sorted(group, key=lambda a: a.copy)]
+    order = [_by_description(a) for a in group]
+    complete = sorted(a.copy for a in group) == list(range(len(group)))
+    if not final and (not complete or len(set(order)) < len(order)):
+        waiting = [f.member for a in group for f in a.files]
+        for a in group:
+            a.files = []
+        return waiting
+
+    def files(a: Artifact) -> list[str]:
+        return [f.sha256 for f in sorted(a.files, key=lambda f: plain_name(f.member))]
+
+    for artifact, key in zip(
+        sorted(group, key=lambda a: (_by_description(a), files(a))), keys, strict=True
+    ):
+        artifact.key = key
+    return []
 
 
 def _summary(artifact: Artifact) -> str:
@@ -229,43 +370,120 @@ def _options_key(description: dict[str, Any]) -> str:
     return next((k for k in description if k not in known), "")
 
 
-def to_items(artifacts: list[Artifact]) -> list[ItemCreate]:
-    """One child item per artifact, its stored files attached in slide order."""
+def _media(artifact: Artifact) -> list[MediaCreate]:
+    """An artifact's stored files as media rows, in slide order."""
+    names = [f.member.rsplit("/", 1)[-1] for f in artifact.files]
+    numbered = any(SLIDE_NUMBERED.search(n) for n in names)
+    media: list[MediaCreate] = []
+    for stored in sorted(artifact.files, key=lambda f: f.member):
+        member = stored.member
+        mime: str | None
+        name = plain_name(member.rsplit("/", 1)[-1])
+        suffix = Path(name).suffix.lower()
+        number = slide_number(name, numbered) if "/" in member.split(ARTIFACTS, 1)[1] else None
+        if number is not None and not suffix:
+            media_type, mime, position, alt = "image", "image/png", number, f"Slide {number}"
+        elif suffix == ".pptx":
+            media_type, position, alt = "file", 0, name
+            mime = mimetypes.guess_type(name)[0]
+        elif not suffix:
+            # An app: a web page NotebookLM made, served only as a download
+            media_type, mime, position, alt = "file", "text/html", 0, f"{name}.html"
+        elif suffix == ".md":
+            # A file artifact's markdown: named as it was uploaded, not "x.md.md"
+            options = artifact.description.get(_options_key(artifact.description))
+            uploaded = options.get("fileName") if isinstance(options, dict) else None
+            media_type, mime, position = "file", "text/markdown", 0
+            alt = uploaded if isinstance(uploaded, str) and uploaded else name
+        else:
+            media_type = MEDIA_TYPES.get(suffix, "file")
+            mime, position, alt = mimetypes.guess_type(name)[0], 0, name
+        media.append(
+            MediaCreate(
+                media_type=media_type,
+                mime_type=mime,
+                alt_text=alt,
+                position=position,
+                source_origin="takeout",
+                sha256=stored.sha256,
+                size=stored.size,
+            )
+        )
+    return media
+
+
+def export_time(name: str) -> str | None:
+    """When a Takeout export was requested, from a part's name or an export's key
+    ("takeout-20261106T100907Z…"), as the database writes times; None if not named so."""
+    if not (m := REQUEST_TIME.search(name)):
+        return None
+    y, mo, d, h, mi, sec = m.groups()
+    return f"{y}-{mo}-{d} {h}:{mi}:{sec}"
+
+
+@dataclass
+class Export:
+    """One Takeout export's artifacts, and when it was requested."""
+
+    seen_at: str
+    artifacts: list[Artifact]
+
+
+def _versions(
+    source_id: str, current: list[MediaCreate], seen_at: str, others: Sequence[Export]
+) -> list[MediaCreate]:
+    """An artifact's media with each file's versions over the exports (#376).
+
+    At each place (type and position) a file is one version from the export it was
+    first seen in, replaced by the next export's other file there; the newest export's
+    is current, whichever export is read now. A place holding two files in one export
+    is left as it is: there is no telling which file followed which.
+    """
+    sightings: dict[tuple[str, int], list[tuple[str, MediaCreate]]] = defaultdict(list)
+    ambiguous: set[tuple[str, int]] = set()
+    exports = [(seen_at, current)] + [
+        (e.seen_at, _media(a)) for e in others for a in e.artifacts if a.source_id == source_id
+    ]
+    for when, media in exports:
+        places = [(m.media_type, m.position) for m in media]
+        ambiguous.update(p for p in places if places.count(p) > 1)
+        for m in media:
+            sightings[(m.media_type, m.position)].append((when, m))
+    out = []
+    for m in current:
+        place = (m.media_type, m.position)
+        if place in ambiguous:
+            out.append(m)
+            continue
+        if place not in sightings:
+            continue
+        seen = sightings.pop(place)
+        seen.sort(key=lambda s: s[0])
+        runs: list[tuple[str, MediaCreate]] = []
+        for when, version in seen:
+            if not runs or runs[-1][1].sha256 != version.sha256:
+                runs.append((when, version))
+        for i, (when, version) in enumerate(runs):
+            replaced = runs[i + 1][0] if i + 1 < len(runs) else None
+            out.append(version.model_copy(update={"seen_at": when, "superseded_at": replaced}))
+    return out
+
+
+def to_items(
+    artifacts: list[Artifact], seen_at: str | None = None, others: Sequence[Export] = ()
+) -> list[ItemCreate]:
+    """One child item per artifact, its stored files attached in slide order.
+
+    With ``seen_at``, the export's request time, each file is a version seen then, and
+    ``others`` (the other exports read) give its earlier and later versions.
+    """
     items = []
     for artifact in artifacts:
         if artifact.description.get("type") in SKIPPED_TYPES:
             continue
-        names = [f.member.rsplit("/", 1)[-1] for f in artifact.files]
-        numbered = any(SLIDE_NUMBERED.search(n) for n in names)
-        media: list[MediaCreate] = []
-        for stored in sorted(artifact.files, key=lambda f: f.member):
-            member = stored.member
-            mime: str | None
-            name = member.rsplit("/", 1)[-1]
-            suffix = Path(name).suffix.lower()
-            number = slide_number(name, numbered) if "/" in member.split(ARTIFACTS, 1)[1] else None
-            if number is not None and not suffix:
-                media_type, mime, position, alt = "image", "image/png", number, f"Slide {number}"
-            elif suffix == ".pptx":
-                media_type, position, alt = "file", 0, name
-                mime = mimetypes.guess_type(name)[0]
-            elif not suffix:
-                # An app: a web page NotebookLM made, served only as a download
-                media_type, mime, position, alt = "file", "text/html", 0, f"{name}.html"
-            else:
-                media_type = MEDIA_TYPES.get(suffix, "file")
-                mime, position, alt = mimetypes.guess_type(name)[0], 0, name
-            media.append(
-                MediaCreate(
-                    media_type=media_type,
-                    mime_type=mime,
-                    alt_text=alt,
-                    position=position,
-                    source_origin="takeout",
-                    sha256=stored.sha256,
-                    size=stored.size,
-                )
-            )
+        media = _media(artifact)
+        if seen_at is not None:
+            media = _versions(artifact.source_id, media, seen_at, others)
         description = artifact.description
         items.append(
             ItemCreate(
@@ -291,3 +509,83 @@ def to_items(artifacts: list[Artifact]) -> list[ItemCreate]:
             )
         )
     return items
+
+
+def stored_exports(checkpoints: Mapping[str, dict[str, Any]]) -> list[Export]:
+    """The exports whose indexes the Takeout sync kept (``notebooklm:takeout-<time>``),
+    oldest first, each collected as it was last read."""
+    exports = []
+    for key, value in checkpoints.items():
+        when = export_time(key) if key.startswith("notebooklm:") else None
+        if when is None or not value:
+            continue
+        artifacts, _ = collect(Index.from_json(value), final=bool(value.get("final", True)))
+        exports.append(Export(when, artifacts))
+    return sorted(exports, key=lambda e: e.seen_at)
+
+
+def refile_stored_exports(conn: Any, exports: Iterable[Export]) -> tuple[int, int]:
+    """Put each stored artifact's files where the exports say (#375, #376): versions
+    dated by export, so an older file is superseded; a file on the wrong artifact or
+    with the wrong type removed. Only items already stored; their text is rebuilt.
+    Returns (items changed, rows removed). Does not commit."""
+    from lestash.core.database import add_item_media
+    from lestash.core.extract import refresh_item
+
+    exports = list(exports)
+    wanted: dict[str, dict[tuple[Any, ...], MediaCreate]] = defaultdict(dict)
+    places: dict[str, set[tuple[str, int, str | None]]] = defaultdict(set)
+    for i, export in enumerate(exports):
+        others = exports[:i] + exports[i + 1 :]
+        for item in to_items(export.artifacts, export.seen_at, others):
+            for m in item.media or []:
+                wanted[str(item.source_id)][(m.media_type, m.position, m.sha256, m.seen_at)] = m
+        for artifact in export.artifacts:
+            for m in _media(artifact):
+                places[artifact.source_id].add((m.media_type, m.position, m.sha256))
+    known = {sha for item_places in places.values() for _, _, sha in item_places}
+    changed = removed = 0
+    for source_id, by_key in sorted(wanted.items()):
+        # Oldest first at each place, so versions are numbered as they came
+        media = sorted(by_key.values(), key=lambda m: (m.media_type, m.position, m.seen_at or ""))
+        row = conn.execute(
+            "SELECT id FROM items WHERE source_type = 'notebooklm' AND source_id = ?",
+            (source_id,),
+        ).fetchone()
+        if row is None:
+            continue
+        item_id = row[0]
+        before = conn.total_changes
+        # A file the exports put elsewhere, or as another type ("X.png(1)" as a file).
+        # One no export has (an export read before indexing) is left alone.
+        wrong = [
+            r[0]
+            for r in conn.execute(
+                "SELECT id, media_type, position, sha256 FROM item_media "
+                "WHERE item_id = ? AND source_origin = 'takeout' AND sha256 IS NOT NULL",
+                (item_id,),
+            )
+            if r[3] in known and (r[1], r[2], r[3]) not in places[source_id]
+        ]
+        for media_id in wrong:
+            conn.execute("DELETE FROM item_media WHERE id = ?", (media_id,))
+        removed += len(wrong)
+        for m in media:
+            add_item_media(
+                conn,
+                item_id,
+                media_type=m.media_type,
+                mime_type=m.mime_type,
+                alt_text=m.alt_text,
+                position=m.position,
+                source_origin=m.source_origin,
+                sha256=m.sha256,
+                size=m.size,
+                seen_at=m.seen_at,
+                superseded_at=m.superseded_at,
+                _commit=False,
+            )
+        if conn.total_changes != before:
+            changed += 1
+            refresh_item(conn, item_id)
+    return changed, removed

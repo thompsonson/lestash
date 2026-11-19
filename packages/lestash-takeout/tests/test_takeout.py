@@ -683,3 +683,79 @@ def test_an_export_whose_parts_left_drive_is_completed_once(test_db, tmp_path, m
     service._files.clear()  # both parts deleted from Drive
     _sync()
     assert list(_artifact_media(test_db)) == [title]
+
+
+def test_one_requests_parts_a_second_apart_are_one_export() -> None:
+    """#378: Takeout can name one request's parts a second apart."""
+    listed = [
+        {"id": "a", "name": "takeout-20261106T100906Z-001.zip"},
+        {"id": "b", "name": "takeout-20261106T100907Z-1-001.zip"},
+        {"id": "c", "name": "takeout-20261106T100907Z-1-002.zip"},
+        {"id": "d", "name": "takeout-20261113T024919Z-001.zip"},
+    ]
+    assert source.export_keys(listed) == {
+        "a": "notebooklm:takeout-20261106T100907Z",
+        "b": "notebooklm:takeout-20261106T100907Z",
+        "c": "notebooklm:takeout-20261106T100907Z",
+        "d": "notebooklm:takeout-20261113T024919Z",  # another request
+    }
+    # An index kept under the earlier time already: the parts listed later join it
+    kept = {"notebooklm:takeout-20261106T100906Z": {"final": False}}
+    assert set(source.export_keys(listed[:3], kept).values()) == {
+        "notebooklm:takeout-20261106T100906Z"
+    }
+
+
+def test_parts_a_second_apart_complete_one_export(test_db, tmp_path, monkeypatch) -> None:
+    deck = {"title": "Deck", "type": "ARTIFACT_TYPE_SLIDES"}
+    _drive_of(
+        monkeypatch,
+        {
+            "a": (
+                "takeout-20261106T100906Z-001.zip",
+                _zip(tmp_path / "a.zip", {f"{ART}/Deck metadata.json": json.dumps(deck)}),
+            ),
+            "b": (
+                "takeout-20261106T100907Z-1-001.zip",
+                _zip(tmp_path / "b.zip", {**NOTEBOOK, f"{ART}/Deck/Deck.pdf": "%PDF"}),
+            ),
+        },
+    )
+    _sync()
+    assert _artifact_media(test_db) == {"Deck": ["Deck.pdf"]}
+    assert [k for k in _state(test_db) if k.startswith("notebooklm:")] == [
+        "notebooklm:takeout-20261106T100907Z"
+    ]
+
+
+def test_a_part_with_only_artifacts_is_imported_not_nothing_to_import(
+    test_db, tmp_path, monkeypatch, capsys
+) -> None:
+    """#378: a part holding only artifact files was recorded "unrecognized", and
+    `takeout list` showed it as "nothing to import"."""
+    talk = {"title": "Talk", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
+    service = _drive_of(
+        monkeypatch,
+        {
+            "a": (
+                "takeout-20260101T000000Z-001.zip",
+                _zip(
+                    tmp_path / "a.zip", {**NOTEBOOK, f"{ART}/Talk metadata.json": json.dumps(talk)}
+                ),
+            ),
+            # Only an artifact's file: nothing else the importer reads
+            "b": (
+                "takeout-20260101T000000Z-002.zip",
+                _zip(tmp_path / "b.zip", {f"{ART}/Talk.wav": "one"}),
+            ),
+        },
+    )
+    _sync()
+    record = _state(test_db)["b"]
+    assert (record["status"], record["items"], record["artifacts"]) == ("imported", 0, 1)
+    assert source.is_done(record)
+    monkeypatch.setattr(source, "list_takeout_zips", lambda svc: service._files)
+    commands = typer.main.get_command(source.TakeoutSource().get_commands())
+    commands.main(["list"], standalone_mode=False)
+    out = capsys.readouterr().out
+    assert "nothing to import" not in out and "0 items, 1 artifacts" in out

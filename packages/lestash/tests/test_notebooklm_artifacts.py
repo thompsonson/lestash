@@ -170,3 +170,248 @@ def test_parts_read_one_at_a_time_through_a_kept_index(test_db, tmp_path) -> Non
     full = {i.title: i for i in to_items(artifacts)}
     for title, item in early.items():
         assert (item.content, item.metadata) == (full[title].content, full[title].metadata)
+
+
+def _infographic(sources: int, prompt: str = "") -> dict:
+    """An infographic's description; ``sources`` and ``prompt`` tell two apart."""
+    options = {"generationOptions": {"userSteeringPrompt": prompt}} if prompt else {}
+    return {
+        "title": "Board",
+        "type": "ARTIFACT_TYPE_INFOGRAPHIC",
+        "sources": [{"sourceId": {"id": f"s{n}"}} for n in range(sources)],
+        "infographic": options,
+    }
+
+
+def _pair(path: Path, first: tuple[dict, bytes], second: tuple[dict, bytes]) -> Path:
+    """Two infographics of one title, as Takeout names them: the second's description
+    and file get "(1)"."""
+    return _zip(
+        path,
+        {
+            f"{ART}/Board metadata.json": first[0],
+            f"{ART}/Board.png": first[1],
+            f"{ART}/Board metadata(1).json": second[0],
+            f"{ART}/Board.png(1)": second[1],
+        },
+    )
+
+
+def _files_by_key(index: Index, final: bool = True) -> dict[str, list[str]]:
+    """Each artifact's stored files, by its name."""
+    artifacts, _ = collect(index, final=final)
+    return {a.key: [f.sha256 for f in a.files] for a in artifacts}
+
+
+def test_same_titled_artifacts_keep_their_own_files_whichever_takeout_numbers(
+    test_db, tmp_path
+) -> None:
+    """#375: the "(1)" file is the "(1)" description's, and two exports that number the
+    two the other way round still give each item the same file."""
+    store = BlobStore(store_root(test_db))
+    one, five = _infographic(1), _infographic(5, "describe it")
+    first = index_zip(_pair(tmp_path / "a.zip", (five, b"five"), (one, b"one")), store)
+    second = index_zip(_pair(tmp_path / "b.zip", (one, b"one"), (five, b"five")), store)
+    files = _files_by_key(first)
+    assert files == _files_by_key(second)
+    assert sorted(files) == ["Board metadata", "Board metadata(1)"]
+    assert [len(f) for f in files.values()] == [1, 1]
+    artifacts = {a.key: a for a in collect(first)[0]}
+    assert len(artifacts["Board metadata"].description["sources"]) == 1
+    # Each file is its artifact's image, the "(1)" one too
+    items = {str(i.source_id).rsplit("/", 1)[-1]: i for i in to_items(collect(first)[0])}
+    media = {k: [(m.media_type, m.alt_text) for m in i.media or []] for k, i in items.items()}
+    assert media == {
+        "Board metadata": [("image", "Board.png")],
+        "Board metadata(1)": [("image", "Board.png")],
+    }
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run(to_items(collect(first)[0]))
+        SyncStore(conn, "notebooklm").run(to_items(collect(second)[0]))
+        shas = conn.execute(
+            "SELECT i.source_id, count(DISTINCT m.sha256) FROM items i "
+            "JOIN item_media m ON m.item_id = i.id GROUP BY i.id"
+        ).fetchall()
+    assert [r[1] for r in shas] == [1, 1]  # neither got the other's image
+
+
+def test_identical_same_titled_artifacts_are_told_apart_by_their_files(test_db, tmp_path) -> None:
+    store = BlobStore(store_root(test_db))
+    same = _infographic(2)
+    first = index_zip(_pair(tmp_path / "a.zip", (same, b"red"), (same, b"blue")), store)
+    second = index_zip(_pair(tmp_path / "b.zip", (same, b"blue"), (same, b"red")), store)
+    assert _files_by_key(first) == _files_by_key(second)
+
+
+def test_a_same_titled_artifacts_files_wait_until_its_others_are_read(test_db, tmp_path) -> None:
+    """Which name each of two gets depends on both descriptions: before an export's last
+    part, the files of one whose other is not read yet wait."""
+    store = BlobStore(store_root(test_db))
+    part = _zip(
+        tmp_path / "a.zip",
+        {f"{ART}/Board metadata(1).json": _infographic(1), f"{ART}/Board.png(1)": b"one"},
+    )
+    artifacts, unmatched = collect(index_zip(part, store), final=False)
+    assert [a.files for a in artifacts] == [[]]
+    assert unmatched == [f"{ART}/Board.png(1)"]
+
+
+def test_a_title_ending_in_a_number_is_not_a_copy(test_db, tmp_path) -> None:
+    store = BlobStore(store_root(test_db))
+    deck = {"title": "Plan (2)", "type": "ARTIFACT_TYPE_SLIDES"}
+    part = _zip(
+        tmp_path / "a.zip",
+        {f"{ART}/Plan (2) metadata.json": deck, f"{ART}/Plan (2)/Plan_2.pdf": b"%PDF"},
+    )
+    artifacts, unmatched = collect(index_zip(part, store), final=False)
+    assert unmatched == []
+    assert [f.member.rsplit("/", 1)[-1] for f in artifacts[0].files] == ["Plan_2.pdf"]
+
+
+def _app_export(store: BlobStore, path: Path, page: bytes) -> list:
+    app = {"title": "Cards", "type": "ARTIFACT_TYPE_APP"}
+    part = _zip(path, {f"{ART}/Cards metadata.json": app, f"{ART}/Cards": page})
+    return collect(index_zip(part, store))[0]
+
+
+def test_an_app_changed_between_exports_keeps_one_current_page(test_db, tmp_path) -> None:
+    """#376: each export's page is a version dated by the export's request time; the
+    newest export's is current, whichever is read last."""
+    from lestash.importers.notebooklm_artifacts import Export, export_time
+
+    store = BlobStore(store_root(test_db))
+    march = Export("2026-03-23 22:17:13", _app_export(store, tmp_path / "m.zip", b"<p>march</p>"))
+    november = Export(
+        "2026-11-06 10:09:07", _app_export(store, tmp_path / "n.zip", b"<p>november</p>")
+    )
+    assert export_time("takeout-20261106T100907Z-1-002.zip") == november.seen_at
+    with get_connection(test_db) as conn:
+        # The newer export first, then the older
+        for export, other in ((november, march), (march, november)):
+            SyncStore(conn, "notebooklm").run(to_items(export.artifacts, export.seen_at, [other]))
+        rows = conn.execute(
+            "SELECT version, created_at, superseded_at, size FROM item_media "
+            "JOIN blobs USING (sha256) ORDER BY created_at"
+        ).fetchall()
+        assert [tuple(r) for r in rows] == [
+            # Both from the first read: the other export's index gives the older page
+            (1, "2026-03-23 22:17:13", "2026-11-06 10:09:07", len(b"<p>march</p>")),
+            (2, "2026-11-06 10:09:07", None, len(b"<p>november</p>")),
+        ]
+        before = conn.total_changes
+        SyncStore(conn, "notebooklm").run(to_items(march.artifacts, march.seen_at, [november]))
+        assert conn.total_changes == before  # read again, nothing changes
+
+
+def test_a_file_artifacts_markdown_is_its_file_and_a_reports_is_not(test_db, tmp_path) -> None:
+    """#377: an uploaded "notes.md" is kept as "notes.md.md"; a report's markdown is a
+    note already, so it is neither stored nor attached."""
+    store = BlobStore(store_root(test_db))
+    upload = {
+        "title": "notes.md",
+        "type": "ARTIFACT_TYPE_FILE",
+        "file": {"fileName": "notes.md", "mimeType": "text/markdown"},
+    }
+    report = {"title": "Brief", "type": "ARTIFACT_TYPE_TAILORED_REPORT"}
+    part = _zip(
+        tmp_path / "a.zip",
+        {
+            f"{ART}/notes.md metadata.json": upload,
+            f"{ART}/notes.md.md": b"# my notes",
+            f"{ART}/Brief metadata.json": report,
+            f"{ART}/Brief.md": b"# Brief",
+        },
+    )
+    index = index_zip(part, store)
+    assert index.new_blobs == 1
+    artifacts, unmatched = collect(index)
+    assert unmatched == []
+    (item,) = to_items(artifacts)
+    assert [(m.media_type, m.mime_type, m.alt_text) for m in item.media or []] == [
+        ("file", "text/markdown", "notes.md")
+    ]
+
+
+def test_a_markdown_file_whose_description_is_in_another_part_is_kept(test_db, tmp_path) -> None:
+    store = BlobStore(store_root(test_db))
+    part = _zip(tmp_path / "a.zip", {f"{ART}/notes.md.md": b"# my notes"})
+    assert list(index_zip(part, store).files) == [f"{ART}/notes.md.md"]
+    report = {f"{ART}/notes.md.json": {"title": "notes", "type": "ARTIFACT_TYPE_TAILORED_REPORT"}}
+    # Known from an earlier part to be a report's
+    assert index_zip(part, store, known=report).files == {}
+
+
+def test_migration_37_refiles_files_from_the_kept_indexes(test_db, tmp_path) -> None:
+    """Rows written before #375 and #376: the first of two same-titled infographics holds
+    both images, the second as a "file"; the second has none; an app holds two current
+    pages. Migration 37 puts them right from the Takeout sync's kept indexes."""
+    from lestash.core.database import add_item_media, apply_migrations, save_checkpoint
+
+    store = BlobStore(store_root(test_db))
+    one, five = _infographic(1), _infographic(5, "describe it")
+    app = {"title": "Cards", "type": "ARTIFACT_TYPE_APP"}
+    exports: dict[str, dict[str, bytes | dict]] = {
+        "notebooklm:takeout-20261113T024920Z": {
+            f"{ART}/Cards metadata.json": app,
+            f"{ART}/Cards": b"old page",
+        },
+        "notebooklm:takeout-20261113T050346Z": {
+            f"{ART}/Cards metadata.json": app,
+            f"{ART}/Cards": b"new page",
+        },
+    }
+    with get_connection(test_db) as conn:
+        for n, (key, app_files) in enumerate(exports.items()):
+            pair = _pair(tmp_path / f"{n}.zip", (five, b"five"), (one, b"one"))
+            app_part = _zip(tmp_path / f"{n}-app.zip", app_files)
+            index = index_zip(app_part, store, index_zip(pair, store))
+            save_checkpoint(conn, "takeout", key, {**index.to_json(), "final": True})
+            if n == 0:
+                old_page = index.files[f"{ART}/Cards"][0]
+        sha = {f.rsplit("/", 1)[-1]: s for f, (s, _) in index.files.items()}
+        ids = {}
+        for key in ("Board metadata", "Board metadata(1)", "Cards metadata"):
+            ids[key] = conn.execute(
+                "INSERT INTO items (source_type, source_id, content, metadata) "
+                "VALUES ('notebooklm', ?, 'x', '{\"type\": \"artifact\"}') RETURNING id",
+                (f"{ART}/{key}",),
+            ).fetchone()[0]
+
+        def put(item: str, media_type: str, sha256: str) -> None:
+            add_item_media(
+                conn,
+                ids[item],
+                media_type=media_type,
+                source_origin="takeout",
+                sha256=sha256,
+                size=1,
+                _commit=False,
+            )
+
+        # As imported before the fix: both images on the first, "(1)" typed a file
+        put("Board metadata", "image", sha["Board.png"])
+        put("Board metadata", "file", sha["Board.png(1)"])
+        put("Cards metadata", "file", old_page)
+        put("Cards metadata", "file", sha["Cards"])
+        conn.execute("PRAGMA user_version = 36")
+        conn.commit()
+        assert apply_migrations(conn) == 1
+
+        def files(item: str) -> list[tuple]:
+            return [
+                tuple(r)
+                for r in conn.execute(
+                    "SELECT media_type, sha256, superseded_at IS NULL FROM item_media "
+                    "WHERE item_id = ? ORDER BY version, id",
+                    (ids[item],),
+                )
+            ]
+
+        board = {k: files(k) for k in ("Board metadata", "Board metadata(1)")}
+        # The one-source infographic is "Board metadata" in both exports
+        assert board == {
+            "Board metadata": [("image", sha["Board.png(1)"], 1)],
+            "Board metadata(1)": [("image", sha["Board.png"], 1)],
+        }
+        assert files("Cards metadata") == [("file", old_page, 0), ("file", sha["Cards"], 1)]
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 37

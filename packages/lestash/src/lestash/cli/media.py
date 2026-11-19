@@ -277,18 +277,41 @@ def notebooklm(
 ) -> None:
     """Import NotebookLM generated artifacts (slides, audio, video, infographics, apps)
     with their files from a Takeout's zips (#217). Give all parts: a notebook's files
-    are spread over them. Safe to run again."""
+    are spread over them. Safe to run again. Files are dated by the export's request
+    time in the zips' names, with their versions from the exports the Takeout sync
+    read (#376)."""
+    from datetime import datetime
+
     from lestash.core.blobs import BlobStore, store_root
     from lestash.core.config import Config
+    from lestash.core.database import get_checkpoints
     from lestash.core.sync import SyncStore
-    from lestash.importers.notebooklm_artifacts import collect, index_zips, to_items
+    from lestash.importers.notebooklm_artifacts import (
+        SAME_REQUEST,
+        collect,
+        export_time,
+        index_zips,
+        stored_exports,
+        to_items,
+    )
 
     config = Config.load()
     store = BlobStore(store_root(config))
     index = index_zips(zips, store)
     artifacts, unmatched = collect(index)
-    items, new_blobs = to_items(artifacts), index.new_blobs
+    seen_at = export_time(zips[0].name) if zips else None
+    new_blobs = index.new_blobs
     with get_connection(config) as conn:
+        others = []
+        if seen_at is not None:
+            # The Takeout sync's indexes, but not this export's own: its parts' names
+            # can be a second apart (#378)
+            mine = datetime.fromisoformat(seen_at)
+            stored = stored_exports(get_checkpoints(conn, "takeout"))
+            others = [
+                e for e in stored if abs(datetime.fromisoformat(e.seen_at) - mine) > SAME_REQUEST
+            ]
+        items = to_items(artifacts, seen_at, others)
         sync = SyncStore(conn, "notebooklm")
         sync.run(items)
         c = sync.counts

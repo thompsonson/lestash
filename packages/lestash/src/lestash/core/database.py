@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 36
+SCHEMA_VERSION = 37
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -823,6 +823,12 @@ MIGRATIONS = [
         # Run in apply_migrations (_migrate_36): the fold needs Python.
         "",
     ),
+    (
+        37,
+        "NotebookLM artifacts: files re-filed from the kept Takeout indexes (#375, #376)",
+        # Run in apply_migrations (_migrate_37): the indexes are read in Python.
+        "",
+    ),
 ]
 
 
@@ -951,6 +957,32 @@ def _migrate_36(conn: sqlite3.Connection) -> None:
         logger.info(f"Migration 36: folded {folded} YouTube video copies")
         mark_recent_history(conn, since, "migration 36")
         set_schema_version(conn, 36)
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _migrate_37(conn: sqlite3.Connection) -> None:
+    """Re-file each NotebookLM artifact's files from the Takeout exports' kept indexes:
+    the second of two same-titled artifacts gets its own files, and the first loses them
+    (#375); a file changed between exports leaves its older version superseded (#376).
+    See notebooklm_artifacts.refile_stored_exports. One transaction, with the version;
+    history rows are marked "migration 37"."""
+    from lestash.importers.notebooklm_artifacts import refile_stored_exports, stored_exports
+
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        since = max_history_id(conn)
+        changed, removed = refile_stored_exports(
+            conn, stored_exports(get_checkpoints(conn, "takeout"))
+        )
+        logger.info(
+            f"Migration 37: re-filed {changed} NotebookLM artifacts, {removed} files removed"
+        )
+        mark_recent_history(conn, since, "migration 37")
+        set_schema_version(conn, 37)
     except BaseException:
         conn.rollback()
         raise
@@ -1181,6 +1213,8 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> int:
                 _migrate_26(conn)  # likewise
             elif version == 36:
                 _migrate_36(conn)  # likewise
+            elif version == 37:
+                _migrate_37(conn)  # likewise
             else:
                 conn.executescript(sql)
                 if version == 22:
