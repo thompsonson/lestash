@@ -366,6 +366,10 @@ def _gemini_chat(conn: sqlite3.Connection, conversation_id: str) -> _GeminiChat 
     return _GeminiChat(row[0], row[1], metadata if isinstance(metadata, dict) else {})
 
 
+# Metadata read from a reply's text (gemini_activity._reply), besides takeout_gaps
+_FROM_REPLY_TEXT = ("link_count",)
+
+
 def _keep_filled_gaps(conn: sqlite3.Connection, item: ItemCreate) -> None:
     """Keep a reply whose Takeout gaps were filled from another copy (#300).
 
@@ -381,7 +385,12 @@ def _keep_filled_gaps(conn: sqlite3.Connection, item: ItemCreate) -> None:
         return
     item.content = stored["content"]
     metadata.pop("takeout_gaps")
-    metadata["gaps_filled_from"] = stored["metadata"]["gaps_filled_from"]
+    # What is read from the text goes with the text kept
+    for key in ("gaps_filled_from", *_FROM_REPLY_TEXT):
+        if key in stored["metadata"]:
+            metadata[key] = stored["metadata"][key]
+        else:
+            metadata.pop(key, None)
     item.metadata = metadata
 
 

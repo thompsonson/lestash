@@ -536,14 +536,20 @@ def test_a_chat_saved_as_html_is_matched_by_its_url(test_db) -> None:
 
 def test_a_reply_filled_from_another_copy_keeps_its_text_on_reimport(test_db) -> None:
     # Takeout dropped the bullets; the reply was filled in from a NotebookLM copy (#300)
-    gapped = _prompt("Review it", "2026-11-09T19:37:19.515Z", reply="<ul><li>.</li><li>.</li></ul>")
+    gapped = _prompt(
+        "Review it",
+        "2026-11-09T19:37:19.515Z",
+        reply='<ul><li><a href="https://a.example">.</a></li><li>.</li></ul>',
+    )
     _import(test_db, [gapped])
     [reply] = [i for i in _items(test_db, "author = 'model'")]
     assert reply["metadata"]["takeout_gaps"] is True
+    assert reply["metadata"]["link_count"] == 1
     full = "- The first point.\n- The second point."
     with get_connection(test_db) as conn:
         metadata = {**reply["metadata"], "gaps_filled_from": "notebooklm: a source"}
         metadata.pop("takeout_gaps")
+        metadata.pop("link_count")
         conn.execute(
             "UPDATE items SET content = ?, metadata = ? WHERE id = ?",
             (full, json.dumps(metadata), reply["id"]),
@@ -556,6 +562,7 @@ def test_a_reply_filled_from_another_copy_keeps_its_text_on_reimport(test_db) ->
     assert after["content"] == full
     assert "takeout_gaps" not in after["metadata"]
     assert after["metadata"]["gaps_filled_from"] == "notebooklm: a source"
+    assert "link_count" not in after["metadata"]  # the gapped copy's, not the text's
 
 
 def test_a_gapped_reply_not_filled_in_is_updated_as_before(test_db) -> None:
