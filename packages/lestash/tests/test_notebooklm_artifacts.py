@@ -291,7 +291,7 @@ def test_a_title_ending_in_a_number_is_not_a_copy(test_db, tmp_path) -> None:
         tmp_path / "a.zip",
         {f"{ART}/Plan (2) metadata.json": deck, f"{ART}/Plan (2)/Plan_2.pdf": b"%PDF"},
     )
-    artifacts, unmatched = collect(index_zip(part, store), final=False)
+    artifacts, unmatched = collect(index_zip(part, store), final=True)
     assert unmatched == []
     assert [f.member.rsplit("/", 1)[-1] for f in artifacts[0].files] == ["Plan_2.pdf"]
 
@@ -514,3 +514,15 @@ def test_migration_37_keeps_each_item_standing_for_its_artifact(test_db, tmp_pat
         ).fetchone()
     # The five-source item is now "(1)", the name its artifact has, with its own image
     assert tuple(rows) == (f"{ART}/Board metadata(1)", sha["Board.png"], "five")
+
+
+def test_nothing_is_written_before_an_exports_last_part(test_db, tmp_path) -> None:
+    """Review round 2: a part can't tell whether a later one holds another artifact of
+    a title, which would change the names; so before the last part, no artifact has an
+    item and every file waits, even a lone one with nothing "(n)" in sight."""
+    store = BlobStore(store_root(test_db))
+    part = _zip(
+        tmp_path / "a.zip",
+        {f"{ART}/Board metadata.json": _infographic(5, "describe it"), f"{ART}/Board.png": b"5"},
+    )
+    assert collect(index_zip(part, store), final=False) == ([], [f"{ART}/Board.png"])

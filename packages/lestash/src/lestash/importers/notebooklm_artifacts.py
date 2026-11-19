@@ -13,8 +13,9 @@ description whose name is its own, else the longest one either name begins with.
 A multi-part Takeout spreads a notebook's files over its parts. Each part's files go
 into the file store as it is read, and an ``Index`` of the descriptions and stored
 files is kept, so the parts need not be on disk together: the Takeout sync reads one
-at a time. Each artifact becomes a child item of its notebook (``type: artifact``),
-and each file is a media row pointing at its blob.
+at a time, and writes the artifacts once the last is read. Each artifact becomes a
+child item of its notebook (``type: artifact``), and each file is a media row pointing
+at its blob.
 
 Two artifacts of one title and type are "<title> metadata.json" and "<title>
 metadata(1).json", with files "<title>.png" and "<title>.png(1)" (#375). Within an
@@ -249,13 +250,17 @@ def index_zips(zips: list[Path], store: BlobStore) -> Index:
 
 def collect(index: Index, final: bool = True) -> tuple[list[Artifact], list[str]]:
     """The artifacts an index holds, with their files; and the files that belong to no
-    description.
+    description. A file artifact's markdown goes only to a file artifact: else it is a
+    report's, a note.
 
-    Before an export's last part (``final=False``), a file goes only to a description of
-    its own name, type and copy number: one that fits better may be in a part not read
-    yet, and a media row once written stays. Until then it is unmatched. A file
-    artifact's markdown goes only to a file artifact: else it is a report's, a note.
+    Before an export's last part (``final=False``) there are none, and every file is
+    unmatched: a part not read yet may hold a better description for a file, or another
+    artifact of a title, which changes the names (see _name_by_description). A media
+    row or an item written then could stand for the wrong artifact, so nothing is
+    written until the export is read (#375).
     """
+    if not final:
+        return [], sorted(index.files)
     by_notebook: dict[str, list[Artifact]] = defaultdict(list)
     artifacts = []
     for member, description in index.descriptions.items():
@@ -266,49 +271,29 @@ def collect(index: Index, final: bool = True) -> tuple[list[Artifact], list[str]
         by_notebook[notebook].append(artifact)
         artifacts.append(artifact)
     unmatched = []
-    # (notebook, title part) of a "(n)" file whose "(n)" description is not read yet
-    unread_copies: set[tuple[str, str]] = set()
     for member, (sha256, size) in sorted(index.files.items()):
         notebook, rest = member.split(ARTIFACTS, 1)
-        owner = _owner(by_notebook[notebook], rest, final)
-        if owner is None:
-            if not rest.endswith(".md"):
-                unmatched.append(member)
-        elif owner is UNREAD_COPY:
-            unread_copies.add((notebook, _head(_file_copy(rest)[0])))
-            unmatched.append(member)
-        elif owner is not WAIT:
+        owner = _owner(by_notebook[notebook], rest)
+        if owner is not None:
             owner.files.append(StoredFile(member, sha256, size))
-        else:
-            unmatched.append(member)  # its own description may be in a later part
-    held: list[Artifact] = []
-    for group in _same_named(artifacts, unread_copies):
-        waiting = _name_by_description(group, final)
-        if waiting is not None:
-            held.extend(group)
-            unmatched.extend(waiting)
-    # Before the last part, a group whose names may still change has no items yet: an
-    # item written now could stand for the other artifact once they are all read
-    kept = [a for a in artifacts if not any(a is h for h in held)]
-    return sorted(kept, key=lambda a: a.source_id), sorted(unmatched)
+        elif not rest.endswith(".md"):
+            unmatched.append(member)
+    for group in _same_named(artifacts):
+        _name_by_description(group)
+    return sorted(artifacts, key=lambda a: a.source_id), unmatched
 
 
-WAIT = Artifact("", "", {})  # a file whose own description may be in a later part
-UNREAD_COPY = Artifact("", "", {})  # WAIT, for a "(n)" file of an "(n)" not read yet
-
-
-def _owner(artifacts: list[Artifact], rest: str, final: bool) -> Artifact | None:
-    """The artifact a file below Artifacts/ belongs to; WAIT, or None for none."""
+def _owner(artifacts: list[Artifact], rest: str) -> Artifact | None:
+    """The artifact a file below Artifacts/ belongs to, or None."""
     plain, copy = _file_copy(rest)
     head = _head(plain)
-    if copy and not any(a.copy == copy and a.stem == head for a in artifacts):
-        # "X.png(1)" is always Takeout's "(1)"; "X(1)/" or "X(1)" may be a title
-        after_extension = "/" not in rest and plain_name(rest) != rest
-        a_title = not after_extension and any(a.stem == _head(rest) for a in artifacts)
-        if not final and not a_title:
-            return UNREAD_COPY  # its "(n)" description may be in a later part
-        if not after_extension:
-            plain, copy, head = rest, 0, _head(rest)
+    # "X.png(1)" is always Takeout's "(1)"; "X(1)/" or "X(1)" may be a title
+    if (
+        copy
+        and not any(a.copy == copy and a.stem == head for a in artifacts)
+        and ("/" in rest or plain_name(rest) == rest)
+    ):
+        plain, copy, head = rest, 0, _head(rest)
     kind = _file_type(plain)
     named = [a for a in artifacts if head.startswith(a.stem) or a.stem.startswith(head)]
     # Of the right type if any is: a type NotebookLM adds later still finds its files
@@ -319,27 +304,17 @@ def _owner(artifacts: list[Artifact], rest: str, final: bool) -> Artifact | None
     # The copy Takeout's "(n)" names: n-th others of a title pair within an export
     candidates = [a for a in candidates if a.copy == copy] or candidates
     exact = [a for a in candidates if a.stem == head]
-    if not final and not any(a.stem == head and a.copy == copy for a in typed):
-        return WAIT if candidates else None
     if not (exact or candidates):
         return None
     return (exact or sorted(candidates, key=lambda a: -len(a.stem)))[0]
 
 
-def _same_named(
-    artifacts: list[Artifact], unread_copies: Collection[tuple[str, str]] = ()
-) -> list[list[Artifact]]:
-    """The artifacts that share a notebook, title part and type: two or more; or one
-    Takeout numbered "(n)", or one with a "(n)" file of its title, whose others are in
-    a part not read yet."""
+def _same_named(artifacts: list[Artifact]) -> list[list[Artifact]]:
+    """The artifacts that share a notebook, title part and type, two or more."""
     groups: dict[tuple[str, str, str], list[Artifact]] = defaultdict(list)
     for a in artifacts:
         groups[(a.notebook, a.stem, str(a.description.get("type")))].append(a)
-    return [
-        g
-        for (notebook, stem, _), g in groups.items()
-        if len(g) > 1 or g[0].copy or (notebook, stem) in unread_copies
-    ]
+    return [g for g in groups.values() if len(g) > 1]
 
 
 def _by_description(artifact: Artifact) -> tuple[int, str]:
@@ -348,22 +323,11 @@ def _by_description(artifact: Artifact) -> tuple[int, str]:
     return count, json.dumps(artifact.description, sort_keys=True, default=str)
 
 
-def _name_by_description(group: list[Artifact], final: bool) -> list[str] | None:
+def _name_by_description(group: list[Artifact]) -> None:
     """Give artifacts of one title their names in the order of their descriptions, so
     each keeps its item whichever Takeout called "(1)" this time (#375). Ones whose
-    descriptions are the same are told apart by their files, all known only once the
-    export is read. Before then such a group is held: its files wait, and are returned;
-    so are those of a group whose "(n)"s are not all read yet (one alone, with a "(n)"
-    file of its title, too). None if the group is named."""
+    descriptions are the same are told apart by their files."""
     keys = [a.key for a in sorted(group, key=lambda a: a.copy)]
-    order = [_by_description(a) for a in group]
-    complete = sorted(a.copy for a in group) == list(range(len(group)))
-    lone_with_copies = len(group) == 1
-    if not final and (not complete or len(set(order)) < len(order) or lone_with_copies):
-        waiting = [f.member for a in group for f in a.files]
-        for a in group:
-            a.files = []
-        return waiting
 
     def files(a: Artifact) -> list[str]:
         return [f.sha256 for f in sorted(a.files, key=lambda f: plain_name(f.member))]
@@ -372,12 +336,10 @@ def _name_by_description(group: list[Artifact], final: bool) -> list[str] | None
         sorted(group, key=lambda a: (_by_description(a), files(a))), keys, strict=True
     ):
         artifact.key = key
-    return None
 
 
 def _summary(artifact: Artifact) -> str:
-    """From the description alone: a part read before the others has only some of
-    the files, and must not change what a later part wrote."""
+    """From the description alone."""
     title = artifact.description.get("title") or artifact.stem
     kind = artifact.kind.replace("_", " ")
     lines = [f"# {title}", f"NotebookLM {kind}"]

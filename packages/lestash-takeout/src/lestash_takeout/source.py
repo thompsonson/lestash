@@ -12,8 +12,9 @@ together, so a zip is never marked done while its items are missing.
 NotebookLM's generated artifacts (slides, audio, video…) spread their files over an export's
 parts. Each part's artifact files go into the file store as it is read, and what the export's
 parts held so far is kept as a checkpoint (key ``notebooklm:takeout-<request time>``). Each part
-then yields the export's artifacts again, with every file seen so far. Once all its parts are
-settled, the export is completed from that index, with no zip needed. One request's parts can
+keeps them waiting: the export's artifacts are written once, when its last part is read, as
+another part may change which artifact a file or a name belongs to (#375). Once all its parts
+are settled, the export is completed from that index, with no zip needed. One request's parts can
 differ by a second in their names (``takeout-20261106T100906Z-001.zip`` beside
 ``takeout-20261106T100907Z-1-001.zip``): they are one export (#378). Each file is dated by its
 export's request time, and the other exports' indexes give its other versions (#376).
@@ -295,7 +296,7 @@ def _complete(
 
     artifacts, unmatched = collect(index, final=final)
     if unmatched:
-        verb = "have no description" if final else "wait for their description"
+        verb = "have no description" if final else "wait for the export's last part"
         logger.info(f"{len(unmatched)} NotebookLM file(s) {verb}")
     seen_at = export_time(export)
     items = to_items(artifacts, seen_at, stored_exports(others or {}) if seen_at else ())
@@ -343,8 +344,9 @@ def import_zip(
 ) -> Iterator[ItemCreate | SyncCheckpoint]:
     """Download one Takeout zip and yield its items, then its checkpoint.
 
-    Its export's NotebookLM artifacts come after its items, with every file the export's
-    parts held so far, then the export's index (``kept_index`` is the stored one).
+    Its export's NotebookLM artifacts come after its items if it is the export's last
+    part, with every file the export's parts held, then the export's index
+    (``kept_index`` is the stored one).
     ``final``: no other part of the export is still to be read (see collect).
     ``app_config``: the database being synced into, for its file store (else the default).
     ``export``: the export's key (see export_keys; else the part's own name's);

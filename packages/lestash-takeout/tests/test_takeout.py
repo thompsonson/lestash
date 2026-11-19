@@ -636,7 +636,8 @@ def test_a_damaged_artifact_file_counts_an_attempt(test_db, tmp_path, monkeypatc
 
 def test_an_export_still_uploading_is_not_complete(test_db, tmp_path, monkeypatch) -> None:
     """Part one alone, just uploaded: its near-named file waits, as part two may hold its
-    own description. Part two arrives later and the file goes to it."""
+    own description. Part two arrives later, still uploading: nothing is written until
+    the export is complete, then the file goes to its own description."""
     from datetime import UTC, datetime, timedelta
 
     talk = {"title": "Talk", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW"}
@@ -656,7 +657,7 @@ def test_an_export_still_uploading_is_not_complete(test_db, tmp_path, monkeypatc
     )
     service.blobs["b"] = two
     _sync()
-    assert _artifact_media(test_db) == {"Talk 2": ["Talk 2.wav"]}  # an exact match
+    assert _artifact_media(test_db) == {}  # another part may still come
     assert _state(test_db)["notebooklm:takeout-20260101T000000Z"]["final"] is False
     # Once the upload is long done, the export is completed with no zip read
     later = (datetime.now(UTC) - timedelta(days=1)).isoformat()
@@ -666,6 +667,7 @@ def test_an_export_still_uploading_is_not_complete(test_db, tmp_path, monkeypatc
     _sync()
     assert service.downloaded == []
     assert _state(test_db)["notebooklm:takeout-20260101T000000Z"]["final"] is True
+    assert _artifact_media(test_db) == {"Talk 2": ["Talk 2.wav"]}
 
 
 def test_an_export_whose_parts_left_drive_is_completed_once(test_db, tmp_path, monkeypatch) -> None:
@@ -789,3 +791,51 @@ def test_a_request_kept_as_two_exports_before_378_is_merged(test_db, tmp_path, m
     assert exports == ["notebooklm:takeout-20261106T100907Z"]
     assert _state(test_db)[exports[0]]["final"] is True
     assert _artifact_media(test_db) == {"Deck": ["Deck.pdf"]}
+
+
+def test_same_titled_artifacts_in_two_parts_are_written_once_named(
+    test_db, tmp_path, monkeypatch
+) -> None:
+    """Review round 2: the first part holds one "Board" with its image, the second the
+    other "Board" (Takeout's "(1)"). Nothing is written until the second is read, so
+    no item or file stands for the wrong one, even for a while."""
+    one = {"title": "Board", "type": "ARTIFACT_TYPE_INFOGRAPHIC", "sources": [{}]}
+    five = {"title": "Board", "type": "ARTIFACT_TYPE_INFOGRAPHIC", "sources": [{}] * 5}
+    _drive_of(
+        monkeypatch,
+        {
+            "a": (
+                "takeout-20260101T000000Z-001.zip",
+                _zip(
+                    tmp_path / "a.zip",
+                    {
+                        **NOTEBOOK,
+                        f"{ART}/Board metadata.json": json.dumps(five),
+                        f"{ART}/Board.png": "five",
+                    },
+                ),
+            ),
+            "b": (
+                "takeout-20260101T000000Z-002.zip",
+                _zip(
+                    tmp_path / "b.zip",
+                    {
+                        f"{ART}/Board metadata(1).json": json.dumps(one),
+                        f"{ART}/Board.png(1)": "one",
+                    },
+                ),
+            ),
+        },
+    )
+    _sync()
+    with get_connection(test_db) as conn:
+        rows = conn.execute(
+            "SELECT i.source_id, json_array_length(i.metadata, '$.notebook_sources'), b.size "
+            "FROM items i JOIN item_media m ON m.item_id = i.id JOIN blobs b USING (sha256) "
+            "ORDER BY i.source_id"
+        ).fetchall()
+    # The one-source infographic is named first, and each has only its own image
+    assert [tuple(r) for r in rows] == [
+        (f"{ART}/Board metadata", 1, 3),
+        (f"{ART}/Board metadata(1)", 5, 4),
+    ]
