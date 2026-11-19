@@ -20,7 +20,7 @@ W3 (#218): searchable text for files that have none.
 - A diarizer turn's edge often falls a word or two off, and a short blip of the other voice can sit inside a turn; given a voice word by word, phrases were split between speakers.
 - A sentence keeps two voices only when each speaks at least 16 words of it: whisper ran two sentences together without a full stop.
 - Over the 25 overviews stored before the change, half the speaker changes fell mid-sentence; grouped by sentence, 9 in 1,836 do.
-- A title ("Dr.", "Mr.") or "e.g.", "i.e." and "vs." never end a sentence.
+- A title ("Dr.", "Mr."), "St.", "Mt.", "Fig.", "approx.", "e.g.", "i.e." and "vs." never end a sentence: they come before a name or a number.
 - Another abbreviation, an initial or an acronym ("Inc.", "B.", "U.S.") ends one when the next word starts with a capital. It does not when the next word is lowercase.
 - `lestash enrich regroup-transcripts` groups stored transcripts again from their text, with no recording heard again. `--dry-run` only counts.
 - A regrouped turn starting with words that moved forward into the next stored turn takes that turn's start: never before the real start, and late by at most those words.

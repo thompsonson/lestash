@@ -192,12 +192,14 @@ RUN_ON_WORDS = 16
 Word = tuple[float, str, int]  # (start, text, speaker)
 
 
-# Titles before a name, and Latin linking words: their full stop never ends a sentence
-NEVER_ENDS = frozenset({"mr", "mrs", "ms", "dr", "prof", "e.g", "i.e", "vs", "cf"})
-# Words whose full stop may or may not end a sentence: "Main St.", "Apple Inc."
+# Words almost always before a name or a number ("Dr. Smith", "St. Louis", "Fig. 3",
+# "approx. 30"), and Latin linking words: their full stop never ends a sentence
+NEVER_ENDS = frozenset({
+    "mr", "mrs", "ms", "dr", "prof", "st", "mt", "fig", "approx", "e.g", "i.e", "vs", "cf",
+})  # fmt: skip
+# Words whose full stop may or may not end a sentence: "Apple Inc.", "John Smith Jr."
 ABBREVIATIONS = frozenset({
-    "sr", "jr", "st", "mt", "fig", "approx", "al", "inc", "ltd", "corp", "dept", "etc",
-    "a.m", "p.m",
+    "sr", "jr", "al", "inc", "ltd", "corp", "dept", "etc", "a.m", "p.m",
 })  # fmt: skip
 _DOTTED = re.compile(r"(?:[A-Za-z]\.){2,}")  # U.S., B.F.
 _OPENERS = "\"'([“‘"
@@ -207,11 +209,12 @@ _CLOSERS = "\"')]”’"
 def _ends_sentence(word: str, following: str | None = None) -> bool:
     """Whether a word ends its sentence; ``following`` is the next word, if any.
 
-    A title ("Dr.") or "e.g." never does. Another abbreviation, an initial ("B.") or a
-    dotted acronym ("U.S.") does when the next word starts with a capital, as in "in
-    the U.S. Right.", and not when it is lowercase. So does any word with a stop when
-    nothing follows. A name with an initial, "John B. Watson", is then cut in two:
-    the cost is a voice change that falls there, not a reply joined to the wrong voice.
+    A title ("Dr."), "St.", "Mt.", "Fig.", "approx." or "e.g." never does. Another
+    abbreviation, an initial ("B.") or a dotted acronym ("U.S.") does when the next
+    word starts with a capital, as in "in the U.S. Right.", and not when it is
+    lowercase; with nothing after it, it ends one. A name with an initial, "John B.
+    Watson", is then cut in two: the cost is a voice change that falls there, not a
+    reply joined to the wrong voice.
     """
     parts = word.split()
     last = parts[-1].rstrip(_CLOSERS) if parts else ""

@@ -498,8 +498,11 @@ def test_a_regrouped_turn_is_never_timed_before_it_starts() -> None:
 def test_titles_never_end_a_sentence_and_other_abbreviations_go_by_the_next_word() -> None:
     for word in (" Dr.", "Mr.", "(e.g.", "i.e.", "vs."):
         assert not extract._ends_sentence(word, "Smith"), word
+    # Before a name or a number (review round 3)
+    for word, following in (("St.", "Louis"), ("Mt.", "Everest"), ("Fig.", "3"), ("approx.", "30")):
+        assert not extract._ends_sentence(word, following), word
     # Another abbreviation, an initial or an acronym ends a sentence before a capital
-    for word in ("U.S.", "a.m.", "B.", "C.", "Inc.", 'St."', "etc."):
+    for word in ("U.S.", "a.m.", "B.", "C.", "Inc.", 'Jr."', "etc."):
         assert extract._ends_sentence(word, "Right."), word
         assert not extract._ends_sentence(word, "and"), word
         assert extract._ends_sentence(word), word  # nothing follows
@@ -521,6 +524,13 @@ def test_a_reply_after_an_acronym_keeps_its_voice() -> None:
     stored = "**Speaker 1** (0:00): We met Dr.\n\n**Speaker 2** (0:02): Smith today. Yes."
     assert extract.regroup_transcript(stored) == (
         "**Speaker 1** (0:00): We met Dr. Smith today.\n\n**Speaker 2** (0:02): Yes."
+    )
+
+
+def test_a_blip_before_a_place_name_does_not_split_it() -> None:
+    stored = "**Speaker 1** (0:00): We flew to St.\n\n**Speaker 2** (0:02): Louis last week. Nice."
+    assert extract.regroup_transcript(stored) == (
+        "**Speaker 1** (0:00): We flew to St. Louis last week.\n\n**Speaker 2** (0:02): Nice."
     )
 
 
