@@ -196,43 +196,29 @@ Word = tuple[float, str, int]  # (start, text, speaker)
 # linking words: their full stop never ends a sentence
 TITLES = frozenset({"Mr", "Mrs", "Ms", "Dr", "Prof"})
 LINKING = frozenset({"e.g", "i.e", "vs", "cf"})
-# Saint and Mount before a name ("the St. Louis"), but Street after one ("Main St.")
-BEFORE_A_NAME = frozenset({"st", "mt"})
 BEFORE_A_NUMBER = frozenset({"fig", "approx"})  # "Fig. 3", "approx. 30"
-# Words whose full stop may or may not end a sentence: "Apple Inc.", "John Smith Jr."
+# Words whose full stop may or may not end a sentence: "Apple Inc.", "Main St."
 ABBREVIATIONS = frozenset({
-    "sr", "jr", "al", "inc", "ltd", "corp", "dept", "etc", "a.m", "p.m", "ms", "min", "sec",
+    "sr", "jr", "st", "mt", "al", "inc", "ltd", "corp", "dept", "etc", "a.m", "p.m", "ms",
+    "min", "sec",
 })  # fmt: skip
 _DOTTED = re.compile(r"(?:[A-Za-z]\.){2,}")  # U.S., B.F.
 _OPENERS = "\"'([“‘"
 _CLOSERS = "\"')]”’"
 
 
-def _bare(word: str | None, last: bool = False) -> str:
-    """A word without its opening quotes; of a segment kept as one "word", its first
-    word, or its last with ``last``."""
-    parts = (word or "").split()
-    if not parts:
-        return ""
-    return (parts[-1] if last else parts[0]).lstrip(_OPENERS)
+def _ends_sentence(word: str, following: str | None = None) -> bool:
+    """Whether a word ends its sentence; ``following`` is the next word, if any.
 
+    A capitalised title ("Dr.") or "e.g." never does; "Fig." and "approx." don't
+    before a number. Any other abbreviation ("Inc.", "St.", "200 ms."), an initial
+    ("B.") or a dotted acronym ("U.S.") ends a sentence when the next word starts
+    with a capital, as in "in the U.S. Right.", and not when it is lowercase; with
+    nothing after it, it ends one.
 
-def _ends_sentence(
-    word: str, following: str | None = None, before: str | None = None, opener: bool = False
-) -> bool:
-    """Whether a word ends its sentence, given the word after it and the one before it
-    in its sentence (``opener``: that one starts the sentence).
-
-    A capitalised title ("Dr.") or "e.g." never does. "St." and "Mt." are a saint or a
-    mount before a name, and never do, unless the word before them is a name ("Main
-    St.") or a number ("5th St."): capitalised but not opening the sentence, or
-    starting with a digit. "Fig." and "approx." don't before
-    a number. Any other abbreviation ("Main St.", "Inc.", "200 ms."), an initial ("B.")
-    or a dotted acronym ("U.S.") ends a sentence when the next word starts with a
-    capital, as in "in the U.S. Right.", and not when it is lowercase; with nothing
-    after it, it ends one. A name with an initial, "John B. Watson", is then cut in
-    two: the cost is a voice change that falls there, not a reply joined to the wrong
-    voice.
+    Text alone can't tell "Baker St. Right." from "St. Louis", or "John B. Watson"
+    from "Plan B. Then": these are cut there. A wrong cut matters only if a voice
+    change falls on it; a wrong join gives a reply to the wrong voice (#381).
     """
     parts = word.split()
     last = parts[-1].rstrip(_CLOSERS) if parts else ""
@@ -240,19 +226,16 @@ def _ends_sentence(
         return False
     if not last.endswith("."):
         return True
-    shown = _bare(last)[:-1]
+    shown = last.lstrip(_OPENERS)[:-1]
     stem = shown.lower()
-    nxt, prev = _bare(following), _bare(before, last=True)
+    # Of a segment kept as one "word", the first word
+    nxt = (following or "").split()[0].lstrip(_OPENERS) if (following or "").split() else ""
     if shown in TITLES or stem in LINKING:
-        return False
-    street = prev[:1].isdigit() or (prev[:1].isupper() and not opener)
-    if stem in BEFORE_A_NAME and not street:
         return False
     if stem in BEFORE_A_NUMBER and nxt[:1].isdigit():
         return False
     initial = len(stem) == 1 and shown.isupper()
-    known = ABBREVIATIONS | BEFORE_A_NAME | BEFORE_A_NUMBER
-    if stem in known or initial or _DOTTED.fullmatch(stem + "."):
+    if stem in ABBREVIATIONS | BEFORE_A_NUMBER or initial or _DOTTED.fullmatch(stem + "."):
         return not nxt or not nxt[0].islower()
     return True
 
@@ -311,11 +294,7 @@ def group_turns(words: list[Word]) -> list[tuple[int, float, str]]:
 
     for n, word in enumerate(words):
         sentence.append(word)
-        following = words[n + 1][1] if n + 1 < len(words) else None
-        before = sentence[-2][1] if len(sentence) > 1 else None
-        # The word before opens the sentence only if it is a word, not a segment
-        opener = len(sentence) == 2 and len(sentence[0][1].split()) == 1
-        if _ends_sentence(word[1], following, before, opener=opener):
+        if _ends_sentence(word[1], words[n + 1][1] if n + 1 < len(words) else None):
             flush()
     flush()
     return [(speaker, start, " ".join("".join(ws).split())) for speaker, start, ws in turns]

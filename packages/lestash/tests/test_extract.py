@@ -498,30 +498,21 @@ def test_a_regrouped_turn_is_never_timed_before_it_starts() -> None:
 def test_titles_never_end_a_sentence_and_other_abbreviations_go_by_the_next_word() -> None:
     for word in (" Dr.", "Mr.", "(e.g.", "i.e.", "vs."):
         assert not extract._ends_sentence(word, "Smith"), word
-    # By context (review rounds 3 and 4): saint and mount before a name, street after
-    # one; "Fig." and "approx." before a number; a lowercase unit is no title
-    for word, following, before, ends in (
-        ("St.", "Louis", "the", False),
-        ("Mt.", "Everest", "climbed", False),
-        ("St.", "Louis", None, False),
-        ("St.", "Right.", "Main", True),
-        ("St.", "and", "Baker", False),
-        ("Fig.", "3", "in", False),
-        ("approx.", "30", "is", False),
-        ("approx.", "Yes.", "only", True),
-        ("ms.", "Then", "200", True),
-        ("ms.", "and", "200", False),
-        ("min.", "Okay.", "five", True),
-        ("Ms.", "Smith", "met", False),
+    # "Fig." and "approx." before a number; a lowercase unit is no title
+    for word, following, ends in (
+        ("Fig.", "3", False),
+        ("approx.", "30", False),
+        ("approx.", "Yes.", True),
+        ("ms.", "Then", True),
+        ("ms.", "and", False),
+        ("min.", "Okay.", True),
+        ("Ms.", "Smith", False),
+        # "St." and "Mt." go by the next word, like other abbreviations (round 6)
+        ("St.", "Right.", True),
+        ("Mt.", "and", False),
+        ("St.", "Louis Missouri", True),  # a segment kept as one "word": its first
     ):
-        assert extract._ends_sentence(word, following, before) is ends, (before, word)
-    # A numbered street; a capital that only opens the sentence; a segment kept as one
-    # "word" (review round 5)
-    assert extract._ends_sentence("St.", "Right.", "5th")
-    assert extract._ends_sentence("St.", "Right.", "42nd")
-    assert not extract._ends_sentence("St.", "Louis", "Visit", opener=True)
-    assert extract._ends_sentence("St.", "Then", " we walked down Baker")
-    assert not extract._ends_sentence("St.", "Louis Missouri", " Then we saw the")
+        assert extract._ends_sentence(word, following) is ends, word
     # Another abbreviation, an initial or an acronym ends a sentence before a capital
     for word in ("U.S.", "a.m.", "B.", "C.", "Inc.", 'Jr."', "etc."):
         assert extract._ends_sentence(word, "Right."), word
@@ -548,38 +539,23 @@ def test_a_reply_after_an_acronym_keeps_its_voice() -> None:
     )
 
 
-def test_a_blip_before_a_place_name_does_not_split_it() -> None:
-    stored = "**Speaker 1** (0:00): We flew to St.\n\n**Speaker 2** (0:02): Louis last week. Nice."
-    assert extract.regroup_transcript(stored) == (
-        "**Speaker 1** (0:00): We flew to St. Louis last week.\n\n**Speaker 2** (0:02): Nice."
-    )
-
-
 def test_a_reply_after_a_street_keeps_its_voice() -> None:
     long_turn = " ".join(["word"] * 20)
     stored = f"**Speaker 1** (0:00): {long_turn} on Main St.\n\n**Speaker 2** (0:09): Right."
     assert extract.regroup_transcript(stored) == stored
-
-
-def test_a_saint_at_the_start_of_a_sentence_keeps_the_name() -> None:
-    # "Visit" is capitalised only as it opens the sentence: "St." is a saint here
-    stored = "**Speaker 1** (0:00): Visit St.\n\n**Speaker 2** (0:02): Louis. Sure."
-    assert extract.regroup_transcript(stored) == (
-        "**Speaker 1** (0:00): Visit St. Louis.\n\n**Speaker 2** (0:02): Sure."
+    # A street opening its sentence, as a reply, stays apart from the next reply
+    stored = (
+        f"**Speaker 1** (0:00): {long_turn}.\n\n**Speaker 2** (0:09): Baker St.\n\n"
+        "**Speaker 1** (0:10): Right."
     )
+    assert extract.regroup_transcript(stored) == stored
 
 
-def test_a_segment_without_word_times_gives_its_last_word_as_the_one_before() -> None:
-    # Whisper gave the first segment no word times: it is one "word"
-    segments = [
-        [0.0, 2.0, " We walked down Baker", []],
-        [2.0, 3.0, "", _words((2, "St."))],
-        [3.0, 4.0, "", _words((3, "Right."))],
-    ]
-    turns = [[0.0, 2.9, 0], [2.9, 4.0, 1]]
-    assert extract.speaker_turns(segments, turns) == (
-        "**Speaker 1** (0:00): We walked down Baker St.\n\n**Speaker 2** (0:03): Right."
-    )
+def test_st_before_a_name_is_cut_there_the_accepted_limit() -> None:
+    # Text can't tell "St. Louis" from "Baker St. Right.": "St." before a capital
+    # ends a sentence, so a voice change there is kept (round 6)
+    stored = "**Speaker 1** (0:00): We flew to St.\n\n**Speaker 2** (0:02): Louis. Nice."
+    assert extract.regroup_transcript(stored) == stored
 
 
 def test_a_turn_left_after_its_head_moved_back_keeps_its_own_time() -> None:
