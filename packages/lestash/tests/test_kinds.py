@@ -4,7 +4,7 @@ import json
 import sqlite3
 
 import pytest
-from lestash.core.kinds import KIND_SQL, KINDS, item_kind, kind_detail
+from lestash.core.kinds import KIND_SQL, KINDS, item_kind, kind_detail, kind_noun
 
 CASES = [
     ("linkedin", {"resource_name": "ugcPosts"}, None, True, "post"),
@@ -123,3 +123,20 @@ def test_migration_32_relabels_stored_jelu_items(tmp_path) -> None:
     assert conn.execute("SELECT kind FROM items").fetchone()[0] == "note"
     assert conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'idx_items_kind'").fetchone()
     conn.close()
+
+
+def test_kind_noun_names_one_item():
+    assert kind_noun("artifact", {"artifact_type": "slides"}) == "Slide deck"
+    assert kind_noun("artifact", {"artifact_type": "infographic"}) == "Infographic"
+    assert kind_noun("turn", {}) == "Turn"
+    assert kind_noun("nonsense", {}) is None
+    # A type not listed, and none at all (#373 review round 1)
+    assert kind_noun("artifact", {"artifact_type": "data_table"}) == "Data table"
+    assert kind_noun("artifact", {}) == "Generated item"
+    assert kind_noun("artifact", {"type": "artifact"}) == "Generated item"
+    assert kind_noun("artifact", {"artifact_type": " _ARTIFACT_ "}) == "Generated item"
+    assert kind_noun("artifact", {"artifact_type": "  ", "type": "report"}) == "Report"
+    assert kind_noun("artifact", {"artifact_type": "\t", "type": "report"}) == "Report"
+    assert kind_noun("artifact", {"artifact_type": "artifact", "type": "report"}) == "Report"
+    assert kind_noun("artifact", {"type": "report"}) == "Report"
+    assert kind_noun("artifact", {"artifact_type": " _ "}) == "Generated item"

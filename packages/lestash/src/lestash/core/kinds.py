@@ -200,3 +200,25 @@ def kind_detail(kind: str, metadata: Mapping[str, Any] | None) -> str | None:
         artifact = _text(metadata, "artifact_type") or _text(metadata, "type")
         return ARTIFACT_LABELS.get(artifact or "", artifact)
     return None
+
+
+# Where a label is a plural, the one thing it names, as in "Found in the slide deck"
+_SINGULAR = {"Slides": "Slide deck"}
+
+
+def _artifact_noun(value: str | None) -> str:
+    """An artifact type in words; "" for none, a blank one, or the kind's own key."""
+    if not value:
+        return ""
+    name = ARTIFACT_LABELS.get(value) or " ".join(value.replace("_", " ").split()).capitalize()
+    return "" if name == "Artifact" else name
+
+
+def kind_noun(kind: str, metadata: Mapping[str, Any] | None) -> str | None:
+    """One item of this kind, in words: the artifact's type, else the kind's label."""
+    if kind == "artifact":
+        # The first type that reads as words, artifact_type before type
+        names = (_artifact_noun(_text(metadata, k)) for k in ("artifact_type", "type"))
+        detail = next((name for name in names if name), "")
+        return _SINGULAR.get(detail, detail) if detail else "Generated item"
+    return KINDS[kind].label if kind in KINDS else None

@@ -294,3 +294,27 @@ def test_a_folder_name_reused_by_another_notebook_is_not_merged(test_db) -> None
         )
         assert len(_notebooks(conn)) == 2
         assert find_duplicates(conn) == []
+
+
+def test_a_view_time_without_a_zone_compares_with_one_that_has_it(test_db) -> None:
+    # Naive against aware raised TypeError, and the whole dedupe was skipped (#302)
+    renamed = "Takeout/NotebookLM/Other name"
+    with get_connection(test_db) as conn:
+        _sync(conn, _export(FULL, notebook_id=UUID, chat="Chat 1", viewed="2026-10-01T00:00:00"))
+        _sync(
+            conn,
+            _export(renamed, notebook_id=UUID, chat="Chat 1", viewed="2026-11-01T00:00:00Z"),
+        )
+        assert [source_id for _, source_id in _notebooks(conn)] == [renamed]
+
+
+def test_a_rename_to_50_characters_beginning_the_old_name_is_not_undone(test_db) -> None:
+    # The new name looks like a cut of the old, but only it has a view time: it came from
+    # a newer export, so it is not taken for the older copy (#302)
+    with get_connection(test_db) as conn:
+        _sync(conn, _export(FULL, notebook_id=UUID, chat="Chat 1"))
+        _sync(
+            conn,
+            _export(CUT, notebook_id=UUID, chat="Chat 1", viewed="2026-11-01T00:00:00Z"),
+        )
+        assert CUT in [source_id for _, source_id in _notebooks(conn)]

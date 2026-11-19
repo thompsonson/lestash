@@ -27,7 +27,7 @@ from lestash.core.embeddings import re_embed_item
 from lestash.core.enrichment import (
     subtype_excludes_sql,
 )
-from lestash.core.kinds import KINDS
+from lestash.core.kinds import KINDS, kind_noun
 from lestash.core.links import links_of, reject_link
 from lestash.core.search import keyword_search
 from lestash.models.item import Item
@@ -386,12 +386,14 @@ def search_items(
             if found and found["snippet"]:
                 enriched.preview = found["snippet"]
             if part is not None:
-                kind, text = conn.execute(
-                    "SELECT kind, substr(content, 1, 300) FROM items WHERE id = ?", (part,)
-                ).fetchone() or (None, None)
+                kind, text, meta = conn.execute(
+                    "SELECT kind, substr(content, 1, 300), metadata FROM items WHERE id = ?",
+                    (part,),
+                ).fetchone() or (None, None, None)
                 enriched.match_id = part
+                # The artifact's type for a generated one, as in "Found in the slide deck"
                 enriched.match_label = (
-                    KINDS[kind].label if isinstance(kind, str) and kind in KINDS else None
+                    kind_noun(kind, _json_object(meta)) if isinstance(kind, str) else None
                 )
                 if not (found and found["snippet"]) and text:
                     enriched.preview = " ".join(text.split())[:200]

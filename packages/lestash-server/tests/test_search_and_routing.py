@@ -1,5 +1,6 @@
 """Search with punctuation, the API's 404 for unknown paths, and the reported version."""
 
+import json
 from importlib.metadata import version
 
 import lestash_server.deps as deps
@@ -479,6 +480,39 @@ def test_keyword_hits_on_turns_give_one_result_for_their_chat(client, seeded):
     assert items[0]["match_id"] in turns
     assert items[0]["match_label"] == "Turn"
     assert "<<PDDL>>" in items[0]["preview"]
+
+
+def test_a_match_in_a_generated_artifact_names_its_type(client, seeded):
+    """Not "Found in a generated" (#298)."""
+    with deps.get_db() as conn:
+        notebook = conn.execute(
+            "INSERT INTO items (source_type, source_id, title, content, metadata) "
+            "VALUES ('notebooklm', 'nb-298', 'Psychology', 'A notebook', "
+            '\'{"type": "notebook"}\') RETURNING id'
+        ).fetchone()[0]
+        for n, (artifact, text) in enumerate(
+            [("infographic", "Zylophant dimensions"), ("slides", "Quorblet dimensions")]
+        ):
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, title, content, parent_id, metadata)"
+                " VALUES ('notebooklm', ?, ?, ?, ?, ?)",
+                (
+                    f"art-298-{n}",
+                    artifact,
+                    text,
+                    notebook,
+                    json.dumps({"type": "artifact", "artifact_type": artifact}),
+                ),
+            )
+        conn.commit()
+
+    labels = {}
+    for word in ("Zylophant", "Quorblet"):
+        resp = client.get("/api/items/search", params={"q": word, "mode": "keyword"})
+        [item] = resp.json()["items"]
+        labels[word] = item["match_label"]
+
+    assert labels == {"Zylophant": "Infographic", "Quorblet": "Slide deck"}
 
 
 def test_ungrouped_keyword_search_lists_the_turns(client, seeded):
