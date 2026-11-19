@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
+from typing import Any
 
 from lestash.core.blobs import BlobStore, store_root
 from lestash.core.database import get_connection
@@ -245,15 +246,42 @@ def test_identical_same_titled_artifacts_are_told_apart_by_their_files(test_db, 
 
 def test_a_same_titled_artifacts_files_wait_until_its_others_are_read(test_db, tmp_path) -> None:
     """Which name each of two gets depends on both descriptions: before an export's last
-    part, the files of one whose other is not read yet wait."""
+    part, one whose other is not read yet has no item, and its files wait."""
     store = BlobStore(store_root(test_db))
     part = _zip(
         tmp_path / "a.zip",
         {f"{ART}/Board metadata(1).json": _infographic(1), f"{ART}/Board.png(1)": b"one"},
     )
     artifacts, unmatched = collect(index_zip(part, store), final=False)
-    assert [a.files for a in artifacts] == [[]]
+    assert artifacts == []
     assert unmatched == [f"{ART}/Board.png(1)"]
+
+
+def test_a_copys_file_waits_for_its_own_description(test_db, tmp_path) -> None:
+    """Review round 1: "Board.png(1)" read with only "Board metadata.json" is not the
+    first one's; and the first one may be renamed once the other is read, so it waits
+    too. Once the export is read, each has its own."""
+    store = BlobStore(store_root(test_db))
+    first = _zip(
+        tmp_path / "a.zip",
+        {
+            f"{ART}/Board metadata.json": _infographic(5, "describe it"),
+            f"{ART}/Board.png": b"five",
+            f"{ART}/Board.png(1)": b"one",
+        },
+    )
+    index = index_zip(first, store)
+    artifacts, unmatched = collect(index, final=False)
+    assert artifacts == []
+    assert unmatched == [f"{ART}/Board.png", f"{ART}/Board.png(1)"]
+    second = _zip(tmp_path / "b.zip", {f"{ART}/Board metadata(1).json": _infographic(1)})
+    files = _files_by_key(index_zip(second, store, index))
+    sha = {f.rsplit("/", 1)[-1]: s for f, (s, _) in index.files.items()}
+    # The one-source infographic is named first, whichever Takeout numbered "(1)"
+    assert files == {
+        "Board metadata": [sha["Board.png(1)"]],
+        "Board metadata(1)": [sha["Board.png"]],
+    }
 
 
 def test_a_title_ending_in_a_number_is_not_a_copy(test_db, tmp_path) -> None:
@@ -415,3 +443,74 @@ def test_migration_37_refiles_files_from_the_kept_indexes(test_db, tmp_path) -> 
         }
         assert files("Cards metadata") == [("file", old_page, 0), ("file", sha["Cards"], 1)]
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
+
+
+def test_merging_one_requests_two_kept_indexes() -> None:
+    """Review round 1: syncs before #378 kept one request's parts as two exports."""
+    from lestash.importers.notebooklm_artifacts import merge_split_exports, stored_exports
+
+    early: dict[str, Any] = {
+        "descriptions": {f"{ART}/Cards metadata.json": {"title": "Cards"}},
+        "files": {},
+    }
+    late: dict[str, Any] = {"descriptions": {}, "files": {f"{ART}/Cards": ["a" * 64, 4]}}
+    late["final"] = True
+    checkpoints = {
+        "notebooklm:takeout-20261106T100906Z": {**early, "final": True},
+        "notebooklm:takeout-20261106T100907Z": late,
+        "notebooklm:takeout-20261113T024920Z": late,  # another request
+    }
+    merged = merge_split_exports(checkpoints)
+    assert list(merged) == ["notebooklm:takeout-20261106T100907Z"]
+    value, replaced = merged["notebooklm:takeout-20261106T100907Z"]
+    assert replaced == ["notebooklm:takeout-20261106T100906Z"]
+    assert value["final"] is False  # completed again by the sync
+    assert set(value["descriptions"]) == set(early["descriptions"])
+    assert set(value["files"]) == set(late["files"])
+    exports = stored_exports(checkpoints)
+    assert [e.seen_at for e in exports] == ["2026-11-06 10:09:07", "2026-11-13 02:49:20"]
+    assert [len(a.files) for a in exports[0].artifacts] == [1]
+
+
+def test_migration_37_keeps_each_item_standing_for_its_artifact(test_db, tmp_path) -> None:
+    """Review round 1: an item made before #375 under the name its artifact no longer
+    has is renamed, with its tags, rather than given the other artifact's files."""
+    from lestash.core.database import add_tag, apply_migrations, save_checkpoint
+
+    store = BlobStore(store_root(test_db))
+    one, five = _infographic(1), _infographic(5, "describe it")
+    index = index_zip(_pair(tmp_path / "a.zip", (five, b"five"), (one, b"one")), store)
+    sha = {f.rsplit("/", 1)[-1]: s for f, (s, _) in index.files.items()}
+    with get_connection(test_db) as conn:
+        save_checkpoint(
+            conn,
+            "takeout",
+            "notebooklm:takeout-20261113T024920Z",
+            {**index.to_json(), "final": True},
+        )
+        # As the export named them before: the five-source one first
+        ids = {}
+        for key, description in (("Board metadata", five), ("Board metadata(1)", one)):
+            metadata = {
+                "type": "artifact",
+                "notebook_sources": [s["sourceId"]["id"] for s in description["sources"]],
+                "options": description["infographic"],
+            }
+            ids[key] = conn.execute(
+                "INSERT INTO items (source_type, source_id, content, metadata) "
+                "VALUES ('notebooklm', ?, 'x', ?) RETURNING id",
+                (f"{ART}/{key}", json.dumps(metadata)),
+            ).fetchone()[0]
+        add_tag(conn, ids["Board metadata"], "five")
+        conn.execute("PRAGMA user_version = 36")
+        conn.commit()
+        apply_migrations(conn)
+        rows = conn.execute(
+            "SELECT i.source_id, m.sha256, group_concat(t.name) FROM items i "
+            "JOIN item_media m ON m.item_id = i.id "
+            "LEFT JOIN item_tags it ON it.item_id = i.id LEFT JOIN tags t ON t.id = it.tag_id "
+            "WHERE i.id = ? GROUP BY i.id",
+            (ids["Board metadata"],),
+        ).fetchone()
+    # The five-source item is now "(1)", the name its artifact has, with its own image
+    assert tuple(rows) == (f"{ART}/Board metadata(1)", sha["Board.png"], "five")

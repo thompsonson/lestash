@@ -759,3 +759,33 @@ def test_a_part_with_only_artifacts_is_imported_not_nothing_to_import(
     commands.main(["list"], standalone_mode=False)
     out = capsys.readouterr().out
     assert "nothing to import" not in out and "0 items, 1 artifacts" in out
+
+
+def test_a_request_kept_as_two_exports_before_378_is_merged(test_db, tmp_path, monkeypatch) -> None:
+    """Review round 1: a sync before #378 kept the two names' indexes apart, so the
+    deck's description and its file were never put together. The next sync merges
+    them and completes the export."""
+    from lestash.core.blobs import BlobStore, store_root
+    from lestash.core.database import save_checkpoint
+    from lestash.importers.notebooklm_artifacts import index_zip
+
+    deck = {"title": "Deck", "type": "ARTIFACT_TYPE_SLIDES"}
+    a = _zip(tmp_path / "a.zip", {**NOTEBOOK, f"{ART}/Deck metadata.json": json.dumps(deck)})
+    b = _zip(tmp_path / "b.zip", {f"{ART}/Deck/Deck.pdf": "%PDF"})
+    names = {"a": "takeout-20261106T100906Z-001.zip", "b": "takeout-20261106T100907Z-1-001.zip"}
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        for fid, path in (("a", a), ("b", b)):
+            key = source.export_key({"name": names[fid]})
+            save_checkpoint(
+                conn, "takeout", key, {**index_zip(path, store).to_json(), "final": True}
+            )
+            record = source._record({"name": names[fid]}, "imported", 0, None)
+            save_checkpoint(conn, "takeout", fid, record)
+        conn.commit()
+    _drive_of(monkeypatch, {fid: (names[fid], p) for fid, p in (("a", a), ("b", b))})
+    _sync()
+    exports = [k for k in _state(test_db) if k.startswith("notebooklm:")]
+    assert exports == ["notebooklm:takeout-20261106T100907Z"]
+    assert _state(test_db)[exports[0]]["final"] is True
+    assert _artifact_media(test_db) == {"Deck": ["Deck.pdf"]}

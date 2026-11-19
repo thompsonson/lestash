@@ -39,7 +39,6 @@ from typing import TYPE_CHECKING, Annotated, Any
 import typer
 from lestash.core.logging import get_plugin_logger
 from lestash.importers import IMPORTER_VERSION, CorruptZip, parse_zip
-from lestash.importers.notebooklm_artifacts import SAME_REQUEST
 from lestash.models.item import ItemCreate
 from lestash.models.sync import SyncCheckpoint
 from lestash.plugins.base import SourcePlugin
@@ -203,13 +202,6 @@ def export_key(file: dict[str, Any]) -> str:
     return "notebooklm:" + re.sub(r"-\d+\.zip$", "", name)
 
 
-def _request_time(key: str) -> datetime | None:
-    try:
-        return datetime.strptime(key.removeprefix("notebooklm:takeout-"), "%Y%m%dT%H%M%SZ")
-    except ValueError:
-        return None
-
-
 def export_keys(
     listed: list[dict[str, Any]], state: dict[str, dict[str, Any]] | None = None
 ) -> dict[str, str]:
@@ -217,23 +209,26 @@ def export_keys(
     at most SAME_REQUEST apart are one request: Takeout can name one request's parts a
     second apart (#378). The group's key is one an index is kept under already, so a
     part listed late joins it; else its latest time's."""
+    from lestash.importers.notebooklm_artifacts import request_groups
+
     own = {f["id"]: export_key(f) for f in listed}
-    timed = sorted(
-        {(t, k) for k in set(own.values()) | set(state or {}) if (t := _request_time(k))}
-    )
-    groups: list[list[tuple[datetime, str]]] = []
-    for when, key in timed:
-        if groups and when - groups[-1][-1][0] <= SAME_REQUEST:
-            groups[-1].append((when, key))
-        else:
-            groups.append([(when, key)])
-    chosen: dict[str, str] = {}
-    for group in groups:
-        keys = [k for _, k in group]
-        kept = [k for k in keys if k in (state or {})]
-        for key in keys:
-            chosen[key] = (kept or keys)[-1]
-    return {fid: chosen.get(key, key) for fid, key in own.items()}
+    kept = [k for k in state or {} if k.startswith("notebooklm:")]
+    groups = request_groups([*own.values(), *kept], kept)
+    return {fid: groups[key] for fid, key in own.items()}
+
+
+def merge_split(state: dict[str, dict[str, Any]]) -> Iterator[SyncCheckpoint]:
+    """Merge the indexes a sync before #378 kept for one request's two names, in
+    ``state`` too; finish_exports then completes the merged export."""
+    from lestash.importers.notebooklm_artifacts import merge_split_exports
+
+    for key, (value, replaced) in merge_split_exports(state).items():
+        logger.info(f"{key}: merged the indexes of {', '.join(replaced)}")
+        state[key] = value
+        yield SyncCheckpoint(key=key, value=value)
+        for old in replaced:
+            state.pop(old, None)
+            yield SyncCheckpoint(key=old, value=None)
 
 
 def _other_exports(state: dict[str, dict[str, Any]] | None, export: str) -> dict[str, Any]:
@@ -521,6 +516,7 @@ class TakeoutSource(SourcePlugin):
         problems: list[str] = []
         try:
             listed = list_takeout_zips(service)
+            yield from merge_split(state)
             pending = pending_zips(service, state, listed)
             keys = export_keys(listed, state)
             for file in pending:

@@ -32,9 +32,9 @@ import mimetypes
 import re
 import zipfile
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -266,31 +266,49 @@ def collect(index: Index, final: bool = True) -> tuple[list[Artifact], list[str]
         by_notebook[notebook].append(artifact)
         artifacts.append(artifact)
     unmatched = []
+    # (notebook, title part) of a "(n)" file whose "(n)" description is not read yet
+    unread_copies: set[tuple[str, str]] = set()
     for member, (sha256, size) in sorted(index.files.items()):
         notebook, rest = member.split(ARTIFACTS, 1)
         owner = _owner(by_notebook[notebook], rest, final)
         if owner is None:
             if not rest.endswith(".md"):
                 unmatched.append(member)
+        elif owner is UNREAD_COPY:
+            unread_copies.add((notebook, _head(_file_copy(rest)[0])))
+            unmatched.append(member)
         elif owner is not WAIT:
             owner.files.append(StoredFile(member, sha256, size))
         else:
             unmatched.append(member)  # its own description may be in a later part
-    for group in _same_named(artifacts):
-        unmatched.extend(_name_by_description(group, final))
-    return sorted(artifacts, key=lambda a: a.source_id), sorted(unmatched)
+    held: list[Artifact] = []
+    for group in _same_named(artifacts, unread_copies):
+        waiting = _name_by_description(group, final)
+        if waiting is not None:
+            held.extend(group)
+            unmatched.extend(waiting)
+    # Before the last part, a group whose names may still change has no items yet: an
+    # item written now could stand for the other artifact once they are all read
+    kept = [a for a in artifacts if not any(a is h for h in held)]
+    return sorted(kept, key=lambda a: a.source_id), sorted(unmatched)
 
 
 WAIT = Artifact("", "", {})  # a file whose own description may be in a later part
+UNREAD_COPY = Artifact("", "", {})  # WAIT, for a "(n)" file of an "(n)" not read yet
 
 
 def _owner(artifacts: list[Artifact], rest: str, final: bool) -> Artifact | None:
     """The artifact a file below Artifacts/ belongs to; WAIT, or None for none."""
     plain, copy = _file_copy(rest)
     head = _head(plain)
-    if not copy or not any(a.copy == copy and a.stem == head for a in artifacts):
-        # No "(n)" Takeout added, or a title that ends "(2)" itself
-        plain, copy, head = rest, 0, _head(rest)
+    if copy and not any(a.copy == copy and a.stem == head for a in artifacts):
+        # "X.png(1)" is always Takeout's "(1)"; "X(1)/" or "X(1)" may be a title
+        after_extension = "/" not in rest and plain_name(rest) != rest
+        a_title = not after_extension and any(a.stem == _head(rest) for a in artifacts)
+        if not final and not a_title:
+            return UNREAD_COPY  # its "(n)" description may be in a later part
+        if not after_extension:
+            plain, copy, head = rest, 0, _head(rest)
     kind = _file_type(plain)
     named = [a for a in artifacts if head.startswith(a.stem) or a.stem.startswith(head)]
     # Of the right type if any is: a type NotebookLM adds later still finds its files
@@ -308,13 +326,20 @@ def _owner(artifacts: list[Artifact], rest: str, final: bool) -> Artifact | None
     return (exact or sorted(candidates, key=lambda a: -len(a.stem)))[0]
 
 
-def _same_named(artifacts: list[Artifact]) -> list[list[Artifact]]:
-    """The artifacts that share a notebook, title part and type: two or more, or one
-    Takeout numbered "(n)", whose others are in a part not read yet."""
+def _same_named(
+    artifacts: list[Artifact], unread_copies: Collection[tuple[str, str]] = ()
+) -> list[list[Artifact]]:
+    """The artifacts that share a notebook, title part and type: two or more; or one
+    Takeout numbered "(n)", or one with a "(n)" file of its title, whose others are in
+    a part not read yet."""
     groups: dict[tuple[str, str, str], list[Artifact]] = defaultdict(list)
     for a in artifacts:
         groups[(a.notebook, a.stem, str(a.description.get("type")))].append(a)
-    return [g for g in groups.values() if len(g) > 1 or g[0].copy]
+    return [
+        g
+        for (notebook, stem, _), g in groups.items()
+        if len(g) > 1 or g[0].copy or (notebook, stem) in unread_copies
+    ]
 
 
 def _by_description(artifact: Artifact) -> tuple[int, str]:
@@ -323,16 +348,18 @@ def _by_description(artifact: Artifact) -> tuple[int, str]:
     return count, json.dumps(artifact.description, sort_keys=True, default=str)
 
 
-def _name_by_description(group: list[Artifact], final: bool) -> list[str]:
+def _name_by_description(group: list[Artifact], final: bool) -> list[str] | None:
     """Give artifacts of one title their names in the order of their descriptions, so
     each keeps its item whichever Takeout called "(1)" this time (#375). Ones whose
     descriptions are the same are told apart by their files, all known only once the
-    export is read: before then their files wait, and are returned. So do those of a
-    group whose "(n)"s are not all read yet."""
+    export is read. Before then such a group is held: its files wait, and are returned;
+    so are those of a group whose "(n)"s are not all read yet (one alone, with a "(n)"
+    file of its title, too). None if the group is named."""
     keys = [a.key for a in sorted(group, key=lambda a: a.copy)]
     order = [_by_description(a) for a in group]
     complete = sorted(a.copy for a in group) == list(range(len(group)))
-    if not final and (not complete or len(set(order)) < len(order)):
+    lone_with_copies = len(group) == 1
+    if not final and (not complete or len(set(order)) < len(order) or lone_with_copies):
         waiting = [f.member for a in group for f in a.files]
         for a in group:
             a.files = []
@@ -345,7 +372,7 @@ def _name_by_description(group: list[Artifact], final: bool) -> list[str]:
         sorted(group, key=lambda a: (_by_description(a), files(a))), keys, strict=True
     ):
         artifact.key = key
-    return []
+    return None
 
 
 def _summary(artifact: Artifact) -> str:
@@ -419,6 +446,52 @@ def export_time(name: str) -> str | None:
         return None
     y, mo, d, h, mi, sec = m.groups()
     return f"{y}-{mo}-{d} {h}:{mi}:{sec}"
+
+
+def request_groups(keys: Iterable[str], kept: Collection[str] = ()) -> dict[str, str]:
+    """Each Takeout export key's group key. Keys whose request times are at most
+    SAME_REQUEST apart are one request (#378). The group's key is the latest of those
+    in ``kept`` (an index is stored under it), else its latest. A key with no request
+    time is its own group."""
+    timed = sorted((t, k) for k in set(keys) if (t := export_time(k)))
+    groups: list[list[str]] = []
+    last: datetime | None = None
+    for when, key in timed:
+        at = datetime.fromisoformat(when)
+        if groups and last is not None and at - last <= SAME_REQUEST:
+            groups[-1].append(key)
+        else:
+            groups.append([key])
+        last = at
+    chosen = {}
+    for group in groups:
+        stored = [k for k in group if k in kept]
+        for key in group:
+            chosen[key] = (stored or group)[-1]
+    return {k: chosen.get(k, k) for k in keys}
+
+
+def merge_split_exports(
+    checkpoints: Mapping[str, dict[str, Any]],
+) -> dict[str, tuple[dict[str, Any], list[str]]]:
+    """Exports a sync before #378 kept as two indexes, one request's parts named a
+    second apart: by the key to keep, the merged index and the keys it replaces. The
+    merged index is not final, so the sync completes it again."""
+    exports = [k for k, v in checkpoints.items() if k.startswith("notebooklm:") and v]
+    members: dict[str, list[str]] = defaultdict(list)
+    for key, group in request_groups(exports, exports).items():
+        members[group].append(key)
+    merged = {}
+    for group, keys in members.items():
+        if len(keys) < 2:
+            continue
+        index = Index()
+        for key in sorted(keys, key=lambda k: export_time(k) or ""):  # newer wins
+            part = Index.from_json(checkpoints[key])
+            index.descriptions.update(part.descriptions)
+            index.files.update(part.files)
+        merged[group] = ({**index.to_json(), "final": False}, [k for k in keys if k != group])
+    return merged
 
 
 @dataclass
@@ -497,11 +570,7 @@ def to_items(
                     "type": "artifact",
                     "artifact_type": artifact.kind,
                     "status": description.get("status"),
-                    "notebook_sources": [
-                        s.get("sourceId", {}).get("id")
-                        for s in description.get("sources") or []
-                        if isinstance(s, dict)
-                    ],
+                    "notebook_sources": _source_ids(description),
                     "options": description.get(_options_key(description)),
                     "_parent_source_id": artifact.notebook,
                 },
@@ -511,9 +580,85 @@ def to_items(
     return items
 
 
+def _source_ids(description: dict[str, Any]) -> list[Any]:
+    return [
+        s.get("sourceId", {}).get("id")
+        for s in description.get("sources") or []
+        if isinstance(s, dict)
+    ]
+
+
+def _identity(sources: Any, options: Any) -> str:
+    """What tells an artifact from another of its title: its sources and options."""
+    return json.dumps([sources, options], sort_keys=True, default=str)
+
+
+def _artifact_identity(artifact: Artifact) -> str:
+    description = artifact.description
+    return _identity(_source_ids(description), description.get(_options_key(description)))
+
+
+def rebind_same_named(conn: Any, exports: Sequence[Export]) -> int:
+    """Rename stored items of same-titled artifacts so each keeps standing for the
+    artifact it was made from, with its tags and notes, now that their names follow
+    their descriptions (#375). An item is matched by the sources and options its
+    metadata holds; a group is left alone unless each stored item matches a different
+    artifact. Returns the items renamed. Does not commit."""
+    renamed = 0
+    seen: set[tuple[str, str, str]] = set()
+    for export in reversed(exports):  # the newest export names a group
+        for group in _same_named(export.artifacts):
+            key = (group[0].notebook, group[0].stem, str(group[0].description.get("type")))
+            if len(group) < 2 or key in seen:
+                continue
+            seen.add(key)
+            by_identity = {_artifact_identity(a): a for a in group}
+            if len(by_identity) < len(group):
+                continue  # the same descriptions: their files tell them apart
+            ids = [a.source_id for a in group]
+            rows = conn.execute(
+                "SELECT id, source_id, metadata FROM items WHERE source_type = 'notebooklm' "
+                f"AND source_id IN ({','.join('?' * len(ids))})",
+                ids,
+            ).fetchall()
+            moves: dict[int, tuple[str, str]] = {}
+            for item_id, source_id, metadata in rows:
+                try:
+                    meta = json.loads(metadata or "{}")
+                except ValueError:
+                    meta = {}
+                found = by_identity.get(
+                    _identity(meta.get("notebook_sources"), meta.get("options"))
+                )
+                if found is None:
+                    moves = {}
+                    break
+                moves[item_id] = (source_id, found.source_id)
+            targets = [new for _, new in moves.values()]
+            if not moves or len(set(targets)) < len(targets):
+                continue
+            changing = {i: m for i, m in moves.items() if m[0] != m[1]}
+            # Two steps: the names are unique, and the items swap them
+            for item_id, (old, _) in changing.items():
+                conn.execute(
+                    "UPDATE items SET source_id = ? WHERE id = ?", (f"{old}#rebinding", item_id)
+                )
+            for item_id, (_, new) in changing.items():
+                conn.execute("UPDATE items SET source_id = ? WHERE id = ?", (new, item_id))
+            renamed += len(changing)
+    return renamed
+
+
 def stored_exports(checkpoints: Mapping[str, dict[str, Any]]) -> list[Export]:
     """The exports whose indexes the Takeout sync kept (``notebooklm:takeout-<time>``),
     oldest first, each collected as it was last read."""
+    checkpoints = dict(checkpoints)
+    for key, (value, replaced) in merge_split_exports(checkpoints).items():
+        # Final if each half was: then nothing of the request is unread
+        final = all(checkpoints[k].get("final", True) for k in [key, *replaced])
+        checkpoints[key] = {**value, "final": final}
+        for old in replaced:
+            del checkpoints[old]
     exports = []
     for key, value in checkpoints.items():
         when = export_time(key) if key.startswith("notebooklm:") else None
@@ -528,11 +673,14 @@ def refile_stored_exports(conn: Any, exports: Iterable[Export]) -> tuple[int, in
     """Put each stored artifact's files where the exports say (#375, #376): versions
     dated by export, so an older file is superseded; a file on the wrong artifact or
     with the wrong type removed. Only items already stored; their text is rebuilt.
-    Returns (items changed, rows removed). Does not commit."""
+    Same-titled items are first renamed to the artifact each stands for
+    (rebind_same_named). Returns (items changed or renamed, rows removed). Does not
+    commit."""
     from lestash.core.database import add_item_media
     from lestash.core.extract import refresh_item
 
     exports = list(exports)
+    renamed = rebind_same_named(conn, exports)
     wanted: dict[str, dict[tuple[Any, ...], MediaCreate]] = defaultdict(dict)
     places: dict[str, set[tuple[str, int, str | None]]] = defaultdict(set)
     for i, export in enumerate(exports):
@@ -544,7 +692,7 @@ def refile_stored_exports(conn: Any, exports: Iterable[Export]) -> tuple[int, in
             for m in _media(artifact):
                 places[artifact.source_id].add((m.media_type, m.position, m.sha256))
     known = {sha for item_places in places.values() for _, _, sha in item_places}
-    changed = removed = 0
+    changed, removed = renamed, 0
     for source_id, by_key in sorted(wanted.items()):
         # Oldest first at each place, so versions are numbered as they came
         media = sorted(by_key.values(), key=lambda m: (m.media_type, m.position, m.seen_at or ""))
