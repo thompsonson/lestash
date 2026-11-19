@@ -84,6 +84,8 @@ def _stored(conn: sqlite3.Connection, item: ItemCreate) -> dict[str, Any] | None
         metadata = json.loads(row[3]) if row[3] else {}
     except json.JSONDecodeError:
         metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}  # a list or a string: callers read keys
     return {
         "id": row[0],
         "title": row[1],
@@ -366,11 +368,39 @@ def _gemini_chat(conn: sqlite3.Connection, conversation_id: str) -> _GeminiChat 
     return _GeminiChat(row[0], row[1], metadata if isinstance(metadata, dict) else {})
 
 
+# Metadata read from a reply's text (gemini_activity._reply)
+_FROM_REPLY_TEXT = ("link_count", "takeout_gaps")
+
+
+def _keep_filled_gaps(conn: sqlite3.Connection, item: ItemCreate) -> None:
+    """Keep a reply whose Takeout gaps were filled from another copy (#300).
+
+    Takeout drops parts of some replies (``takeout_gaps``). When the stored reply was
+    filled in from elsewhere (``gaps_filled_from``), a later export's gapped copy must
+    not put the gaps back.
+    """
+    metadata = item.metadata or {}
+    if not metadata.get("takeout_gaps"):
+        return
+    stored = _stored(conn, item)
+    if not stored or not stored["metadata"].get("gaps_filled_from"):
+        return
+    item.content = stored["content"]
+    # What is read from the text goes with the text kept
+    for key in ("gaps_filled_from", *_FROM_REPLY_TEXT):
+        if key in stored["metadata"]:
+            metadata[key] = stored["metadata"][key]
+        else:
+            metadata.pop(key, None)
+    item.metadata = metadata
+
+
 def _merge_gemini(conn: sqlite3.Connection, item: ItemCreate) -> bool:
     metadata = dict(item.metadata or {})
     prompt = metadata.pop("_prompt", None)
     occurrence = int(metadata.pop("_occurrence", 1))
     item.metadata = metadata
+    _keep_filled_gaps(conn, item)
     if metadata.get("type") == "chat":
         chat = _gemini_chat(conn, item.source_id or "")
         if chat is None:

@@ -12,6 +12,8 @@ prompt in its title and Gemini's reply as HTML. Chats have no titles in Takeout.
 - A reply becomes Markdown (markdownify), keeping its links, citations among them.
 - Some replies have lines reduced to a lone full stop; the cause is unconfirmed. Such a
   reply is kept verbatim and flagged ``takeout_gaps``, so it can be checked later.
+  A reply filled in from another copy is marked ``gaps_filled_from``, and a later
+  export's gapped copy leaves it as it is (#300).
 - A prompt that names several chats is stored as a turn of each of them.
 - Attachments are listed by file name; the files are not imported.
 - A NotebookLM notebook named in a prompt ("X was used in this chat") is kept by name.
