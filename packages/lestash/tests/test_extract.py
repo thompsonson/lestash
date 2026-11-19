@@ -400,7 +400,7 @@ def _words(*timed: tuple[float, str]) -> list[list]:
     return [[t, t + 0.5, f" {w}"] for t, w in timed]
 
 
-def test_speaker_turns_number_voices_and_move_a_stray_word() -> None:
+def test_speaker_turns_number_voices_and_keep_a_sentence_together() -> None:
     segments = [
         [0.0, 3.0, "", _words((0, "It's"), (1, "so"), (2, "confident."), (3, "And"))],
         [4.0, 8.0, "", _words((4, "then"), (5, "it"), (6, "crashes."))],
@@ -414,15 +414,190 @@ def test_speaker_turns_number_voices_and_move_a_stray_word() -> None:
     )
 
 
-def test_a_turn_ending_mid_sentence_keeps_long_tails() -> None:
+def test_a_sentence_is_one_voice_when_the_diarizer_edge_falls_off() -> None:
+    # The diarizer's turn ends a word into the next sentence (#381)
     segments = [
-        [0.0, 5.0, "", _words((0, "one"), (1, "two"), (2, "three"), (3, "four"), (4, "five"))]
-    ]
-    turns = [[0.0, 3.5, 0], [3.5, 5.0, 1]]
-    # No full stop to cut at: the words stay with the voice heard
+        [0.0, 6.0, "", _words((0, "Cats"), (1, "sleep"), (2, "a"), (3, "lot."), (4, "Dogs"),
+                              (5, "bark"))],
+        [6.0, 8.0, "", _words((6, "at"), (7, "night."))],
+    ]  # fmt: skip
+    turns = [[0.0, 4.6, 0], [4.6, 8.0, 1]]
     assert extract.speaker_turns(segments, turns) == (
-        "**Speaker 1** (0:00): one two three four\n\n**Speaker 2** (0:04): five"
+        "**Speaker 1** (0:00): Cats sleep a lot.\n\n**Speaker 2** (0:04): Dogs bark at night."
     )
+
+
+def test_a_blip_of_the_other_voice_inside_a_sentence_is_ignored() -> None:
+    words = ["We", "went", "to", "the", "shop."]
+    segments = [[0.0, 6.0, "", _words(*enumerate(words))]]
+    # A second voice for half a second, nested in the first one's turn
+    turns = [[0.0, 6.0, 0], [0.9, 1.6, 1]]
+    assert extract.speaker_turns(segments, turns) == "**Speaker 1** (0:00): We went to the shop."
+
+
+def test_a_short_reply_keeps_its_own_turn() -> None:
+    segments = [[0.0, 7.0, "", _words((0, "Is"), (1, "it"), (2, "late?"), (3, "Yes."),
+                                      (4, "Very"), (5, "late."))]]  # fmt: skip
+    turns = [[0.0, 2.8, 0], [2.8, 3.8, 1], [3.8, 6.0, 0]]
+    assert extract.speaker_turns(segments, turns) == (
+        "**Speaker 1** (0:00): Is it late?\n\n**Speaker 2** (0:03): Yes.\n\n"
+        "**Speaker 1** (0:04): Very late."
+    )
+
+
+def test_two_voices_run_together_without_a_stop_stay_apart() -> None:
+    # Whisper put no full stop where the voice changed: long runs are both kept
+    first = [(n, f"a{n}") for n in range(extract.RUN_ON_WORDS)]
+    second = [(n, f"b{n}") for n in range(extract.RUN_ON_WORDS, 2 * extract.RUN_ON_WORDS)]
+    segments = [[0.0, 40.0, "", _words(*first, *second)]]
+    turns = [[0.0, extract.RUN_ON_WORDS - 0.2, 0], [extract.RUN_ON_WORDS - 0.2, 40.0, 1]]
+    out = extract.speaker_turns(segments, turns)
+    assert out.startswith("**Speaker 1** (0:00): a0 a1")
+    assert f"\n\n**Speaker 2** (0:{extract.RUN_ON_WORDS:02d}): b{extract.RUN_ON_WORDS}" in out
+
+
+def test_regroup_a_stored_transcript_from_its_text() -> None:
+    stored = (
+        "**Speaker 1** (0:00): Cats sleep a lot. Dogs\n\n"
+        "**Speaker 2** (0:04): bark at night. And\n\n"
+        "**Speaker 1** (0:07): birds sing.\n\n"
+        "**Speaker 2** (0:09): Really?"
+    )
+    regrouped = extract.regroup_transcript(stored)
+    assert regrouped == (
+        "**Speaker 1** (0:00): Cats sleep a lot.\n\n"
+        "**Speaker 2** (0:04): Dogs bark at night.\n\n"
+        "**Speaker 1** (0:07): And birds sing.\n\n"
+        "**Speaker 2** (0:09): Really?"
+    )
+    assert extract.regroup_transcript(regrouped) == regrouped  # once is enough
+    # Speakers renumbered as they first speak; an hour's clock read back
+    assert extract.regroup_transcript("**Speaker 2** (1:02:03): Hi.") == (
+        "**Speaker 1** (1:02:03): Hi."
+    )
+    minutes = "## 0:00\n\nOne voice, no turns"
+    assert extract.regroup_transcript(minutes) == minutes
+
+
+def test_a_regrouped_turn_is_never_timed_before_it_starts() -> None:
+    # A tail moved out of a long turn starts where the next stored turn starts, not
+    # minutes before, where the long turn did (review round 1)
+    long_turn = " ".join(["word"] * 30)
+    stored = f"**Speaker 1** (0:00): {long_turn}. Then\n\n**Speaker 2** (3:00): it rained."
+    assert extract.regroup_transcript(stored) == (
+        f"**Speaker 1** (0:00): {long_turn}.\n\n**Speaker 2** (3:00): Then it rained."
+    )
+    # A short head moved back: the rest of that turn keeps its own start
+    rest = " ".join(["more"] * 20)
+    stored = f"**Speaker 1** (0:00): Hi there\n\n**Speaker 2** (0:05): friend. {rest}."
+    assert extract.regroup_transcript(stored) == (
+        f"**Speaker 1** (0:00): Hi there friend.\n\n**Speaker 2** (0:05): {rest}."
+    )
+
+
+def test_titles_never_end_a_sentence_and_other_abbreviations_go_by_the_next_word() -> None:
+    for word in (" Dr.", "Mr.", "(e.g.", "i.e.", "vs."):
+        assert not extract._ends_sentence(word, "Smith"), word
+    # "Fig." and "approx." before a number; a lowercase unit is no title
+    for word, following, ends in (
+        ("Fig.", "3", False),
+        ("approx.", "30", False),
+        ("approx.", "Yes.", True),
+        ("ms.", "Then", True),
+        ("ms.", "and", False),
+        ("min.", "Okay.", True),
+        ("Ms.", "Smith", False),
+        # "St." and "Mt." go by the next word, like other abbreviations (round 6)
+        ("St.", "Right.", True),
+        ("Mt.", "and", False),
+        ("St.", "Louis Missouri", True),  # a segment kept as one "word": its first
+    ):
+        assert extract._ends_sentence(word, following) is ends, word
+    # Another abbreviation, an initial or an acronym ends a sentence before a capital
+    for word in ("U.S.", "a.m.", "B.", "C.", "Inc.", 'Jr."', "etc."):
+        assert extract._ends_sentence(word, "Right."), word
+        assert not extract._ends_sentence(word, "and"), word
+        assert extract._ends_sentence(word), word  # nothing follows
+    for word, following, ends in (
+        (" end.", "and", True),  # a plain word's stop ends it, whatever comes next
+        ("why?", "and", True),
+        ("No.", "Yes", True),
+        ("a.m", "Then", False),
+        ("I", "Then", False),
+    ):
+        assert extract._ends_sentence(word, following) is ends, word
+
+
+def test_a_reply_after_an_acronym_keeps_its_voice() -> None:
+    long_turn = " ".join(["word"] * 20)
+    stored = f"**Speaker 1** (0:00): {long_turn} in the U.S.\n\n**Speaker 2** (0:09): Right."
+    assert extract.regroup_transcript(stored) == stored
+    # "Dr." is not the end of a sentence, so the name stays with it
+    stored = "**Speaker 1** (0:00): We met Dr.\n\n**Speaker 2** (0:02): Smith today. Yes."
+    assert extract.regroup_transcript(stored) == (
+        "**Speaker 1** (0:00): We met Dr. Smith today.\n\n**Speaker 2** (0:02): Yes."
+    )
+
+
+def test_a_reply_after_a_street_keeps_its_voice() -> None:
+    long_turn = " ".join(["word"] * 20)
+    stored = f"**Speaker 1** (0:00): {long_turn} on Main St.\n\n**Speaker 2** (0:09): Right."
+    assert extract.regroup_transcript(stored) == stored
+    # A street opening its sentence, as a reply, stays apart from the next reply
+    stored = (
+        f"**Speaker 1** (0:00): {long_turn}.\n\n**Speaker 2** (0:09): Baker St.\n\n"
+        "**Speaker 1** (0:10): Right."
+    )
+    assert extract.regroup_transcript(stored) == stored
+
+
+def test_st_before_a_name_is_cut_there_the_accepted_limit() -> None:
+    # Text can't tell "St. Louis" from "Baker St. Right.": "St." before a capital
+    # ends a sentence, so a voice change there is kept (round 6)
+    stored = "**Speaker 1** (0:00): We flew to St.\n\n**Speaker 2** (0:02): Louis. Nice."
+    assert extract.regroup_transcript(stored) == stored
+
+
+def test_a_turn_left_after_its_head_moved_back_keeps_its_own_time() -> None:
+    # A short stored turn: what is left once its head moves back started inside it,
+    # before the next stored turn (review round 2)
+    stored = (
+        "**Speaker 1** (0:00): Is it\n\n"
+        "**Speaker 2** (0:04): late? Yes it is.\n\n"
+        "**Speaker 1** (0:09): Good."
+    )
+    assert extract.regroup_transcript(stored) == (
+        "**Speaker 1** (0:00): Is it late?\n\n"
+        "**Speaker 2** (0:04): Yes it is.\n\n"
+        "**Speaker 1** (0:09): Good."
+    )
+
+
+def test_regroup_transcripts_rewrites_the_stored_text_and_its_items(test_db, fake_worker) -> None:
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run(
+            [_recording(store, b"Hello there.", "audio_overview", "audio/x-wav")]
+        )
+        extract_pending(conn, test_db)
+        split = "**Speaker 1** (0:00): Hello\n\n**Speaker 2** (0:01): there."
+        conn.execute("UPDATE blob_text SET text = ?", (split,))
+        conn.commit()
+        (item_id,) = conn.execute("SELECT id FROM items").fetchone()
+        extract.refresh_item(conn, item_id)
+        conn.commit()
+        dry = extract.regroup_transcripts(conn, dry_run=True)
+        (kept,) = conn.execute("SELECT text FROM blob_text").fetchone()
+        counts = extract.regroup_transcripts(conn)
+        (text,) = conn.execute("SELECT text FROM blob_text").fetchone()
+        (content,) = conn.execute("SELECT content FROM items").fetchone()
+        again = extract.regroup_transcripts(conn)
+    assert (dry.files, dry.items, kept) == (1, 1, split)
+    assert (counts.files, counts.items) == (1, 1)
+    # "Hello" moved forward into the second voice's turn: it takes that turn's time
+    assert text == "**Speaker 1** (0:01): Hello there."
+    assert content.endswith(f"{PART}\n\n**Speaker 1** (0:01): Hello there.")
+    assert (again.files, again.items) == (0, 0)
 
 
 def test_one_voice_reads_as_minutes() -> None:
@@ -452,7 +627,7 @@ def test_audio_and_video_get_their_transcripts(test_db, fake_worker) -> None:
         SyncStore(conn, "notebooklm").run(
             [
                 _recording(
-                    store, b"Hebbian plasticity.", "audio_overview", "audio/x-wav",
+                    store, b"Hebbian. Plasticity.", "audio_overview", "audio/x-wav",
                     "SHOW_FORMAT_UNSPECIFIED",
                 ),
                 _recording(store, b"Neurons wire", "explainer_video", "video/mp4"),
@@ -469,7 +644,7 @@ def test_audio_and_video_get_their_transcripts(test_db, fake_worker) -> None:
     assert sorted(j.speakers for j in fake_worker) == [1, 2]
     assert rows["audio_overview"] == (
         f"# audio_overview\n\n{PART}\n\n"
-        "**Speaker 1** (0:00): Hebbian\n\n**Speaker 2** (0:01): plasticity."
+        "**Speaker 1** (0:00): Hebbian.\n\n**Speaker 2** (0:01): Plasticity."
     )
     assert rows["explainer_video"].endswith(f"{PART}\n\n## 0:00\n\nNeurons wire")
 

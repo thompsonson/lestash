@@ -15,10 +15,11 @@ draws itself from (``data-app-data``).
 
 Audio overviews and explainer videos are transcribed by ``transcribe_worker``:
 faster-whisper's ``small.en`` model for the words, sherpa-onnx for who says them. A
-two-host overview reads as turns, ``**Speaker 1** (2:14): ...``; one voice (a brief, an
-explainer video) as text with a ``## 12:34`` heading about each minute. The worker runs
-here, or on the machine named by ``[transcribe] host`` (``computer``), which gets the
-recordings as 16 kHz audio over ssh and keeps nothing once a batch is back.
+two-host overview reads as turns, ``**Speaker 1** (2:14): ...``, each sentence one
+voice's; one voice (a brief, an explainer video) as text with a ``## 12:34`` heading
+about each minute. The worker runs here, or on the machine named by ``[transcribe]
+host`` (``computer``), which gets the recordings as 16 kHz audio over ssh and keeps
+nothing once a batch is back.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import shlex
 import shutil
 import sqlite3
@@ -182,44 +184,243 @@ def _speaker_at(start: float, end: float, turns: list[list[Any]]) -> int:
 
 
 SENTENCE_END = (".", "?", "!")
+# A run of one voice inside a sentence is kept only from this long: shorter, it is
+# the diarizer's edge falling off, not a second voice. Over 25 stored overviews, 8
+# still left 246 phrases cut mid-sentence, 16 left 9 (#381); hosts rarely share one.
+RUN_ON_WORDS = 16
+
+Word = tuple[float, str, int]  # (start, text, speaker)
 
 
-def _move_trailing_words(blocks: list[list[Any]]) -> None:
-    """A turn's last words after its last full stop go to the next turn when that one
-    goes on mid-sentence: "...so confident. And" / "then you run it". A word at a turn's
-    edge is often given to the wrong voice."""
-    for this, after in zip(blocks, blocks[1:], strict=False):
-        first = after[1][0][1].strip()
-        if not first[:1].islower():
-            continue
-        words = this[1]
-        cut = len(words)
-        while cut and not words[cut - 1][1].strip().endswith(SENTENCE_END):
-            cut -= 1
-        if cut and len(words) - cut <= 3:
-            after[1][:0] = words[cut:]
-            del words[cut:]
+# Titles before a name, when capitalised ("Dr. Smith"; "200 ms." is a unit), and Latin
+# linking words: their full stop never ends a sentence
+TITLES = frozenset({"Mr", "Mrs", "Ms", "Dr", "Prof"})
+LINKING = frozenset({"e.g", "i.e", "vs", "cf"})
+BEFORE_A_NUMBER = frozenset({"fig", "approx"})  # "Fig. 3", "approx. 30"
+# Words whose full stop may or may not end a sentence: "Apple Inc.", "Main St."
+ABBREVIATIONS = frozenset({
+    "sr", "jr", "st", "mt", "al", "inc", "ltd", "corp", "dept", "etc", "a.m", "p.m", "ms",
+    "min", "sec",
+})  # fmt: skip
+_DOTTED = re.compile(r"(?:[A-Za-z]\.){2,}")  # U.S., B.F.
+_OPENERS = "\"'([“‘"
+_CLOSERS = "\"')]”’"
+
+
+def _ends_sentence(word: str, following: str | None = None) -> bool:
+    """Whether a word ends its sentence; ``following`` is the next word, if any.
+
+    A capitalised title ("Dr.") or "e.g." never does; "Fig." and "approx." don't
+    before a number. Any other abbreviation ("Inc.", "St.", "200 ms."), an initial
+    ("B.") or a dotted acronym ("U.S.") ends a sentence when the next word starts
+    with a capital, as in "in the U.S. Right.", and not when it is lowercase; with
+    nothing after it, it ends one.
+
+    Text alone can't tell "Baker St. Right." from "St. Louis", or "John B. Watson"
+    from "Plan B. Then": these are cut there. A wrong cut matters only if a voice
+    change falls on it; a wrong join gives a reply to the wrong voice (#381).
+    """
+    parts = word.split()
+    last = parts[-1].rstrip(_CLOSERS) if parts else ""
+    if not last.endswith(SENTENCE_END):
+        return False
+    if not last.endswith("."):
+        return True
+    shown = last.lstrip(_OPENERS)[:-1]
+    stem = shown.lower()
+    # Of a segment kept as one "word", the first word
+    nxt = (following or "").split()[0].lstrip(_OPENERS) if (following or "").split() else ""
+    if shown in TITLES or stem in LINKING:
+        return False
+    if stem in BEFORE_A_NUMBER and nxt[:1].isdigit():
+        return False
+    initial = len(stem) == 1 and shown.isupper()
+    if stem in ABBREVIATIONS | BEFORE_A_NUMBER or initial or _DOTTED.fullmatch(stem + "."):
+        return not nxt or not nxt[0].islower()
+    return True
+
+
+def _size(run: list[Word]) -> int:
+    return sum(len(w[1].split()) for w in run) or 1
+
+
+def _sentence_runs(sentence: list[Word]) -> list[list[Word]]:
+    """A sentence's words as runs of one voice. A run shorter than ``RUN_ON_WORDS``
+    goes to the longer run beside it, so a sentence is one voice's unless whisper ran
+    two voices' sentences together (#381)."""
+    runs: list[list[Word]] = []
+    for word in sentence:
+        if runs and runs[-1][-1][2] == word[2]:
+            runs[-1].append(word)
+        else:
+            runs.append([word])
+    while len(runs) > 1:
+        n = min(range(len(runs)), key=lambda i: _size(runs[i]))
+        if _size(runs[n]) >= RUN_ON_WORDS:
+            break
+        sides = [i for i in (n - 1, n + 1) if 0 <= i < len(runs)]
+        into = max(sides, key=lambda i: _size(runs[i]))
+        speaker = runs[into][0][2]
+        moved = [(s, w, speaker) for s, w, _ in runs[n]]
+        runs[into] = runs[into] + moved if into < n else moved + runs[into]
+        del runs[n]
+        # Runs of one voice now side by side are one
+        merged: list[list[Word]] = []
+        for run in runs:
+            if merged and merged[-1][0][2] == run[0][2]:
+                merged[-1].extend(run)
+            else:
+                merged.append(run)
+        runs = merged
+    return runs
+
+
+def group_turns(words: list[Word]) -> list[tuple[int, float, str]]:
+    """(speaker, start, text) for each turn, from words each given a voice: the voice
+    is decided a sentence at a time, never a word at a time. A diarizer's turn edges
+    fall a word or two off, and a blip of the other voice inside a turn would split a
+    phrase between two speakers (#381)."""
+    turns: list[tuple[int, float, list[str]]] = []
+    sentence: list[Word] = []
+
+    def flush() -> None:
+        for run in _sentence_runs(sentence):
+            speaker = run[0][2]
+            if turns and turns[-1][0] == speaker:
+                turns[-1][2].extend(w for _, w, _ in run)
+            else:
+                turns.append((speaker, run[0][0], [w for _, w, _ in run]))
+        sentence.clear()
+
+    for n, word in enumerate(words):
+        sentence.append(word)
+        if _ends_sentence(word[1], words[n + 1][1] if n + 1 < len(words) else None):
+            flush()
+    flush()
+    return [(speaker, start, " ".join("".join(ws).split())) for speaker, start, ws in turns]
 
 
 def speaker_turns(segments: list[list[Any]], turns: list[list[Any]]) -> str:
     """``**Speaker 1** (0:07): ...`` for each turn; speakers numbered as they first speak."""
-    names: dict[int, int] = {}
-    blocks: list[list[Any]] = []  # [number, [(start, word), ...]]
+    words: list[Word] = []
     for seg in segments:
         # A segment whisper gave no word times keeps its text, as one "word"
         for start, end, word in seg[3] or [[seg[0], seg[1], seg[2]]]:
-            name = names.setdefault(_speaker_at(start, end, turns), len(names) + 1)
-            if blocks and blocks[-1][0] == name:
-                blocks[-1][1].append((start, word))
-            else:
-                blocks.append([name, [(start, word)]])
-    _move_trailing_words(blocks)
+            words.append((start, word, _speaker_at(start, end, turns)))
+    names: dict[int, int] = {}
     return "\n\n".join(
-        f"**Speaker {name}** ({clock(words[0][0])}): "
-        + " ".join("".join(w for _, w in words).split())
-        for name, words in blocks
-        if words
+        f"**Speaker {names.setdefault(speaker, len(names) + 1)}** ({clock(start)}): {text}"
+        for speaker, start, text in group_turns(words)
+        if text
     )
+
+
+_TURN = re.compile(r"\*\*Speaker (\d+)\*\* \((\d+(?::\d\d){1,2})\): (.*)", re.DOTALL)
+
+
+def _seconds(clock_text: str) -> float:
+    seconds = 0
+    for part in clock_text.split(":"):
+        seconds = seconds * 60 + int(part)
+    return float(seconds)
+
+
+def regroup_transcript(text: str) -> str:
+    """A stored transcript's turns grouped again a sentence at a time, as
+    ``speaker_turns`` groups them now (#381): for transcripts made before, whose word
+    times were not kept. Each word counts as one. Text that is not all turns comes back
+    as it is.
+
+    Only each stored turn's start is known. A new turn takes the start of the stored
+    turn its first word comes from, with one exception: when that word now has another
+    voice than in the stored turn, it is part of a tail moved forward into the next
+    stored turn, and the new turn takes that one's start. The tail was said just
+    before it, so that time is never before the real one, and late by at most the
+    tail. A turn left after its head moved back keeps its stored start: early by at
+    most that head."""
+    blocks = text.split("\n\n")
+    matches = [_TURN.fullmatch(b) for b in blocks]
+    if not blocks or not all(matches):
+        return text
+    starts: list[float] = []
+    voices: list[int] = []
+    block_of: list[int] = []  # each word's stored turn
+    words: list[Word] = []
+    for n, m in enumerate(matches):
+        assert m is not None
+        starts.append(_seconds(m.group(2)))
+        voices.append(int(m.group(1)))
+        for w in m.group(3).split():
+            # The word's number stands in for its start: its turn's time is set below
+            words.append((float(len(words)), f" {w}", voices[n]))
+            block_of.append(n)
+
+    def start(speaker: int, first: float) -> float:
+        n = block_of[int(first)]
+        moved = speaker != voices[n] and n + 1 < len(starts)
+        return starts[n + 1] if moved else starts[n]
+
+    names: dict[int, int] = {}
+    return "\n\n".join(
+        f"**Speaker {names.setdefault(speaker, len(names) + 1)}** "
+        f"({clock(start(speaker, first))}): {body}"
+        for speaker, first, body in group_turns(words)
+        if body
+    )
+
+
+@dataclass
+class RegroupCounts:
+    files: int = 0  # transcripts whose turns changed
+    items: int = 0  # items whose text changed
+
+
+def regroup_transcripts(conn: sqlite3.Connection, *, dry_run: bool = False) -> RegroupCounts:
+    """Group the turns of every stored transcript again (``regroup_transcript``) and
+    rebuild the items that show them. Needs no recording: only the stored text. With
+    ``dry_run``, counts what would change and writes nothing. Call it with no
+    transaction open."""
+    from lestash.core.database import mark_recent_history, max_history_id
+
+    counts = RegroupCounts()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        rows = conn.execute(
+            "SELECT sha256, text FROM blob_text WHERE tool = ? AND text LIKE '**Speaker %'",
+            (TRANSCRIPT_TOOL,),
+        ).fetchall()
+        changed: list[str] = []
+        for sha, text in rows:
+            new = regroup_transcript(text)
+            if new != text:
+                changed.append(sha)
+                conn.execute(
+                    "UPDATE blob_text SET text = ? WHERE sha256 = ? AND tool = ?",
+                    (new, sha, TRANSCRIPT_TOOL),
+                )
+        counts.files = len(changed)
+        item_ids: list[int] = []
+        if changed:
+            item_ids = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT DISTINCT item_id FROM item_media WHERE superseded_at IS NULL "
+                    f"AND sha256 IN ({','.join('?' * len(changed))}) ORDER BY item_id",
+                    changed,
+                )
+            ]
+        since = max_history_id(conn)
+        updated = [i for i in item_ids if refresh_item(conn, i)]
+        mark_recent_history(conn, since, "extract", item_ids=updated)
+        counts.items = len(updated)
+    except BaseException:
+        conn.rollback()
+        raise
+    if dry_run:
+        conn.rollback()
+    else:
+        conn.commit()
+    return counts
 
 
 def transcript_text(raw: Raw) -> str:
