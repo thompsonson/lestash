@@ -285,10 +285,12 @@ def collect(
             unmatched.append(member)
     held = _stored_by_title(stored or {})
     for group in _by_title(artifacts):
-        a = group[0]
-        title = (a.notebook, a.stem, a.kind)
+        title = (group[0].notebook, group[0].stem)
         if len(group) > 1 or held.get(title):
             _name(group, held.get(title, {}))
+    names = [a.source_id for a in artifacts]
+    if len(set(names)) < len(names):  # _name gives each a name no other has
+        raise RuntimeError(f"two NotebookLM artifacts named alike: {sorted(names)}")
     return sorted(artifacts, key=lambda a: a.source_id), unmatched
 
 
@@ -319,10 +321,12 @@ def _owner(artifacts: list[Artifact], rest: str) -> Artifact | None:
 
 
 def _by_title(artifacts: list[Artifact]) -> list[list[Artifact]]:
-    """The artifacts grouped by notebook, title part and type."""
-    groups: dict[tuple[str, str, str], list[Artifact]] = defaultdict(list)
+    """The artifacts grouped by notebook and title part, of every type: Takeout's
+    names ("<title> metadata.json", "<title> metadata(1).json") are shared by all of
+    a title's artifacts in a notebook, whatever their types."""
+    groups: dict[tuple[str, str], list[Artifact]] = defaultdict(list)
     for a in artifacts:
-        groups[(a.notebook, a.stem, str(a.description.get("type")))].append(a)
+        groups[(a.notebook, a.stem)].append(a)
     return list(groups.values())
 
 
@@ -331,19 +335,19 @@ class StoredItem:
     """What tells a stored artifact item from another of its title."""
 
     identity: str  # its sources and options: see _identity
-    kind: str  # its artifact type, "infographic"
+    kind: str  # its artifact type, "infographic"; "" if not recorded
 
 
 def _stored_by_title(
     stored: Mapping[str, StoredItem],
-) -> dict[tuple[str, str, str], dict[str, str]]:
-    """The stored items' names (keys) and identities, by notebook, title part and type."""
-    out: dict[tuple[str, str, str], dict[str, str]] = defaultdict(dict)
+) -> dict[tuple[str, str], dict[str, StoredItem]]:
+    """The stored items by name (key), by notebook and title part."""
+    out: dict[tuple[str, str], dict[str, StoredItem]] = defaultdict(dict)
     for source_id, item in stored.items():
         if ARTIFACTS not in source_id:
             continue
         notebook, key = source_id.split(ARTIFACTS, 1)
-        out[(notebook, _stem(f"{key}.json"), item.kind)][key] = item.identity
+        out[(notebook, _stem(f"{key}.json"))][key] = item
     return out
 
 
@@ -353,42 +357,64 @@ def _by_description(artifact: Artifact) -> tuple[int, str]:
     return count, json.dumps(artifact.description, sort_keys=True, default=str)
 
 
-def _name(group: list[Artifact], held: Mapping[str, str]) -> None:
-    """Give artifacts of one title and type their names, so each keeps its item
-    whichever Takeout called "(1)" this time, and however many there are now (#375).
+def _name(group: list[Artifact], held: Mapping[str, StoredItem]) -> None:
+    """Give a title's artifacts in a notebook, of every type, names no two share, so
+    each keeps its item whichever Takeout called "(1)" this time, and however many
+    there are now (#375).
 
-    One whose sources and options are those of a stored item of its title takes that
-    item's name, whatever names this export has. The others take, in the order of
-    their descriptions (then their files), the names no artifact took: their own
-    first, then the export's other names, then new ones. A stored item no artifact
-    matched is one whose artifact changed: its name is free, so it is updated.
-    ``held``: the stored items' names and identities.
+    One whose type, sources and options are those of a stored item of its title takes
+    that item's name, whatever names this export has. The others of each type take,
+    in the order of their descriptions (then their files), the names Takeout gave that
+    type's artifacts, no artifact took and no stored item of another type has; failing
+    that, a new name no artifact of the export and no stored item has. A stored item
+    no artifact matched is one whose artifact changed: its name stays free for its
+    type, so it is updated.
+    ``held``: the stored items of the title, by name.
     """
-    identities = [_artifact_identity(a) for a in group]
     named: dict[int, str] = {}
-    for i, identity in enumerate(identities):
-        if identities.count(identity) > 1:
-            continue  # the same description twice: no telling which item is which
-        matches = [k for k, held_identity in held.items() if held_identity == identity]
-        if len(matches) == 1:
-            named[i] = matches[0]
+    by_type: dict[str, list[int]] = defaultdict(list)
+    for i, a in enumerate(group):
+        by_type[a.kind].append(i)
+    for indexes in by_type.values():
+        identities = {i: _artifact_identity(group[i]) for i in indexes}
+        for i, identity in identities.items():
+            if list(identities.values()).count(identity) > 1:
+                continue  # the same description twice: no telling which item is which
+            matches = [
+                k
+                for k, item in held.items()
+                if item.kind in (group[i].kind, "") and item.identity == identity
+            ]
+            if len(matches) == 1 and matches[0] not in named.values():
+                named[i] = matches[0]
     taken = set(named.values())
+    takeout_names = {a.key for a in group}
 
     def files(a: Artifact) -> list[str]:
         return [f.sha256 for f in sorted(a.files, key=lambda f: plain_name(f.member))]
 
-    own = [a.key for a in sorted(group, key=lambda a: a.copy)]
-    others = sorted(
-        (i for i in range(len(group)) if i not in named),
-        key=lambda i: (_by_description(group[i]), files(group[i])),
-    )
-    stem = group[0].stem
-    fresh = (f"{stem} metadata({n})" for n in range(1, 10_000))
-    for i in others:
-        free = [k for k in own if k not in taken]
-        key = free[0] if free else next(k for k in fresh if k not in taken and k not in held)
-        named[i] = key
-        taken.add(key)
+    fresh = (f"{group[0].stem} metadata({n})" for n in range(1, 100_000))
+    for kind in sorted(by_type):
+        indexes = by_type[kind]
+        own = [group[i].key for i in sorted(indexes, key=lambda i: group[i].copy)]
+        unnamed = sorted(
+            (i for i in indexes if i not in named),
+            key=lambda i: (_by_description(group[i]), files(group[i])),
+        )
+        for i in unnamed:
+            # Not a stored item of another type: that would make it stand for this one
+            free = [
+                k for k in own if k not in taken and (k not in held or held[k].kind in (kind, ""))
+            ]
+            key = (
+                free[0]
+                if free
+                else next(
+                    k for k in fresh if k not in taken and k not in takeout_names and k not in held
+                )
+            )
+            named[i] = key
+            taken.add(key)
     for i, key in named.items():
         group[i].key = key
 

@@ -616,3 +616,35 @@ def test_stored_options_that_are_a_string_still_match(test_db, tmp_path) -> None
         for a in collect(index_zip(part, store), stored=identities)[0]
     }
     assert names == {"Board metadata(1)": 1, "Board metadata": 5}
+
+
+def test_a_titles_artifacts_of_two_types_never_share_a_name(test_db, tmp_path) -> None:
+    """Review round 5: Takeout's names are shared by a title's artifacts of every type.
+    The audio's stored item is "Talk metadata", the name Takeout now gives the deck:
+    the audio keeps its item, and the deck gets a name no other artifact or item has.
+    A stored item of another type is never taken over, matched or not."""
+    from lestash.importers.notebooklm_artifacts import StoredItem, _artifact_identity
+
+    store = BlobStore(store_root(test_db))
+    deck = {"title": "Talk", "type": "ARTIFACT_TYPE_SLIDES", "slides": {"x": 1}}
+    audio = {"title": "Talk", "type": "ARTIFACT_TYPE_AUDIO_OVERVIEW", "audioOverview": {"y": 2}}
+    part = _zip(
+        tmp_path / "a.zip",
+        {f"{ART}/Talk metadata.json": deck, f"{ART}/Talk metadata(1).json": audio},
+    )
+    index = index_zip(part, store)
+    plain = {a.kind: a for a in collect(index)[0]}
+    stored = {
+        f"{ART}/Talk metadata": StoredItem(
+            _artifact_identity(plain["audio_overview"]), "audio_overview"
+        )
+    }
+    names = {a.kind: a.key for a in collect(index, stored=stored)[0]}
+    assert names["audio_overview"] == "Talk metadata"
+    assert names["slides"] not in ("Talk metadata", "Talk metadata(1)")
+    # The audio changed since: its item is not the deck's either
+    changed = {f"{ART}/Talk metadata": StoredItem("something else", "audio_overview")}
+    names = {a.kind: a.key for a in collect(index, stored=changed)[0]}
+    assert names["slides"] != "Talk metadata"
+    assert names["audio_overview"] == "Talk metadata(1)"  # its own name, by Takeout
+    assert len(set(names.values())) == 2
