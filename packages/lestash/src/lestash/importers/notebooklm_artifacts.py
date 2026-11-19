@@ -48,13 +48,18 @@ ARTIFACTS = "/Artifacts/"
 # second artifact of that title, cut to 51 bytes with ".json": "…Data met.json"
 METADATA = re.compile(r" m(?:e(?:t(?:a(?:d(?:a(?:t(?:a)?)?)?)?)?)?)?(?:\(\d*\)?)?$")
 CUT_AT = 46  # bytes before ".json" in a name cut short
-# Which artifact type a file can belong to: its folder (a deck) or its extension
-FILE_TYPES = {
-    "folder": "ARTIFACT_TYPE_SLIDES",
-    ".mp4": "ARTIFACT_TYPE_EXPLAINER_VIDEO",
-    ".wav": "ARTIFACT_TYPE_AUDIO_OVERVIEW",
-    ".png": "ARTIFACT_TYPE_INFOGRAPHIC",
-    "": "ARTIFACT_TYPE_APP",
+# Which artifact types a file can belong to: its folder (a deck) or its extension.
+# The kept indexes have decks' PDFs and PPTXs only in their folders; one beside them
+# is a deck's or an uploaded file's.
+SLIDES = "ARTIFACT_TYPE_SLIDES"
+FILE_TYPES: dict[str, frozenset[str]] = {
+    "folder": frozenset({SLIDES}),
+    ".mp4": frozenset({"ARTIFACT_TYPE_EXPLAINER_VIDEO"}),
+    ".wav": frozenset({"ARTIFACT_TYPE_AUDIO_OVERVIEW"}),
+    ".png": frozenset({"ARTIFACT_TYPE_INFOGRAPHIC"}),
+    ".pdf": frozenset({SLIDES, "ARTIFACT_TYPE_FILE"}),
+    ".pptx": frozenset({SLIDES, "ARTIFACT_TYPE_FILE"}),
+    "": frozenset({"ARTIFACT_TYPE_APP"}),
 }
 # A slide image's name ends "_-_Slide_7", or, for a deck downloaded as "x", "x(1)",
 # "x(2)"…, "_-_Slide", "_-_Slide(1)"…, cut as short as "_-_Slid(3)" or "_-(3)"
@@ -65,6 +70,7 @@ REPORT = "ARTIFACT_TYPE_TAILORED_REPORT"
 SKIPPED_TYPES = frozenset({REPORT})
 # A file artifact (an upload NotebookLM keeps) named "notes.md" is "notes.md.md" (#377)
 FILE_ARTIFACT = "ARTIFACT_TYPE_FILE"
+MARKDOWN = frozenset({FILE_ARTIFACT})
 MEDIA_TYPES = {".pdf": "pdf", ".png": "image", ".wav": "audio", ".mp4": "video"}
 # Takeout's "(n)" on the files of the n-th other artifact of a title: "X.png(1)", a
 # deck's folder "X(1)/", an app "X(1)"
@@ -154,15 +160,16 @@ def plain_name(name: str) -> str:
     return re.sub(r"(\.[A-Za-z0-9]+)\(\d+\)$", r"\1", name)
 
 
-def _file_type(rest: str) -> str:
-    """The artifact type a file below Artifacts/ fits: see FILE_TYPES."""
+def _file_type(rest: str) -> frozenset[str]:
+    """The artifact types a file below Artifacts/ fits (see FILE_TYPES); none if its
+    name doesn't say."""
     if "/" in rest:
         return FILE_TYPES["folder"]
     name = rest.rsplit("/", 1)[-1]
     suffix = ("." + name.rsplit(".", 1)[1].lower()) if "." in name else ""
     if suffix == ".md":
-        return FILE_ARTIFACT  # a report's markdown is a note, and not matched
-    return FILE_TYPES.get(suffix, "")
+        return MARKDOWN  # a report's markdown is a note, and not matched
+    return FILE_TYPES.get(suffix, frozenset())
 
 
 def _head(rest: str) -> str:
@@ -294,8 +301,8 @@ def collect(
     return sorted(artifacts, key=lambda a: a.source_id), unmatched
 
 
-def _of_type(artifact: Artifact, kind: str) -> bool:
-    return not kind or artifact.description.get("type") in (kind, None)
+def _of_type(artifact: Artifact, kinds: frozenset[str]) -> bool:
+    return not kinds or artifact.description.get("type") in kinds | {None}
 
 
 def _owner(artifacts: list[Artifact], rest: str) -> Artifact | None:
@@ -306,8 +313,9 @@ def _owner(artifacts: list[Artifact], rest: str) -> Artifact | None:
     only among files of one name ("X.mp4", "X.png", "X.png(1)"). So a file's "(n)"
     is its rank among the descriptions of its type, in Takeout's order: the n-th
     infographic of the title gets "X.png(n)", whatever number its description has.
-    A rank with no description is no artifact's file, and so is a file whose name
-    doesn't say its type when the title has artifacts of more than one type.
+    A rank with no description is no artifact's file, and so is a file whose rank
+    would count among descriptions of more than one type: one whose name doesn't say
+    its type, or fits several, or none the title has, of a title with several types.
     """
     plain, copy = _file_copy(rest)
     head = _head(plain)
@@ -324,7 +332,7 @@ def _owner(artifacts: list[Artifact], rest: str) -> Artifact | None:
     named = [a for a in artifacts if head.startswith(a.stem) or a.stem.startswith(head)]
     # Of the right type if any is: a type NotebookLM adds later still finds its files
     typed = [a for a in named if _of_type(a, kind)]
-    if kind == FILE_ARTIFACT:
+    if kind == MARKDOWN:
         named = typed  # a report's markdown: no artifact's file
     candidates = typed or named
     if not candidates:
@@ -336,9 +344,8 @@ def _owner(artifacts: list[Artifact], rest: str) -> Artifact | None:
         else max((a.stem for a in candidates), key=len)
     )
     ranked = sorted((a for a in candidates if a.stem == stem), key=lambda a: a.copy)
-    if not kind and len({a.description.get("type") for a in ranked}) > 1:
-        # A file whose name doesn't say its type, of a title with artifacts of several:
-        # its "(n)" counts among one type's, and there is no telling which
+    if len({a.description.get("type") for a in ranked}) > 1:
+        # Its "(n)" counts among one type's descriptions, and there is no telling which
         return None
     return ranked[copy] if copy < len(ranked) else None
 
