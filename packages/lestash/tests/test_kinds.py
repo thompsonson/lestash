@@ -133,3 +133,4 @@ def test_kind_noun_names_one_item():
     # A type not listed, and none at all (#373 review round 1)
     assert kind_noun("artifact", {"artifact_type": "data_table"}) == "Data table"
     assert kind_noun("artifact", {}) == "Generated item"
+    assert kind_noun("artifact", {"artifact_type": " _ "}) == "Generated item"

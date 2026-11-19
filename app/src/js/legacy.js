@@ -1385,6 +1385,14 @@ route(/^\/search$/, (m, url) => {
 // A result found by one of its parts (a chat's round, a post's reply, a book's
 // highlight): the card opens at that part, which links up to the whole, and says so.
 // Its preview is the part's text: the matched words, or its opening (#221).
+
+// "a" or "an" by the sound of the word: "an hour", "a user", "a one-off"
+function indefiniteArticle(word) {
+  if (/^(hour|honest|honou?r|heir)/.test(word)) return 'an';
+  if (/^(uni|use|usu|ura|eu|one|once)/.test(word)) return 'a';
+  return /^[aeiou]/.test(word) ? 'an' : 'a';
+}
+
 function foundInPart(card, item) {
   card.href = `/items/${item.match_id}`;
   const body = card.querySelector('.item-body');
@@ -1399,7 +1407,7 @@ function foundInPart(card, item) {
   const where = document.createElement('div');
   where.className = 'item-card-counts';
   const label = (item.match_label || 'part').toLowerCase();
-  where.textContent = `Found in ${/^[aeiou]/.test(label) ? 'an' : 'a'} ${label} · opens there`;
+  where.textContent = `Found in ${indefiniteArticle(label)} ${label} · opens there`;
   preview.after(where);
 }
 
