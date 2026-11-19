@@ -210,9 +210,10 @@ def kind_noun(kind: str, metadata: Mapping[str, Any] | None) -> str | None:
     """One item of this kind, in words: the artifact's type, else the kind's label."""
     if kind == "artifact":
         detail = kind_detail(kind, metadata) or ""
-        if detail == "artifact":
-            detail = ""  # no artifact type: kind_detail fell back to the kind's own key
         if detail not in ARTIFACT_LABELS.values():
             detail = " ".join(detail.replace("_", " ").split()).capitalize()  # not listed
-        return _SINGULAR.get(detail, detail) if detail else "Generated item"
+        if detail in ("", "Artifact"):
+            # No artifact type: kind_detail fell back to the kind's own key
+            return "Generated item"
+        return _SINGULAR.get(detail, detail)
     return KINDS[kind].label if kind in KINDS else None
