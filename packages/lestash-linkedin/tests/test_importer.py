@@ -568,3 +568,24 @@ def test_a_message_is_not_named_from_a_nearby_row_with_other_text(
         assert report.people_named == 0
         assert _person(conn, carl) == (carl, None)
         assert _person(conn, dee) == (dee, None)
+
+
+def test_a_message_with_no_text_is_not_named_from_a_row_with_text(
+    config: Config, tmp_path: Path
+) -> None:
+    """#380, review round 2: the text is compared even when the held message has none."""
+    from lestash.core.agents import link_agents
+
+    eve = "urn:li:person:eve"
+    rows = f"""CONVERSATION ID,FROM,SENDER PROFILE URL,DATE,CONTENT
+{THREAD_ID},Ann Example,{IN}ann-example,2026-11-10 09:22:45 UTC,Hi there
+"""
+    path = _zip(tmp_path)
+    with zipfile.ZipFile(path, "a") as zf:
+        zf.writestr("messages.csv", rows)
+    with get_connection(config) as conn:
+        _message(conn, 1, eve, AT_MS, "")
+        link_agents(conn)
+        conn.commit()
+        assert import_export(conn, path).people_named == 0
+        assert _person(conn, eve) == (eve, None)

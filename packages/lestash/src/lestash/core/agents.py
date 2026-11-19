@@ -66,6 +66,7 @@ class AgentRef(NamedTuple):
     position: int | None = None
     is_self: bool = False
     evidence: str | None = None
+    seen_at: str | None = None  # when the source said it, as SQLite's datetime()
 
 
 class _Row(NamedTuple):
@@ -74,6 +75,7 @@ class _Row(NamedTuple):
     author: str | None
     is_own: bool
     metadata: dict[str, Any]
+    created_at: str | None = None  # datetime(created_at)
 
 
 class _Context(NamedTuple):
@@ -204,6 +206,7 @@ def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
             url=f"{BLUESKY_PROFILE}{handle}" if handle else None,
             is_self=row.is_own,
             evidence="DID",
+            seen_at=row.created_at,
         )
     mentioned = _dict(meta.get("facets")).get("mentions")
     seen: set[str] = set()
@@ -351,18 +354,19 @@ def agents_of(
     ctx = ctx or _context(conn)
     marks = ",".join("?" * len(EXTRACTORS))
     rows = conn.execute(
-        f"SELECT id, source_type, author, is_own_content, metadata FROM items "
+        f"SELECT id, source_type, author, is_own_content, metadata, datetime(created_at) "
+        f"FROM items "
         f"WHERE held = 1 AND source_type IN ({marks})",
         list(EXTRACTORS),
     )
-    for item_id, source_type, author, is_own, metadata_json in rows:
+    for item_id, source_type, author, is_own, metadata_json, created_at in rows:
         try:
             metadata = json.loads(metadata_json) if metadata_json else {}
         except (TypeError, ValueError):
             metadata = {}
         if not isinstance(metadata, dict):
             metadata = {}
-        row = _Row(item_id, source_type, author, bool(is_own), metadata)
+        row = _Row(item_id, source_type, author, bool(is_own), metadata, created_at)
         for ref in EXTRACTORS[source_type](row, ctx):
             yield item_id, source_type, ref
 
@@ -376,6 +380,9 @@ class _People:
         self.accounts: dict[tuple[str, str], int | None] = {}
         self.display: dict[tuple[str, str], str | None] = {}
         self.urls: dict[tuple[str, str], str | None] = {}
+        # When the source that gave an account its address said it; the pass reads
+        # items in no order, so a newer handle must win over an older one
+        self.url_at: dict[tuple[str, str], str] = {}
         for platform, identifier, person_id, display, url in conn.execute(
             "SELECT platform, identifier, "
             "CASE WHEN status = 'confirmed' THEN person_id END, display_name, url "
@@ -420,7 +427,7 @@ class _People:
                     self.name_you(ref)
             if ref.platform in CANONICAL_NAMES and person_id not in (None, self.you(None)):
                 self.rename(key, person_id, ref.name)
-            self.better_url(key, ref.url)
+            self.better_url(key, ref.url, ref.seen_at)
             if person_id in self.unnamed and ref.name != ref.identifier:
                 # Named by its identifier until a source gave a name, as a list's
                 # address is until a relayed message names the list
@@ -452,22 +459,35 @@ class _People:
         )
         self.accounts[key] = person_id
         self.urls[key] = ref.url
+        if ref.url and ref.seen_at:
+            self.url_at[key] = ref.seen_at
         return person_id
 
-    def better_url(self, key: tuple[str, str], url: str | None) -> None:
-        """Give an account the address a later ref knows, when it had none or only the
-        one made from its identifier: a Bluesky account first seen by a mention has its
-        DID's address until a post of theirs gives their handle."""
+    def better_url(self, key: tuple[str, str], url: str | None, seen_at: str | None) -> None:
+        """Give an account the address a later ref knows, when it had none or only one
+        made by an import from a Bluesky identifier or handle. A Bluesky account first
+        seen by a mention has its DID's address until a post of theirs gives their
+        handle; after that, the newest post's handle wins, so the address follows a
+        handle change. An address set any other way stays."""
         old = self.urls.get(key)
         if not url or url == old:
             return
-        if old is not None and not (key[0] == "bluesky" and old == BLUESKY_PROFILE + key[1]):
-            return
+        if old is not None:
+            if key[0] != "bluesky" or not old.startswith(BLUESKY_PROFILE):
+                return
+            if old != BLUESKY_PROFILE + key[1]:
+                # old is a handle's address: only a newer post's handle replaces it
+                if url == BLUESKY_PROFILE + key[1] or seen_at is None:
+                    return
+                if (at := self.url_at.get(key)) is not None and seen_at <= at:
+                    return
         self.conn.execute(
             "UPDATE person_identities SET url = ? WHERE platform = ? AND identifier = ?",
             (url, *key),
         )
         self.urls[key] = url
+        if seen_at:
+            self.url_at[key] = seen_at
 
     def rename(self, key: tuple[str, str], person_id: int | None, name: str) -> None:
         """Give a person the account's better name, while they still have the name the

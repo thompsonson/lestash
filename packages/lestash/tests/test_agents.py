@@ -560,3 +560,32 @@ def test_a_post_of_yours_that_mentions_you_names_you(test_db) -> None:
             ).fetchone()[0]
             == "Matthew Thompson"
         )
+
+
+def test_a_bluesky_address_follows_the_newest_posts_handle(test_db) -> None:
+    """#379, review round 2: an address made from a handle follows a handle change; the
+    newest post's handle wins, whatever order the pass reads posts in."""
+
+    def post(conn: sqlite3.Connection, n: str, handle: str, when: str) -> None:
+        item = _item(
+            conn,
+            "bluesky",
+            n,
+            "Zed",
+            {"author_did": "did:plc:zed", "author_handle": handle},
+        )
+        conn.execute("UPDATE items SET created_at = ? WHERE id = ?", (when, item))
+
+    with get_connection(test_db) as conn:
+        # The newer post is read first; the older one must not take its place
+        post(conn, "b2", "zed-new.example.social", "2026-06-01T10:00:00+00:00")
+        post(conn, "b1", "zed-old.example.social", "2025-01-01T10:00:00+00:00")
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == (
+            "https://bsky.app/profile/zed-new.example.social"
+        )
+        post(conn, "b3", "zed-newest.example.social", "2026-11-01T10:00:00+00:00")
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == (
+            "https://bsky.app/profile/zed-newest.example.social"
+        )

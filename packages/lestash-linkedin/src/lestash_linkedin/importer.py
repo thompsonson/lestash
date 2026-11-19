@@ -541,11 +541,10 @@ def message_senders(
             for m in exported.get(thread.removeprefix(THREAD), [])
             if m.ms is None or abs(m.ms - ms) < SAME_MESSAGE_MS
         ]
+        # The text must match, even when it is empty: a nearby row with other text
+        # was written by someone else, or is another message
         text = _norm(str(_dict(activity.get("content")).get("fallback") or ""))
-        if text:
-            close = [m for m in close if m.text == text]
-        elif any(m.ms is None for m in close):
-            continue  # no text to tell an untimed row from this one
+        close = [m for m in close if m.text == text]
         found = {m.sender for m in close}
         if len(found) == 1 and (sender := next(iter(found))) is not None:
             senders.setdefault(author, set()).add(sender)
