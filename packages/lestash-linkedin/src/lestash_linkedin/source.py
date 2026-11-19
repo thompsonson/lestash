@@ -332,7 +332,8 @@ class LinkedInSource(SourcePlugin):
         ) -> None:
             """Import your posts, comments and articles from a LinkedIn data export ZIP.
 
-            Items the sync already holds are not stored twice. Safe to run again.
+            Items the sync already holds are not stored twice. The senders of your
+            messages take their names from messages.csv. Safe to run again.
             """
             from lestash.core.blobs import BlobStore, store_root
             from lestash.core.config import Config
@@ -357,7 +358,8 @@ class LinkedInSource(SourcePlugin):
                 f"Comments: {report.comments_added} added, {report.comments_held} held already.\n"
                 f"Articles: {report.articles_added} added, {report.articles_updated} updated.\n"
                 f"Held items given their text: {report.filled}. "
-                f"Rows without text or a post: {report.skipped}.[/green]"
+                f"Rows without text or a post: {report.skipped}.\n"
+                f"Message senders named: {report.people_named}.[/green]"
             )
             if report.media:
                 m = report.media

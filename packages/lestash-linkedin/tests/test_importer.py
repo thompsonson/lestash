@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 from lestash.core.config import Config, GeneralConfig
-from lestash.core.database import get_connection, init_database, upsert_item
+from lestash.core.database import (
+    get_connection,
+    init_database,
+    upsert_item,
+    upsert_person_profile,
+)
 from lestash.models.item import ItemCreate
 from lestash_linkedin.importer import import_export, parse_article, post_urn_of, share_text
 from lestash_linkedin.stubs import snowflake_ms
@@ -439,3 +444,167 @@ def test_a_post_imported_with_quotes_is_put_right(config: Config, tmp_path: Path
         import_export(conn, _zip(tmp_path, shares=shares))
         (post,) = _items(conn, "kind = 'post'")
         assert post["content"].startswith("Testing out Bluesky 🤓\n\nIt started")
+
+
+ANN = "urn:li:person:ann"
+BOB = "urn:li:person:bob"
+NAMED = "urn:li:person:named"
+THREAD_ID = "2-dGhyZWFkLW9uZQ=="
+# 2026-11-10 09:22:44 UTC, as the changelog writes it, to the ms
+AT_MS = 1794302564400
+IN = "https://www.linkedin.com/in/"
+
+# The columns the importer reads, of the eleven the export has
+MESSAGES = f"""CONVERSATION ID,FROM,SENDER PROFILE URL,DATE,CONTENT
+{THREAD_ID},Ann Example,{IN}ann-example,2026-11-10 09:22:44 UTC,"Hello, there"
+{THREAD_ID},Me Myself,{IN}me,2026-11-10 09:22:45 UTC,Hi Ann
+{THREAD_ID},Bob Example,{IN}bob-example,2026-11-10 10:00:00 UTC,One
+{THREAD_ID},Bobby Example,{IN}bob-example,2026-11-10 11:00:00 UTC,Two
+{THREAD_ID},LinkedIn Member,,2026-11-10 12:00:00 UTC,Gone
+{THREAD_ID},Someone Else,{IN}else,2026-11-10 13:00:00 UTC,Named
+"""
+
+
+def _message(conn, n: int, author: str, ms: int, text: str) -> None:
+    upsert_item(
+        conn,
+        ItemCreate(
+            source_type="linkedin",
+            source_id=f"changelog-messages-{n}",
+            content=text,
+            author=author,
+            is_own_content=author == ME,
+            metadata={
+                "source": "changelog",
+                "resource_name": "messages",
+                "thread": f"urn:li:messagingThread:{THREAD_ID}",
+                "raw": {
+                    "owner": ME,
+                    "actor": author,
+                    "activity": {
+                        "author": author,
+                        "thread": f"urn:li:messagingThread:{THREAD_ID}",
+                        "createdAt": ms,
+                        "content": {"fallback": text},
+                    },
+                },
+            },
+        ),
+    )
+
+
+def _person(conn, urn: str) -> tuple[str, str | None]:
+    row = conn.execute(
+        "SELECT p.name, i.url FROM person_identities i JOIN people p ON p.id = i.person_id "
+        "WHERE i.platform = 'linkedin' AND i.identifier = ?",
+        (urn,),
+    ).fetchone()
+    return (row[0], row[1])
+
+
+def test_message_senders_are_named_from_the_export(config: Config, tmp_path: Path) -> None:
+    """#380: a member first seen by a message is named by their URN; messages.csv names
+    the sender of the row at that time in that conversation."""
+    from lestash.core.agents import link_agents
+
+    path = _zip(tmp_path)
+    with zipfile.ZipFile(path, "a") as zf:
+        zf.writestr("messages.csv", MESSAGES)
+    with get_connection(config) as conn:
+        # Ann's message and your reply a second later: the text says which is hers
+        _message(conn, 1, ANN, AT_MS, "Hello, there")
+        _message(conn, 2, ME, AT_MS + 1000, "Hi Ann")
+        # Bob's two messages give two names: neither is taken
+        _message(conn, 3, BOB, AT_MS + 2_236_000, "One")
+        _message(conn, 4, BOB, AT_MS + 5_836_000, "Two")
+        # A member the export no longer names
+        _message(conn, 5, "urn:li:person:gone", AT_MS + 9_436_000, "Gone")
+        # One you named yourself keeps your name
+        _message(conn, 6, NAMED, AT_MS + 13_036_000, "Named")
+        link_agents(conn)
+        conn.commit()
+        upsert_person_profile(conn, NAMED, display_name="My Name For Them")
+        assert _person(conn, ANN) == (ANN, None)
+
+        report = import_export(conn, path)
+
+        assert report.people_named == 1
+        assert _person(conn, ANN) == ("Ann Example", "https://www.linkedin.com/in/ann-example")
+        assert _person(conn, BOB) == (BOB, None)
+        assert _person(conn, "urn:li:person:gone") == ("urn:li:person:gone", None)
+        assert _person(conn, NAMED) == ("My Name For Them", "https://www.linkedin.com/in/else")
+        # The agents pass keeps the name; a second import names no one
+        link_agents(conn)
+        assert _person(conn, ANN)[0] == "Ann Example"
+        assert import_export(conn, path).people_named == 0
+
+
+def test_a_message_is_not_named_from_a_nearby_row_with_other_text(
+    config: Config, tmp_path: Path
+) -> None:
+    """#380, review round 1: an unnamed sender's row, or a lone row whose text differs,
+    never names the held message's author."""
+    from lestash.core.agents import link_agents
+
+    carl, dee = "urn:li:person:carl", "urn:li:person:dee"
+    rows = f"""CONVERSATION ID,FROM,SENDER PROFILE URL,DATE,CONTENT
+{THREAD_ID},LinkedIn Member,,2026-11-10 09:22:44 UTC,Hello from Carl
+{THREAD_ID},Ann Example,{IN}ann-example,2026-11-10 09:22:45 UTC,Hi Carl
+{THREAD_ID},Ann Example,{IN}ann-example,2026-11-10 10:00:00 UTC,Something else
+"""
+    path = _zip(tmp_path)
+    with zipfile.ZipFile(path, "a") as zf:
+        zf.writestr("messages.csv", rows)
+    with get_connection(config) as conn:
+        # Carl's row is unnamed; Ann's row a second later must not be taken for it
+        _message(conn, 1, carl, AT_MS, "Hello from Carl")
+        # Dee's message has only Ann's row near it, with different text
+        _message(conn, 2, dee, AT_MS + 2_236_000, "Dee writes")
+        link_agents(conn)
+        conn.commit()
+
+        report = import_export(conn, path)
+
+        assert report.people_named == 0
+        assert _person(conn, carl) == (carl, None)
+        assert _person(conn, dee) == (dee, None)
+
+
+def test_a_message_with_no_text_is_not_named_from_a_row_with_text(
+    config: Config, tmp_path: Path
+) -> None:
+    """#380, review round 2: the text is compared even when the held message has none."""
+    from lestash.core.agents import link_agents
+
+    eve = "urn:li:person:eve"
+    rows = f"""CONVERSATION ID,FROM,SENDER PROFILE URL,DATE,CONTENT
+{THREAD_ID},Ann Example,{IN}ann-example,2026-11-10 09:22:45 UTC,Hi there
+"""
+    path = _zip(tmp_path)
+    with zipfile.ZipFile(path, "a") as zf:
+        zf.writestr("messages.csv", rows)
+    with get_connection(config) as conn:
+        _message(conn, 1, eve, AT_MS, "")
+        link_agents(conn)
+        conn.commit()
+        assert import_export(conn, path).people_named == 0
+        assert _person(conn, eve) == (eve, None)
+
+
+def test_an_untimed_row_never_names_a_sender(config: Config, tmp_path: Path) -> None:
+    """#380, review round 4: a row with no time can block a match but never make one."""
+    from lestash.core.agents import link_agents
+
+    fay = "urn:li:person:fay"
+    rows = f"""CONVERSATION ID,FROM,SENDER PROFILE URL,DATE,CONTENT
+{THREAD_ID},Ann Example,{IN}ann-example,,Same words
+"""
+    path = _zip(tmp_path)
+    with zipfile.ZipFile(path, "a") as zf:
+        zf.writestr("messages.csv", rows)
+    with get_connection(config) as conn:
+        _message(conn, 1, fay, AT_MS, "Same words")
+        link_agents(conn)
+        conn.commit()
+        assert import_export(conn, path).people_named == 0
+        assert _person(conn, fay) == (fay, None)

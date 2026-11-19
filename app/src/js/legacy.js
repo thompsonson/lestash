@@ -11,6 +11,7 @@ import {
   attachPickerSuggest, rememberOpened,
 } from './objects/item/picker.js';
 import { renderCard } from './objects/item/card.js';
+import { personName } from './objects/item/kinds.js';
 import { openAddFiles } from './objects/item/add-files.js';
 import { koboSectionHtml, loadKobo } from './objects/item/kobo.js';
 import { relatedSectionHtml, loadRelated } from './objects/item/related.js';
@@ -1163,7 +1164,7 @@ async function loadPeople(itemId, sourceType) {
     return;
   }
   const rows = data.agents.map(a => {
-    const name = a.person.is_self ? selfName() : a.person.name;
+    const name = a.person.is_self ? selfName() : personName(a.person.name, a.accounts[0] && a.accounts[0].platform);
     // The account on a web page: the one on this item's platform first, so "Matt"
     // on a LinkedIn post links your LinkedIn profile. Only web and mail addresses:
     // a URL from imported data must not run script.

@@ -41,6 +41,9 @@ LINKEDIN_ENTITIES = {
     "com.linkedin.common.CompanyAttributedEntity": ("company", "organization"),
 }
 LIST_ID = re.compile(r"<([^<>]+)>")
+# A Bluesky profile address: by handle when a post of theirs gives it, else by DID
+BLUESKY_PROFILE = "https://bsky.app/profile/"
+BLUESKY_INVALID_HANDLE = "handle.invalid"  # Bluesky's word for an unverified one
 
 # Chat sources: the author word (or Claude's metadata.sender) -> the software agent that
 # wrote the turn, or None for your own turns
@@ -191,15 +194,22 @@ def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
     names them."""
     meta = row.metadata
     did, handle = meta.get("author_did"), meta.get("author_handle")
+    if handle == BLUESKY_INVALID_HANDLE:
+        handle = None  # Bluesky could not verify it: neither a name nor an address
     if isinstance(did, str) and did:
         # The author first: a post of yours that mentions you must name your account
         yield AgentRef(
             "author",
             "bluesky",
             did,
-            str(meta.get("author_display_name") or handle or row.author or did),
+            str(
+                meta.get("author_display_name")
+                or handle
+                or (row.author if row.author != BLUESKY_INVALID_HANDLE else None)
+                or did
+            ),
             "person",
-            url=f"https://bsky.app/profile/{handle}" if handle else None,
+            url=f"{BLUESKY_PROFILE}{handle}" if handle else None,
             is_self=row.is_own,
             evidence="DID",
         )
@@ -215,7 +225,7 @@ def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
             mention,
             mention,
             "person",
-            url=f"https://bsky.app/profile/{mention}",
+            url=f"{BLUESKY_PROFILE}{mention}",
             is_self=row.is_own and mention == did,
             evidence="tagged",
         )
@@ -373,13 +383,40 @@ class _People:
         # An account not confirmed (suggested, rejected) is kept but gives no agent
         self.accounts: dict[tuple[str, str], int | None] = {}
         self.display: dict[tuple[str, str], str | None] = {}
-        for platform, identifier, person_id, display in conn.execute(
+        self.urls: dict[tuple[str, str], str | None] = {}
+        # Each Bluesky DID's handle addresses, as its held posts give them: the one
+        # seen last, and all of them. A post holds the handle it had when last synced,
+        # and a sync that changes it leaves an item_history row holding the old one,
+        # so a post's handle was seen at its fetch or at the latest change of handle,
+        # whichever is later; other changes don't count. Read up
+        # front, as the pass reads items in no order. Bluesky's placeholder for an
+        # unverified handle is skipped
+        self.bluesky_handles: dict[str, tuple[str, set[str]]] = {}
+        for did, handle in conn.execute(
+            "SELECT json_extract(metadata, '$.author_did'), "
+            "json_extract(metadata, '$.author_handle') FROM items "
+            "WHERE source_type = 'bluesky' AND held = 1 "
+            "AND json_extract(metadata, '$.author_handle') NOT IN ('', ?) "
+            "ORDER BY max(coalesce(datetime(fetched_at), ''), coalesce(("
+            "SELECT datetime(max(h.changed_at)) FROM item_history h WHERE h.item_id = items.id "
+            "AND json_extract(h.metadata_old, '$.author_handle') "
+            "IS NOT json_extract(items.metadata, '$.author_handle')"
+            "), '')), id",
+            (BLUESKY_INVALID_HANDLE,),
+        ):
+            if isinstance(did, str) and isinstance(handle, str):
+                url = BLUESKY_PROFILE + handle
+                known = self.bluesky_handles.get(did, (url, set()))[1]
+                known.add(url)
+                self.bluesky_handles[did] = (url, known)
+        for platform, identifier, person_id, display, url in conn.execute(
             "SELECT platform, identifier, "
-            "CASE WHEN status = 'confirmed' THEN person_id END, display_name "
+            "CASE WHEN status = 'confirmed' THEN person_id END, display_name, url "
             "FROM person_identities"
         ):
             self.accounts[(platform, identifier)] = person_id
             self.display[(platform, identifier)] = display
+            self.urls[(platform, identifier)] = url
         # People named by an account's identifier, waiting for a source to name them
         self.unnamed: set[int] = {
             person_id
@@ -416,6 +453,13 @@ class _People:
                     self.name_you(ref)
             if ref.platform in CANONICAL_NAMES and person_id not in (None, self.you(None)):
                 self.rename(key, person_id, ref.name)
+            elif (
+                ref.platform == "bluesky"
+                and self.display.get(key) == BLUESKY_INVALID_HANDLE
+                and person_id is not None
+            ):
+                self.unname_placeholder(key, person_id, ref.name)
+            self.better_url(key, ref.url)
             if person_id in self.unnamed and ref.name != ref.identifier:
                 # Named by its identifier until a source gave a name, as a list's
                 # address is until a relayed message names the list
@@ -446,7 +490,55 @@ class _People:
             (person_id, ref.platform, ref.identifier, ref.name, ref.url, ref.evidence, origin),
         )
         self.accounts[key] = person_id
+        self.urls[key] = ref.url
+        if ref.platform == "bluesky":
+            self.better_url(key, ref.url)  # the newest handle, if this ref is older
         return person_id
+
+    def better_url(self, key: tuple[str, str], url: str | None) -> None:
+        """Give an account a better address than it has. One with none takes the ref's.
+        A Bluesky account takes its newest held post's handle address in place of its
+        DID's, which a mention gives it, or of an older handle's from its own posts,
+        so the address follows a handle change. An address set any other way stays."""
+        old = self.urls.get(key)
+        platform, identifier = key
+        if platform == "bluesky":
+            did_url = BLUESKY_PROFILE + identifier
+            made = (did_url, BLUESKY_PROFILE + BLUESKY_INVALID_HANDLE)
+            newest, known = self.bluesky_handles.get(identifier, (None, set()))
+            if old is not None and old not in made and old not in known:
+                return  # set some other way
+            # The newest handle's address; with none, the ref's, or the DID's in place
+            # of the dead placeholder's
+            url = newest or (url if old is None else did_url)
+        elif old is not None:
+            return
+        if not url or url == old:
+            return
+        self.conn.execute(
+            "UPDATE person_identities SET url = ? WHERE platform = ? AND identifier = ?",
+            (url, *key),
+        )
+        self.urls[key] = url
+
+    def unname_placeholder(self, key: tuple[str, str], person_id: int, name: str) -> None:
+        """A Bluesky account named 'handle.invalid' before that was skipped takes the
+        ref's name: a real one, or its DID until a post names it (you: YOU). A name you
+        set stays."""
+        is_you = person_id == self.you(None)
+        if is_you and name == key[1]:
+            name = YOU
+        self.conn.execute(
+            "UPDATE people SET name = ? WHERE id = ? AND name = ? AND name_origin IS NULL",
+            (name, person_id, BLUESKY_INVALID_HANDLE),
+        )
+        self.conn.execute(
+            "UPDATE person_identities SET display_name = ? WHERE platform = ? AND identifier = ?",
+            (name, *key),
+        )
+        self.display[key] = name
+        if name == key[1] and not is_you:
+            self.unnamed.add(person_id)
 
     def rename(self, key: tuple[str, str], person_id: int | None, name: str) -> None:
         """Give a person the account's better name, while they still have the name the
