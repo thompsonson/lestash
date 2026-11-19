@@ -463,6 +463,82 @@ def test_a_bluesky_mention_names_its_account_once_a_post_of_theirs_does(test_db)
         assert link_agents(conn) == 0
 
 
+def _bluesky_url(conn: sqlite3.Connection, did: str) -> str | None:
+    return conn.execute(
+        "SELECT url FROM person_identities WHERE platform = 'bluesky' AND identifier = ?",
+        (did,),
+    ).fetchone()[0]
+
+
+def test_a_bluesky_mention_takes_the_handle_address_once_a_post_of_theirs_gives_it(
+    test_db,
+) -> None:
+    """#379: first seen by a mention, an account has its DID's address; a post of theirs
+    gives their handle, whose address replaces it."""
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            "bluesky",
+            "b1",
+            "Me",
+            {"author_did": "did:plc:me", "facets": {"mentions": ["did:plc:zed"]}},
+            own=True,
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/did:plc:zed"
+        _item(
+            conn,
+            "bluesky",
+            "b2",
+            "Zed",
+            {
+                "author_did": "did:plc:zed",
+                "author_handle": "zed.example.social",
+                "author_display_name": "Zed Example",
+            },
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/zed.example.social"
+        # A later mention keeps the handle's address
+        _item(
+            conn,
+            "bluesky",
+            "b3",
+            "Me",
+            {"author_did": "did:plc:me", "facets": {"mentions": ["did:plc:zed"]}},
+            own=True,
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/zed.example.social"
+
+
+def test_a_bluesky_address_set_otherwise_is_kept(test_db) -> None:
+    """Only the address made from the DID gives way: one set some other way stays."""
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            "bluesky",
+            "b1",
+            "Me",
+            {"author_did": "did:plc:me", "facets": {"mentions": ["did:plc:zed"]}},
+            own=True,
+        )
+        link_agents(conn)
+        conn.execute(
+            "UPDATE person_identities SET url = 'https://zed.example.org' "
+            "WHERE identifier = 'did:plc:zed'"
+        )
+        _item(
+            conn,
+            "bluesky",
+            "b2",
+            "Zed",
+            {"author_did": "did:plc:zed", "author_handle": "zed.example.social"},
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://zed.example.org"
+
+
 def test_a_post_of_yours_that_mentions_you_names_you(test_db) -> None:
     with get_connection(test_db) as conn:
         _item(

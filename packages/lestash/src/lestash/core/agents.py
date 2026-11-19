@@ -41,6 +41,8 @@ LINKEDIN_ENTITIES = {
     "com.linkedin.common.CompanyAttributedEntity": ("company", "organization"),
 }
 LIST_ID = re.compile(r"<([^<>]+)>")
+# A Bluesky profile address: by handle when a post of theirs gives it, else by DID
+BLUESKY_PROFILE = "https://bsky.app/profile/"
 
 # Chat sources: the author word (or Claude's metadata.sender) -> the software agent that
 # wrote the turn, or None for your own turns
@@ -199,7 +201,7 @@ def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
             did,
             str(meta.get("author_display_name") or handle or row.author or did),
             "person",
-            url=f"https://bsky.app/profile/{handle}" if handle else None,
+            url=f"{BLUESKY_PROFILE}{handle}" if handle else None,
             is_self=row.is_own,
             evidence="DID",
         )
@@ -215,7 +217,7 @@ def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
             mention,
             mention,
             "person",
-            url=f"https://bsky.app/profile/{mention}",
+            url=f"{BLUESKY_PROFILE}{mention}",
             is_self=row.is_own and mention == did,
             evidence="tagged",
         )
@@ -373,13 +375,15 @@ class _People:
         # An account not confirmed (suggested, rejected) is kept but gives no agent
         self.accounts: dict[tuple[str, str], int | None] = {}
         self.display: dict[tuple[str, str], str | None] = {}
-        for platform, identifier, person_id, display in conn.execute(
+        self.urls: dict[tuple[str, str], str | None] = {}
+        for platform, identifier, person_id, display, url in conn.execute(
             "SELECT platform, identifier, "
-            "CASE WHEN status = 'confirmed' THEN person_id END, display_name "
+            "CASE WHEN status = 'confirmed' THEN person_id END, display_name, url "
             "FROM person_identities"
         ):
             self.accounts[(platform, identifier)] = person_id
             self.display[(platform, identifier)] = display
+            self.urls[(platform, identifier)] = url
         # People named by an account's identifier, waiting for a source to name them
         self.unnamed: set[int] = {
             person_id
@@ -416,6 +420,7 @@ class _People:
                     self.name_you(ref)
             if ref.platform in CANONICAL_NAMES and person_id not in (None, self.you(None)):
                 self.rename(key, person_id, ref.name)
+            self.better_url(key, ref.url)
             if person_id in self.unnamed and ref.name != ref.identifier:
                 # Named by its identifier until a source gave a name, as a list's
                 # address is until a relayed message names the list
@@ -446,7 +451,23 @@ class _People:
             (person_id, ref.platform, ref.identifier, ref.name, ref.url, ref.evidence, origin),
         )
         self.accounts[key] = person_id
+        self.urls[key] = ref.url
         return person_id
+
+    def better_url(self, key: tuple[str, str], url: str | None) -> None:
+        """Give an account the address a later ref knows, when it had none or only the
+        one made from its identifier: a Bluesky account first seen by a mention has its
+        DID's address until a post of theirs gives their handle."""
+        old = self.urls.get(key)
+        if not url or url == old:
+            return
+        if old is not None and not (key[0] == "bluesky" and old == BLUESKY_PROFILE + key[1]):
+            return
+        self.conn.execute(
+            "UPDATE person_identities SET url = ? WHERE platform = ? AND identifier = ?",
+            (url, *key),
+        )
+        self.urls[key] = url
 
     def rename(self, key: tuple[str, str], person_id: int | None, name: str) -> None:
         """Give a person the account's better name, while they still have the name the
