@@ -545,8 +545,10 @@ def message_senders(
         # was written by someone else, or is another message
         text = _norm(str(_dict(activity.get("content")).get("fallback") or ""))
         close = [m for m in close if m.text == text]
-        found = {m.sender for m in close}
-        if len(found) == 1 and (sender := next(iter(found))) is not None:
+        # Only a timed row names the sender; an untimed one can only stand in the way
+        found = {m.sender for m in close if m.ms is not None}
+        untimed = {m.sender for m in close if m.ms is None}
+        if len(found) == 1 and (sender := next(iter(found))) is not None and untimed <= found:
             senders.setdefault(author, set()).add(sender)
     return {urn: next(iter(found)) for urn, found in senders.items() if len(found) == 1}
 

@@ -589,3 +589,22 @@ def test_a_message_with_no_text_is_not_named_from_a_row_with_text(
         conn.commit()
         assert import_export(conn, path).people_named == 0
         assert _person(conn, eve) == (eve, None)
+
+
+def test_an_untimed_row_never_names_a_sender(config: Config, tmp_path: Path) -> None:
+    """#380, review round 4: a row with no time can block a match but never make one."""
+    from lestash.core.agents import link_agents
+
+    fay = "urn:li:person:fay"
+    rows = f"""CONVERSATION ID,FROM,SENDER PROFILE URL,DATE,CONTENT
+{THREAD_ID},Ann Example,{IN}ann-example,,Same words
+"""
+    path = _zip(tmp_path)
+    with zipfile.ZipFile(path, "a") as zf:
+        zf.writestr("messages.csv", rows)
+    with get_connection(config) as conn:
+        _message(conn, 1, fay, AT_MS, "Same words")
+        link_agents(conn)
+        conn.commit()
+        assert import_export(conn, path).people_named == 0
+        assert _person(conn, fay) == (fay, None)
