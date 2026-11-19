@@ -192,8 +192,30 @@ RUN_ON_WORDS = 16
 Word = tuple[float, str, int]  # (start, text, speaker)
 
 
+# Words whose full stop seldom ends a sentence. Not "etc." or "no.", which often do
+ABBREVIATIONS = frozenset({
+    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "mt", "fig", "approx", "cf",
+    "al", "inc", "ltd", "corp", "dept",
+})  # fmt: skip
+_DOTTED = re.compile(r"(?:[A-Za-z]\.){2,}")  # U.S., B.F., e.g., i.e.
+
+
 def _ends_sentence(word: str) -> bool:
-    return word.strip().rstrip("\"')]”’").endswith(SENTENCE_END)
+    """Whether a word ends its sentence. An abbreviation, an initial ("B.") or a dotted
+    acronym ("U.S.") does not, though it ends in a full stop: one at the end of a
+    sentence then runs that sentence into the next, which keeps the voice of the
+    longer."""
+    parts = word.split()
+    last = parts[-1].rstrip("\"')]”’") if parts else ""
+    if not last.endswith(SENTENCE_END):
+        return False
+    if last.endswith("."):
+        stem = last.lstrip("\"'([“‘")
+        if stem[:-1].lower() in ABBREVIATIONS or _DOTTED.fullmatch(stem):
+            return False
+        if len(stem) == 2 and stem[0].isupper():  # an initial
+            return False
+    return True
 
 
 def _size(run: list[Word]) -> int:
@@ -284,17 +306,28 @@ def _seconds(clock_text: str) -> float:
 def regroup_transcript(text: str) -> str:
     """A stored transcript's turns grouped again a sentence at a time, as
     ``speaker_turns`` groups them now (#381): for transcripts made before, whose word
-    times were not kept. Each word counts as one; a turn that starts inside another's
-    takes that one's time. Text that is not all turns comes back as it is."""
+    times were not kept. Each word counts as one. Text that is not all turns comes back
+    as it is.
+
+    Only each stored turn's start is known. A new turn that starts with a stored turn's
+    first word takes its time. One that starts inside a stored turn takes the start of
+    the next stored turn when it starts in that turn's last ``RUN_ON_WORDS`` words: a
+    tail moved forward ends where the next turn starts, so that time is never before
+    the real one, and late by at most the tail. Any other start, after a short head
+    moved back, takes the stored turn's own start: early by at most that head."""
     blocks = text.split("\n\n")
     matches = [_TURN.fullmatch(b) for b in blocks]
     if not blocks or not all(matches):
         return text
+    starts = [_seconds(m.group(2)) for m in matches if m]
     words: list[Word] = []
-    for m in matches:
+    for n, m in enumerate(matches):
         assert m is not None
-        start, speaker = _seconds(m.group(2)), int(m.group(1))
-        words.extend((start, f" {w}", speaker) for w in m.group(3).split())
+        speaker, tokens = int(m.group(1)), m.group(3).split()
+        after = starts[n + 1] if n + 1 < len(starts) else starts[n]
+        for i, w in enumerate(tokens):
+            tail = i and len(tokens) - i < RUN_ON_WORDS
+            words.append((after if tail else starts[n], f" {w}", speaker))
     names: dict[int, int] = {}
     return "\n\n".join(
         f"**Speaker {names.setdefault(speaker, len(names) + 1)}** ({clock(start)}): {body}"

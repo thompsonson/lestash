@@ -466,8 +466,8 @@ def test_regroup_a_stored_transcript_from_its_text() -> None:
     regrouped = extract.regroup_transcript(stored)
     assert regrouped == (
         "**Speaker 1** (0:00): Cats sleep a lot.\n\n"
-        "**Speaker 2** (0:00): Dogs bark at night.\n\n"
-        "**Speaker 1** (0:04): And birds sing.\n\n"
+        "**Speaker 2** (0:04): Dogs bark at night.\n\n"
+        "**Speaker 1** (0:07): And birds sing.\n\n"
         "**Speaker 2** (0:09): Really?"
     )
     assert extract.regroup_transcript(regrouped) == regrouped  # once is enough
@@ -477,6 +477,34 @@ def test_regroup_a_stored_transcript_from_its_text() -> None:
     )
     minutes = "## 0:00\n\nOne voice, no turns"
     assert extract.regroup_transcript(minutes) == minutes
+
+
+def test_a_regrouped_turn_is_never_timed_before_it_starts() -> None:
+    # A tail moved out of a long turn starts where the next stored turn starts, not
+    # minutes before, where the long turn did (review round 1)
+    long_turn = " ".join(["word"] * 30)
+    stored = f"**Speaker 1** (0:00): {long_turn}. Then\n\n**Speaker 2** (3:00): it rained."
+    assert extract.regroup_transcript(stored) == (
+        f"**Speaker 1** (0:00): {long_turn}.\n\n**Speaker 2** (3:00): Then it rained."
+    )
+    # A short head moved back: the rest of that turn keeps its own start
+    rest = " ".join(["more"] * 20)
+    stored = f"**Speaker 1** (0:00): Hi there\n\n**Speaker 2** (0:05): friend. {rest}."
+    assert extract.regroup_transcript(stored) == (
+        f"**Speaker 1** (0:00): Hi there friend.\n\n**Speaker 2** (0:05): {rest}."
+    )
+
+
+def test_abbreviations_and_initials_do_not_end_a_sentence() -> None:
+    for word in (" Dr.", "Mr.", "U.S.", "e.g.", "B.", "(i.e.", 'St."'):
+        assert not extract._ends_sentence(word), word
+    for word in (" end.", "why?", "No.", "etc.", 'said."', "I", "a.m"):
+        assert extract._ends_sentence(word) == word.rstrip('"').endswith((".", "?")), word
+    # "Dr." is not the end of a sentence, so the name stays with it
+    stored = "**Speaker 1** (0:00): We met Dr.\n\n**Speaker 2** (0:02): Smith today. Yes."
+    assert extract.regroup_transcript(stored) == (
+        "**Speaker 1** (0:00): We met Dr. Smith today.\n\n**Speaker 2** (0:02): Yes."
+    )
 
 
 def test_regroup_transcripts_rewrites_the_stored_text_and_its_items(test_db, fake_worker) -> None:
