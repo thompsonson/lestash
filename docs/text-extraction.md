@@ -21,7 +21,8 @@ W3 (#218): searchable text for files that have none.
 - A sentence keeps two voices only when each speaks at least 16 words of it: whisper ran two sentences together without a full stop.
 - Over the 25 overviews stored before the change, half the speaker changes fell mid-sentence; grouped by sentence, 9 in 1,836 do.
 - A capitalised title ("Dr.", "Ms."), "e.g.", "i.e." and "vs." never end a sentence.
-- "St." and "Mt." don't after a word that is not capitalised ("the St. Louis"); "Fig." and "approx." don't before a number.
+- "St." and "Mt." are a saint or a mount, and don't end a sentence, unless the word before is a name or a number ("Main St.", "5th St."). A capital that only opens the sentence is no name.
+- "Fig." and "approx." don't end a sentence before a number.
 - Another abbreviation, an initial or an acronym ("Main St.", "Inc.", "200 ms.", "B.", "U.S.") ends one when the next word starts with a capital. It does not when the next word is lowercase.
 - `lestash enrich regroup-transcripts` groups stored transcripts again from their text, with no recording heard again. `--dry-run` only counts.
 - A regrouped turn starting with words that moved forward into the next stored turn takes that turn's start: never before the real start, and late by at most those words.
