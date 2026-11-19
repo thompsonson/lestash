@@ -589,3 +589,18 @@ def test_a_bluesky_address_follows_the_newest_posts_handle(test_db) -> None:
         assert _bluesky_url(conn, "did:plc:zed") == (
             "https://bsky.app/profile/zed-newest.example.social"
         )
+
+
+def test_a_bsky_address_you_set_stays_after_a_newer_post(test_db) -> None:
+    """#379, review round 3: an address on bsky.app that no post of the account gave
+    was set some other way, so a newer post's handle does not replace it."""
+    with get_connection(test_db) as conn:
+        _item(conn, "bluesky", "b1", "Zed", {"author_did": "did:plc:zed", "author_handle": "a.x"})
+        link_agents(conn)
+        conn.execute(
+            "UPDATE person_identities SET url = 'https://bsky.app/profile/chosen.example' "
+            "WHERE identifier = 'did:plc:zed'"
+        )
+        _item(conn, "bluesky", "b2", "Zed", {"author_did": "did:plc:zed", "author_handle": "b.x"})
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/chosen.example"
