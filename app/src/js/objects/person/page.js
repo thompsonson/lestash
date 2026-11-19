@@ -5,6 +5,7 @@ import { api } from '../../api.js';
 import { escHtml, dateText } from '../../util.js';
 import { renderCard } from '../item/card.js';
 import { PERSON_KIND } from './card.js';
+import { personName } from '../item/kinds.js';
 import { setSelfName } from './self.js';
 
 const ROLE_WORDS = {
@@ -49,9 +50,11 @@ export async function drawPerson(id, container, url) {
   if (location.pathname !== `/people/${id}`) return {};
   const kind = url.searchParams.get('kind') || '';
   const kindName = p.is_self ? 'You' : (PERSON_KIND[p.kind] || p.kind);
+  // Unnamed, they read as words; their account below still shows the URN or DID
+  const name = personName(p.name, p.accounts[0] && p.accounts[0].platform);
   const accounts = p.accounts.map(a => {
     const href = safeUrl(a.url);
-    const label = `${a.platform}${a.display_name && a.display_name !== p.name ? `: ${a.display_name}` : ''}`;
+    const label = `${a.platform}${a.display_name && a.display_name !== name ? `: ${a.display_name}` : ''}`;
     return href ? `<a href="${escHtml(href)}" target="_blank" rel="noopener">${escHtml(label)} ↗</a>` : `<span>${escHtml(label)}</span>`;
   }).join(' · ');
 
@@ -82,7 +85,7 @@ export async function drawPerson(id, container, url) {
     </form>` : '';
 
   container.innerHTML = `
-    <div class="item-view-title"><span class="kind-icon" aria-hidden="true">●</span> ${escHtml(p.name)}</div>
+    <div class="item-view-title"><span class="kind-icon" aria-hidden="true">●</span> ${escHtml(name)}</div>
     <div class="item-view-meta">${escHtml(kindName)} · ${p.items} ${p.items === 1 ? 'item' : 'items'}${p.mentioned_in ? ` · mentioned in ${p.mentioned_in}` : ''}</div>
     ${accounts ? `<div class="person-accounts">${accounts}</div>` : ''}
     ${shortName}

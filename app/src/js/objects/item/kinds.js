@@ -25,6 +25,7 @@ export function kindText(item) {
 // A person's name as shown: an account LeStash can't name reads as words, not a URN
 export function personName(display, source) {
   if (!display || display === '-') return '';
+  if (display.startsWith('urn:li:company:')) return 'A LinkedIn page';
   if (display.startsWith('urn:li:')) return 'A LinkedIn member';
   if (display.startsWith('did:')) return 'A Bluesky account';
   if (display.startsWith('urn:')) return `An account on ${source || 'another site'}`;

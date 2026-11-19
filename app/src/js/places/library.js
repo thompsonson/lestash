@@ -6,6 +6,7 @@ import { api } from '../api.js';
 import { route, navigate } from '../router.js';
 import { escHtml, openFiltersWhenWide } from '../util.js';
 import { renderCard } from '../objects/item/card.js';
+import { personName } from '../objects/item/kinds.js';
 
 const PAGE = 30;
 const SORTS = [['recent', 'Newest'], ['oldest', 'Oldest'], ['title', 'Title']];
@@ -85,7 +86,7 @@ async function drawShelf(url) {
 
   api(`/api/library/${current.shelf}/facets`).then(f => {
     if (shown !== key) return;
-    options(sel('person'), 'Any person', f.people, params.get('person'), p => p.id, p => `${p.name} (${p.count})`);
+    options(sel('person'), 'Any person', f.people, params.get('person'), p => p.id, p => `${personName(p.name) || p.name} (${p.count})`);
     options(sel('tag'), 'Any topic', f.topics, params.get('tag'), t => t.name, t => `${t.name} (${t.count})`);
     options(sel('year'), 'Any year', f.years, params.get('year'), y => y.name, y => `${y.name} (${y.count})`);
     const active = ['person', 'tag', 'year'].filter(k => params.get(k)).length;

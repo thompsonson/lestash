@@ -463,6 +463,82 @@ def test_a_bluesky_mention_names_its_account_once_a_post_of_theirs_does(test_db)
         assert link_agents(conn) == 0
 
 
+def _bluesky_url(conn: sqlite3.Connection, did: str) -> str | None:
+    return conn.execute(
+        "SELECT url FROM person_identities WHERE platform = 'bluesky' AND identifier = ?",
+        (did,),
+    ).fetchone()[0]
+
+
+def test_a_bluesky_mention_takes_the_handle_address_once_a_post_of_theirs_gives_it(
+    test_db,
+) -> None:
+    """#379: first seen by a mention, an account has its DID's address; a post of theirs
+    gives their handle, whose address replaces it."""
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            "bluesky",
+            "b1",
+            "Me",
+            {"author_did": "did:plc:me", "facets": {"mentions": ["did:plc:zed"]}},
+            own=True,
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/did:plc:zed"
+        _item(
+            conn,
+            "bluesky",
+            "b2",
+            "Zed",
+            {
+                "author_did": "did:plc:zed",
+                "author_handle": "zed.example.social",
+                "author_display_name": "Zed Example",
+            },
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/zed.example.social"
+        # A later mention keeps the handle's address
+        _item(
+            conn,
+            "bluesky",
+            "b3",
+            "Me",
+            {"author_did": "did:plc:me", "facets": {"mentions": ["did:plc:zed"]}},
+            own=True,
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/zed.example.social"
+
+
+def test_a_bluesky_address_set_otherwise_is_kept(test_db) -> None:
+    """Only the address made from the DID gives way: one set some other way stays."""
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            "bluesky",
+            "b1",
+            "Me",
+            {"author_did": "did:plc:me", "facets": {"mentions": ["did:plc:zed"]}},
+            own=True,
+        )
+        link_agents(conn)
+        conn.execute(
+            "UPDATE person_identities SET url = 'https://zed.example.org' "
+            "WHERE identifier = 'did:plc:zed'"
+        )
+        _item(
+            conn,
+            "bluesky",
+            "b2",
+            "Zed",
+            {"author_did": "did:plc:zed", "author_handle": "zed.example.social"},
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://zed.example.org"
+
+
 def test_a_post_of_yours_that_mentions_you_names_you(test_db) -> None:
     with get_connection(test_db) as conn:
         _item(
@@ -483,4 +559,218 @@ def test_a_post_of_yours_that_mentions_you_names_you(test_db) -> None:
                 "SELECT display_name FROM person_identities WHERE identifier = 'did:plc:me'"
             ).fetchone()[0]
             == "Matthew Thompson"
+        )
+
+
+def test_a_bluesky_address_follows_the_newest_posts_handle(test_db) -> None:
+    """#379, review rounds 2 and 5: an address made from a handle follows a handle
+    change; the handle fetched last wins, whatever order the pass reads posts in."""
+
+    def post(conn: sqlite3.Connection, n: str, handle: str, when: str) -> None:
+        item = _item(
+            conn,
+            "bluesky",
+            n,
+            "Zed",
+            {"author_did": "did:plc:zed", "author_handle": handle},
+        )
+        conn.execute("UPDATE items SET fetched_at = ? WHERE id = ?", (when, item))
+
+    with get_connection(test_db) as conn:
+        # The newer post is read first; the older one must not take its place
+        post(conn, "b2", "zed-new.example.social", "2026-06-01T10:00:00+00:00")
+        post(conn, "b1", "zed-old.example.social", "2025-01-01T10:00:00+00:00")
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == (
+            "https://bsky.app/profile/zed-new.example.social"
+        )
+        post(conn, "b3", "zed-newest.example.social", "2026-11-01T10:00:00+00:00")
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == (
+            "https://bsky.app/profile/zed-newest.example.social"
+        )
+
+
+def test_a_bsky_address_you_set_stays_after_a_newer_post(test_db) -> None:
+    """#379, review round 3: an address on bsky.app that no post of the account gave
+    was set some other way, so a newer post's handle does not replace it."""
+    with get_connection(test_db) as conn:
+        _item(conn, "bluesky", "b1", "Zed", {"author_did": "did:plc:zed", "author_handle": "a.x"})
+        link_agents(conn)
+        conn.execute(
+            "UPDATE person_identities SET url = 'https://bsky.app/profile/chosen.example' "
+            "WHERE identifier = 'did:plc:zed'"
+        )
+        _item(conn, "bluesky", "b2", "Zed", {"author_did": "did:plc:zed", "author_handle": "b.x"})
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/chosen.example"
+
+
+def test_an_unverified_bluesky_handle_never_becomes_an_address(test_db) -> None:
+    """#379, review round 5: Bluesky's placeholder 'handle.invalid' is not a handle."""
+    with get_connection(test_db) as conn:
+        _item(conn, "bluesky", "b1", "Zed", {"author_did": "did:plc:zed", "author_handle": "a.x"})
+        link_agents(conn)
+        _item(
+            conn,
+            "bluesky",
+            "b2",
+            "Zed",
+            {"author_did": "did:plc:zed", "author_handle": "handle.invalid"},
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/a.x"
+
+
+def test_a_first_post_with_an_unverified_handle_gives_no_address(test_db) -> None:
+    """#379, review round 6: 'handle.invalid' on the first post seen gives no address,
+    so a real handle seen later fills it."""
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            "bluesky",
+            "b1",
+            "Zed",
+            {"author_did": "did:plc:zed", "author_handle": "handle.invalid"},
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") is None
+        _item(conn, "bluesky", "b2", "Zed", {"author_did": "did:plc:zed", "author_handle": "z.x"})
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/z.x"
+
+
+def test_a_resynced_posts_new_handle_wins_over_a_later_fetch(test_db) -> None:
+    """#379, review round 6: a re-sync that changes an old post's handle keeps its old
+    fetched_at but leaves a history row; that change counts as the handle's sighting."""
+    with get_connection(test_db) as conn:
+        old = _item(
+            conn, "bluesky", "b1", "Zed", {"author_did": "did:plc:zed", "author_handle": "a.x"}
+        )
+        later = _item(
+            conn, "bluesky", "b2", "Zed", {"author_did": "did:plc:zed", "author_handle": "a.x"}
+        )
+        conn.execute("UPDATE items SET fetched_at = '2025-01-01 00:00:00' WHERE id = ?", (old,))
+        conn.execute("UPDATE items SET fetched_at = '2026-01-01 00:00:00' WHERE id = ?", (later,))
+        # The re-sync of the old post brings the new handle
+        conn.execute(
+            "UPDATE items SET metadata = ? WHERE id = ?",
+            (json.dumps({"author_did": "did:plc:zed", "author_handle": "b.x"}), old),
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/b.x"
+
+
+def test_only_a_change_of_handle_counts_as_its_sighting(test_db) -> None:
+    """#379, review round 7: a later edit that leaves the handle alone (a tag, a title)
+    does not make an old handle look newer."""
+    with get_connection(test_db) as conn:
+        old = _item(
+            conn, "bluesky", "b1", "Zed", {"author_did": "did:plc:zed", "author_handle": "a.x"}
+        )
+        new = _item(
+            conn, "bluesky", "b2", "Zed", {"author_did": "did:plc:zed", "author_handle": "b.x"}
+        )
+        conn.execute("UPDATE items SET fetched_at = '2025-01-01 00:00:00' WHERE id = ?", (old,))
+        conn.execute("UPDATE items SET fetched_at = '2026-01-01 00:00:00' WHERE id = ?", (new,))
+        conn.execute("UPDATE items SET title = 'edited' WHERE id = ?", (old,))
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/b.x"
+
+
+def test_an_unverified_handle_never_names_an_account(test_db) -> None:
+    """#379, review round 7: with no display name, items.author holds the handle; the
+    placeholder 'handle.invalid' is not a name."""
+    with get_connection(test_db) as conn:
+        item = _item(
+            conn,
+            "bluesky",
+            "b1",
+            "handle.invalid",
+            {"author_did": "did:plc:zed", "author_handle": "handle.invalid"},
+        )
+        link_agents(conn)
+        assert _agents(conn, item)[0][2] == "did:plc:zed"
+
+
+def test_an_account_named_by_the_placeholder_handle_is_repaired(test_db) -> None:
+    """#379, review round 8: an account made before the fix, with the address and name
+    of 'handle.invalid', takes the real handle's address and name."""
+    with get_connection(test_db) as conn:
+        _item(conn, "bluesky", "b1", "Zed", {"author_did": "did:plc:zed", "author_handle": "z.x"})
+        link_agents(conn)
+        conn.execute(
+            "UPDATE person_identities SET url = 'https://bsky.app/profile/handle.invalid', "
+            "display_name = 'handle.invalid' WHERE identifier = 'did:plc:zed'"
+        )
+        conn.execute(
+            "UPDATE people SET name = 'handle.invalid' WHERE id = (SELECT person_id FROM "
+            "person_identities WHERE identifier = 'did:plc:zed')"
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/z.x"
+        assert (
+            conn.execute(
+                "SELECT p.name FROM people p JOIN person_identities i ON i.person_id = p.id "
+                "WHERE i.identifier = 'did:plc:zed'"
+            ).fetchone()[0]
+            == "z.x"
+        )
+
+
+def test_a_placeholder_account_with_no_real_handle_falls_back_to_its_did(test_db) -> None:
+    """#379, review round 9: with no post giving a real handle, an account named and
+    addressed by 'handle.invalid' takes its DID's name and address, as a mention does."""
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            "bluesky",
+            "b1",
+            "handle.invalid",
+            {"author_did": "did:plc:zed", "author_handle": "handle.invalid"},
+        )
+        link_agents(conn)
+        conn.execute(
+            "UPDATE person_identities SET url = 'https://bsky.app/profile/handle.invalid', "
+            "display_name = 'handle.invalid' WHERE identifier = 'did:plc:zed'"
+        )
+        conn.execute(
+            "UPDATE people SET name = 'handle.invalid' WHERE id = (SELECT person_id FROM "
+            "person_identities WHERE identifier = 'did:plc:zed')"
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/did:plc:zed"
+        assert (
+            conn.execute(
+                "SELECT p.name FROM people p JOIN person_identities i ON i.person_id = p.id "
+                "WHERE i.identifier = 'did:plc:zed'"
+            ).fetchone()[0]
+            == "did:plc:zed"
+        )
+
+
+def test_your_account_named_by_the_placeholder_handle_is_repaired(test_db) -> None:
+    """#379, review round 10: your own account is repaired too."""
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            "bluesky",
+            "b1",
+            "Me",
+            {"author_did": "did:plc:me", "author_handle": "me.x"},
+            own=True,
+        )
+        link_agents(conn)
+        conn.execute(
+            "UPDATE person_identities SET display_name = 'handle.invalid' "
+            "WHERE identifier = 'did:plc:me'"
+        )
+        conn.execute("UPDATE people SET name = 'handle.invalid' WHERE is_self = 1")
+        link_agents(conn)
+        assert conn.execute("SELECT name FROM people WHERE is_self = 1").fetchone()[0] == "me.x"
+        assert (
+            conn.execute(
+                "SELECT display_name FROM person_identities WHERE identifier = 'did:plc:me'"
+            ).fetchone()[0]
+            == "me.x"
         )

@@ -510,6 +510,22 @@ CREATE UNIQUE INDEX idx_item_mentions_tag ON item_mentions(item_id, tag_id) WHER
 - An account not yet seen is named by its DID until a post of theirs names it.
 - On a copy of the live database: 4 mentions of 2 accounts.
 
+### Names and addresses for accounts first seen without them (#379, #380)
+
+- A Bluesky account first seen by a mention has its DID's profile address.
+  A post of theirs gives their handle, whose address then replaces it; an address set otherwise stays.
+- LinkedIn's changelog gives others only by member URN, and no LinkedIn data links a URN to a name, except:
+  - a mention's text, as in step 4b;
+  - the export's `messages.csv`, which names each message's sender and their profile address.
+- `lestash linkedin import <zip>` names each sender of a held message from `messages.csv`.
+  A row in the same conversation within 2 s names them; when two rows are that close, the one with the same text.
+  It names only a person still named by their URN, fills a blank address, and leaves out a sender given two names.
+- People who only reacted or commented stay named by their URN: `Reactions.csv` and `Comments.csv` hold only yours, and `Invitations.csv` gives no URN.
+- The app shows such a person in words, as bylines do: "A LinkedIn member", "A LinkedIn page", "A Bluesky account".
+  Their page still lists the account's URN or DID.
+- On a copy of the live database: 41 of 182 people named by URN are named; 141 remain, 133 members and 8 pages.
+  The 2 Bluesky accounts with a DID address have no post of theirs held, so they keep it.
+
 ### LinkedIn items held twice (#244)
 
 - Before #84 a changelog item's source id ended with the event's processedAt; now it ends with the resource id. Events imported under both made two items.
