@@ -563,8 +563,8 @@ def test_a_post_of_yours_that_mentions_you_names_you(test_db) -> None:
 
 
 def test_a_bluesky_address_follows_the_newest_posts_handle(test_db) -> None:
-    """#379, review round 2: an address made from a handle follows a handle change; the
-    newest post's handle wins, whatever order the pass reads posts in."""
+    """#379, review rounds 2 and 5: an address made from a handle follows a handle
+    change; the handle fetched last wins, whatever order the pass reads posts in."""
 
     def post(conn: sqlite3.Connection, n: str, handle: str, when: str) -> None:
         item = _item(
@@ -574,7 +574,7 @@ def test_a_bluesky_address_follows_the_newest_posts_handle(test_db) -> None:
             "Zed",
             {"author_did": "did:plc:zed", "author_handle": handle},
         )
-        conn.execute("UPDATE items SET created_at = ? WHERE id = ?", (when, item))
+        conn.execute("UPDATE items SET fetched_at = ? WHERE id = ?", (when, item))
 
     with get_connection(test_db) as conn:
         # The newer post is read first; the older one must not take its place
@@ -604,3 +604,19 @@ def test_a_bsky_address_you_set_stays_after_a_newer_post(test_db) -> None:
         _item(conn, "bluesky", "b2", "Zed", {"author_did": "did:plc:zed", "author_handle": "b.x"})
         link_agents(conn)
         assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/chosen.example"
+
+
+def test_an_unverified_bluesky_handle_never_becomes_an_address(test_db) -> None:
+    """#379, review round 5: Bluesky's placeholder 'handle.invalid' is not a handle."""
+    with get_connection(test_db) as conn:
+        _item(conn, "bluesky", "b1", "Zed", {"author_did": "did:plc:zed", "author_handle": "a.x"})
+        link_agents(conn)
+        _item(
+            conn,
+            "bluesky",
+            "b2",
+            "Zed",
+            {"author_did": "did:plc:zed", "author_handle": "handle.invalid"},
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/a.x"

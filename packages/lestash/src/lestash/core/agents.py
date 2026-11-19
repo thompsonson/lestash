@@ -43,6 +43,7 @@ LINKEDIN_ENTITIES = {
 LIST_ID = re.compile(r"<([^<>]+)>")
 # A Bluesky profile address: by handle when a post of theirs gives it, else by DID
 BLUESKY_PROFILE = "https://bsky.app/profile/"
+BLUESKY_INVALID_HANDLE = "handle.invalid"  # Bluesky's word for an unverified one
 
 # Chat sources: the author word (or Claude's metadata.sender) -> the software agent that
 # wrote the turn, or None for your own turns
@@ -376,15 +377,18 @@ class _People:
         self.accounts: dict[tuple[str, str], int | None] = {}
         self.display: dict[tuple[str, str], str | None] = {}
         self.urls: dict[tuple[str, str], str | None] = {}
-        # Each Bluesky DID's handle addresses, as its held posts give them: the newest
-        # post's, and all of them. Read up front, as the pass reads items in no order
+        # Each Bluesky DID's handle addresses, as its held posts give them: the one
+        # fetched last, and all of them. A post keeps the handle it had when fetched,
+        # so the latest fetch is the newest handle. Read up front, as the pass reads
+        # items in no order. Bluesky's placeholder for an unverified handle is skipped
         self.bluesky_handles: dict[str, tuple[str, set[str]]] = {}
         for did, handle in conn.execute(
             "SELECT json_extract(metadata, '$.author_did'), "
             "json_extract(metadata, '$.author_handle') FROM items "
             "WHERE source_type = 'bluesky' AND held = 1 "
-            "AND json_extract(metadata, '$.author_handle') != '' "
-            "ORDER BY datetime(created_at), id"
+            "AND json_extract(metadata, '$.author_handle') NOT IN ('', ?) "
+            "ORDER BY datetime(fetched_at), id",
+            (BLUESKY_INVALID_HANDLE,),
         ):
             if isinstance(did, str) and isinstance(handle, str):
                 url = BLUESKY_PROFILE + handle
