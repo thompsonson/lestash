@@ -366,11 +366,31 @@ def _gemini_chat(conn: sqlite3.Connection, conversation_id: str) -> _GeminiChat 
     return _GeminiChat(row[0], row[1], metadata if isinstance(metadata, dict) else {})
 
 
+def _keep_filled_gaps(conn: sqlite3.Connection, item: ItemCreate) -> None:
+    """Keep a reply whose Takeout gaps were filled from another copy (#300).
+
+    Takeout drops parts of some replies (``takeout_gaps``). When the stored reply was
+    filled in from elsewhere (``gaps_filled_from``), a later export's gapped copy must
+    not put the gaps back.
+    """
+    metadata = item.metadata or {}
+    if not metadata.get("takeout_gaps"):
+        return
+    stored = _stored(conn, item)
+    if not stored or not stored["metadata"].get("gaps_filled_from"):
+        return
+    item.content = stored["content"]
+    metadata.pop("takeout_gaps")
+    metadata["gaps_filled_from"] = stored["metadata"]["gaps_filled_from"]
+    item.metadata = metadata
+
+
 def _merge_gemini(conn: sqlite3.Connection, item: ItemCreate) -> bool:
     metadata = dict(item.metadata or {})
     prompt = metadata.pop("_prompt", None)
     occurrence = int(metadata.pop("_occurrence", 1))
     item.metadata = metadata
+    _keep_filled_gaps(conn, item)
     if metadata.get("type") == "chat":
         chat = _gemini_chat(conn, item.source_id or "")
         if chat is None:
