@@ -1,7 +1,6 @@
 """Search with punctuation, the API's 404 for unknown paths, and the reported version."""
 
 import json
-
 from importlib.metadata import version
 
 import lestash_server.deps as deps
@@ -489,7 +488,7 @@ def test_a_match_in_a_generated_artifact_names_its_type(client, seeded):
         notebook = conn.execute(
             "INSERT INTO items (source_type, source_id, title, content, metadata) "
             "VALUES ('notebooklm', 'nb-298', 'Psychology', 'A notebook', "
-            "'{\"type\": \"notebook\"}') RETURNING id"
+            '\'{"type": "notebook"}\') RETURNING id'
         ).fetchone()[0]
         for n, (artifact, text) in enumerate(
             [("infographic", "Zylophant dimensions"), ("slides", "Quorblet dimensions")]
