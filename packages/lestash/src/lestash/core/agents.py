@@ -456,9 +456,10 @@ class _People:
             elif (
                 ref.platform == "bluesky"
                 and self.display.get(key) == BLUESKY_INVALID_HANDLE
-                and person_id not in (None, self.you(None))
+                and person_id is not None
+                and person_id != self.you(None)
             ):
-                self.rename(key, person_id, ref.name)  # named by the placeholder before
+                self.unname_placeholder(key, person_id, ref.name)
             self.better_url(key, ref.url)
             if person_id in self.unnamed and ref.name != ref.identifier:
                 # Named by its identifier until a source gave a name, as a list's
@@ -502,12 +503,15 @@ class _People:
         so the address follows a handle change. An address set any other way stays."""
         old = self.urls.get(key)
         platform, identifier = key
-        if platform == "bluesky" and identifier in self.bluesky_handles:
-            newest, known = self.bluesky_handles[identifier]
-            made = (BLUESKY_PROFILE + identifier, BLUESKY_PROFILE + BLUESKY_INVALID_HANDLE)
+        if platform == "bluesky":
+            did_url = BLUESKY_PROFILE + identifier
+            made = (did_url, BLUESKY_PROFILE + BLUESKY_INVALID_HANDLE)
+            newest, known = self.bluesky_handles.get(identifier, (None, set()))
             if old is not None and old not in made and old not in known:
                 return  # set some other way
-            url = newest
+            # The newest handle's address; with none, the ref's, or the DID's in place
+            # of the dead placeholder's
+            url = newest or (url if old is None else did_url)
         elif old is not None:
             return
         if not url or url == old:
@@ -517,6 +521,21 @@ class _People:
             (url, *key),
         )
         self.urls[key] = url
+
+    def unname_placeholder(self, key: tuple[str, str], person_id: int, name: str) -> None:
+        """A Bluesky account named 'handle.invalid' before that was skipped takes the
+        ref's name: a real one, or its DID until a post names it. A name you set stays."""
+        self.conn.execute(
+            "UPDATE people SET name = ? WHERE id = ? AND name = ? AND name_origin IS NULL",
+            (name, person_id, BLUESKY_INVALID_HANDLE),
+        )
+        self.conn.execute(
+            "UPDATE person_identities SET display_name = ? WHERE platform = ? AND identifier = ?",
+            (name, *key),
+        )
+        self.display[key] = name
+        if name == key[1]:
+            self.unnamed.add(person_id)
 
     def rename(self, key: tuple[str, str], person_id: int | None, name: str) -> None:
         """Give a person the account's better name, while they still have the name the
