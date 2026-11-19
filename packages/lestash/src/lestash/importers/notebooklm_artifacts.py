@@ -306,7 +306,8 @@ def _owner(artifacts: list[Artifact], rest: str) -> Artifact | None:
     only among files of one name ("X.mp4", "X.png", "X.png(1)"). So a file's "(n)"
     is its rank among the descriptions of its type, in Takeout's order: the n-th
     infographic of the title gets "X.png(n)", whatever number its description has.
-    A rank with no description is no artifact's file.
+    A rank with no description is no artifact's file, and so is a file whose name
+    doesn't say its type when the title has artifacts of more than one type.
     """
     plain, copy = _file_copy(rest)
     head = _head(plain)
@@ -335,6 +336,10 @@ def _owner(artifacts: list[Artifact], rest: str) -> Artifact | None:
         else max((a.stem for a in candidates), key=len)
     )
     ranked = sorted((a for a in candidates if a.stem == stem), key=lambda a: a.copy)
+    if not kind and len({a.description.get("type") for a in ranked}) > 1:
+        # A file whose name doesn't say its type, of a title with artifacts of several:
+        # its "(n)" counts among one type's, and there is no telling which
+        return None
     return ranked[copy] if copy < len(ranked) else None
 
 
@@ -511,19 +516,20 @@ def export_time(name: str) -> str | None:
 
 def request_groups(keys: Iterable[str], kept: Collection[str] = ()) -> dict[str, str]:
     """Each Takeout export key's group key. Keys whose request times are at most
-    SAME_REQUEST apart are one request (#378). The group's key is the latest of those
+    SAME_REQUEST after their group's earliest are one request (#378), so a run of
+    requests each close to the next is not one. The group's key is the latest of those
     in ``kept`` (an index is stored under it), else its latest. A key with no request
     time is its own group."""
     timed = sorted((t, k) for k in set(keys) if (t := export_time(k)))
     groups: list[list[str]] = []
-    last: datetime | None = None
+    first: datetime | None = None  # the group's earliest: a group spans SAME_REQUEST
     for when, key in timed:
         at = datetime.fromisoformat(when)
-        if groups and last is not None and at - last <= SAME_REQUEST:
+        if groups and first is not None and at - first <= SAME_REQUEST:
             groups[-1].append(key)
         else:
             groups.append([key])
-        last = at
+            first = at
     chosen = {}
     for group in groups:
         stored = [k for k in group if k in kept]

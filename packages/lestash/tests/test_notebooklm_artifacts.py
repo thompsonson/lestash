@@ -685,3 +685,40 @@ def test_a_files_number_is_its_rank_among_its_types_descriptions(test_db, tmp_pa
         ("infographic", 2): ["Plan.png(1)"],
     }
     assert unmatched == [f"{ART}/Plan.png(2)"]
+
+
+def test_a_file_of_no_known_type_is_matched_only_when_one_type_could_own_it(
+    test_db, tmp_path
+) -> None:
+    """Review round 7: "Plan.pdf" beside the folders says no type. With a deck and a
+    video of the title its "(n)" can't be ranked, so it is left unmatched; with one
+    type only, it is that artifact's."""
+    store = BlobStore(store_root(test_db))
+    deck = {"title": "Plan", "type": "ARTIFACT_TYPE_SLIDES"}
+    video = {"title": "Plan", "type": "ARTIFACT_TYPE_EXPLAINER_VIDEO"}
+    mixed = _zip(
+        tmp_path / "a.zip",
+        {
+            f"{ART}/Plan metadata.json": deck,
+            f"{ART}/Plan metadata(1).json": video,
+            f"{ART}/Plan.pdf": b"%PDF",
+        },
+    )
+    artifacts, unmatched = collect(index_zip(mixed, store))
+    assert [a.files for a in artifacts] == [[], []]
+    assert unmatched == [f"{ART}/Plan.pdf"]
+    alone = _zip(
+        tmp_path / "b.zip", {f"{ART}/Plan metadata.json": deck, f"{ART}/Plan.pdf": b"%PDF"}
+    )
+    artifacts, unmatched = collect(index_zip(alone, store))
+    assert [len(a.files) for a in artifacts] == [1] and unmatched == []
+
+
+def test_requests_seconds_apart_in_a_run_are_not_one_export() -> None:
+    """Review round 7: each within 2 s of the next, the first and last 4 s apart."""
+    from lestash.importers.notebooklm_artifacts import request_groups
+
+    keys = [f"notebooklm:takeout-20261106T10090{s}Z" for s in (0, 2, 4)]
+    groups = request_groups(keys)
+    assert groups[keys[0]] == groups[keys[1]] == keys[1]
+    assert groups[keys[2]] == keys[2]
