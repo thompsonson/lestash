@@ -16,7 +16,11 @@ W3 (#218): searchable text for files that have none.
 - One voice reads as text with a `## 12:34` heading about each minute. Briefs (`SHOW_FORMAT_THE_BRIEF`) and explainer videos have one voice.
 - An overview with no format recorded is taken to have two hosts: left to count them, the worker heard six voices in its first 17 seconds.
 - sherpa-onnx's CAM++ English voice model tells the two hosts apart; TitaNet small put both hosts of 3 overviews in 4 under one speaker.
-- A turn's last few words after its last full stop move to the next turn when that one goes on mid-sentence. A word at a turn's edge is often given to the wrong voice.
+- Each sentence goes to one voice: the one heard for most of its words (#381).
+- A diarizer turn's edge often falls a word or two off, and a short blip of the other voice can sit inside a turn; given a voice word by word, phrases were split between speakers.
+- A sentence keeps two voices only when each speaks at least 16 words of it: whisper ran two sentences together without a full stop.
+- Over the 25 overviews stored before the change, half the speaker changes fell mid-sentence; grouped by sentence, 9 in 1,834 do.
+- `lestash enrich regroup-transcripts` groups stored transcripts again from their text, with no recording heard again. A moved phrase's turn takes the time of the turn it came from. `--dry-run` only counts.
 - `base.en` is three times faster than `small.en` but mishears more ("a server out of you" for "a server outage"). Whisper's voice-activity filter skips music and silence, where it otherwise makes up words.
 - ffmpeg turns each recording into 16 kHz mono audio first.
 

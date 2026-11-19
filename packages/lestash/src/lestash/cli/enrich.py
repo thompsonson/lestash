@@ -4,6 +4,7 @@ lestash enrich item N            # enrich a single item
 lestash enrich all               # enrich every PDF item
 lestash enrich backfill-sources  # one-shot legacy source-PDF backfill
 lestash enrich text              # text from NotebookLM slides, infographics, apps (#218)
+lestash enrich regroup-transcripts  # turns of stored transcripts, a sentence at a time (#381)
 """
 
 from __future__ import annotations
@@ -118,6 +119,24 @@ def text(
         console.print(f"[yellow]Stopped: {counts.stopped}. The next run goes on.[/yellow]")
         if counts.engine_failed:  # needs fixing; a busy database clears by itself
             raise typer.Exit(1)
+
+
+@app.command("regroup-transcripts")
+def regroup_transcripts(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Count what would change; write nothing"),
+) -> None:
+    """Group the turns of stored transcripts again, a sentence at a time, so no phrase
+    is split between two speakers (#381). Uses the stored text: nothing is
+    transcribed again. Back up the database first."""
+    from lestash.core.database import get_connection
+    from lestash.core.extract import regroup_transcripts as regroup
+
+    with get_connection() as conn:
+        counts = regroup(conn, dry_run=dry_run)
+    if dry_run:
+        console.print(f"Would regroup {counts.files} transcript(s) in {counts.items} item(s).")
+    else:
+        console.print(f"Regrouped {counts.files} transcript(s); {counts.items} item(s) updated.")
 
 
 @app.command("backfill-sources")

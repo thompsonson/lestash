@@ -400,7 +400,7 @@ def _words(*timed: tuple[float, str]) -> list[list]:
     return [[t, t + 0.5, f" {w}"] for t, w in timed]
 
 
-def test_speaker_turns_number_voices_and_move_a_stray_word() -> None:
+def test_speaker_turns_number_voices_and_keep_a_sentence_together() -> None:
     segments = [
         [0.0, 3.0, "", _words((0, "It's"), (1, "so"), (2, "confident."), (3, "And"))],
         [4.0, 8.0, "", _words((4, "then"), (5, "it"), (6, "crashes."))],
@@ -414,15 +414,95 @@ def test_speaker_turns_number_voices_and_move_a_stray_word() -> None:
     )
 
 
-def test_a_turn_ending_mid_sentence_keeps_long_tails() -> None:
+def test_a_sentence_is_one_voice_when_the_diarizer_edge_falls_off() -> None:
+    # The diarizer's turn ends a word into the next sentence (#381)
     segments = [
-        [0.0, 5.0, "", _words((0, "one"), (1, "two"), (2, "three"), (3, "four"), (4, "five"))]
-    ]
-    turns = [[0.0, 3.5, 0], [3.5, 5.0, 1]]
-    # No full stop to cut at: the words stay with the voice heard
+        [0.0, 6.0, "", _words((0, "Cats"), (1, "sleep"), (2, "a"), (3, "lot."), (4, "Dogs"),
+                              (5, "bark"))],
+        [6.0, 8.0, "", _words((6, "at"), (7, "night."))],
+    ]  # fmt: skip
+    turns = [[0.0, 4.6, 0], [4.6, 8.0, 1]]
     assert extract.speaker_turns(segments, turns) == (
-        "**Speaker 1** (0:00): one two three four\n\n**Speaker 2** (0:04): five"
+        "**Speaker 1** (0:00): Cats sleep a lot.\n\n**Speaker 2** (0:04): Dogs bark at night."
     )
+
+
+def test_a_blip_of_the_other_voice_inside_a_sentence_is_ignored() -> None:
+    words = ["We", "went", "to", "the", "shop."]
+    segments = [[0.0, 6.0, "", _words(*enumerate(words))]]
+    # A second voice for half a second, nested in the first one's turn
+    turns = [[0.0, 6.0, 0], [0.9, 1.6, 1]]
+    assert extract.speaker_turns(segments, turns) == "**Speaker 1** (0:00): We went to the shop."
+
+
+def test_a_short_reply_keeps_its_own_turn() -> None:
+    segments = [[0.0, 7.0, "", _words((0, "Is"), (1, "it"), (2, "late?"), (3, "Yes."),
+                                      (4, "Very"), (5, "late."))]]  # fmt: skip
+    turns = [[0.0, 2.8, 0], [2.8, 3.8, 1], [3.8, 6.0, 0]]
+    assert extract.speaker_turns(segments, turns) == (
+        "**Speaker 1** (0:00): Is it late?\n\n**Speaker 2** (0:03): Yes.\n\n"
+        "**Speaker 1** (0:04): Very late."
+    )
+
+
+def test_two_voices_run_together_without_a_stop_stay_apart() -> None:
+    # Whisper put no full stop where the voice changed: long runs are both kept
+    first = [(n, f"a{n}") for n in range(extract.RUN_ON_WORDS)]
+    second = [(n, f"b{n}") for n in range(extract.RUN_ON_WORDS, 2 * extract.RUN_ON_WORDS)]
+    segments = [[0.0, 40.0, "", _words(*first, *second)]]
+    turns = [[0.0, extract.RUN_ON_WORDS - 0.2, 0], [extract.RUN_ON_WORDS - 0.2, 40.0, 1]]
+    out = extract.speaker_turns(segments, turns)
+    assert out.startswith("**Speaker 1** (0:00): a0 a1")
+    assert f"\n\n**Speaker 2** (0:{extract.RUN_ON_WORDS:02d}): b{extract.RUN_ON_WORDS}" in out
+
+
+def test_regroup_a_stored_transcript_from_its_text() -> None:
+    stored = (
+        "**Speaker 1** (0:00): Cats sleep a lot. Dogs\n\n"
+        "**Speaker 2** (0:04): bark at night. And\n\n"
+        "**Speaker 1** (0:07): birds sing.\n\n"
+        "**Speaker 2** (0:09): Really?"
+    )
+    regrouped = extract.regroup_transcript(stored)
+    assert regrouped == (
+        "**Speaker 1** (0:00): Cats sleep a lot.\n\n"
+        "**Speaker 2** (0:00): Dogs bark at night.\n\n"
+        "**Speaker 1** (0:04): And birds sing.\n\n"
+        "**Speaker 2** (0:09): Really?"
+    )
+    assert extract.regroup_transcript(regrouped) == regrouped  # once is enough
+    # Speakers renumbered as they first speak; an hour's clock read back
+    assert extract.regroup_transcript("**Speaker 2** (1:02:03): Hi.") == (
+        "**Speaker 1** (1:02:03): Hi."
+    )
+    minutes = "## 0:00\n\nOne voice, no turns"
+    assert extract.regroup_transcript(minutes) == minutes
+
+
+def test_regroup_transcripts_rewrites_the_stored_text_and_its_items(test_db, fake_worker) -> None:
+    store = BlobStore(store_root(test_db))
+    with get_connection(test_db) as conn:
+        SyncStore(conn, "notebooklm").run(
+            [_recording(store, b"Hello there.", "audio_overview", "audio/x-wav")]
+        )
+        extract_pending(conn, test_db)
+        split = "**Speaker 1** (0:00): Hello\n\n**Speaker 2** (0:01): there."
+        conn.execute("UPDATE blob_text SET text = ?", (split,))
+        conn.commit()
+        (item_id,) = conn.execute("SELECT id FROM items").fetchone()
+        extract.refresh_item(conn, item_id)
+        conn.commit()
+        dry = extract.regroup_transcripts(conn, dry_run=True)
+        (kept,) = conn.execute("SELECT text FROM blob_text").fetchone()
+        counts = extract.regroup_transcripts(conn)
+        (text,) = conn.execute("SELECT text FROM blob_text").fetchone()
+        (content,) = conn.execute("SELECT content FROM items").fetchone()
+        again = extract.regroup_transcripts(conn)
+    assert (dry.files, dry.items, kept) == (1, 1, split)
+    assert (counts.files, counts.items) == (1, 1)
+    assert text == "**Speaker 1** (0:00): Hello there."
+    assert content.endswith(f"{PART}\n\n**Speaker 1** (0:00): Hello there.")
+    assert (again.files, again.items) == (0, 0)
 
 
 def test_one_voice_reads_as_minutes() -> None:
@@ -452,7 +532,7 @@ def test_audio_and_video_get_their_transcripts(test_db, fake_worker) -> None:
         SyncStore(conn, "notebooklm").run(
             [
                 _recording(
-                    store, b"Hebbian plasticity.", "audio_overview", "audio/x-wav",
+                    store, b"Hebbian. Plasticity.", "audio_overview", "audio/x-wav",
                     "SHOW_FORMAT_UNSPECIFIED",
                 ),
                 _recording(store, b"Neurons wire", "explainer_video", "video/mp4"),
@@ -469,7 +549,7 @@ def test_audio_and_video_get_their_transcripts(test_db, fake_worker) -> None:
     assert sorted(j.speakers for j in fake_worker) == [1, 2]
     assert rows["audio_overview"] == (
         f"# audio_overview\n\n{PART}\n\n"
-        "**Speaker 1** (0:00): Hebbian\n\n**Speaker 2** (0:01): plasticity."
+        "**Speaker 1** (0:00): Hebbian.\n\n**Speaker 2** (0:01): Plasticity."
     )
     assert rows["explainer_video"].endswith(f"{PART}\n\n## 0:00\n\nNeurons wire")
 
