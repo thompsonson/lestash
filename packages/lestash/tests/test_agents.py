@@ -747,3 +747,30 @@ def test_a_placeholder_account_with_no_real_handle_falls_back_to_its_did(test_db
             ).fetchone()[0]
             == "did:plc:zed"
         )
+
+
+def test_your_account_named_by_the_placeholder_handle_is_repaired(test_db) -> None:
+    """#379, review round 10: your own account is repaired too."""
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            "bluesky",
+            "b1",
+            "Me",
+            {"author_did": "did:plc:me", "author_handle": "me.x"},
+            own=True,
+        )
+        link_agents(conn)
+        conn.execute(
+            "UPDATE person_identities SET display_name = 'handle.invalid' "
+            "WHERE identifier = 'did:plc:me'"
+        )
+        conn.execute("UPDATE people SET name = 'handle.invalid' WHERE is_self = 1")
+        link_agents(conn)
+        assert conn.execute("SELECT name FROM people WHERE is_self = 1").fetchone()[0] == "me.x"
+        assert (
+            conn.execute(
+                "SELECT display_name FROM person_identities WHERE identifier = 'did:plc:me'"
+            ).fetchone()[0]
+            == "me.x"
+        )

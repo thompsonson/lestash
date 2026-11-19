@@ -457,7 +457,6 @@ class _People:
                 ref.platform == "bluesky"
                 and self.display.get(key) == BLUESKY_INVALID_HANDLE
                 and person_id is not None
-                and person_id != self.you(None)
             ):
                 self.unname_placeholder(key, person_id, ref.name)
             self.better_url(key, ref.url)
@@ -524,7 +523,11 @@ class _People:
 
     def unname_placeholder(self, key: tuple[str, str], person_id: int, name: str) -> None:
         """A Bluesky account named 'handle.invalid' before that was skipped takes the
-        ref's name: a real one, or its DID until a post names it. A name you set stays."""
+        ref's name: a real one, or its DID until a post names it (you: YOU). A name you
+        set stays."""
+        is_you = person_id == self.you(None)
+        if is_you and name == key[1]:
+            name = YOU
         self.conn.execute(
             "UPDATE people SET name = ? WHERE id = ? AND name = ? AND name_origin IS NULL",
             (name, person_id, BLUESKY_INVALID_HANDLE),
@@ -534,7 +537,7 @@ class _People:
             (name, *key),
         )
         self.display[key] = name
-        if name == key[1]:
+        if name == key[1] and not is_you:
             self.unnamed.add(person_id)
 
     def rename(self, key: tuple[str, str], person_id: int | None, name: str) -> None:
