@@ -135,5 +135,6 @@ def test_kind_noun_names_one_item():
     assert kind_noun("artifact", {}) == "Generated item"
     assert kind_noun("artifact", {"type": "artifact"}) == "Generated item"
     assert kind_noun("artifact", {"artifact_type": " _ARTIFACT_ "}) == "Generated item"
+    assert kind_noun("artifact", {"artifact_type": "  ", "type": "report"}) == "Report"
     assert kind_noun("artifact", {"type": "report"}) == "Report"
     assert kind_noun("artifact", {"artifact_type": " _ "}) == "Generated item"

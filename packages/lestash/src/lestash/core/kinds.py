@@ -209,11 +209,18 @@ _SINGULAR = {"Slides": "Slide deck"}
 def kind_noun(kind: str, metadata: Mapping[str, Any] | None) -> str | None:
     """One item of this kind, in words: the artifact's type, else the kind's label."""
     if kind == "artifact":
-        detail = kind_detail(kind, metadata) or ""
-        if detail not in ARTIFACT_LABELS.values():
-            detail = " ".join(detail.replace("_", " ").split()).capitalize()  # not listed
+        # The first type that is more than spaces or underscores
+        raw = next(
+            (
+                v
+                for v in (_text(metadata, "artifact_type"), _text(metadata, "type"))
+                if v and v.strip(" _")
+            ),
+            "",
+        )
+        detail = ARTIFACT_LABELS.get(raw) or " ".join(raw.replace("_", " ").split()).capitalize()
         if detail in ("", "Artifact"):
-            # No artifact type: kind_detail fell back to the kind's own key
+            # No artifact type, only the kind's own key
             return "Generated item"
         return _SINGULAR.get(detail, detail)
     return KINDS[kind].label if kind in KINDS else None
