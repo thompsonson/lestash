@@ -21,7 +21,8 @@ Two notebook items are the same notebook when:
 Which copy is current needs evidence too:
 
 - both carry ``metadata.last_viewed`` from their export, and one is later;
-- or one's folder is the cut form of the other's (50 characters, beginning it);
+- or one's folder is the cut form of the other's (50 characters, beginning it), unless
+  only the cut-looking copy has a view time;
 - or one's folder is among the other's earlier folders.
 
 A group with no copy shown current by all the others is left alone and logged.
@@ -39,7 +40,7 @@ import json
 import logging
 import sqlite3
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
 from lestash.core.database import mark_recent_history, max_history_id
@@ -83,16 +84,21 @@ class _Notebook(NamedTuple):
         """Whether there is evidence this copy is more current than ``other``."""
         if self.last_viewed and other.last_viewed and self.last_viewed != other.last_viewed:
             return self.last_viewed > other.last_viewed
-        return other.cut_of(self) or other.source_id in self.folders
+        # A 50-character folder with a view time was read from a newer export: it may be
+        # a rename to a name the old one begins with, not a cut (#302)
+        cut = other.cut_of(self) and not (other.last_viewed and not self.last_viewed)
+        return cut or other.source_id in self.folders
 
 
 def _viewed(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        viewed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    # A time without a zone is read as UTC, so any two compare (#302)
+    return viewed if viewed.tzinfo else viewed.replace(tzinfo=UTC)
 
 
 def _metadata(raw: str | None) -> dict[str, Any]:

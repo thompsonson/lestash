@@ -1398,7 +1398,8 @@ function foundInPart(card, item) {
   if (item.preview && !item.preview.includes('<<')) preview.textContent = item.preview;
   const where = document.createElement('div');
   where.className = 'item-card-counts';
-  where.textContent = `Found in a ${(item.match_label || 'part').toLowerCase()} · opens there`;
+  const label = (item.match_label || 'part').toLowerCase();
+  where.textContent = `Found in ${/^[aeiou]/.test(label) ? 'an' : 'a'} ${label} · opens there`;
   preview.after(where);
 }
 
