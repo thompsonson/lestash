@@ -573,3 +573,4 @@ def test_a_gapped_reply_not_filled_in_is_updated_as_before(test_db) -> None:
     )
     [reply] = _items(test_db, "author = 'model'")
     assert reply["metadata"].get("takeout_gaps") is True
+    assert reply["content"] != "Old."  # replaced by the newer export's text
