@@ -486,24 +486,27 @@ def parse_article(html: str, filename: str) -> Article | None:
 
 @dataclass
 class _ExportMessage:
-    ms: int
+    ms: int | None  # None when the row has no time
     text: str  # as _norm leaves it
-    sender: tuple[str, str | None]  # name, profile address
+    sender: tuple[str, str | None] | None  # name, profile address; None when unnamed
 
 
 def _export_messages(zf: zipfile.ZipFile) -> dict[str, list[_ExportMessage]]:
-    """messages.csv's rows by conversation, with a sender named and a time."""
+    """messages.csv's rows by conversation. Every row is kept, even one with no time
+    or an unnamed sender, so it can still stand in the way of a wrong match."""
     found: dict[str, list[_ExportMessage]] = {}
     for row in _rows(zf, "messages.csv"):
+        conversation = (row.get("CONVERSATION ID") or "").strip()
+        if not conversation:
+            continue
         name = " ".join((row.get("FROM") or "").split())
         when = parse_export_time((row.get("DATE") or "").removesuffix(" UTC"))
-        conversation = (row.get("CONVERSATION ID") or "").strip()
-        if name.lower() in NOT_A_NAME or when is None or not conversation:
-            continue
         url = (row.get("SENDER PROFILE URL") or "").strip() or None
         found.setdefault(conversation, []).append(
             _ExportMessage(
-                int(when.timestamp() * 1000), _norm(row.get("CONTENT") or ""), (name, url)
+                int(when.timestamp() * 1000) if when else None,
+                _norm(row.get("CONTENT") or ""),
+                None if not name or name.lower() in NOT_A_NAME else (name, url),
             )
         )
     return found
@@ -532,16 +535,20 @@ def message_senders(
         ms = activity.get("createdAt") or activity.get("deliveredAt")
         if not isinstance(thread, str) or not isinstance(ms, int):
             continue
+        # A row with no time might be this message, so it stays a candidate
         close = [
             m
             for m in exported.get(thread.removeprefix(THREAD), [])
-            if abs(m.ms - ms) < SAME_MESSAGE_MS
+            if m.ms is None or abs(m.ms - ms) < SAME_MESSAGE_MS
         ]
-        if len(close) > 1:
-            text = _norm(str(_dict(activity.get("content")).get("fallback") or ""))
+        text = _norm(str(_dict(activity.get("content")).get("fallback") or ""))
+        if text:
             close = [m for m in close if m.text == text]
-        if len({m.sender for m in close}) == 1:
-            senders.setdefault(author, set()).add(close[0].sender)
+        elif any(m.ms is None for m in close):
+            continue  # no text to tell an untimed row from this one
+        found = {m.sender for m in close}
+        if len(found) == 1 and (sender := next(iter(found))) is not None:
+            senders.setdefault(author, set()).add(sender)
     return {urn: next(iter(found)) for urn, found in senders.items() if len(found) == 1}
 
 

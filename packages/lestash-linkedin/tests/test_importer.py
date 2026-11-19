@@ -537,3 +537,34 @@ def test_message_senders_are_named_from_the_export(config: Config, tmp_path: Pat
         link_agents(conn)
         assert _person(conn, ANN)[0] == "Ann Example"
         assert import_export(conn, path).people_named == 0
+
+
+def test_a_message_is_not_named_from_a_nearby_row_with_other_text(
+    config: Config, tmp_path: Path
+) -> None:
+    """#380, review round 1: an unnamed sender's row, or a lone row whose text differs,
+    never names the held message's author."""
+    from lestash.core.agents import link_agents
+
+    carl, dee = "urn:li:person:carl", "urn:li:person:dee"
+    rows = f"""CONVERSATION ID,FROM,SENDER PROFILE URL,DATE,CONTENT
+{THREAD_ID},LinkedIn Member,,2026-11-10 09:22:44 UTC,Hello from Carl
+{THREAD_ID},Ann Example,{IN}ann-example,2026-11-10 09:22:45 UTC,Hi Carl
+{THREAD_ID},Ann Example,{IN}ann-example,2026-11-10 10:00:00 UTC,Something else
+"""
+    path = _zip(tmp_path)
+    with zipfile.ZipFile(path, "a") as zf:
+        zf.writestr("messages.csv", rows)
+    with get_connection(config) as conn:
+        # Carl's row is unnamed; Ann's row a second later must not be taken for it
+        _message(conn, 1, carl, AT_MS, "Hello from Carl")
+        # Dee's message has only Ann's row near it, with different text
+        _message(conn, 2, dee, AT_MS + 2_236_000, "Dee writes")
+        link_agents(conn)
+        conn.commit()
+
+        report = import_export(conn, path)
+
+        assert report.people_named == 0
+        assert _person(conn, carl) == (carl, None)
+        assert _person(conn, dee) == (dee, None)
