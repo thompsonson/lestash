@@ -50,16 +50,17 @@ METADATA = re.compile(r" m(?:e(?:t(?:a(?:d(?:a(?:t(?:a)?)?)?)?)?)?)?(?:\(\d*\)?)
 CUT_AT = 46  # bytes before ".json" in a name cut short
 # Which artifact types a file can belong to: its folder (a deck) or its extension.
 # The kept indexes have decks' PDFs and PPTXs only in their folders; one beside them
-# is a deck's or an uploaded file's.
+# is a deck's. An uploaded file (ARTIFACT_TYPE_FILE) can be of any format.
 SLIDES = "ARTIFACT_TYPE_SLIDES"
+UPLOAD = "ARTIFACT_TYPE_FILE"
 FILE_TYPES: dict[str, frozenset[str]] = {
     "folder": frozenset({SLIDES}),
-    ".mp4": frozenset({"ARTIFACT_TYPE_EXPLAINER_VIDEO"}),
-    ".wav": frozenset({"ARTIFACT_TYPE_AUDIO_OVERVIEW"}),
-    ".png": frozenset({"ARTIFACT_TYPE_INFOGRAPHIC"}),
-    ".pdf": frozenset({SLIDES, "ARTIFACT_TYPE_FILE"}),
-    ".pptx": frozenset({SLIDES, "ARTIFACT_TYPE_FILE"}),
-    "": frozenset({"ARTIFACT_TYPE_APP"}),
+    ".mp4": frozenset({"ARTIFACT_TYPE_EXPLAINER_VIDEO", UPLOAD}),
+    ".wav": frozenset({"ARTIFACT_TYPE_AUDIO_OVERVIEW", UPLOAD}),
+    ".png": frozenset({"ARTIFACT_TYPE_INFOGRAPHIC", UPLOAD}),
+    ".pdf": frozenset({SLIDES, UPLOAD}),
+    ".pptx": frozenset({SLIDES, UPLOAD}),
+    "": frozenset({"ARTIFACT_TYPE_APP", UPLOAD}),
 }
 # A slide image's name ends "_-_Slide_7", or, for a deck downloaded as "x", "x(1)",
 # "x(2)"…, "_-_Slide", "_-_Slide(1)"…, cut as short as "_-_Slid(3)" or "_-(3)"

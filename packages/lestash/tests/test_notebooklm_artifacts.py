@@ -747,3 +747,24 @@ def test_a_file_never_ranks_among_another_types_descriptions(test_db, tmp_path) 
     )
     artifacts, unmatched = collect(index_zip(one_type, store))
     assert [len(a.files) for a in artifacts] == [1] and unmatched == []
+
+
+def test_an_uploaded_file_keeps_its_file_beside_a_shorter_title(test_db, tmp_path) -> None:
+    """Review round 9: an uploaded "Plan notes.png" beside a "Plan" infographic. The
+    upload's image was the infographic's by its name's start; each keeps its own."""
+    store = BlobStore(store_root(test_db))
+    upload = {"title": "Plan notes.png", "type": "ARTIFACT_TYPE_FILE"}
+    infographic = {"title": "Plan", "type": "ARTIFACT_TYPE_INFOGRAPHIC"}
+    part = _zip(
+        tmp_path / "a.zip",
+        {
+            f"{ART}/Plan notes.png metadata.json": upload,
+            f"{ART}/Plan notes.png.png": b"upload",
+            f"{ART}/Plan metadata.json": infographic,
+            f"{ART}/Plan.png": b"generated",
+        },
+    )
+    artifacts, unmatched = collect(index_zip(part, store))
+    files = {a.kind: [f.member.rsplit("/", 1)[-1] for f in a.files] for a in artifacts}
+    assert files == {"file": ["Plan notes.png.png"], "infographic": ["Plan.png"]}
+    assert unmatched == []
