@@ -192,29 +192,37 @@ RUN_ON_WORDS = 16
 Word = tuple[float, str, int]  # (start, text, speaker)
 
 
-# Words almost always before a name or a number ("Dr. Smith", "St. Louis", "Fig. 3",
-# "approx. 30"), and Latin linking words: their full stop never ends a sentence
-NEVER_ENDS = frozenset({
-    "mr", "mrs", "ms", "dr", "prof", "st", "mt", "fig", "approx", "e.g", "i.e", "vs", "cf",
-})  # fmt: skip
+# Titles before a name, when capitalised ("Dr. Smith"; "200 ms." is a unit), and Latin
+# linking words: their full stop never ends a sentence
+TITLES = frozenset({"Mr", "Mrs", "Ms", "Dr", "Prof"})
+LINKING = frozenset({"e.g", "i.e", "vs", "cf"})
+# Saint and Mount before a name ("the St. Louis"), but Street after one ("Main St.")
+BEFORE_A_NAME = frozenset({"st", "mt"})
+BEFORE_A_NUMBER = frozenset({"fig", "approx"})  # "Fig. 3", "approx. 30"
 # Words whose full stop may or may not end a sentence: "Apple Inc.", "John Smith Jr."
 ABBREVIATIONS = frozenset({
-    "sr", "jr", "al", "inc", "ltd", "corp", "dept", "etc", "a.m", "p.m",
+    "sr", "jr", "al", "inc", "ltd", "corp", "dept", "etc", "a.m", "p.m", "ms", "min", "sec",
 })  # fmt: skip
 _DOTTED = re.compile(r"(?:[A-Za-z]\.){2,}")  # U.S., B.F.
 _OPENERS = "\"'([“‘"
 _CLOSERS = "\"')]”’"
 
 
-def _ends_sentence(word: str, following: str | None = None) -> bool:
-    """Whether a word ends its sentence; ``following`` is the next word, if any.
+def _bare(word: str | None) -> str:
+    return (word or "").strip().lstrip(_OPENERS)
 
-    A title ("Dr."), "St.", "Mt.", "Fig.", "approx." or "e.g." never does. Another
-    abbreviation, an initial ("B.") or a dotted acronym ("U.S.") does when the next
-    word starts with a capital, as in "in the U.S. Right.", and not when it is
-    lowercase; with nothing after it, it ends one. A name with an initial, "John B.
-    Watson", is then cut in two: the cost is a voice change that falls there, not a
-    reply joined to the wrong voice.
+
+def _ends_sentence(word: str, following: str | None = None, before: str | None = None) -> bool:
+    """Whether a word ends its sentence, given the word after it and the one before.
+
+    A capitalised title ("Dr.") or "e.g." never does. "St." and "Mt." don't after a
+    word that is not capitalised ("the St. Louis"); "Fig." and "approx." don't before
+    a number. Any other abbreviation ("Main St.", "Inc.", "200 ms."), an initial ("B.")
+    or a dotted acronym ("U.S.") ends a sentence when the next word starts with a
+    capital, as in "in the U.S. Right.", and not when it is lowercase; with nothing
+    after it, it ends one. A name with an initial, "John B. Watson", is then cut in
+    two: the cost is a voice change that falls there, not a reply joined to the wrong
+    voice.
     """
     parts = word.split()
     last = parts[-1].rstrip(_CLOSERS) if parts else ""
@@ -222,12 +230,18 @@ def _ends_sentence(word: str, following: str | None = None) -> bool:
         return False
     if not last.endswith("."):
         return True
-    stem = last.lstrip(_OPENERS)[:-1].lower()
-    if stem in NEVER_ENDS:
+    shown = _bare(last)[:-1]
+    stem = shown.lower()
+    nxt, prev = _bare(following), _bare(before)
+    if shown in TITLES or stem in LINKING:
         return False
-    initial = len(stem) == 1 and last.lstrip(_OPENERS)[0].isupper()
-    if stem in ABBREVIATIONS or initial or _DOTTED.fullmatch(stem + "."):
-        nxt = (following or "").strip().lstrip(_OPENERS)
+    if stem in BEFORE_A_NAME and not prev[:1].isupper():
+        return False
+    if stem in BEFORE_A_NUMBER and nxt[:1].isdigit():
+        return False
+    initial = len(stem) == 1 and shown.isupper()
+    known = ABBREVIATIONS | BEFORE_A_NAME | BEFORE_A_NUMBER
+    if stem in known or initial or _DOTTED.fullmatch(stem + "."):
         return not nxt or not nxt[0].islower()
     return True
 
@@ -286,7 +300,8 @@ def group_turns(words: list[Word]) -> list[tuple[int, float, str]]:
 
     for n, word in enumerate(words):
         sentence.append(word)
-        if _ends_sentence(word[1], words[n + 1][1] if n + 1 < len(words) else None):
+        following = words[n + 1][1] if n + 1 < len(words) else None
+        if _ends_sentence(word[1], following, words[n - 1][1] if n else None):
             flush()
     flush()
     return [(speaker, start, " ".join("".join(ws).split())) for speaker, start, ws in turns]

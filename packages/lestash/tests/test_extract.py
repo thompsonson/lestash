@@ -498,9 +498,23 @@ def test_a_regrouped_turn_is_never_timed_before_it_starts() -> None:
 def test_titles_never_end_a_sentence_and_other_abbreviations_go_by_the_next_word() -> None:
     for word in (" Dr.", "Mr.", "(e.g.", "i.e.", "vs."):
         assert not extract._ends_sentence(word, "Smith"), word
-    # Before a name or a number (review round 3)
-    for word, following in (("St.", "Louis"), ("Mt.", "Everest"), ("Fig.", "3"), ("approx.", "30")):
-        assert not extract._ends_sentence(word, following), word
+    # By context (review rounds 3 and 4): saint and mount before a name, street after
+    # one; "Fig." and "approx." before a number; a lowercase unit is no title
+    for word, following, before, ends in (
+        ("St.", "Louis", "the", False),
+        ("Mt.", "Everest", "climbed", False),
+        ("St.", "Louis", None, False),
+        ("St.", "Right.", "Main", True),
+        ("St.", "and", "Baker", False),
+        ("Fig.", "3", "in", False),
+        ("approx.", "30", "is", False),
+        ("approx.", "Yes.", "only", True),
+        ("ms.", "Then", "200", True),
+        ("ms.", "and", "200", False),
+        ("min.", "Okay.", "five", True),
+        ("Ms.", "Smith", "met", False),
+    ):
+        assert extract._ends_sentence(word, following, before) is ends, (before, word)
     # Another abbreviation, an initial or an acronym ends a sentence before a capital
     for word in ("U.S.", "a.m.", "B.", "C.", "Inc.", 'Jr."', "etc."):
         assert extract._ends_sentence(word, "Right."), word
@@ -532,6 +546,12 @@ def test_a_blip_before_a_place_name_does_not_split_it() -> None:
     assert extract.regroup_transcript(stored) == (
         "**Speaker 1** (0:00): We flew to St. Louis last week.\n\n**Speaker 2** (0:02): Nice."
     )
+
+
+def test_a_reply_after_a_street_keeps_its_voice() -> None:
+    long_turn = " ".join(["word"] * 20)
+    stored = f"**Speaker 1** (0:00): {long_turn} on Main St.\n\n**Speaker 2** (0:09): Right."
+    assert extract.regroup_transcript(stored) == stored
 
 
 def test_a_turn_left_after_its_head_moved_back_keeps_its_own_time() -> None:
