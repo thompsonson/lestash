@@ -194,6 +194,8 @@ def _bluesky(row: _Row, _: _Context) -> Iterator[AgentRef]:
     names them."""
     meta = row.metadata
     did, handle = meta.get("author_did"), meta.get("author_handle")
+    if handle == BLUESKY_INVALID_HANDLE:
+        handle = None  # Bluesky could not verify it: neither a name nor an address
     if isinstance(did, str) and did:
         # The author first: a post of yours that mentions you must name your account
         yield AgentRef(
@@ -378,16 +380,20 @@ class _People:
         self.display: dict[tuple[str, str], str | None] = {}
         self.urls: dict[tuple[str, str], str | None] = {}
         # Each Bluesky DID's handle addresses, as its held posts give them: the one
-        # fetched last, and all of them. A post keeps the handle it had when fetched,
-        # so the latest fetch is the newest handle. Read up front, as the pass reads
-        # items in no order. Bluesky's placeholder for an unverified handle is skipped
+        # seen last, and all of them. A post holds the handle it had when last synced,
+        # and a sync that changes it leaves an item_history row, so a post's handle
+        # was last seen at its fetch or its latest change, whichever is later. Read up
+        # front, as the pass reads items in no order. Bluesky's placeholder for an
+        # unverified handle is skipped
         self.bluesky_handles: dict[str, tuple[str, set[str]]] = {}
         for did, handle in conn.execute(
             "SELECT json_extract(metadata, '$.author_did'), "
             "json_extract(metadata, '$.author_handle') FROM items "
             "WHERE source_type = 'bluesky' AND held = 1 "
             "AND json_extract(metadata, '$.author_handle') NOT IN ('', ?) "
-            "ORDER BY datetime(fetched_at), id",
+            "ORDER BY max(coalesce(datetime(fetched_at), ''), coalesce(("
+            "SELECT datetime(max(h.changed_at)) FROM item_history h WHERE h.item_id = items.id"
+            "), '')), id",
             (BLUESKY_INVALID_HANDLE,),
         ):
             if isinstance(did, str) and isinstance(handle, str):

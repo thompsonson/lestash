@@ -620,3 +620,42 @@ def test_an_unverified_bluesky_handle_never_becomes_an_address(test_db) -> None:
         )
         link_agents(conn)
         assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/a.x"
+
+
+def test_a_first_post_with_an_unverified_handle_gives_no_address(test_db) -> None:
+    """#379, review round 6: 'handle.invalid' on the first post seen gives no address,
+    so a real handle seen later fills it."""
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            "bluesky",
+            "b1",
+            "Zed",
+            {"author_did": "did:plc:zed", "author_handle": "handle.invalid"},
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") is None
+        _item(conn, "bluesky", "b2", "Zed", {"author_did": "did:plc:zed", "author_handle": "z.x"})
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/z.x"
+
+
+def test_a_resynced_posts_new_handle_wins_over_a_later_fetch(test_db) -> None:
+    """#379, review round 6: a re-sync that changes an old post's handle keeps its old
+    fetched_at but leaves a history row; that change counts as the handle's sighting."""
+    with get_connection(test_db) as conn:
+        old = _item(
+            conn, "bluesky", "b1", "Zed", {"author_did": "did:plc:zed", "author_handle": "a.x"}
+        )
+        later = _item(
+            conn, "bluesky", "b2", "Zed", {"author_did": "did:plc:zed", "author_handle": "a.x"}
+        )
+        conn.execute("UPDATE items SET fetched_at = '2025-01-01 00:00:00' WHERE id = ?", (old,))
+        conn.execute("UPDATE items SET fetched_at = '2026-01-01 00:00:00' WHERE id = ?", (later,))
+        # The re-sync of the old post brings the new handle
+        conn.execute(
+            "UPDATE items SET metadata = ? WHERE id = ?",
+            (json.dumps({"author_did": "did:plc:zed", "author_handle": "b.x"}), old),
+        )
+        link_agents(conn)
+        assert _bluesky_url(conn, "did:plc:zed") == "https://bsky.app/profile/b.x"
