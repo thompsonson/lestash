@@ -832,8 +832,8 @@ MIGRATIONS = [
     (
         38,
         "Backfill 'saved' activities for Google Drive documents imported before #387",
-        # Dated by fetched_at, the last time it was imported: its created_at is when
-        # the document was written in Drive.
+        # Dated by fetched_at, when it was first imported (upsert_item leaves it): its
+        # created_at is when the document was written in Drive.
         """
         INSERT INTO activities (verb, item_id, occurred_at, source)
         SELECT 'saved', i.id, strftime('%Y-%m-%dT%H:%M:%fZ', i.fetched_at), 'app:share'

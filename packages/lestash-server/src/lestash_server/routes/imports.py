@@ -444,6 +444,7 @@ def sync_from_drive(body: DriveSyncRequest):
     from lestash.core.database import upsert_item
     from lestash.core.google_drive import (
         classify_drive_url,
+        store_folder_file,
         sync_drive_folder,
         sync_single_file,
     )
@@ -463,15 +464,7 @@ def sync_from_drive(body: DriveSyncRequest):
                 with get_db() as conn:
                     for item, pdf_bytes, filename in sync_drive_folder(file_id, recursive=True):
                         try:
-                            held = conn.execute(
-                                "SELECT 1 FROM items WHERE source_type = ? AND source_id = ?",
-                                (item.source_type, item.source_id),
-                            ).fetchone()
-                            item_id = upsert_item(conn, item)
-                            if held is None:
-                                # A folder's new files show on the Timeline (#387); one
-                                # imported before stays where it was
-                                record_saved(conn, item_id)
+                            item_id = store_folder_file(conn, item)
                             items_added += 1
                             if pdf_bytes:
                                 drive_url = (item.metadata or {}).get("drive_web_link")

@@ -422,3 +422,21 @@ def test_migration_38_saves_each_earlier_drive_document_once(test_db) -> None:
         assert (
             conn.execute("SELECT count(*) FROM activities WHERE verb = 'saved'").fetchone()[0] == 2
         )
+
+
+def test_a_folder_file_is_saved_only_when_new(test_db) -> None:
+    """The CLI and the server's folder imports both store through this (#387)."""
+    from lestash.core.google_drive import store_folder_file
+    from lestash.models.item import ItemCreate
+
+    item = ItemCreate(source_type="google-drive", source_id="drive:N1", title="N", content="t")
+    with get_connection(test_db) as conn:
+        first = store_folder_file(conn, item)
+        again = store_folder_file(conn, item)
+        assert first == again
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM activities WHERE verb = 'saved' AND item_id = ?", (first,)
+            ).fetchone()[0]
+            == 1
+        )
