@@ -214,15 +214,16 @@ class MainActivity : TauriActivity() {
 
     /**
      * True if the stream is a text or Markdown file: by its name's suffix, or by
-     * its own type. A stream of unknown type counts when the share carries no text,
-     * since then the stream is all that was shared.
+     * its own type. A stream of unknown or generic type counts when the share
+     * carries no text, since then the stream is all that was shared.
      */
     private fun isTextFile(uri: Uri, hasText: Boolean): Boolean {
         val name = getFileName(uri) ?: ""
         if (TEXT_SUFFIXES.any { name.endsWith(it, ignoreCase = true) }) return true
         val type = try { contentResolver.getType(uri) } catch (e: Exception) { null }
-        if (type == null) return !hasText
-        return type.substringBefore(';').trim().lowercase() in TEXT_TYPES
+        val base = type?.substringBefore(';')?.trim()?.lowercase()
+        if (base == null || base == "application/octet-stream") return !hasText
+        return base in TEXT_TYPES
     }
 
     private fun getFileName(uri: Uri): String? {
