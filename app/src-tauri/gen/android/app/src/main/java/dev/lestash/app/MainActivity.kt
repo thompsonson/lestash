@@ -135,9 +135,8 @@ class MainActivity : TauriActivity() {
             // A stream that isn't text, such as a link's preview image, leaves the text alone.
             val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
             val hasText = intent.getStringExtra(Intent.EXTRA_TEXT) != null
-            if (uri != null && isTextFile(uri, hasText)) {
-                if (!putTextFile(uri, mimeType, json)) return
-            } else {
+            // A file that can't be read falls back to the share's text, if any
+            if (uri == null || !isTextFile(uri, hasText) || !putTextFile(uri, mimeType, json)) {
                 val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
                 json.put("text", text)
                 val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
