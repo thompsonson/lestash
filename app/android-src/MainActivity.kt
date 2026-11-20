@@ -128,9 +128,10 @@ class MainActivity : TauriActivity() {
                 if (subject != null) json.put("subject", subject)
             }
         } else if (mimeType.startsWith("text/")) {
-            // A text or Markdown file comes as a stream; a selection or link as text (#389)
+            // A text or Markdown file comes as a stream; a selection or link as text (#389).
+            // A stream that isn't text, such as a link's preview image, leaves the text alone.
             val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-            if (uri != null) {
+            if (uri != null && isTextFile(uri)) {
                 if (!putTextFile(uri, mimeType, json)) return
             } else {
                 val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
@@ -205,6 +206,13 @@ class MainActivity : TauriActivity() {
         json.put("filePath", tempFile.absolutePath)
         json.put("fileName", fileName)
         return true
+    }
+
+    /** True if the stream is a text file: by its name's suffix, or its own type. */
+    private fun isTextFile(uri: Uri): Boolean {
+        val name = getFileName(uri) ?: ""
+        if (TEXT_SUFFIXES.any { name.endsWith(it, ignoreCase = true) }) return true
+        return contentResolver.getType(uri)?.startsWith("text/") == true
     }
 
     private fun getFileName(uri: Uri): String? {
