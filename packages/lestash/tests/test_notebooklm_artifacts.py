@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from lestash.core.blobs import BlobStore, store_root
-from lestash.core.database import get_connection
+from lestash.core.database import SCHEMA_VERSION, get_connection
 from lestash.core.sync import SyncStore
 from lestash.importers.notebooklm_artifacts import (
     Index,
@@ -423,7 +423,7 @@ def test_migration_37_refiles_files_from_the_kept_indexes(test_db, tmp_path) -> 
         put("Cards metadata", "file", sha["Cards"])
         conn.execute("PRAGMA user_version = 36")
         conn.commit()
-        assert apply_migrations(conn) == 1
+        assert apply_migrations(conn) == SCHEMA_VERSION - 36
 
         def files(item: str) -> list[tuple]:
             return [
@@ -442,7 +442,7 @@ def test_migration_37_refiles_files_from_the_kept_indexes(test_db, tmp_path) -> 
             "Board metadata(1)": [("image", sha["Board.png"], 1)],
         }
         assert files("Cards metadata") == [("file", old_page, 0), ("file", sha["Cards"], 1)]
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 
 def test_merging_one_requests_two_kept_indexes() -> None:
