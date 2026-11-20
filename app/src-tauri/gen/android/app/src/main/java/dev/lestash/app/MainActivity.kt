@@ -9,6 +9,11 @@ import java.io.File
 
 class MainActivity : TauriActivity() {
 
+    companion object {
+        /** Suffixes the server imports as text (lestash.core.text_files.FORMATS). */
+        private val TEXT_SUFFIXES = listOf(".txt", ".md", ".markdown")
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handleShareIntent(intent)
@@ -123,10 +128,16 @@ class MainActivity : TauriActivity() {
                 if (subject != null) json.put("subject", subject)
             }
         } else if (mimeType.startsWith("text/")) {
-            val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
-            json.put("text", text)
-            val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
-            if (subject != null) json.put("subject", subject)
+            // A text or Markdown file comes as a stream; a selection or link as text (#389)
+            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            if (uri != null) {
+                if (!putTextFile(uri, mimeType, json)) return
+            } else {
+                val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+                json.put("text", text)
+                val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+                if (subject != null) json.put("subject", subject)
+            }
         } else {
             // Fallback: check file extension for generic MIME types (e.g. application/octet-stream)
             val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
@@ -156,6 +167,8 @@ class MainActivity : TauriActivity() {
                     json.put("mimeType", "application/pdf")
                     json.put("filePath", tempFile.absolutePath)
                     json.put("fileName", fileName)
+                } else if (TEXT_SUFFIXES.any { fileName.endsWith(it, ignoreCase = true) }) {
+                    if (!putTextFile(uri, mimeType, json)) return
                 } else {
                     return
                 }
@@ -166,6 +179,32 @@ class MainActivity : TauriActivity() {
 
         val pendingFile = File(cacheDir, "pending_share.json")
         pendingFile.writeText(json.toString())
+    }
+
+    /**
+     * Copy a shared text or Markdown file to the cache and describe it in [json].
+     * The name keeps a suffix the server imports (.txt, .md, .markdown), so a file
+     * named without one still imports. Returns false if the file can't be read.
+     */
+    private fun putTextFile(uri: Uri, mimeType: String, json: JSONObject): Boolean {
+        var fileName = getFileName(uri) ?: "shared"
+        if (TEXT_SUFFIXES.none { fileName.endsWith(it, ignoreCase = true) }) {
+            fileName += if (mimeType.contains("markdown")) ".md" else ".txt"
+        }
+        val markdown = !fileName.endsWith(".txt", ignoreCase = true)
+        val ext = if (markdown) "md" else "txt"
+        val tempFile = File(cacheDir, "shared_${System.currentTimeMillis()}.$ext")
+        try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                tempFile.outputStream().use { output -> input.copyTo(output) }
+            } ?: return false
+        } catch (e: Exception) {
+            return false
+        }
+        json.put("mimeType", if (markdown) "text/markdown" else "text/plain")
+        json.put("filePath", tempFile.absolutePath)
+        json.put("fileName", fileName)
+        return true
     }
 
     private fun getFileName(uri: Uri): String? {
