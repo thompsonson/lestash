@@ -3,6 +3,7 @@
 import contextlib
 import logging
 import re
+import sqlite3
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -309,3 +310,22 @@ def sync_single_file(file_id: str) -> tuple[ItemCreate, bytes | None, str]:
         .execute()
     )
     return _process_file(service, file_meta)
+
+
+def store_folder_file(conn: sqlite3.Connection, item: ItemCreate) -> int:
+    """Store a file a folder import found, and return its id.
+
+    A new file is saved now, so it shows on today's Timeline (#387); one imported
+    before stays where it was, so a re-sync doesn't repeat it.
+    """
+    from lestash.core.activities import record_saved
+    from lestash.core.database import upsert_item
+
+    held = conn.execute(
+        "SELECT 1 FROM items WHERE source_type = ? AND source_id = ?",
+        (item.source_type, item.source_id),
+    ).fetchone()
+    item_id = upsert_item(conn, item)
+    if held is None:
+        record_saved(conn, item_id)
+    return item_id

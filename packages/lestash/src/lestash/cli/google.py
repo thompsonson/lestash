@@ -145,13 +145,14 @@ def sync(
     as a searchable item with source_type 'google-drive'.
     """
     from lestash.core.config import Config
-    from lestash.core.database import get_connection, upsert_item
+    from lestash.core.database import get_connection
     from lestash.core.google_auth import get_drive_service
     from lestash.core.google_drive import (
         FOLDER_MIME,
         SKIP_MIME_PREFIXES,
         extract_folder_id,
         list_drive_folder,
+        store_folder_file,
         sync_drive_folder,
     )
 
@@ -192,7 +193,7 @@ def sync(
         ):
             status.update(f"Processing: {item.title or 'unknown'}")
             try:
-                item_id = upsert_item(conn, item)
+                item_id = store_folder_file(conn, item)
                 added += 1
                 if pdf_bytes:
                     drive_url = (item.metadata or {}).get("drive_web_link")

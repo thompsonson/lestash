@@ -1537,6 +1537,72 @@ def test_a_drive_file_goes_under_the_item_it_was_added_to(client, test_config, m
     assert _saved(test_config, item_id) == 1
 
 
+def _drive_file(monkeypatch, file_id: str) -> None:
+    import lestash.core.google_drive as gd
+    from lestash.models.item import ItemCreate
+
+    monkeypatch.setattr(gd, "classify_drive_url", lambda url: ("file", file_id))
+    monkeypatch.setattr(
+        gd,
+        "sync_single_file",
+        lambda fid: (
+            ItemCreate(
+                source_type="google-drive", source_id=f"drive:{fid}", title="Doc", content="t"
+            ),
+            None,
+            None,
+        ),
+    )
+
+
+def test_a_drive_file_imported_alone_is_saved_each_time(client, test_config, monkeypatch):
+    """Settings or capture, with no item to go under: on today's Timeline all the same (#387)."""
+    from lestash.core.database import get_connection
+
+    _drive_file(monkeypatch, "F3")
+    url = {"urls": ["https://docs.google.com/document/d/F3/edit"]}
+    assert client.post("/api/import/drive/sync", json=url).status_code == 200
+    with get_connection(test_config) as conn:
+        (item_id,) = conn.execute("SELECT id FROM items WHERE source_id = 'drive:F3'").fetchone()
+    assert _saved(test_config, item_id) == 1
+    # Importing it again is saving it again, as a YouTube re-share is
+    assert client.post("/api/import/drive/sync", json=url).status_code == 200
+    assert _saved(test_config, item_id) == 2
+
+
+def test_a_drive_folder_saves_only_its_new_files(client, test_config, monkeypatch):
+    import lestash.core.google_drive as gd
+    from lestash.core.database import get_connection
+    from lestash.models.item import ItemCreate
+
+    def folder(folder_id, recursive=True):
+        for fid in ("D1", "D2"):
+            yield (
+                ItemCreate(
+                    source_type="google-drive", source_id=f"drive:{fid}", title=fid, content="t"
+                ),
+                None,
+                None,
+            )
+
+    monkeypatch.setattr(gd, "classify_drive_url", lambda url: ("folder", "FOLDER"))
+    monkeypatch.setattr(gd, "sync_drive_folder", folder)
+    with get_connection(test_config) as conn:
+        held = conn.execute(
+            "INSERT INTO items (source_type, source_id, content)"
+            " VALUES ('google-drive', 'drive:D1', 't')"
+        ).lastrowid
+        conn.commit()
+    resp = client.post(
+        "/api/import/drive/sync", json={"urls": ["https://drive.google.com/drive/folders/X"]}
+    )
+    assert resp.status_code == 200, resp.text
+    with get_connection(test_config) as conn:
+        (new,) = conn.execute("SELECT id FROM items WHERE source_id = 'drive:D2'").fetchone()
+    assert _saved(test_config, new) == 1
+    assert _saved(test_config, held) == 0
+
+
 def test_a_drive_file_already_held_is_not_moved(client, test_config, monkeypatch):
     import lestash.core.google_drive as gd
     from lestash.core.database import get_connection
