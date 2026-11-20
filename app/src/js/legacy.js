@@ -2774,9 +2774,12 @@ async function handlePendingShare() {
       addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${fileName} (${(fileData.base64.length * 0.75 / 1024).toFixed(0)} KB)`);
       const htmlText = atob(fileData.base64);
       openHtmlImportDialog(fileData, htmlText);
-    } else if (share.mimeType === 'application/pdf' && share.filePath) {
-      const fileName = share.fileName || 'shared.pdf';
-      addDebugLog('SHARE', 'read_shared_file', 'START', null, `pdf: ${share.filePath}`);
+    } else if (share.filePath && (share.mimeType === 'application/pdf'
+        || share.mimeType === 'text/markdown' || share.mimeType === 'text/plain')) {
+      // A PDF, text or Markdown file is imported like an uploaded file (#389)
+      const fallbackName = { 'application/pdf': 'shared.pdf', 'text/markdown': 'shared.md' };
+      const fileName = share.fileName || fallbackName[share.mimeType] || 'shared.txt';
+      addDebugLog('SHARE', 'read_shared_file', 'START', null, `${share.mimeType}: ${share.filePath}`);
       const fileData = await tauriInvoke('read_shared_file', {
         filePath: share.filePath,
         fileName: fileName,
@@ -2784,7 +2787,7 @@ async function handlePendingShare() {
       const byteStr = atob(fileData.base64);
       const bytes = new Uint8Array(byteStr.length);
       for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
-      const file = new File([bytes], fileData.fileName, { type: 'application/pdf' });
+      const file = new File([bytes], fileData.fileName, { type: share.mimeType });
       addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
       navigate('/settings/sources');
       await uploadImport(file);
