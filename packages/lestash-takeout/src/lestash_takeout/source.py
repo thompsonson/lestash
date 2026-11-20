@@ -12,8 +12,12 @@ together, so a zip is never marked done while its items are missing.
 NotebookLM's generated artifacts (slides, audio, video…) spread their files over an export's
 parts. Each part's artifact files go into the file store as it is read, and what the export's
 parts held so far is kept as a checkpoint (key ``notebooklm:takeout-<request time>``). Each part
-then yields the export's artifacts again, with every file seen so far. Once all its parts are
-settled, the export is completed from that index, with no zip needed.
+keeps them waiting: the export's artifacts are written once, when its last part is read, as
+another part may change which artifact a file or a name belongs to (#375). Once all its parts
+are settled, the export is completed from that index, with no zip needed. One request's parts can
+differ by a second in their names (``takeout-20261106T100906Z-001.zip`` beside
+``takeout-20261106T100907Z-1-001.zip``): they are one export (#378). Each file is dated by its
+export's request time, and the other exports' indexes give its other versions (#376).
 
 A zip that can't be read, or that Drive says is gone (404, 403), is recorded as ``failed``
 with its attempt count, and the sync then ends ``failed``. It is retried up to
@@ -189,28 +193,71 @@ REQUEST = re.compile(r"^(takeout-\d{8}T\d{6}Z)-")
 
 
 def export_key(file: dict[str, Any]) -> str:
-    """The checkpoint key of the Takeout request a part belongs to. One request's parts
-    are ``takeout-<time>-001.zip``…, and ``takeout-<time>-3-001.zip``… when Takeout
-    splits it further: all are ``notebooklm:takeout-<time>``."""
+    """The checkpoint key of the Takeout request a part's name says it belongs to. One
+    request's parts are ``takeout-<time>-001.zip``…, and ``takeout-<time>-3-001.zip``…
+    when Takeout splits it further: all are ``notebooklm:takeout-<time>``. See
+    export_keys for parts whose times differ by a second."""
     name = file["name"]
     if m := REQUEST.match(name):
         return "notebooklm:" + m.group(1)
     return "notebooklm:" + re.sub(r"-\d+\.zip$", "", name)
 
 
+def export_keys(
+    listed: list[dict[str, Any]], state: dict[str, dict[str, Any]] | None = None
+) -> dict[str, str]:
+    """Each listed part's export key, by Drive file id. Parts whose request times are
+    at most SAME_REQUEST apart are one request: Takeout can name one request's parts a
+    second apart (#378). The group's key is one an index is kept under already, so a
+    part listed late joins it; else its latest time's."""
+    from lestash.importers.notebooklm_artifacts import request_groups
+
+    own = {f["id"]: export_key(f) for f in listed}
+    kept = [k for k in state or {} if k.startswith("notebooklm:")]
+    groups = request_groups([*own.values(), *kept], kept)
+    return {fid: groups[key] for fid, key in own.items()}
+
+
+def merge_split(state: dict[str, dict[str, Any]]) -> Iterator[SyncCheckpoint]:
+    """Merge the indexes a sync before #378 kept for one request's two names, in
+    ``state`` too; finish_exports then completes the merged export."""
+    from lestash.importers.notebooklm_artifacts import merge_split_exports
+
+    for key, (value, replaced) in merge_split_exports(state).items():
+        logger.info(f"{key}: merged the indexes of {', '.join(replaced)}")
+        state[key] = value
+        yield SyncCheckpoint(key=key, value=value)
+        for old in replaced:
+            state.pop(old, None)
+            yield SyncCheckpoint(key=old, value=None)
+
+
+def _other_exports(state: dict[str, dict[str, Any]] | None, export: str) -> dict[str, Any]:
+    """The other exports' kept indexes: they hold a file's other versions."""
+    return {k: v for k, v in (state or {}).items() if k.startswith("notebooklm:") and k != export}
+
+
 def _artifacts(
-    path: Path, kept: dict[str, Any] | None, final: bool, app_config: "Config | None" = None
-) -> tuple[list[ItemCreate], Any]:
-    """The export's NotebookLM artifacts with this part read, and its index to keep; no
-    items and None if the part holds no artifact files. ``final``: no other part of the
-    export is still to be read. A file store that can't be written stops the sync.
-    ``app_config``: the database whose file store takes the files (else the default)."""
+    path: Path,
+    kept: dict[str, Any] | None,
+    final: bool,
+    app_config: "Config | None" = None,
+    export: str = "",
+    others: dict[str, Any] | None = None,
+) -> tuple[list[ItemCreate], Any, tuple[int, int]]:
+    """The export's NotebookLM artifacts with this part read, its index to keep, and
+    how many artifact descriptions and how many artifact files this part held; no items
+    and None if the export has none so far. ``final``: no other part of the export is still to be
+    read. A file store that can't be written stops the sync. ``app_config``: the
+    database whose file store takes the files (else the default). ``export``: its key;
+    ``others``: the other exports' kept indexes, by key."""
     from lestash.core.blobs import BlobStore, store_root
     from lestash.core.config import Config
     from lestash.importers.notebooklm_artifacts import Index, index_zip
 
+    known = Index.from_json(kept).descriptions
     try:
-        fresh = index_zip(path, BlobStore(store_root(app_config or Config.load())))
+        fresh = index_zip(path, BlobStore(store_root(app_config or Config.load())), known=known)
     except (
         zipfile.BadZipFile,
         KeyError,
@@ -224,37 +271,66 @@ def _artifacts(
     except OSError as e:
         # The store's disk, not this zip: every zip would fail the same way
         raise TakeoutError(f"stopped, file store not writable: {type(e).__name__}: {e}") from e
-    if not fresh.descriptions and not fresh.files and not final:
-        return [], None
+    held = (len(fresh.descriptions), len(fresh.files))
+    if not any(held) and not final:
+        return [], None, held
     index = Index.from_json(kept)
     index.descriptions.update(fresh.descriptions)
     index.files.update(fresh.files)
     if not index.descriptions and not index.files:
-        return [], None
-    return _complete(index, final)
+        return [], None, held
+    return (*_complete(index, final, export, others, app_config), held)
 
 
-def _complete(index: Any, final: bool) -> tuple[list[ItemCreate], dict[str, Any]]:
-    from lestash.importers.notebooklm_artifacts import collect, to_items
+def _complete(
+    index: Any,
+    final: bool,
+    export: str = "",
+    others: dict[str, Any] | None = None,
+    app_config: "Config | None" = None,
+) -> tuple[list[ItemCreate], dict[str, Any]]:
+    """The export's artifacts as items, and its index to keep. Its files are dated by
+    the export's request time, with their versions from the ``others`` (#376).
+    Same-titled artifacts keep the items stored in ``app_config``'s database (#375)."""
+    from lestash.core.config import Config
+    from lestash.core.database import get_connection
+    from lestash.importers.notebooklm_artifacts import (
+        StoredItem,
+        collect,
+        export_time,
+        stored_exports,
+        stored_identities,
+        to_items,
+    )
 
-    artifacts, unmatched = collect(index, final=final)
+    identities: dict[str, StoredItem] = {}
+    if final:
+        with get_connection(app_config or Config.load()) as conn:
+            identities = stored_identities(conn)
+    artifacts, unmatched = collect(index, final, identities)
     if unmatched:
-        verb = "have no description" if final else "wait for their description"
+        verb = "have no description" if final else "wait for the export's last part"
         logger.info(f"{len(unmatched)} NotebookLM file(s) {verb}")
-    return to_items(artifacts), {**index.to_json(), "final": final}
+    seen_at = export_time(export)
+    history = stored_exports(others or {}, identities) if seen_at and final else ()
+    items = to_items(artifacts, seen_at, history)
+    return items, {**index.to_json(), "final": final}
 
 
 def finish_exports(
-    listed: list[dict[str, Any]], state: dict[str, dict[str, Any]]
+    listed: list[dict[str, Any]],
+    state: dict[str, dict[str, Any]],
+    app_config: "Config | None" = None,
 ) -> Iterator[ItemCreate | SyncCheckpoint]:
     """Complete each export whose parts are all settled but whose last read was not
     final: its last part was given up, or a listed part left Drive. Its files are in
-    the store already, so no zip is read."""
+    the store already, so no zip is read. ``app_config``: the database synced into."""
     from lestash.importers.notebooklm_artifacts import Index
 
+    keys = export_keys(listed, state)
     parts: dict[str, list[dict[str, Any]]] = {}
     for f in listed:
-        parts.setdefault(export_key(f), []).append(f)
+        parts.setdefault(keys[f["id"]], []).append(f)
     exports = {k for k in state if k.startswith("notebooklm:")}
     for export in sorted(exports):
         kept = state[export]
@@ -265,7 +341,8 @@ def finish_exports(
             or not all(settled(state.get(f["id"])) for f in listed_parts)
         ):
             continue
-        items, value = _complete(Index.from_json(kept), final=True)
+        others = _other_exports(state, export)
+        items, value = _complete(Index.from_json(kept), True, export, others, app_config)
         yield from items
         state[export] = value
         yield SyncCheckpoint(key=export, value=value)
@@ -279,20 +356,28 @@ def import_zip(
     kept_index: dict[str, Any] | None = None,
     final: bool = True,
     app_config: "Config | None" = None,
+    export: str | None = None,
+    other_exports: dict[str, Any] | None = None,
 ) -> Iterator[ItemCreate | SyncCheckpoint]:
     """Download one Takeout zip and yield its items, then its checkpoint.
 
-    Its export's NotebookLM artifacts come after its items, with every file the export's
-    parts held so far, then the export's index (``kept_index`` is the stored one).
+    Its export's NotebookLM artifacts come after its items if it is the export's last
+    part, with every file the export's parts held, then the export's index
+    (``kept_index`` is the stored one).
     ``final``: no other part of the export is still to be read (see collect).
     ``app_config``: the database being synced into, for its file store (else the default).
+    ``export``: the export's key (see export_keys; else the part's own name's);
+    ``other_exports``: the other exports' kept indexes, for each file's versions.
+    A part with only artifacts is recorded imported, with their count (#378).
 
     The download is deleted before the items are yielded. A corrupt (e.g. truncated) zip, a
     parse error, or a file Drive says is gone yields a ``failed`` checkpoint counting the
     attempt; ``previous`` is the zip's stored record. Any other download error raises
     ``TakeoutError`` and records nothing: it would fail the next zip too.
     """
+    export = export or export_key(file)
     error: Exception | None = None
+    held = (0, 0)  # this part's artifact descriptions, and files
     with tempfile.TemporaryDirectory(dir=workdir) as tmp:
         try:
             path = download(service, file["id"], Path(tmp) / file["name"])
@@ -319,7 +404,9 @@ def import_zip(
                 try:
                     # Also for a part with nothing else: as the export's last, it completes
                     # the artifacts the other parts left waiting
-                    artifact_items, index = _artifacts(path, kept_index, final, app_config)
+                    artifact_items, index, held = _artifacts(
+                        path, kept_index, final, app_config, export, other_exports
+                    )
                 except CorruptZip as e:
                     error = e
     if error is not None:
@@ -330,13 +417,17 @@ def import_zip(
     yield from items
     yield from artifact_items
     if index is not None:
-        yield SyncCheckpoint(key=export_key(file), value=index)
-    if unrecognized:
+        yield SyncCheckpoint(key=export, value=index)
+    if unrecognized and not any(held):
         yield SyncCheckpoint(key=file["id"], value=_record(file, "unrecognized", 0, None))
         return
-    record = _record(file, "imported", len(items), source_type)
+    record = _record(
+        file, "imported", len(items), source_type or ("notebooklm" if any(held) else None)
+    )
+    if held[1]:
+        record["artifact_files"] = held[1]  # this part's files, counted as it was read
     if artifact_items:
-        record["artifacts"] = len(artifact_items)  # the export's, so far
+        record["artifacts"] = len(artifact_items)  # the export's
     yield SyncCheckpoint(key=file["id"], value=record)
     logger.info(f"{file['name']}: {len(items)} items, {len(artifact_items)} artifacts")
 
@@ -395,7 +486,13 @@ class TakeoutSource(SourcePlugin):
                 elif seen.get("status") == "failed":
                     status = describe_failure(seen)
                 else:
-                    status = f"{seen['items']} items, {seen['imported_at'][:10]}"
+                    if seen.get("artifact_files"):
+                        artifacts = f", {seen['artifact_files']} artifact files"
+                    elif seen.get("artifacts"):  # recorded before the count per part
+                        artifacts = f", {seen['artifacts']} artifacts"
+                    else:
+                        artifacts = ""
+                    status = f"{seen['items']} items{artifacts}, {seen['imported_at'][:10]}"
                 table.add_row(
                     f["name"],
                     f"{int(f.get('size', 0)) / 1e6:,.0f} MB",
@@ -447,17 +544,19 @@ class TakeoutSource(SourcePlugin):
         problems: list[str] = []
         try:
             listed = list_takeout_zips(service)
+            yield from merge_split(state)
             pending = pending_zips(service, state, listed)
+            keys = export_keys(listed, state)
             for file in pending:
                 if reason := lacks_space(file):
                     # Not the zip's fault: no attempt counted, and smaller zips still import
                     logger.warning(f"{file['name']} ({file['id']}): {reason}")
                     problems.append(f"{file['name']} ({reason})")
                     continue
-                export = export_key(file)
+                export = keys[file["id"]]
                 # The last of its export's parts still to read: the others are done, and
                 # no more are still being uploaded
-                siblings = [f for f in listed if export_key(f) == export]
+                siblings = [f for f in listed if keys[f["id"]] == export]
                 final = uploads_done(siblings) and all(
                     settled(state.get(f["id"])) for f in siblings if f["id"] != file["id"]
                 )
@@ -468,6 +567,8 @@ class TakeoutSource(SourcePlugin):
                     kept_index=state.get(export),
                     final=final,
                     app_config=app_config,
+                    export=export,
+                    other_exports=_other_exports(state, export),
                 )
                 for obj in parts:
                     if isinstance(obj, SyncCheckpoint) and obj.key in (export, file["id"]):
@@ -478,7 +579,7 @@ class TakeoutSource(SourcePlugin):
                     ):
                         problems.append(f"{file['name']} ({describe_failure(obj.value or {})})")
                     yield obj
-            yield from finish_exports(listed, state)
+            yield from finish_exports(listed, state, app_config)
         except TakeoutError as e:  # sign-in, network, Drive or disk: the rest would fail too
             logger.warning(f"Takeout sync stopped: {e}")
             problems.insert(0, str(e))
