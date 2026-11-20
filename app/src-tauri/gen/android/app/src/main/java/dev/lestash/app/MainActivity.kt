@@ -12,6 +12,9 @@ class MainActivity : TauriActivity() {
     companion object {
         /** Suffixes the server imports as text (lestash.core.text_files.FORMATS). */
         private val TEXT_SUFFIXES = listOf(".txt", ".md", ".markdown")
+
+        /** Stream types imported as text; text/html and others have their own routes. */
+        private val TEXT_TYPES = setOf("text/plain", "text/markdown", "text/x-markdown")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -131,7 +134,8 @@ class MainActivity : TauriActivity() {
             // A text or Markdown file comes as a stream; a selection or link as text (#389).
             // A stream that isn't text, such as a link's preview image, leaves the text alone.
             val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-            if (uri != null && isTextFile(uri)) {
+            val hasText = intent.getStringExtra(Intent.EXTRA_TEXT) != null
+            if (uri != null && isTextFile(uri, hasText)) {
                 if (!putTextFile(uri, mimeType, json)) return
             } else {
                 val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
@@ -208,20 +212,31 @@ class MainActivity : TauriActivity() {
         return true
     }
 
-    /** True if the stream is a text file: by its name's suffix, or its own type. */
-    private fun isTextFile(uri: Uri): Boolean {
+    /**
+     * True if the stream is a text or Markdown file: by its name's suffix, or by
+     * its own type. A stream of unknown type counts when the share carries no text,
+     * since then the stream is all that was shared.
+     */
+    private fun isTextFile(uri: Uri, hasText: Boolean): Boolean {
         val name = getFileName(uri) ?: ""
         if (TEXT_SUFFIXES.any { name.endsWith(it, ignoreCase = true) }) return true
-        return contentResolver.getType(uri)?.startsWith("text/") == true
+        val type = try { contentResolver.getType(uri) } catch (e: Exception) { null }
+        if (type == null) return !hasText
+        return type.substringBefore(';').trim().lowercase() in TEXT_TYPES
     }
 
     private fun getFileName(uri: Uri): String? {
         if (uri.scheme == "content") {
-            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (idx >= 0) return cursor.getString(idx)
+            // A provider that refuses the query mustn't crash the share
+            try {
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (idx >= 0) return cursor.getString(idx)
+                    }
                 }
+            } catch (e: Exception) {
+                // fall back to the address's last segment
             }
         }
         return uri.lastPathSegment
