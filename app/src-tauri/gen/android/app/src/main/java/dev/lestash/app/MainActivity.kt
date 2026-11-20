@@ -39,7 +39,8 @@ class MainActivity : TauriActivity() {
         json.put("mimeType", mimeType)
 
         if (action == Intent.ACTION_SEND_MULTIPLE && mimeType.startsWith("image/")) {
-            val uris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM) ?: return
+            val uris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+                ?.filter { isForeignContent(it) } ?: return
             val filePaths = org.json.JSONArray()
             val fileNames = org.json.JSONArray()
             for (uri in uris) {
@@ -65,7 +66,7 @@ class MainActivity : TauriActivity() {
         }
 
         if (mimeType.startsWith("audio/")) {
-            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) ?: return
+            val uri = sharedStream(intent) ?: return
             val fileName = getFileName(uri) ?: "shared_audio.m4a"
             val ext = fileName.substringAfterLast('.', "m4a")
             val tempFile = File(cacheDir, "shared_${System.currentTimeMillis()}.$ext")
@@ -81,7 +82,7 @@ class MainActivity : TauriActivity() {
             json.put("filePath", tempFile.absolutePath)
             json.put("fileName", fileName)
         } else if (mimeType.startsWith("image/")) {
-            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) ?: return
+            val uri = sharedStream(intent) ?: return
             val fileName = getFileName(uri) ?: "shared_image.jpg"
             val ext = fileName.substringAfterLast('.', "jpg")
             val tempFile = File(cacheDir, "shared_${System.currentTimeMillis()}.$ext")
@@ -97,7 +98,7 @@ class MainActivity : TauriActivity() {
             json.put("filePath", tempFile.absolutePath)
             json.put("fileName", fileName)
         } else if (mimeType == "application/pdf") {
-            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) ?: return
+            val uri = sharedStream(intent) ?: return
             val fileName = getFileName(uri) ?: "shared.pdf"
             val tempFile = File(cacheDir, "shared_${System.currentTimeMillis()}.pdf")
             try {
@@ -111,7 +112,7 @@ class MainActivity : TauriActivity() {
             json.put("fileName", fileName)
         } else if (mimeType == "text/html" || mimeType == "application/xhtml+xml") {
             // HTML file share: try file stream first, fall back to text
-            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            val uri = sharedStream(intent)
             if (uri != null) {
                 val fileName = getFileName(uri) ?: "shared_page.html"
                 val tempFile = File(cacheDir, "shared_${System.currentTimeMillis()}.html")
@@ -133,7 +134,7 @@ class MainActivity : TauriActivity() {
         } else if (mimeType.startsWith("text/")) {
             // A text or Markdown file comes as a stream; a selection or link as text (#389).
             // A stream that isn't text, such as a link's preview image, leaves the text alone.
-            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            val uri = sharedStream(intent)
             val hasText = intent.getStringExtra(Intent.EXTRA_TEXT) != null
             // A file that can't be read falls back to the share's text, if any
             if (uri == null || !isTextFile(uri, hasText) || !putTextFile(uri, mimeType, json)) {
@@ -144,7 +145,7 @@ class MainActivity : TauriActivity() {
             }
         } else {
             // Fallback: check file extension for generic MIME types (e.g. application/octet-stream)
-            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            val uri = sharedStream(intent)
             if (uri != null) {
                 val fileName = getFileName(uri) ?: ""
                 if (fileName.endsWith(".html", ignoreCase = true) || fileName.endsWith(".htm", ignoreCase = true)) {
@@ -185,6 +186,18 @@ class MainActivity : TauriActivity() {
         pendingFile.writeText(json.toString())
     }
 
+    /** The share's file, if another app's content provider holds it (see [isForeignContent]). */
+    private fun sharedStream(intent: Intent): Uri? =
+        intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.takeIf { isForeignContent(it) }
+
+    /**
+     * Only content:// addresses from another app's provider are read. A file:// address,
+     * or one of LeStash's own provider, would let another app make LeStash read and
+     * import LeStash's private files.
+     */
+    private fun isForeignContent(uri: Uri): Boolean =
+        uri.scheme == "content" && uri.authority != "$packageName.fileprovider"
+
     /**
      * Copy a shared text or Markdown file to the cache and describe it in [json].
      * The name keeps a suffix the server imports (.txt, .md, .markdown), so a file
@@ -203,6 +216,7 @@ class MainActivity : TauriActivity() {
                 tempFile.outputStream().use { output -> input.copyTo(output) }
             } ?: return false
         } catch (e: Exception) {
+            tempFile.delete()  // a half-copied file would stay in the cache
             return false
         }
         json.put("mimeType", if (markdown) "text/markdown" else "text/plain")
