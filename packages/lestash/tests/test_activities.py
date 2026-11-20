@@ -385,3 +385,40 @@ def test_migration_35_saves_each_earlier_share_once(test_db) -> None:
         assert (
             conn.execute("SELECT count(*) FROM activities WHERE verb = 'saved'").fetchone()[0] == 4
         )
+
+
+def test_migration_38_saves_each_earlier_drive_document_once(test_db) -> None:
+    """Dated by fetched_at, not by when it was written in Drive; one already saved, or
+    another source, gets nothing, and a rerun adds nothing (#387)."""
+    with get_connection(test_db) as conn:
+        conn.execute("PRAGMA user_version = 37")
+        rows = [
+            ("google-drive", "drive:A", "2020-01-01 00:00:00+00:00", "2026-11-20 07:59:19"),
+            ("google-drive", "drive:B", "2021-01-01 00:00:00+00:00", "2026-10-01 10:00:00"),
+            ("note", "note-1", "2026-07-03 09:00:00+00:00", "2026-07-03 09:00:00"),
+        ]
+        conn.executemany(
+            "INSERT INTO items (source_type, source_id, content, created_at, fetched_at)"
+            " VALUES (?, ?, '', ?, ?)",
+            rows,
+        )
+        (b,) = conn.execute("SELECT id FROM items WHERE source_id = 'drive:B'").fetchone()
+        conn.execute(
+            "INSERT INTO activities (verb, item_id, occurred_at, source)"
+            " VALUES ('saved', ?, '2026-10-01T10:00:00.000Z', 'app:share')",
+            (b,),
+        )
+        assert apply_migrations(conn) == SCHEMA_VERSION - 37
+        saved = conn.execute(
+            "SELECT i.source_id, a.occurred_at FROM activities a"
+            " JOIN items i ON i.id = a.item_id WHERE a.verb = 'saved' ORDER BY i.source_id"
+        ).fetchall()
+        assert [tuple(r) for r in saved] == [
+            ("drive:A", "2026-11-20T07:59:19.000Z"),
+            ("drive:B", "2026-10-01T10:00:00.000Z"),
+        ]
+        conn.execute("PRAGMA user_version = 37")
+        apply_migrations(conn)
+        assert (
+            conn.execute("SELECT count(*) FROM activities WHERE verb = 'saved'").fetchone()[0] == 2
+        )

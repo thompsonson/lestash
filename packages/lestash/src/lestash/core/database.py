@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 37
+SCHEMA_VERSION = 38
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -828,6 +828,22 @@ MIGRATIONS = [
         "NotebookLM artifacts: files re-filed from the kept Takeout indexes (#375, #376)",
         # Run in apply_migrations (_migrate_37): the indexes are read in Python.
         "",
+    ),
+    (
+        38,
+        "Backfill 'saved' activities for Google Drive documents imported before #387",
+        # Dated by fetched_at, the last time it was imported: its created_at is when
+        # the document was written in Drive.
+        """
+        INSERT INTO activities (verb, item_id, occurred_at, source)
+        SELECT 'saved', i.id, strftime('%Y-%m-%dT%H:%M:%fZ', i.fetched_at), 'app:share'
+        FROM items i
+        WHERE i.source_type = 'google-drive' AND i.fetched_at IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM activities a
+              WHERE a.verb = 'saved' AND a.item_id = i.id AND a.source = 'app:share'
+          );
+        """,
     ),
 ]
 

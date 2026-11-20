@@ -463,7 +463,15 @@ def sync_from_drive(body: DriveSyncRequest):
                 with get_db() as conn:
                     for item, pdf_bytes, filename in sync_drive_folder(file_id, recursive=True):
                         try:
+                            held = conn.execute(
+                                "SELECT 1 FROM items WHERE source_type = ? AND source_id = ?",
+                                (item.source_type, item.source_id),
+                            ).fetchone()
                             item_id = upsert_item(conn, item)
+                            if held is None:
+                                # A folder's new files show on the Timeline (#387); one
+                                # imported before stays where it was
+                                record_saved(conn, item_id)
                             items_added += 1
                             if pdf_bytes:
                                 drive_url = (item.metadata or {}).get("drive_web_link")
@@ -486,8 +494,9 @@ def sync_from_drive(body: DriveSyncRequest):
                         else:
                             items_held += 1
                     item_id = upsert_item(conn, item)
-                    if body.parent_id is not None:
-                        record_saved(conn, item_id)
+                    # Importing a file is saving it now, under an item or alone, so it
+                    # shows on today's Timeline, again if it was imported before (#387)
+                    record_saved(conn, item_id)
                     conn.commit()
                 items_added += 1
                 if pdf_bytes:
