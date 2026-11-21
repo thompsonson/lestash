@@ -99,17 +99,13 @@ def extract_pictures(
     else, such as a diagram drawn as vector shapes, is rendered from the page,
     so it is saved as a picture too (#391).
     """
-    import pymupdf
-
     images: list[ExtractedImage] = []
     for index, region in enumerate(regions):
-        if region is None or not 0 <= region.page < doc.page_count:
+        clip = _clip(doc, region)
+        if region is None or clip is None:
             continue
         page = doc[region.page]
-        clip = pymupdf.Rect(region.bbox) & page.rect
-        if clip.is_empty:
-            continue
-        stored = _raster_filling(doc, page, clip)
+        stored = _raster_filling(doc, page, clip) if _only_an_image(page, clip) else None
         if stored is not None:
             data, ext = stored
         else:
@@ -147,6 +143,30 @@ def _raster_filling(
     return None
 
 
+def _clip(doc: pymupdf.Document, region: PictureRegion | None) -> pymupdf.Rect | None:
+    """The region's box on its page, or None if it has no area there."""
+    import pymupdf
+
+    if region is None or not 0 <= region.page < doc.page_count:
+        return None
+    clip = pymupdf.Rect(region.bbox) & doc[region.page].rect
+    return None if clip.is_empty else clip
+
+
+def _only_an_image(page: pymupdf.Page, clip: pymupdf.Rect) -> bool:
+    """True if no text or drawing lies in the region, so a stored image shows all of it.
+
+    Labels or arrows drawn over a photo would be lost from the photo's own bytes.
+    """
+    if page.get_text("words", clip=clip):
+        return False
+    # Compared edge by edge: a straight line's box has no area, so `&` would miss it
+    return not any(
+        r.x0 <= clip.x1 and r.x1 >= clip.x0 and r.y0 <= clip.y1 and r.y1 >= clip.y0
+        for r in (d["rect"] for d in page.get_drawings())
+    )
+
+
 def _same_place(rect: pymupdf.Rect, clip: pymupdf.Rect) -> bool:
     overlap = (rect & clip).get_area()
     return overlap >= RASTER_COVER * clip.get_area() and overlap >= RASTER_COVER * rect.get_area()
@@ -155,10 +175,8 @@ def _same_place(rect: pymupdf.Rect, clip: pymupdf.Rect) -> bool:
 def regions_fit(
     doc: pymupdf.Document, regions: list[PictureRegion | None], placeholders: int
 ) -> bool:
-    """True if every placeholder has a region on a page of this document."""
-    return len(regions) == placeholders > 0 and all(
-        r is not None and 0 <= r.page < doc.page_count for r in regions
-    )
+    """True if every placeholder has a region with some area on a page of this document."""
+    return len(regions) == placeholders > 0 and all(_clip(doc, r) is not None for r in regions)
 
 
 def apply_images(markdown: str, replacements: dict[int, str]) -> str:

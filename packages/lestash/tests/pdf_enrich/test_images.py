@@ -157,5 +157,25 @@ def test_regions_fit_needs_a_usable_region_for_every_placeholder(tmp_path):
         assert not regions_fit(doc, [], 0)
         assert not regions_fit(doc, [good, None], 2)
         assert not regions_fit(doc, [good, PictureRegion(3, (0, 0, 10, 10))], 2)
+        assert not regions_fit(doc, [good, PictureRegion(0, (700, 900, 800, 1000))], 2)
     finally:
         doc.close()
+
+
+def test_extract_pictures_renders_a_photo_with_labels_drawn_over_it(make_pdf, red_dot_png):
+    """A stored photo would lose the arrow drawn over it, so the region is rendered."""
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    pdf = make_pdf([{"images": [((100, 100, 200, 200), red_dot_png)]}])
+    doc = pymupdf.open(pdf)
+    try:
+        doc[0].draw_line(pymupdf.Point(110, 150), pymupdf.Point(190, 150), color=(0, 0, 0))
+        stored = doc.extract_image(doc[0].get_images()[0][0])["image"]
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 200.0, 200.0))])
+    finally:
+        doc.close()
+
+    assert len(images) == 1
+    assert images[0].bytes_ != stored
