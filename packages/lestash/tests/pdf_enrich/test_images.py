@@ -366,3 +366,38 @@ def test_an_inline_jpeg_photo_is_a_jpeg(tmp_path):
 
     assert images[0].mime_type == "image/jpeg"
     assert pymupdf.Pixmap(images[0].bytes_).width == 400
+
+
+def test_a_photo_in_strips_counts_as_one(tmp_path):
+    """Ten JPEG strips, each a tenth of the region, make one photo filling it."""
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 400, 40), False)
+    pix.set_rect(pix.irect, (200, 30, 30))
+    for i in range(10):
+        page.insert_image(
+            pymupdf.Rect(100, 100 + 10 * i, 200, 110 + 10 * i), stream=pix.tobytes("jpeg")
+        )
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 200.0, 200.0))])
+    finally:
+        doc.close()
+
+    assert images[0].mime_type == "image/jpeg"
+    assert pymupdf.Pixmap(images[0].bytes_).width == 400
+
+
+def test_overlapping_photos_count_once():
+    import pymupdf
+    from lestash.core.pdf_enrich.images import _union_area
+
+    a, b = pymupdf.Rect(0, 0, 10, 10), pymupdf.Rect(5, 0, 15, 10)
+    assert _union_area([a, b]) == 150
+    assert _union_area([a, a, a]) == 100
+    assert _union_area([]) == 0
+    c = pymupdf.Rect(0, 20, 10, 30)  # apart from a, in the same slab
+    assert _union_area([a, c, b]) == 250

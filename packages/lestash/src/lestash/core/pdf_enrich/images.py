@@ -89,7 +89,8 @@ RENDER_DPI = 144
 MAX_RENDER_DPI = 300
 
 # An image is part of a picture when this share of its part on the page lies inside
-# the region, and it fills at least PHOTO_SHARE of the region
+# the region. The picture's images raise its resolution when together they fill at
+# least PHOTO_SHARE of it, so a lone small icon doesn't
 PHOTO_INSIDE = 0.5
 PHOTO_SHARE = 0.1
 
@@ -116,7 +117,9 @@ def extract_pictures(
         page = doc[region.page]
         if region.page not in blocks_by_page:
             blocks_by_page[region.page] = _image_blocks(page)
-        image_dpi, jpeg_area = _images_in(blocks_by_page[region.page], page, clip)
+        image_dpi, image_area, jpeg_area = _images_in(blocks_by_page[region.page], page, clip)
+        if image_area < PHOTO_SHARE * clip.get_area():
+            image_dpi = 0.0
         dpi = min(max(RENDER_DPI, image_dpi), MAX_RENDER_DPI)
         ext = "jpeg" if jpeg_area >= JPEG_SHARE * clip.get_area() else "png"
         data = page.get_pixmap(clip=clip, dpi=round(dpi)).tobytes(ext)
@@ -142,26 +145,28 @@ def _image_blocks(page: pymupdf.Page) -> list[dict]:
         return []
 
 
-def _images_in(blocks: list[dict], page: pymupdf.Page, clip: pymupdf.Rect) -> tuple[float, float]:
-    """The highest resolution of the images that are part of `clip`, and the area
-    of `clip` that images stored as JPEG cover.
+def _images_in(
+    blocks: list[dict], page: pymupdf.Page, clip: pymupdf.Rect
+) -> tuple[float, float, float]:
+    """The highest resolution of the images that are part of `clip`, the area of
+    `clip` they cover together, and the area that those stored as JPEG cover.
 
     An image is part of the picture when most of its part on the page lies inside
-    the region and it fills a fair share of it, so a page background or a small
-    icon doesn't count. An image cropped by a clipping path is measured by its
-    whole placement, which PyMuPDF reports; see #393.
+    the region, so a page background doesn't count. Areas are of the images' union,
+    so tiles of one photo add up and overlaps count once. An image cropped by a
+    clipping path is measured by its whole placement, which PyMuPDF reports; see #393.
     """
     import math
 
     import pymupdf
 
-    best, jpeg_area = 0.0, 0.0
+    best = 0.0
+    covered: list[pymupdf.Rect] = []
+    jpeg: list[pymupdf.Rect] = []
     for block in blocks:
         shown = pymupdf.Rect(block["bbox"]) & page.rect
-        inside = (shown & clip).get_area()
-        if shown.is_empty or inside < PHOTO_INSIDE * shown.get_area():
-            continue
-        if inside < PHOTO_SHARE * clip.get_area():
+        part = shown & clip
+        if shown.is_empty or part.get_area() < PHOTO_INSIDE * shown.get_area():
             continue
         # The matrix maps the image's unit square onto the page, so each of its
         # axes' length in points holds, whatever the rotation or scaling
@@ -170,9 +175,33 @@ def _images_in(blocks: list[dict], page: pymupdf.Page, clip: pymupdf.Rect) -> tu
         if x_points == 0 or y_points == 0:
             continue
         best = max(best, max(block["width"] / x_points, block["height"] / y_points) * 72)
+        covered.append(part)
         if block.get("ext") in ("jpeg", "jpx"):
-            jpeg_area += inside
-    return best, jpeg_area
+            jpeg.append(part)
+    return best, _union_area(covered), _union_area(jpeg)
+
+
+def _union_area(rects: list[pymupdf.Rect]) -> float:
+    """The area the rectangles cover together, overlaps counted once.
+
+    Sweeps across x; in each slab the covering rectangles' y spans are merged.
+    """
+    xs = sorted({x for r in rects for x in (r.x0, r.x1)})
+    area = 0.0
+    for x0, x1 in zip(xs, xs[1:], strict=False):
+        spans = sorted((r.y0, r.y1) for r in rects if r.x0 <= x0 and x1 <= r.x1)
+        covered, top, bottom = 0.0, None, None
+        for y0, y1 in spans:
+            if bottom is None or y0 > bottom:
+                if bottom is not None and top is not None:
+                    covered += bottom - top
+                top, bottom = y0, y1
+            else:
+                bottom = max(bottom, y1)
+        if bottom is not None and top is not None:
+            covered += bottom - top
+        area += (x1 - x0) * covered
+    return area
 
 
 def _clip(doc: pymupdf.Document, region: PictureRegion | None) -> pymupdf.Rect | None:
