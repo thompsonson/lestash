@@ -324,18 +324,92 @@ def _held(conn, item) -> bool:
     )
 
 
+def _import_arxiv_pdf(
+    data: bytes, filename: str, errors: list[str], parent_id: int | None
+) -> tuple[ImportResponse | None, int | None]:
+    """A shared arXiv paper's PDF: the paper's arXiv item, with this file as its source
+    PDF (#398).
+
+    Returns the reply, or None when the file is added as a plain PDF: it isn't an
+    arXiv paper, or arXiv can't be reached, or the paper holds another file, such as
+    the copy arXiv served when this is your annotated one. In that last case the
+    paper's id comes back too, so the plain PDF is linked to it.
+    """
+    import hashlib
+
+    try:
+        from lestash_arxiv.share import (
+            arxiv_id_from_pdf,
+            attach_pdf,
+            find_paper,
+            import_paper,
+            source_pdf_sha256,
+        )
+    except ImportError:
+        return None, None
+    arxiv_id = arxiv_id_from_pdf(data, filename)
+    if arxiv_id is None:
+        return None, None
+    with get_db() as conn:
+        held = find_paper(conn, arxiv_id)
+        # A stored PDF that can't be read is no PDF: this file takes its place
+        stored = source_pdf_sha256(conn, get_config(), held) if held is not None else None
+    if held is not None and stored is not None and stored != hashlib.sha256(data).hexdigest():
+        return None, held
+    try:
+        with get_db() as conn:
+            imported = import_paper(conn, arxiv_id, parent_id=parent_id)
+    except Exception:
+        logger.exception("Could not fetch arXiv paper %s; adding the PDF as it is", arxiv_id)
+        return None, None
+    if imported is None:
+        return None, None
+    if stored is None:
+        try:
+            status = attach_pdf(imported.item_id, config=get_config(), data=data)
+            if status == "failed":
+                errors.append("enrich: the PDF could not be read")
+        except Exception as e:
+            logger.exception("Failed to store the PDF of arXiv item %d", imported.item_id)
+            errors.append(f"enrich: {e}")
+    reply = ImportResponse(
+        status="completed",
+        source_type="arxiv",
+        items_added=1 if imported.created else 0,
+        items_updated=0,
+        errors=errors,
+        item_id=imported.item_id,
+        items_held=0 if imported.created else 1,
+    )
+    return reply, None
+
+
 def _import_pdf(
     data: bytes, filename: str, errors: list[str], parent_id: int | None = None
 ) -> ImportResponse:
     """Import a PDF: extract markdown via Docling, save original as media.
 
-    A file already held is not added again (#338).
+    A file already held is not added again (#338). An arXiv paper becomes its arXiv
+    item instead (#398).
     """
     from lestash.core.pdfs import add_pdf
+
+    paper, copy_of = _import_arxiv_pdf(data, filename, errors, parent_id)
+    if paper is not None:
+        return paper
 
     with get_db() as conn:
         added = add_pdf(conn, get_config(), data, filename)
         _place(conn, added.item_id, parent_id, added.new)
+        if copy_of is not None and copy_of != added.item_id:
+            from lestash_arxiv.share import COPY_OF_PAPER_ORIGIN
+
+            # Another copy of a paper held: the same paper in two files
+            conn.execute(
+                "INSERT OR IGNORE INTO item_links (from_id, to_id, kind, origin, status) "
+                "VALUES (?, ?, 'alternate_of', ?, 'confirmed')",
+                (added.item_id, copy_of, COPY_OF_PAPER_ORIGIN),
+            )
         # Saved now, also when the file was held already (#357)
         record_saved(conn, added.item_id)
         conn.commit()

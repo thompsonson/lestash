@@ -28,6 +28,18 @@ _ADDRESS = re.compile(
     rf"^https?://(?:www\.|export\.)?arxiv\.org/(?:abs|pdf|html)/{_ID}(?:\.pdf)?/?(?:[?#].*)?$",
     re.IGNORECASE,
 )
+# A downloaded paper's file name: 2603.15401v1.pdf
+_FILENAME = re.compile(r"^(\d{4}\.\d{4,5})(?:v\d+)?(?: ?\(\d+\))?\.pdf$", re.IGNORECASE)
+# The stamp arXiv prints down page 1's margin: arXiv:2603.15401v1  [cs.AI]  2 Apr 2026,
+# or arXiv:hep-th/9901001v3  10 May 1999 for an old paper. Its version and date tell it
+# from a citation, such as "arXiv:1706.03762 [cs.CL]". Categories: cs.AI, hep-th,
+# cond-mat.str-el, physics.optics, astro-ph.GA
+_STAMP = re.compile(
+    r"arXiv:(\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7})v\d+\s+"
+    r"(?:\[[a-z-]+(?:\.[A-Za-z-]+)?\]\s+)?\d{1,2}\s+[A-Z][a-z]{2}\s+\d{4}"
+)
+# Who links another file of a paper, such as your annotated copy, to the paper (#398)
+COPY_OF_PAPER_ORIGIN = "linker:arxiv"
 PDF_LIMIT = 100 * 1024 * 1024  # bytes; a paper with many figures is a few tens of MB
 TIMEOUT_S = 60
 USER_AGENT = "LeStash (personal knowledge base)"
@@ -45,6 +57,30 @@ def arxiv_id_from_url(url: str) -> str | None:
     """The paper's arXiv id, without its version, from an arXiv address; else None."""
     match = _ADDRESS.match(url.strip())
     return canonical_id(match.group(1)) if match else None
+
+
+def arxiv_id_from_pdf(data: bytes, filename: str) -> str | None:
+    """The arXiv id of a PDF file, from the arXiv stamp on its first page, else its name.
+
+    The stamp is the margin line arXiv adds to the papers it serves; its version and
+    date tell it from an arXiv id the paper merely cites. A name alone
+    (2603.15401v1.pdf) counts only if page 1 shows that id too, so a file merely named
+    like a paper isn't stored as that paper's PDF.
+    """
+    try:
+        import pymupdf
+
+        with pymupdf.open(stream=data, filetype="pdf") as doc:
+            text = doc[0].get_text() if doc.page_count else ""
+    except Exception:
+        return None
+    stamp = _STAMP.search(text)
+    if stamp:
+        return canonical_id(stamp.group(1))
+    match = _FILENAME.match(filename.rsplit("/", 1)[-1].strip())
+    if match and match.group(1) in text:
+        return match.group(1)
+    return None
 
 
 def find_paper(conn: sqlite3.Connection, arxiv_id: str) -> int | None:
@@ -65,6 +101,37 @@ def has_source_pdf(conn: sqlite3.Connection, item_id: int) -> bool:
         (item_id, SOURCE_PDF_MEDIA_TYPE),
     ).fetchone()
     return row is not None
+
+
+def _source_pdf_file(conn: sqlite3.Connection, config: Config, item_id: int) -> Any:
+    """The item's stored source PDF row and file: (row, path), path None if gone."""
+    from lestash.core.blobs import media_file
+    from lestash.core.pdf_enrich.persistence import SOURCE_PDF_MEDIA_TYPE
+
+    row = conn.execute(
+        "SELECT local_path, sha256 FROM item_media WHERE item_id = ? AND media_type = ? "
+        "AND local_path IS NOT NULL ORDER BY id LIMIT 1",
+        (item_id, SOURCE_PDF_MEDIA_TYPE),
+    ).fetchone()
+    if row is None:
+        return None, None
+    return row, media_file({"local_path": row[0], "sha256": row[1]}, config)
+
+
+def has_readable_pdf(conn: sqlite3.Connection, config: Config, item_id: int) -> bool:
+    """True if the item's stored source PDF is there to read. Doesn't read it."""
+    return _source_pdf_file(conn, config, item_id)[1] is not None
+
+
+def source_pdf_sha256(conn: sqlite3.Connection, config: Config, item_id: int) -> str | None:
+    """The SHA-256 of the item's stored source PDF, or None if it has none to read:
+    no row, or a file gone from both the store and the media folder."""
+    import hashlib
+
+    row, path = _source_pdf_file(conn, config, item_id)
+    if path is None:
+        return None
+    return str(row[1]) if row[1] else hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _metadata(conn: sqlite3.Connection, item_id: int) -> dict[str, Any]:
@@ -92,6 +159,7 @@ def import_paper(
     note: str | None = None,
     shared: Mapping[str, str | None] | None = None,
     parent_id: int | None = None,
+    record_share: bool = True,
     fetch: Callable[[str], Paper | None] = get_paper,
 ) -> Imported | None:
     """Save the paper as its arXiv item, or reuse the one held. None if arXiv has no such
@@ -99,6 +167,7 @@ def import_paper(
 
     ``shared`` is what came with the share, such as ``shared_text`` and
     ``shared_title``; each is kept in the item's metadata, as a link's would be.
+    Without ``record_share`` no share is recorded, for a caller moving an older one.
     """
     kept = {key: text for key, text in (shared or {}).items() if text}
     rekey_old_style(conn)
@@ -110,7 +179,8 @@ def import_paper(
             for key, text in ({"notes": note} | kept).items():
                 if text:
                     _add_text(conn, held, key, text)
-        record_saved(conn, held)
+        if record_share:
+            record_saved(conn, held)
         conn.commit()
         row = conn.execute("SELECT title FROM items WHERE id = ?", (held,)).fetchone()
         title = (row[0] if row else None) or arxiv_id
@@ -126,9 +196,26 @@ def import_paper(
         item.metadata["notes"] = note
     item.parent_id = parent_id
     item_id = upsert_item(conn, item)
-    record_saved(conn, item_id)
+    if record_share:
+        record_saved(conn, item_id)
     conn.commit()
     return Imported(item_id, paper.title, created=True, has_pdf=False)
+
+
+def papers_without_pdf(
+    conn: sqlite3.Connection, config: Config
+) -> list[tuple[int, str, str | None]]:
+    """Each arXiv item with no source PDF to read: its id, arXiv id and title. A paper
+    whose stored file is gone counts, so it is fetched again."""
+    rows = conn.execute(
+        "SELECT id, source_id, title FROM items WHERE source_type = ? ORDER BY id",
+        (SOURCE_TYPE,),
+    ).fetchall()
+    return [
+        (r[0], r[1].removeprefix("arxiv:"), r[2])
+        for r in rows
+        if not has_readable_pdf(conn, config, r[0])
+    ]
 
 
 def pdf_url_of(conn: sqlite3.Connection, item_id: int) -> str | None:
@@ -157,9 +244,11 @@ def attach_pdf(
     item_id: int,
     *,
     config: Config,
+    data: bytes | None = None,
     download: Callable[[str], bytes] = download_pdf,
 ) -> str:
     """Download the paper's PDF, store it as the item's source PDF and enrich the item.
+    ``data`` is the PDF when it came with the share, so it isn't downloaded.
 
     Returns the enricher's status, or ``"held"`` if the item already has its PDF.
     Raises on a failed download. Slow: run it after answering the request.
@@ -168,13 +257,15 @@ def attach_pdf(
     from lestash.core.pdf_enrich import attach_source_pdf_and_enrich
 
     with get_connection(config) as conn:
-        if has_source_pdf(conn, item_id):
+        # A stored PDF that can't be read is replaced, as if there were none
+        if has_readable_pdf(conn, config, item_id):
             return "held"
         url = pdf_url_of(conn, item_id)
         row = conn.execute("SELECT source_id FROM items WHERE id = ?", (item_id,)).fetchone()
     if url is None or row is None:
         raise ValueError(f"item {item_id} is not an arXiv paper")
-    data = download(url)
+    if data is None:
+        data = download(url)
     filename = f"{row[0].removeprefix('arxiv:').replace('/', '_')}.pdf"
     result = attach_source_pdf_and_enrich(item_id, data, filename, drive_url=url, config=config)
     return result.status

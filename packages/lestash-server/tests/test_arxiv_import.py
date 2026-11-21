@@ -104,3 +104,144 @@ def test_the_shared_text_and_title_reach_the_paper(client, monkeypatch):
         json={"url": "https://arxiv.org/abs/1602.05629", "shared_text": "t", "shared_title": "T"},
     )
     assert seen == {"shared_text": "t", "shared_title": "T"}
+
+
+# A shared arXiv PDF file becomes the paper (#398)
+
+
+def _stamped_pdf() -> bytes:
+    import pymupdf
+
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), "arXiv:2603.15401v1  [cs.AI]  2 Apr 2026")
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+PAPER_PDF = _stamped_pdf()
+
+
+def _upload(client, name: str = "2603.15401v1.pdf", data: bytes = PAPER_PDF):
+    import io
+
+    return client.post("/api/import", files={"file": (name, io.BytesIO(data), "application/pdf")})
+
+
+def test_a_shared_arxiv_pdf_becomes_the_paper(client, monkeypatch):
+    calls: list[tuple] = []
+
+    def save(conn, arxiv_id, *, parent_id=None, **k):
+        calls.append(("save", arxiv_id, parent_id))
+        return Imported(41, "A paper", created=True, has_pdf=False)
+
+    def attach(item_id, *, config, data=None):
+        calls.append(("pdf", item_id, data))
+        return "enriched"
+
+    monkeypatch.setattr(share, "import_paper", save)
+    monkeypatch.setattr(share, "attach_pdf", attach)
+    response = _upload(client)
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["source_type"], body["item_id"], body["items_added"]) == ("arxiv", 41, 1)
+    # The shared file is the source PDF: not downloaded again
+    assert calls == [("save", "2603.15401", None), ("pdf", 41, PAPER_PDF)]
+
+
+def test_a_held_paper_with_its_pdf_is_returned(client, monkeypatch):
+    monkeypatch.setattr(
+        share, "import_paper", lambda conn, i, **k: Imported(5, "Held", created=False, has_pdf=True)
+    )
+
+    def attach(item_id, *, config, data=None):
+        raise AssertionError("not stored again")
+
+    monkeypatch.setattr(share, "attach_pdf", attach)
+    body = _upload(client).json()
+    assert (body["item_id"], body["items_added"], body["items_held"]) == (5, 0, 1)
+
+
+def test_an_arxiv_pdf_stays_a_pdf_when_arxiv_cannot_be_reached(client, monkeypatch):
+    from unittest.mock import patch
+
+    def fail(conn, i, **k):
+        raise OSError("HTTP 429")
+
+    monkeypatch.setattr(share, "import_paper", fail)
+    with patch("lestash.core.text_extract.convert_to_markdown", return_value="# Paper"):
+        body = _upload(client).json()
+    assert body["source_type"] == "pdf" and body["items_added"] == 1
+
+
+def test_a_pdf_that_is_not_from_arxiv_is_a_pdf(client, monkeypatch):
+    from unittest.mock import patch
+
+    def save(conn, i, **k):
+        raise AssertionError("not an arXiv paper")
+
+    monkeypatch.setattr(share, "import_paper", save)
+    with patch("lestash.core.text_extract.convert_to_markdown", return_value="# Report"):
+        body = _upload(client, "report.pdf", b"%PDF-1.4 a report").json()
+    assert body["source_type"] == "pdf"
+
+
+def _hold_paper(test_config, data: bytes | None) -> int:
+    """An arXiv item whose stored source PDF is ``data``; None, a file that is gone."""
+    from lestash.core.database import get_connection, get_media_dir
+
+    if data is not None:
+        path = get_media_dir(test_config) / "x" / "held.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    with get_connection(test_config) as conn:
+        (item_id,) = conn.execute(
+            "INSERT INTO items (source_type, source_id, title, content) "
+            "VALUES ('arxiv', '2603.15401', 'Held paper', '') RETURNING id"
+        ).fetchone()
+        conn.execute(
+            "INSERT INTO item_media (item_id, media_type, local_path) "
+            "VALUES (?, 'source_pdf', 'x/held.pdf')",
+            (item_id,),
+        )
+        conn.commit()
+    return item_id
+
+
+def test_your_own_copy_of_a_held_paper_is_kept(client, test_config):
+    """A file other than the stored PDF, such as an annotated copy, isn't thrown away."""
+    from unittest.mock import patch
+
+    from lestash.core.database import get_connection
+
+    held = _hold_paper(test_config, b"%PDF-1.4 the copy arXiv served")
+    with patch("lestash.core.text_extract.convert_to_markdown", return_value="# Paper"):
+        body = _upload(client).json()
+    assert body["source_type"] == "pdf" and body["items_added"] == 1
+    # Tied to the paper: the same paper in another file
+    with get_connection(test_config) as conn:
+        link = conn.execute(
+            "SELECT kind, status FROM item_links WHERE from_id = ? AND to_id = ?",
+            (body["item_id"], held),
+        ).fetchone()
+    assert tuple(link) == ("alternate_of", "confirmed")
+
+
+def test_a_held_paper_whose_file_is_gone_takes_the_upload(client, test_config, monkeypatch):
+    held = _hold_paper(test_config, None)
+    stored: list[tuple] = []
+
+    def attach(item_id, *, config, data=None):
+        stored.append((item_id, data))
+        return "enriched"
+
+    monkeypatch.setattr(share, "attach_pdf", attach)
+    body = _upload(client).json()
+    assert (body["source_type"], body["item_id"]) == ("arxiv", held)
+    assert stored == [(held, PAPER_PDF)]
+
+
+def test_the_same_file_again_is_the_held_paper(client, test_config):
+    held = _hold_paper(test_config, PAPER_PDF)
+    body = _upload(client).json()
+    assert (body["source_type"], body["item_id"], body["items_held"]) == ("arxiv", held, 1)
