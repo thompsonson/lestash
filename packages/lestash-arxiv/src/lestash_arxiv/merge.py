@@ -21,6 +21,7 @@ from lestash_arxiv.share import (
     _add_text,
     _metadata,
     arxiv_id_from_url,
+    has_readable_pdf,
     import_paper,
 )
 from lestash_arxiv.source import SOURCE_TYPE
@@ -48,11 +49,14 @@ class Merged:
 
 
 def saved_links(conn: sqlite3.Connection) -> list[Link]:
-    """Items, other than arXiv items, whose address is an arXiv paper's."""
+    """Items, other than arXiv items, whose address is an arXiv paper's. One already
+    kept and linked to its paper (it holds a PDF file of its own) isn't listed again."""
     rows = conn.execute(
-        "SELECT id, source_type, url, title FROM items "
-        "WHERE source_type != ? AND url LIKE '%arxiv.org/%' ORDER BY id",
-        (SOURCE_TYPE,),
+        "SELECT i.id, i.source_type, i.url, i.title FROM items i "
+        "WHERE i.source_type != ? AND i.url LIKE '%arxiv.org/%' "
+        "AND NOT EXISTS (SELECT 1 FROM item_links l WHERE l.from_id = i.id "
+        "AND l.kind = 'alternate_of' AND l.origin = ?) ORDER BY i.id",
+        (SOURCE_TYPE, COPY_OF_PAPER_ORIGIN),
     ).fetchall()
     found = []
     for item_id, source_type, url, title in rows:
@@ -122,10 +126,15 @@ def merge_link(
         shared_text = _shared_text(content, notes)
     if shared_text and shared_text.strip() == (url or "").strip():
         shared_text = None
-    has_file = conn.execute(
-        "SELECT 1 FROM item_media WHERE item_id = ? AND media_type = ?",
-        (link.item_id, SOURCE_PDF_MEDIA_TYPE),
-    ).fetchone()
+    # A file there to read; a row whose file is gone, or an address only, is no file
+    has_file = has_readable_pdf(conn, config, link.item_id)
+    pdf_rows = [
+        {"url": r[0], "local_path": r[1]}
+        for r in conn.execute(
+            "SELECT url, local_path FROM item_media WHERE item_id = ? AND media_type = ?",
+            (link.item_id, SOURCE_PDF_MEDIA_TYPE),
+        )
+    ]
 
     # The share's own saved activity moves below, so the paper isn't saved "now" as well
     imported = import_paper(conn, link.arxiv_id, record_share=False, fetch=fetch)
@@ -163,12 +172,17 @@ def merge_link(
     if paper_parent is None and parent_id is not None and not _under(conn, parent_id, paper_id):
         conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, paper_id))
 
-    # What merge_item doesn't carry: places and syndications, and media. The link has no
-    # PDF file, so its media (pictures, addresses) all come across
+    # What merge_item doesn't carry: places and syndications, and media. The link's
+    # source PDF rows hold no file to read; they're recorded below, not moved, so the
+    # paper keeps one source PDF row of its own. Its other media come across
     for table in _MOVED:
         conn.execute(
             f"UPDATE OR IGNORE {table} SET item_id = ? WHERE item_id = ?", (paper_id, link.item_id)
         )
+    conn.execute(
+        "DELETE FROM item_media WHERE item_id = ? AND media_type = ?",
+        (link.item_id, SOURCE_PDF_MEDIA_TYPE),
+    )
     conn.execute("UPDATE item_media SET item_id = ? WHERE item_id = ?", (paper_id, link.item_id))
 
     record = {
@@ -179,6 +193,8 @@ def merge_link(
         "created_at": str(created_at) if created_at else None,
         "metadata": json.loads(raw_meta) if raw_meta else None,
     }
+    if pdf_rows:
+        record["source_pdf"] = pdf_rows
     paper_meta = _metadata(conn, paper_id)
     merged = [m for m in paper_meta.get("merged_from", []) if m.get("item_id") != link.item_id]
     paper_meta["merged_from"] = [*merged, record]

@@ -452,11 +452,10 @@ def _stored(config: Config, conn, item_id: int, rel: str, data: bytes) -> None:
         (b"%PDF-1.4 as arXiv served it", b"%PDF-1.4 with my notes"),
         (b"%PDF-1.4 the paper", b"%PDF-1.4 the paper"),
         (None, b"%PDF-1.4 the paper"),
-        (b"%PDF-1.4 the paper", None),  # its file is gone
     ],
 )
 def test_a_link_with_a_pdf_file_of_its_own_is_kept(
-    config: Config, held_file: bytes | None, link_file: bytes | None
+    config: Config, held_file: bytes | None, link_file: bytes
 ) -> None:
     """Its file and what was read from it stay with it; it is tied to the paper."""
     with get_connection(config) as conn:
@@ -464,14 +463,7 @@ def test_a_link_with_a_pdf_file_of_its_own_is_kept(
         link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
         if held_file is not None:
             _stored(config, conn, held, "p/paper.pdf", held_file)
-        if link_file is not None:
-            _stored(config, conn, link, "s1/paper.pdf", link_file)
-        else:
-            conn.execute(
-                "INSERT INTO item_media (item_id, media_type, local_path) "
-                "VALUES (?, 'source_pdf', 'gone/paper.pdf')",
-                (link,),
-            )
+        _stored(config, conn, link, "s1/paper.pdf", link_file)
         note = _add(conn, "pdf_annotation", f"item-{link}:p0:A1", None, title="Highlight")
         conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (link, note))
         conn.commit()
@@ -486,3 +478,35 @@ def test_a_link_with_a_pdf_file_of_its_own_is_kept(
             "SELECT kind FROM item_links WHERE from_id = ? AND to_id = ?", (link, held)
         ).fetchone()[0]
         assert kind == "alternate_of"
+        # Kept and linked: it isn't listed again
+        assert saved_links(conn) == []
+
+
+@pytest.mark.parametrize("local_path", ["gone/paper.pdf", None])
+def test_a_link_whose_pdf_row_holds_no_file_merges(config: Config, local_path: str | None) -> None:
+    """A file gone, or an address only, is no file of its own: the link merges, and
+    its row is recorded rather than given to the paper."""
+    with get_connection(config) as conn:
+        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
+        link = _add(
+            conn, "share", "s1", "https://arxiv.org/abs/2512.20660", metadata={"notes": "Mine"}
+        )
+        _stored(config, conn, held, "p/paper.pdf", b"%PDF-1.4 the paper")
+        conn.execute(
+            "INSERT INTO item_media (item_id, media_type, url, local_path) "
+            "VALUES (?, 'source_pdf', 'https://arxiv.org/pdf/2512.20660', ?)",
+            (link, local_path),
+        )
+        conn.commit()
+        merged = merge_link(
+            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
+        )
+        assert merged is not None and not merged.kept
+        assert _meta(conn, held)["notes"] == "Mine"
+        rows = conn.execute(
+            "SELECT local_path FROM item_media WHERE item_id = ? AND media_type = 'source_pdf'",
+            (held,),
+        ).fetchall()
+        assert [r[0] for r in rows] == ["p/paper.pdf"]
+        recorded = _meta(conn, held)["merged_from"][0]["source_pdf"]
+        assert recorded == [{"url": "https://arxiv.org/pdf/2512.20660", "local_path": local_path}]

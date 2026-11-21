@@ -269,7 +269,11 @@ class ArxivSource(SourcePlugin):
                 for n, link in enumerate(links):
                     label = f"{link.item_id} ({link.source_type}) → arXiv {link.arxiv_id}"
                     if not apply:
-                        console.print(f"would merge {label}: {link.title or ''}")
+                        from lestash_arxiv.share import has_readable_pdf
+
+                        # One with a PDF file of its own is kept, linked to the paper
+                        verb = "keep" if has_readable_pdf(conn, config, link.item_id) else "merge"
+                        console.print(f"would {verb} {label}: {link.title or ''}")
                         continue
                     if n:
                         time.sleep(pause)  # arXiv answers 429 to quick requests
