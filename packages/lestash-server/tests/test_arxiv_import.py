@@ -184,3 +184,40 @@ def test_a_pdf_that_is_not_from_arxiv_is_a_pdf(client, monkeypatch):
     with patch("lestash.core.text_extract.convert_to_markdown", return_value="# Report"):
         body = _upload(client, "report.pdf", b"%PDF-1.4 a report").json()
     assert body["source_type"] == "pdf"
+
+
+def _hold_paper(test_config, data: bytes) -> int:
+    """An arXiv item whose stored source PDF is ``data``."""
+    from lestash.core.database import get_connection, get_media_dir
+
+    path = get_media_dir(test_config) / "x" / "held.pdf"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    with get_connection(test_config) as conn:
+        (item_id,) = conn.execute(
+            "INSERT INTO items (source_type, source_id, title, content) "
+            "VALUES ('arxiv', '2603.15401', 'Held paper', '') RETURNING id"
+        ).fetchone()
+        conn.execute(
+            "INSERT INTO item_media (item_id, media_type, local_path) "
+            "VALUES (?, 'source_pdf', 'x/held.pdf')",
+            (item_id,),
+        )
+        conn.commit()
+    return item_id
+
+
+def test_your_own_copy_of_a_held_paper_is_kept(client, test_config):
+    """A file other than the stored PDF, such as an annotated copy, isn't thrown away."""
+    from unittest.mock import patch
+
+    _hold_paper(test_config, b"%PDF-1.4 the copy arXiv served")
+    with patch("lestash.core.text_extract.convert_to_markdown", return_value="# Paper"):
+        body = _upload(client).json()
+    assert body["source_type"] == "pdf" and body["items_added"] == 1
+
+
+def test_the_same_file_again_is_the_held_paper(client, test_config):
+    held = _hold_paper(test_config, PAPER_PDF)
+    body = _upload(client).json()
+    assert (body["source_type"], body["item_id"], body["items_held"]) == ("arxiv", held, 1)

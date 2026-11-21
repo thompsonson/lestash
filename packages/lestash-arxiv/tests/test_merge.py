@@ -100,7 +100,8 @@ def test_the_arxiv_stamp_on_page_one() -> None:
 
 
 def test_an_old_style_stamp() -> None:
-    data = _pdf("arXiv:hep-th/9901001v3  [hep-th]  12 Jan 1999")
+    # As arXiv prints it: no category for an old paper
+    data = _pdf("arXiv:hep-th/9901001v3  10 May 1999")
     assert share.arxiv_id_from_pdf(data, "paper.pdf") == "hep-th/9901001"
 
 
@@ -108,6 +109,9 @@ def test_a_cited_arxiv_id_is_not_a_stamp() -> None:
     """Only the stamp, with its category in brackets, names the paper itself."""
     data = _pdf("As shown in arXiv:2401.00001, attention", "is all you need.")
     assert share.arxiv_id_from_pdf(data, "paper.pdf") is None
+    # In the usual reference style, with its category but no version or date
+    cited = _pdf("[3] A. Vaswani. Attention. arXiv:1706.03762 [cs.CL], 2017.")
+    assert share.arxiv_id_from_pdf(cited, "paper.pdf") is None
 
 
 def test_a_file_that_is_not_a_pdf() -> None:
@@ -355,3 +359,20 @@ def test_a_paper_arxiv_does_not_have_leaves_the_link(config: Config) -> None:
             merge_link(conn, Link(link, "share", "9999.99999", None), fetch=lambda _: None) is None
         )
         assert conn.execute("SELECT 1 FROM items WHERE id = ?", (link,)).fetchone()
+
+
+def test_a_paper_further_down_under_its_link_does_not_loop(config: Config) -> None:
+    with get_connection(config) as conn:
+        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
+        note = _add(conn, "note", "n1", None)
+        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
+        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (link, note))
+        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (note, held))
+        conn.commit()
+        merge_link(conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None)
+        assert (
+            conn.execute("SELECT parent_id FROM items WHERE id = ?", (held,)).fetchone()[0] is None
+        )
+        assert (
+            conn.execute("SELECT parent_id FROM items WHERE id = ?", (note,)).fetchone()[0] == held
+        )

@@ -120,11 +120,13 @@ def merge_link(
         _add_text(conn, paper_id, "shared_title", title)
 
     # The paper takes the link's place under its parent, if it has none of its own and
-    # that wouldn't put it under itself; a paper filed under the link moves up with it
+    # that wouldn't put it under itself; a paper filed below the link moves up to its place
     paper_parent = conn.execute("SELECT parent_id FROM items WHERE id = ?", (paper_id,)).fetchone()[
         0
     ]
-    if paper_parent == link.item_id:
+    if paper_parent is not None and _under(conn, paper_parent, link.item_id):
+        # Anywhere below the link: once the link's children move under the paper,
+        # its old place would put it under itself
         paper_parent = None
         conn.execute("UPDATE items SET parent_id = NULL WHERE id = ?", (paper_id,))
     if paper_parent is None and parent_id is not None and not _under(conn, parent_id, paper_id):

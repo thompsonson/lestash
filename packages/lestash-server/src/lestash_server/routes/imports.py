@@ -329,14 +329,32 @@ def _import_arxiv_pdf(
 ) -> ImportResponse | None:
     """A shared arXiv paper's PDF: the paper's arXiv item, with this file as its source
     PDF (#398). None if the file isn't an arXiv paper, or arXiv can't be reached, so
-    it is added as a plain PDF."""
+    it is added as a plain PDF. So is a file other than the paper's stored PDF, such as
+    your annotated copy: it isn't thrown away."""
+    import hashlib
+
     try:
-        from lestash_arxiv.share import arxiv_id_from_pdf, attach_pdf, import_paper
+        from lestash_arxiv.share import (
+            arxiv_id_from_pdf,
+            attach_pdf,
+            find_paper,
+            has_source_pdf,
+            import_paper,
+            source_pdf_sha256,
+        )
     except ImportError:
         return None
     arxiv_id = arxiv_id_from_pdf(data, filename)
     if arxiv_id is None:
         return None
+    with get_db() as conn:
+        held = find_paper(conn, arxiv_id)
+        if (
+            held is not None
+            and has_source_pdf(conn, held)
+            and source_pdf_sha256(conn, get_config(), held) != hashlib.sha256(data).hexdigest()
+        ):
+            return None
     try:
         with get_db() as conn:
             imported = import_paper(conn, arxiv_id, parent_id=parent_id)

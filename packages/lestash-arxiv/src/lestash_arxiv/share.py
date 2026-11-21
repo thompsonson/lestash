@@ -30,9 +30,14 @@ _ADDRESS = re.compile(
 )
 # A downloaded paper's file name: 2603.15401v1.pdf
 _FILENAME = re.compile(r"^(\d{4}\.\d{4,5})(?:v\d+)?(?: ?\(\d+\))?\.pdf$", re.IGNORECASE)
-# The stamp arXiv prints down page 1's margin: arXiv:2603.15401v1  [cs.AI]  2 Apr 2026
-# Categories: cs.AI, hep-th, cond-mat.str-el, physics.optics, astro-ph.GA
-_STAMP = re.compile(rf"arXiv:{_ID}\s+\[[a-z-]+(?:\.[A-Za-z-]+)?\]")
+# The stamp arXiv prints down page 1's margin: arXiv:2603.15401v1  [cs.AI]  2 Apr 2026,
+# or arXiv:hep-th/9901001v3  10 May 1999 for an old paper. Its version and date tell it
+# from a citation, such as "arXiv:1706.03762 [cs.CL]". Categories: cs.AI, hep-th,
+# cond-mat.str-el, physics.optics, astro-ph.GA
+_STAMP = re.compile(
+    r"arXiv:(\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7})v\d+\s+"
+    r"(?:\[[a-z-]+(?:\.[A-Za-z-]+)?\]\s+)?\d{1,2}\s+[A-Z][a-z]{2}\s+\d{4}"
+)
 PDF_LIMIT = 100 * 1024 * 1024  # bytes; a paper with many figures is a few tens of MB
 TIMEOUT_S = 60
 USER_AGENT = "LeStash (personal knowledge base)"
@@ -55,8 +60,8 @@ def arxiv_id_from_url(url: str) -> str | None:
 def arxiv_id_from_pdf(data: bytes, filename: str) -> str | None:
     """The arXiv id of a PDF file, from the arXiv stamp on its first page, else its name.
 
-    The stamp is the margin line arXiv adds to the papers it serves. Its category in
-    brackets tells it from an arXiv id the paper merely cites. A name alone
+    The stamp is the margin line arXiv adds to the papers it serves; its version and
+    date tell it from an arXiv id the paper merely cites. A name alone
     (2603.15401v1.pdf) counts only if page 1 shows that id too, so a file merely named
     like a paper isn't stored as that paper's PDF.
     """
@@ -94,6 +99,26 @@ def has_source_pdf(conn: sqlite3.Connection, item_id: int) -> bool:
         (item_id, SOURCE_PDF_MEDIA_TYPE),
     ).fetchone()
     return row is not None
+
+
+def source_pdf_sha256(conn: sqlite3.Connection, config: Config, item_id: int) -> str | None:
+    """The SHA-256 of the item's stored source PDF, or None if it has none to read."""
+    import hashlib
+
+    from lestash.core.blobs import media_file
+    from lestash.core.pdf_enrich.persistence import SOURCE_PDF_MEDIA_TYPE
+
+    row = conn.execute(
+        "SELECT local_path, sha256 FROM item_media WHERE item_id = ? AND media_type = ? "
+        "AND local_path IS NOT NULL ORDER BY id LIMIT 1",
+        (item_id, SOURCE_PDF_MEDIA_TYPE),
+    ).fetchone()
+    if row is None:
+        return None
+    if row[1]:
+        return str(row[1])
+    path = media_file({"local_path": row[0], "sha256": None}, config)
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path is not None else None
 
 
 def _metadata(conn: sqlite3.Connection, item_id: int) -> dict[str, Any]:
