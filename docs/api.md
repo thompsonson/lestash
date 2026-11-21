@@ -703,7 +703,7 @@ Import from an uploaded file (multipart/form-data, max 50MB).
 - `.zip` — auto-detects: Google Keep Takeout, Gemini Takeout, NotebookLM, Mistral Le Chat, generic JSON
 - `.html` — one saved web page; a page that gives no date is dated when saved. A page held already is refreshed from the upload; it and its turns, if held, are not counted in `items_added`.
 - `.pdf` — one `pdf` item with the file, text extracted for search. A file already held is not added again: `items_added` is 0 (#338). The CLI does the same: `lestash pdf add FILE… [--collection NAME] [--revision-of ID]`.
-  - An arXiv paper becomes its `arxiv` item instead, with the file as its source PDF (#398). It is told by its file name (`2603.15401v1.pdf`) or the arXiv stamp on page 1. The reply's `source_type` is `arxiv`. If arXiv can't be reached, the file is added as a plain `pdf` item.
+  - An arXiv paper becomes its `arxiv` item instead, with the file as its source PDF (#398). It is told by its file name (`2603.15401v1.pdf`) or the arXiv stamp on page 1. The reply's `source_type` is `arxiv`. If arXiv can't be reached, the file is added as a plain `pdf` item. So is a file other than the paper's stored PDF, such as an annotated copy; it is linked to the paper with `alternate_of`.
 - `.txt`, `.md` — one `file` item holding the text (kind "document"). Keyed by its bytes like a PDF: a file already held is not added again.
 
 **Optional form fields:**

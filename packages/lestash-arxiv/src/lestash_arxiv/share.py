@@ -245,7 +245,8 @@ def attach_pdf(
     from lestash.core.pdf_enrich import attach_source_pdf_and_enrich
 
     with get_connection(config) as conn:
-        if has_source_pdf(conn, item_id):
+        # A stored PDF that can't be read is replaced, as if there were none
+        if source_pdf_sha256(conn, config, item_id) is not None:
             return "held"
         url = pdf_url_of(conn, item_id)
         row = conn.execute("SELECT source_id FROM items WHERE id = ?", (item_id,)).fetchone()

@@ -324,13 +324,21 @@ def _held(conn, item) -> bool:
     )
 
 
+# A shared PDF of a paper held with another file: linked to the paper (#398)
+COPY_OF_PAPER_ORIGIN = "linker:arxiv"
+
+
 def _import_arxiv_pdf(
     data: bytes, filename: str, errors: list[str], parent_id: int | None
-) -> ImportResponse | None:
+) -> tuple[ImportResponse | None, int | None]:
     """A shared arXiv paper's PDF: the paper's arXiv item, with this file as its source
-    PDF (#398). None if the file isn't an arXiv paper, or arXiv can't be reached, so
-    it is added as a plain PDF. So is a file other than the paper's stored PDF, such as
-    your annotated copy: it isn't thrown away."""
+    PDF (#398).
+
+    Returns the reply, or None when the file is added as a plain PDF: it isn't an
+    arXiv paper, or arXiv can't be reached, or the paper holds another file, such as
+    the copy arXiv served when this is your annotated one. In that last case the
+    paper's id comes back too, so the plain PDF is linked to it.
+    """
     import hashlib
 
     try:
@@ -338,32 +346,29 @@ def _import_arxiv_pdf(
             arxiv_id_from_pdf,
             attach_pdf,
             find_paper,
-            has_source_pdf,
             import_paper,
             source_pdf_sha256,
         )
     except ImportError:
-        return None
+        return None, None
     arxiv_id = arxiv_id_from_pdf(data, filename)
     if arxiv_id is None:
-        return None
+        return None, None
     with get_db() as conn:
         held = find_paper(conn, arxiv_id)
-        if (
-            held is not None
-            and has_source_pdf(conn, held)
-            and source_pdf_sha256(conn, get_config(), held) != hashlib.sha256(data).hexdigest()
-        ):
-            return None
+        # A stored PDF that can't be read is no PDF: this file takes its place
+        stored = source_pdf_sha256(conn, get_config(), held) if held is not None else None
+    if held is not None and stored is not None and stored != hashlib.sha256(data).hexdigest():
+        return None, held
     try:
         with get_db() as conn:
             imported = import_paper(conn, arxiv_id, parent_id=parent_id)
     except Exception:
         logger.exception("Could not fetch arXiv paper %s; adding the PDF as it is", arxiv_id)
-        return None
+        return None, None
     if imported is None:
-        return None
-    if not imported.has_pdf:
+        return None, None
+    if stored is None:
         try:
             status = attach_pdf(imported.item_id, config=get_config(), data=data)
             if status == "failed":
@@ -371,7 +376,7 @@ def _import_arxiv_pdf(
         except Exception as e:
             logger.exception("Failed to store the PDF of arXiv item %d", imported.item_id)
             errors.append(f"enrich: {e}")
-    return ImportResponse(
+    reply = ImportResponse(
         status="completed",
         source_type="arxiv",
         items_added=1 if imported.created else 0,
@@ -380,6 +385,7 @@ def _import_arxiv_pdf(
         item_id=imported.item_id,
         items_held=0 if imported.created else 1,
     )
+    return reply, None
 
 
 def _import_pdf(
@@ -392,13 +398,20 @@ def _import_pdf(
     """
     from lestash.core.pdfs import add_pdf
 
-    paper = _import_arxiv_pdf(data, filename, errors, parent_id)
+    paper, copy_of = _import_arxiv_pdf(data, filename, errors, parent_id)
     if paper is not None:
         return paper
 
     with get_db() as conn:
         added = add_pdf(conn, get_config(), data, filename)
         _place(conn, added.item_id, parent_id, added.new)
+        if copy_of is not None and copy_of != added.item_id:
+            # Another copy of a paper held: the same paper in two files
+            conn.execute(
+                "INSERT OR IGNORE INTO item_links (from_id, to_id, kind, origin, status) "
+                "VALUES (?, ?, 'alternate_of', ?, 'confirmed')",
+                (added.item_id, copy_of, COPY_OF_PAPER_ORIGIN),
+            )
         # Saved now, also when the file was held already (#357)
         record_saved(conn, added.item_id)
         conn.commit()

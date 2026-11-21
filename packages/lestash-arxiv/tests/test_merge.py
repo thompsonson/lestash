@@ -376,3 +376,24 @@ def test_a_paper_further_down_under_its_link_does_not_loop(config: Config) -> No
         assert (
             conn.execute("SELECT parent_id FROM items WHERE id = ?", (note,)).fetchone()[0] == held
         )
+
+
+def test_a_stored_pdf_that_is_gone_is_fetched_again(config: Config, monkeypatch) -> None:
+    with get_connection(config) as conn:
+        got = share.import_paper(conn, "2603.15401", fetch=lambda _: _paper())
+        assert got is not None
+        conn.execute(
+            "INSERT INTO item_media (item_id, media_type, local_path) "
+            "VALUES (?, 'source_pdf', 'gone/file.pdf')",
+            (got.item_id,),
+        )
+        conn.commit()
+
+    def enrich(item_id: int, *, config: Config, force: bool = False) -> EnrichmentResult:
+        return EnrichmentResult(item_id=item_id, status="enriched")
+
+    monkeypatch.setattr("lestash.core.pdf_enrich.runner.enrich_item", enrich)
+    status = share.attach_pdf(got.item_id, config=config, download=lambda url: b"%PDF-1.4 x")
+    assert status == "enriched"
+    with get_connection(config) as conn:
+        assert share.source_pdf_sha256(conn, config, got.item_id) is not None
