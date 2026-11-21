@@ -21,7 +21,6 @@ from lestash_arxiv.share import (
     _add_text,
     _metadata,
     arxiv_id_from_url,
-    has_readable_pdf,
     import_paper,
 )
 from lestash_arxiv.source import SOURCE_TYPE
@@ -79,6 +78,35 @@ class MergeError(ValueError):
     """A link that can't be merged: gone, or the paper's own item."""
 
 
+def held_a_pdf(conn: sqlite3.Connection, item_id: int) -> bool:
+    """True if the item holds, or held, a PDF file, or anything read from one: a source
+    PDF row with a file (there or gone), an earlier version, the enricher's pictures,
+    or annotations. Such a link is kept, not merged. A PDF address alone is not one."""
+    from lestash.core.pdf_enrich.persistence import (
+        ANNOTATION_SOURCE_TYPE,
+        ENRICHER_ORIGIN,
+        SOURCE_PDF_MEDIA_TYPE,
+        SOURCE_PDF_VERSION_MEDIA_TYPE,
+    )
+
+    row = conn.execute(
+        """
+        SELECT EXISTS (SELECT 1 FROM item_media WHERE item_id = :id AND (
+                   (media_type = :pdf AND local_path IS NOT NULL)
+                   OR media_type = :version OR source_origin = :enricher))
+            OR EXISTS (SELECT 1 FROM items WHERE parent_id = :id AND source_type = :ann)
+        """,
+        {
+            "id": item_id,
+            "pdf": SOURCE_PDF_MEDIA_TYPE,
+            "version": SOURCE_PDF_VERSION_MEDIA_TYPE,
+            "enricher": ENRICHER_ORIGIN,
+            "ann": ANNOTATION_SOURCE_TYPE,
+        },
+    ).fetchone()
+    return bool(row[0])
+
+
 def _under(conn: sqlite3.Connection, item_id: int, ancestor: int) -> bool:
     """True if ``item_id`` is ``ancestor`` or sits somewhere below it."""
     seen: set[int] = set()
@@ -103,9 +131,9 @@ def merge_link(
     has no such paper; MergeError if the link is gone. Commits. ``config`` finds the
     stored files.
 
-    A link holding a PDF file of its own is not merged: its file, and what was read
-    from it, stay with it. It is linked to the paper with ``alternate_of`` instead
-    (``kept``), as a shared copy of a paper is on import.
+    A link that holds or held a PDF file of its own (``held_a_pdf``) is not merged: its
+    file, and what was read from it, stay with it. It is linked to the paper with
+    ``alternate_of`` instead (``kept``), as a shared copy of a paper is on import.
     """
     from lestash.core.pdf_enrich.persistence import SOURCE_PDF_MEDIA_TYPE
     from lestash.core.stubs import merge_item
@@ -126,8 +154,7 @@ def merge_link(
         shared_text = _shared_text(content, notes)
     if shared_text and shared_text.strip() == (url or "").strip():
         shared_text = None
-    # A file there to read; a row whose file is gone, or an address only, is no file
-    has_file = has_readable_pdf(conn, config, link.item_id)
+    has_file = held_a_pdf(conn, link.item_id)
     pdf_rows = [
         {"url": r[0], "local_path": r[1]}
         for r in conn.execute(
@@ -172,9 +199,9 @@ def merge_link(
     if paper_parent is None and parent_id is not None and not _under(conn, parent_id, paper_id):
         conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, paper_id))
 
-    # What merge_item doesn't carry: places and syndications, and media. The link's
-    # source PDF rows hold no file to read; they're recorded below, not moved, so the
-    # paper keeps one source PDF row of its own. Its other media come across
+    # What merge_item doesn't carry: places and syndications, and media. A source PDF
+    # row here is an address only; it's recorded below, not moved, so the paper keeps
+    # one source PDF row of its own. Its other media come across
     for table in _MOVED:
         conn.execute(
             f"UPDATE OR IGNORE {table} SET item_id = ? WHERE item_id = ?", (paper_id, link.item_id)

@@ -269,10 +269,10 @@ class ArxivSource(SourcePlugin):
                 for n, link in enumerate(links):
                     label = f"{link.item_id} ({link.source_type}) → arXiv {link.arxiv_id}"
                     if not apply:
-                        from lestash_arxiv.share import has_readable_pdf
+                        from lestash_arxiv.merge import held_a_pdf
 
                         # One with a PDF file of its own is kept, linked to the paper
-                        verb = "keep" if has_readable_pdf(conn, config, link.item_id) else "merge"
+                        verb = "keep" if held_a_pdf(conn, link.item_id) else "merge"
                         console.print(f"would {verb} {label}: {link.title or ''}")
                         continue
                     if n:
@@ -287,7 +287,7 @@ class ArxivSource(SourcePlugin):
                         console.print(f"[yellow]skipped {label}: not found on arXiv[/yellow]")
                     elif merged.kept:
                         console.print(
-                            f"kept {label}: it holds a PDF file of its own; "
+                            f"kept {label}: it has a PDF file of its own; "
                             f"linked to item {merged.paper_id}"
                         )
                     else:

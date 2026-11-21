@@ -482,10 +482,10 @@ def test_a_link_with_a_pdf_file_of_its_own_is_kept(
         assert saved_links(conn) == []
 
 
-@pytest.mark.parametrize("local_path", ["gone/paper.pdf", None])
-def test_a_link_whose_pdf_row_holds_no_file_merges(config: Config, local_path: str | None) -> None:
-    """A file gone, or an address only, is no file of its own: the link merges, and
-    its row is recorded rather than given to the paper."""
+@pytest.mark.parametrize("local_path", [None])
+def test_a_link_with_only_a_pdf_address_merges(config: Config, local_path: str | None) -> None:
+    """An address only is no file of its own: the link merges, and its row is recorded
+    rather than given to the paper."""
     with get_connection(config) as conn:
         held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
         link = _add(
@@ -510,3 +510,34 @@ def test_a_link_whose_pdf_row_holds_no_file_merges(config: Config, local_path: s
         assert [r[0] for r in rows] == ["p/paper.pdf"]
         recorded = _meta(conn, held)["merged_from"][0]["source_pdf"]
         assert recorded == [{"url": "https://arxiv.org/pdf/2512.20660", "local_path": local_path}]
+
+
+@pytest.mark.parametrize(
+    "what",
+    ["file gone", "version", "enricher picture", "annotation"],
+)
+def test_a_link_that_held_a_pdf_is_kept(config: Config, what: str) -> None:
+    """What was read from a file stays with the link, even once the file is gone."""
+    with get_connection(config) as conn:
+        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
+        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
+        if what == "annotation":
+            ann = _add(conn, "pdf_annotation", f"item-{link}:p0:A1", None)
+            conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (link, ann))
+        else:
+            media_type, local_path, origin = {
+                "file gone": ("source_pdf", "gone/paper.pdf", "sync"),
+                "version": ("source_pdf_version", "old/paper.pdf", "sync"),
+                "enricher picture": ("image", "s1/fig1.png", "enricher"),
+            }[what]
+            conn.execute(
+                "INSERT INTO item_media (item_id, media_type, local_path, source_origin) "
+                "VALUES (?, ?, ?, ?)",
+                (link, media_type, local_path, origin),
+            )
+        conn.commit()
+        merged = merge_link(
+            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
+        )
+        assert merged is not None and merged.kept and merged.paper_id == held
+        assert conn.execute("SELECT 1 FROM items WHERE id = ?", (link,)).fetchone()
