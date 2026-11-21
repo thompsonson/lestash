@@ -198,23 +198,20 @@ def merge_link(
     else:
         if link_pdf:
             # The link holds the paper's own file. An annotation read from it that the
-            # paper has too (same title and text) is a twin, and goes, unless you
-            # filed, tagged, collected or linked anything to it; the rest move
-            conn.execute(
+            # paper has too (same title and text) is merged into that twin, with
+            # anything of yours on it; the rest move below with the link's children
+            twins = conn.execute(
                 """
-                DELETE FROM items WHERE parent_id = :link AND source_type = :ann
-                AND EXISTS (SELECT 1 FROM items twin WHERE twin.parent_id = :paper
-                            AND twin.source_type = :ann
-                            AND twin.title IS items.title AND twin.content IS items.content)
-                AND NOT EXISTS (SELECT 1 FROM items c WHERE c.parent_id = items.id)
-                AND NOT EXISTS (SELECT 1 FROM item_tags t WHERE t.item_id = items.id)
-                AND NOT EXISTS (SELECT 1 FROM collection_items ci WHERE ci.item_id = items.id)
-                AND NOT EXISTS (SELECT 1 FROM item_links l
-                                WHERE (l.from_id = items.id OR l.to_id = items.id)
-                                AND l.status = 'confirmed')
+                SELECT a.id, (SELECT twin.id FROM items twin WHERE twin.parent_id = :paper
+                              AND twin.source_type = :ann AND twin.title IS a.title
+                              AND twin.content IS a.content ORDER BY twin.id LIMIT 1)
+                FROM items a WHERE a.parent_id = :link AND a.source_type = :ann
                 """,
                 {"link": link.item_id, "paper": paper_id, "ann": ANNOTATION_SOURCE_TYPE},
-            )
+            ).fetchall()
+            for annotation_id, twin_id in twins:
+                if twin_id is not None:
+                    merge_item(conn, annotation_id, twin_id)
         # The paper keeps its own PDF and what was read from it; only the link's other
         # media come across
         conn.execute(

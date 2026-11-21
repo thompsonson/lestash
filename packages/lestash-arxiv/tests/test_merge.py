@@ -596,11 +596,20 @@ def test_annotations_read_from_the_same_file_are_not_doubled(config: Config) -> 
         merge_link(
             conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
         )
-        assert conn.execute("SELECT 1 FROM items WHERE id = ?", (plain,)).fetchone() is None
-        assert (
-            conn.execute("SELECT parent_id FROM items WHERE id = ?", (twin,)).fetchone()[0] == held
-        )
-        # Something of yours on it, or no twin on the paper: it moves
-        for kept in (noted, tagged, only):
-            parent = conn.execute("SELECT parent_id FROM items WHERE id = ?", (kept,)).fetchone()
-            assert parent[0] == held
+
+        # A twin merges into the paper's annotation, taking what's yours with it
+        def parent(item_id: int) -> int | None:
+            row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (item_id,)).fetchone()
+            return row[0] if row else None
+
+        for gone in (plain, noted, tagged):
+            assert conn.execute("SELECT 1 FROM items WHERE id = ?", (gone,)).fetchone() is None
+        assert parent(twin) == held
+        assert parent(mine) not in (None, noted)  # under the paper's twin now
+        assert conn.execute("SELECT item_id FROM item_tags").fetchone()[0] == twin
+        assert parent(only) == held  # no twin on the paper: it moves
+        count = conn.execute(
+            "SELECT COUNT(*) FROM items WHERE parent_id = ? AND source_type = 'pdf_annotation'",
+            (held,),
+        ).fetchone()[0]
+        assert count == 3
