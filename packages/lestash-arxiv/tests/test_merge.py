@@ -575,16 +575,32 @@ def test_annotations_read_from_the_same_file_are_not_doubled(config: Config) -> 
         link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
         _stored(config, conn, held, "p/paper.pdf", b"%PDF-1.4 the paper")
         _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 the paper")
-        plain = _add(conn, "pdf_annotation", "s1:a1", None, title="Highlight")
-        noted = _add(conn, "pdf_annotation", "s1:a2", None, title="Highlight with a note")
+        twin = _add(conn, "pdf_annotation", "p:a1", None, title="Highlight", content="x")
+        _add(conn, "pdf_annotation", "p:a2", None, title="Highlight with a note", content="y")
+        conn.execute("UPDATE items SET parent_id = ? WHERE source_id LIKE 'p:%'", (held,))
+        plain = _add(conn, "pdf_annotation", "s1:a1", None, title="Highlight", content="x")
+        noted = _add(
+            conn, "pdf_annotation", "s1:a2", None, title="Highlight with a note", content="y"
+        )
+        tagged = _add(conn, "pdf_annotation", "s1:a3", None, title="Highlight", content="x")
+        only = _add(conn, "pdf_annotation", "s1:a4", None, title="Only on the link", content="z")
         mine = _add(conn, "note", "n1", None, title="My note on it")
-        conn.execute("UPDATE items SET parent_id = ? WHERE id IN (?, ?)", (link, plain, noted))
+        conn.execute(
+            "UPDATE items SET parent_id = ? WHERE id IN (?, ?, ?, ?)",
+            (link, plain, noted, tagged, only),
+        )
         conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (noted, mine))
+        (tag,) = conn.execute("INSERT INTO tags (name) VALUES ('keep') RETURNING id").fetchone()
+        conn.execute("INSERT INTO item_tags (item_id, tag_id) VALUES (?, ?)", (tagged, tag))
         conn.commit()
         merge_link(
             conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
         )
         assert conn.execute("SELECT 1 FROM items WHERE id = ?", (plain,)).fetchone() is None
         assert (
-            conn.execute("SELECT parent_id FROM items WHERE id = ?", (noted,)).fetchone()[0] == held
+            conn.execute("SELECT parent_id FROM items WHERE id = ?", (twin,)).fetchone()[0] == held
         )
+        # Something of yours on it, or no twin on the paper: it moves
+        for kept in (noted, tagged, only):
+            parent = conn.execute("SELECT parent_id FROM items WHERE id = ?", (kept,)).fetchone()
+            assert parent[0] == held

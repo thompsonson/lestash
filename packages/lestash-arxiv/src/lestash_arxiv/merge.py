@@ -197,12 +197,23 @@ def merge_link(
         )
     else:
         if link_pdf:
-            # The link holds the paper's own file: the annotations read from it are
-            # the paper's already. One with something filed under it still moves
+            # The link holds the paper's own file. An annotation read from it that the
+            # paper has too (same title and text) is a twin, and goes, unless you
+            # filed, tagged, collected or linked anything to it; the rest move
             conn.execute(
-                "DELETE FROM items WHERE parent_id = ? AND source_type = ? "
-                "AND NOT EXISTS (SELECT 1 FROM items c WHERE c.parent_id = items.id)",
-                (link.item_id, ANNOTATION_SOURCE_TYPE),
+                """
+                DELETE FROM items WHERE parent_id = :link AND source_type = :ann
+                AND EXISTS (SELECT 1 FROM items twin WHERE twin.parent_id = :paper
+                            AND twin.source_type = :ann
+                            AND twin.title IS items.title AND twin.content IS items.content)
+                AND NOT EXISTS (SELECT 1 FROM items c WHERE c.parent_id = items.id)
+                AND NOT EXISTS (SELECT 1 FROM item_tags t WHERE t.item_id = items.id)
+                AND NOT EXISTS (SELECT 1 FROM collection_items ci WHERE ci.item_id = items.id)
+                AND NOT EXISTS (SELECT 1 FROM item_links l
+                                WHERE (l.from_id = items.id OR l.to_id = items.id)
+                                AND l.status = 'confirmed')
+                """,
+                {"link": link.item_id, "paper": paper_id, "ann": ANNOTATION_SOURCE_TYPE},
             )
         # The paper keeps its own PDF and what was read from it; only the link's other
         # media come across
