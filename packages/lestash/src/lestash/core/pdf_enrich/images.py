@@ -89,8 +89,8 @@ RENDER_DPI = 144
 MAX_RENDER_DPI = 300
 
 # An image is part of a picture when this share of its part on the page lies inside
-# the region. The picture's images raise its resolution when together they fill at
-# least PHOTO_SHARE of it, so a lone small icon doesn't
+# the region. The picture takes the highest resolution that images filling at least
+# PHOTO_SHARE of it all reach, so a small sharp icon doesn't set it
 PHOTO_INSIDE = 0.5
 PHOTO_SHARE = 0.1
 
@@ -117,9 +117,7 @@ def extract_pictures(
         page = doc[region.page]
         if region.page not in blocks_by_page:
             blocks_by_page[region.page] = _image_blocks(page)
-        image_dpi, image_area, jpeg_area = _images_in(blocks_by_page[region.page], page, clip)
-        if image_area < PHOTO_SHARE * clip.get_area():
-            image_dpi = 0.0
+        image_dpi, jpeg_area = _images_in(blocks_by_page[region.page], page, clip)
         dpi = min(max(RENDER_DPI, image_dpi), MAX_RENDER_DPI)
         ext = "jpeg" if jpeg_area >= JPEG_SHARE * clip.get_area() else "png"
         data = page.get_pixmap(clip=clip, dpi=round(dpi)).tobytes(ext)
@@ -145,23 +143,22 @@ def _image_blocks(page: pymupdf.Page) -> list[dict]:
         return []
 
 
-def _images_in(
-    blocks: list[dict], page: pymupdf.Page, clip: pymupdf.Rect
-) -> tuple[float, float, float]:
-    """The highest resolution of the images that are part of `clip`, the area of
-    `clip` they cover together, and the area that those stored as JPEG cover.
+def _images_in(blocks: list[dict], page: pymupdf.Page, clip: pymupdf.Rect) -> tuple[float, float]:
+    """The resolution to render `clip` at for its images, and the area of `clip`
+    that images stored as JPEG cover.
 
-    An image is part of the picture when most of its part on the page lies inside
-    the region, so a page background doesn't count. Areas are of the images' union,
-    so tiles of one photo add up and overlaps count once. An image cropped by a
-    clipping path is measured by its whole placement, which PyMuPDF reports; see #393.
+    The resolution is the highest that images covering PHOTO_SHARE of the region
+    together all reach, or 0 if they cover less. An image is part of the picture
+    when most of its part on the page lies inside the region, so a page background
+    doesn't count. Areas are of the images' union, so tiles of one photo add up and
+    overlaps count once. An image cropped by a clipping path is measured by its
+    whole placement, which PyMuPDF reports; see #393.
     """
     import math
 
     import pymupdf
 
-    best = 0.0
-    covered: list[pymupdf.Rect] = []
+    parts: list[tuple[float, pymupdf.Rect]] = []
     jpeg: list[pymupdf.Rect] = []
     for block in blocks:
         shown = pymupdf.Rect(block["bbox"]) & page.rect
@@ -174,11 +171,25 @@ def _images_in(
         x_points, y_points = math.hypot(matrix.a, matrix.b), math.hypot(matrix.c, matrix.d)
         if x_points == 0 or y_points == 0:
             continue
-        best = max(best, max(block["width"] / x_points, block["height"] / y_points) * 72)
-        covered.append(part)
+        parts.append((max(block["width"] / x_points, block["height"] / y_points) * 72, part))
         if block.get("ext") in ("jpeg", "jpx"):
             jpeg.append(part)
-    return best, _union_area(covered), _union_area(jpeg)
+
+    # Sharpest first, the fewest images that cover enough; the area they cover only
+    # grows with each one added, so a binary search finds how many
+    parts.sort(key=lambda p: -p[0])
+    needed = PHOTO_SHARE * clip.get_area()
+    rects = [part for _dpi, part in parts]
+    if not parts or _union_area(rects) < needed:
+        return 0.0, _union_area(jpeg)
+    low, high = 1, len(parts)
+    while low < high:
+        middle = (low + high) // 2
+        if _union_area(rects[:middle]) >= needed:
+            high = middle
+        else:
+            low = middle + 1
+    return parts[low - 1][0], _union_area(jpeg)
 
 
 def _union_area(rects: list[pymupdf.Rect]) -> float:

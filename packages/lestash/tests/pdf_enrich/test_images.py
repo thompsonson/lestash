@@ -401,3 +401,21 @@ def test_overlapping_photos_count_once():
     assert _union_area([]) == 0
     c = pymupdf.Rect(0, 20, 10, 30)  # apart from a, in the same slab
     assert _union_area([a, c, b]) == 250
+
+
+def test_a_small_sharp_icon_does_not_set_the_resolution(tmp_path):
+    """A 400-pixel icon in 10 points (2,880 dpi) beside a 144-dpi photo filling the region."""
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_image(pymupdf.Rect(100, 100, 200, 200), stream=_photo_jpeg(200))
+    page.insert_image(pymupdf.Rect(105, 105, 115, 115), stream=_photo_jpeg(400))
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 200.0, 200.0))])
+    finally:
+        doc.close()
+
+    assert pymupdf.Pixmap(images[0].bytes_).width == 200  # 100 points at 144 dpi
