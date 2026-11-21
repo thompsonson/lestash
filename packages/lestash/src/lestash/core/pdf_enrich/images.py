@@ -129,24 +129,33 @@ def extract_pictures(
 def _photo_dpi(page: pymupdf.Page, clip: pymupdf.Rect) -> float | None:
     """The highest resolution of any photo that is part of `clip`, or None if none is.
 
-    A photo is part of the picture when most of it lies inside the region and it
-    fills a fair share of it, so a page background or a small icon doesn't count.
+    A photo is part of the picture when most of its part on the page lies inside
+    the region and it fills a fair share of it, so a page background or a small
+    icon doesn't count. A photo cropped by a clipping path is measured by its
+    whole placement, which PyMuPDF reports; see #393.
     """
+    import math
+
     best: float | None = None
     for info in page.get_images(full=True):
         xref, width_px, height_px = info[0], info[2], info[3]
         try:
-            rects = page.get_image_rects(xref)
+            placements = page.get_image_rects(xref, transform=True)
         except Exception:
             continue
-        for rect in rects:
-            inside = (rect & clip).get_area()
-            if rect.is_empty or inside < PHOTO_INSIDE * rect.get_area():
+        for rect, matrix in placements:
+            shown = rect & page.rect
+            inside = (shown & clip).get_area()
+            if shown.is_empty or inside < PHOTO_INSIDE * shown.get_area():
                 continue
             if inside < PHOTO_SHARE * clip.get_area():
                 continue
-            # Longest side against longest side, so a photo turned 90° measures right
-            dpi = max(width_px, height_px) / max(rect.width, rect.height) * 72
+            # The matrix maps the photo's unit square onto the page, so each of its
+            # axes' length in points holds, whatever the rotation or scaling
+            x_points, y_points = math.hypot(matrix.a, matrix.b), math.hypot(matrix.c, matrix.d)
+            if x_points == 0 or y_points == 0:
+                continue
+            dpi = max(width_px / x_points, height_px / y_points) * 72
             best = dpi if best is None else max(best, dpi)
     return best
 

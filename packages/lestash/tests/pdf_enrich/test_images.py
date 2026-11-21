@@ -223,3 +223,39 @@ def test_a_rotated_photo_keeps_its_resolution(tmp_path):
 
     assert images[0].mime_type == "image/jpeg"
     assert pymupdf.Pixmap(images[0].bytes_).height == 400  # 100 points at 288 dpi
+
+
+def test_a_photo_running_off_the_page_is_measured_by_its_part_on_the_page(tmp_path):
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    # 100 points wide, 70 of them past the right edge; the region holds the 30 that show
+    page.insert_image(pymupdf.Rect(582, 100, 682, 200), stream=_photo_png(400))
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (580.0, 100.0, 612.0, 200.0))])
+    finally:
+        doc.close()
+
+    assert images[0].mime_type == "image/jpeg"
+
+
+def test_an_unevenly_scaled_photo_takes_its_finer_axis(tmp_path):
+    """400 x 400 pixels squeezed into 100 x 200 points: 288 dpi across, 144 down."""
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_image(
+        pymupdf.Rect(100, 100, 200, 300), stream=_photo_png(400), keep_proportion=False
+    )
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 200.0, 300.0))])
+    finally:
+        doc.close()
+
+    assert pymupdf.Pixmap(images[0].bytes_).width == 400  # 100 points at 288 dpi
