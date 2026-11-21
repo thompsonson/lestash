@@ -12,7 +12,7 @@ from lestash.core.pdf_enrich.runner import EnrichmentResult
 from lestash.testing import forbid_default_config
 from lestash_arxiv import share
 from lestash_arxiv.client import Paper
-from lestash_arxiv.merge import Link, merge_link, saved_links
+from lestash_arxiv.merge import Link, MergeError, merge_link, saved_links
 
 WHEN = datetime(2026, 3, 1, tzinfo=UTC)
 
@@ -71,7 +71,27 @@ def _meta(conn, item_id: int) -> dict:
     ],
 )
 def test_an_arxiv_file_name(filename: str, expected: str | None) -> None:
-    assert share.arxiv_id_from_pdf(_pdf("No stamp"), filename) == expected
+    """A name counts when page 1 shows the id too, as a preprint's header does."""
+    data = _pdf("Preprint 2603.15401, under review")
+    assert share.arxiv_id_from_pdf(data, filename) == expected
+
+
+def test_a_name_alone_is_not_trusted() -> None:
+    """A file merely named like a paper isn't stored as that paper's PDF."""
+    assert share.arxiv_id_from_pdf(_pdf("My holiday notes"), "2603.15401v1.pdf") is None
+
+
+def test_the_stamp_wins_over_the_name() -> None:
+    data = _pdf("arXiv:2401.00001v2  [cs.LG]  3 Jan 2024")
+    assert share.arxiv_id_from_pdf(data, "2603.15401v1.pdf") == "2401.00001"
+
+
+@pytest.mark.parametrize(
+    "category", ["cond-mat.str-el", "physics.optics", "astro-ph.GA", "math-ph"]
+)
+def test_stamps_of_every_category(category: str) -> None:
+    data = _pdf(f"arXiv:2401.00001v1  [{category}]  3 Jan 2024")
+    assert share.arxiv_id_from_pdf(data, "paper.pdf") == "2401.00001"
 
 
 def test_the_arxiv_stamp_on_page_one() -> None:
@@ -260,6 +280,71 @@ def test_a_page_moves_into_the_paper_already_held(config: Config) -> None:
             conn.execute("SELECT COUNT(*) FROM activities WHERE item_id = ?", (held,)).fetchone()[0]
             == 0
         )
+
+
+def test_a_saved_pages_text_is_not_copied(config: Config) -> None:
+    with get_connection(config) as conn:
+        page = _add(
+            conn, "web", "w1", "https://arxiv.org/abs/2603.15401", content="The whole page " * 500
+        )
+        conn.commit()
+        merged = merge_link(conn, Link(page, "web", "2603.15401", None), fetch=lambda _: _paper())
+        assert merged is not None
+        assert "shared_text" not in _meta(conn, merged.paper_id)
+
+
+def test_a_paper_filed_under_its_link_moves_up(config: Config) -> None:
+    """Moving the link's children must not make the paper its own parent."""
+    with get_connection(config) as conn:
+        top = _add(conn, "note", "top", None)
+        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
+        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
+        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (top, link))
+        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (link, held))
+        conn.commit()
+        merge_link(conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None)
+        assert (
+            conn.execute("SELECT parent_id FROM items WHERE id = ?", (held,)).fetchone()[0] == top
+        )
+
+
+def test_a_link_under_the_papers_own_child_does_not_loop(config: Config) -> None:
+    with get_connection(config) as conn:
+        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
+        note = _add(conn, "note", "n1", None)
+        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
+        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (held, note))
+        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (note, link))
+        conn.commit()
+        merge_link(conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None)
+        assert (
+            conn.execute("SELECT parent_id FROM items WHERE id = ?", (held,)).fetchone()[0] is None
+        )
+        assert (
+            conn.execute("SELECT parent_id FROM items WHERE id = ?", (note,)).fetchone()[0] == held
+        )
+
+
+def test_a_links_media_come_across(config: Config) -> None:
+    with get_connection(config) as conn:
+        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2603.15401")
+        conn.execute(
+            "INSERT INTO item_media (item_id, media_type, url) VALUES (?, 'image', 'https://x/y.png')",
+            (link,),
+        )
+        conn.commit()
+        merged = merge_link(conn, Link(link, "share", "2603.15401", None), fetch=lambda _: _paper())
+        assert merged is not None
+        kinds = conn.execute(
+            "SELECT media_type FROM item_media WHERE item_id = ? ORDER BY media_type",
+            (merged.paper_id,),
+        ).fetchall()
+        assert [k[0] for k in kinds] == ["image", "pdf"]
+
+
+def test_a_link_that_is_gone(config: Config) -> None:
+    with get_connection(config) as conn, pytest.raises(MergeError, match="no longer exists"):
+        merge_link(conn, Link(99999, "share", "2603.15401", None), fetch=lambda _: _paper())
 
 
 def test_a_paper_arxiv_does_not_have_leaves_the_link(config: Config) -> None:

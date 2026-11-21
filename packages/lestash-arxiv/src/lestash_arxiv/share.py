@@ -31,7 +31,8 @@ _ADDRESS = re.compile(
 # A downloaded paper's file name: 2603.15401v1.pdf
 _FILENAME = re.compile(r"^(\d{4}\.\d{4,5})(?:v\d+)?(?: ?\(\d+\))?\.pdf$", re.IGNORECASE)
 # The stamp arXiv prints down page 1's margin: arXiv:2603.15401v1  [cs.AI]  2 Apr 2026
-_STAMP = re.compile(rf"arXiv:{_ID}\s+\[[a-z-]+(?:\.[A-Za-z]{{2}})?\]")
+# Categories: cs.AI, hep-th, cond-mat.str-el, physics.optics, astro-ph.GA
+_STAMP = re.compile(rf"arXiv:{_ID}\s+\[[a-z-]+(?:\.[A-Za-z-]+)?\]")
 PDF_LIMIT = 100 * 1024 * 1024  # bytes; a paper with many figures is a few tens of MB
 TIMEOUT_S = 60
 USER_AGENT = "LeStash (personal knowledge base)"
@@ -52,15 +53,13 @@ def arxiv_id_from_url(url: str) -> str | None:
 
 
 def arxiv_id_from_pdf(data: bytes, filename: str) -> str | None:
-    """The arXiv id of a PDF file, from its name or the arXiv stamp on its first page.
+    """The arXiv id of a PDF file, from the arXiv stamp on its first page, else its name.
 
-    The stamp is the margin line arXiv adds to every paper it serves. Its category in
-    brackets tells it from an arXiv id the paper merely cites.
+    The stamp is the margin line arXiv adds to the papers it serves. Its category in
+    brackets tells it from an arXiv id the paper merely cites. A name alone
+    (2603.15401v1.pdf) counts only if page 1 shows that id too, so a file merely named
+    like a paper isn't stored as that paper's PDF.
     """
-    name = filename.rsplit("/", 1)[-1].strip()
-    match = _FILENAME.match(name)
-    if match:
-        return match.group(1)
     try:
         import pymupdf
 
@@ -69,7 +68,12 @@ def arxiv_id_from_pdf(data: bytes, filename: str) -> str | None:
     except Exception:
         return None
     stamp = _STAMP.search(text)
-    return canonical_id(stamp.group(1)) if stamp else None
+    if stamp:
+        return canonical_id(stamp.group(1))
+    match = _FILENAME.match(filename.rsplit("/", 1)[-1].strip())
+    if match and match.group(1) in text:
+        return match.group(1)
+    return None
 
 
 def find_paper(conn: sqlite3.Connection, arxiv_id: str) -> int | None:

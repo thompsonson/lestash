@@ -17,14 +17,8 @@ from lestash_arxiv.client import Paper, get_paper
 from lestash_arxiv.share import _add_text, _metadata, arxiv_id_from_url, import_paper
 from lestash_arxiv.source import SOURCE_TYPE
 
-# Rows that belong to an item and move with it; a row the paper already has stays its own
-_MOVED = (
-    ("item_tags", "item_id"),
-    ("collection_items", "item_id"),
-    ("item_places", "item_id"),
-    ("syndications", "item_id"),
-    ("activities", "item_id"),
-)
+# Rows of an item that merge_item leaves; a row the paper already has stays its own
+_MOVED = ("item_places", "syndications")
 
 
 @dataclass(frozen=True)
@@ -66,6 +60,23 @@ def _shared_text(content: str | None, notes: str | None) -> str | None:
     return text or None
 
 
+class MergeError(ValueError):
+    """A link that can't be merged: gone, or the paper's own item."""
+
+
+def _under(conn: sqlite3.Connection, item_id: int, ancestor: int) -> bool:
+    """True if ``item_id`` is ``ancestor`` or sits somewhere below it."""
+    seen: set[int] = set()
+    current: int | None = item_id
+    while current is not None and current not in seen:
+        if current == ancestor:
+            return True
+        seen.add(current)
+        row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (current,)).fetchone()
+        current = row[0] if row else None
+    return False
+
+
 def merge_link(
     conn: sqlite3.Connection,
     link: Link,
@@ -73,17 +84,24 @@ def merge_link(
     fetch: Callable[[str], Paper | None] = get_paper,
 ) -> Merged | None:
     """Move one saved link into its paper's arXiv item, then delete it. None if arXiv
-    has no such paper. Commits."""
+    has no such paper; MergeError if the link is gone. Commits."""
+    from lestash.core.pdf_enrich.persistence import SOURCE_PDF_MEDIA_TYPE
+    from lestash.core.stubs import merge_item
+
     row = conn.execute(
-        "SELECT url, title, content, metadata, created_at, parent_id FROM items WHERE id = ?",
+        "SELECT source_type, url, title, content, metadata, created_at, parent_id "
+        "FROM items WHERE id = ?",
         (link.item_id,),
     ).fetchone()
     if row is None:
-        return None
-    url, title, content, raw_meta, created_at, parent_id = row
+        raise MergeError(f"item {link.item_id} no longer exists")
+    source_type, url, title, content, raw_meta, created_at, parent_id = row
     meta = _metadata(conn, link.item_id)
     notes = meta.get("notes") if isinstance(meta.get("notes"), str) else None
-    shared_text = meta.get("shared_text") or _shared_text(content, notes)
+    shared_text = meta.get("shared_text")
+    if not shared_text and source_type == "share":
+        # A share's text is what was shared; a saved page's is the page, not kept here
+        shared_text = _shared_text(content, notes)
     if shared_text and shared_text.strip() == (url or "").strip():
         shared_text = None
 
@@ -93,7 +111,7 @@ def merge_link(
         return None
     paper_id = imported.item_id
     if paper_id == link.item_id:
-        return None
+        raise MergeError(f"item {link.item_id} is the paper's own item")
 
     for key, text in (("notes", notes), ("shared_text", shared_text)):
         if text:
@@ -101,31 +119,32 @@ def merge_link(
     if title and title != imported.title:
         _add_text(conn, paper_id, "shared_title", title)
 
-    for table, column in _MOVED:
+    # The paper takes the link's place under its parent, if it has none of its own and
+    # that wouldn't put it under itself; a paper filed under the link moves up with it
+    paper_parent = conn.execute("SELECT parent_id FROM items WHERE id = ?", (paper_id,)).fetchone()[
+        0
+    ]
+    if paper_parent == link.item_id:
+        paper_parent = None
+        conn.execute("UPDATE items SET parent_id = NULL WHERE id = ?", (paper_id,))
+    if paper_parent is None and parent_id is not None and not _under(conn, parent_id, paper_id):
+        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, paper_id))
+
+    # What merge_item doesn't carry: places and syndications, and media. The paper may
+    # hold its PDF address already, so only a source PDF it lacks comes across
+    for table in _MOVED:
         conn.execute(
-            f"UPDATE OR IGNORE {table} SET {column} = ? WHERE {column} = ?",
-            (paper_id, link.item_id),
+            f"UPDATE OR IGNORE {table} SET item_id = ? WHERE item_id = ?", (paper_id, link.item_id)
         )
     conn.execute(
-        "UPDATE activities SET context_id = ? WHERE context_id = ?", (paper_id, link.item_id)
+        "UPDATE item_media SET item_id = :to WHERE item_id = :from AND (media_type != :pdf "
+        "OR NOT EXISTS (SELECT 1 FROM item_media WHERE item_id = :to AND media_type = :pdf))",
+        {"to": paper_id, "from": link.item_id, "pdf": SOURCE_PDF_MEDIA_TYPE},
     )
-    # Links: re-pointed at the paper, except a link between the two of them
-    for column in ("from_id", "to_id"):
-        conn.execute(
-            f"UPDATE OR IGNORE item_links SET {column} = ? WHERE {column} = ? "
-            "AND from_id + to_id - ? != ?",
-            (paper_id, link.item_id, link.item_id, paper_id),
-        )
-    conn.execute("UPDATE items SET parent_id = ? WHERE parent_id = ?", (paper_id, link.item_id))
-    if parent_id is not None:
-        conn.execute(
-            "UPDATE items SET parent_id = ? WHERE id = ? AND parent_id IS NULL",
-            (parent_id, paper_id),
-        )
 
     record = {
         "item_id": link.item_id,
-        "source_type": link.source_type,
+        "source_type": source_type,
         "url": url,
         "title": title,
         "created_at": str(created_at) if created_at else None,
@@ -135,6 +154,8 @@ def merge_link(
     merged = [m for m in paper_meta.get("merged_from", []) if m.get("item_id") != link.item_id]
     paper_meta["merged_from"] = [*merged, record]
     conn.execute("UPDATE items SET metadata = ? WHERE id = ?", (json.dumps(paper_meta), paper_id))
-    conn.execute("DELETE FROM items WHERE id = ?", (link.item_id,))
+    # Links, activities, children, tags, collections, people, mentions; then the link
+    # and its embedding are deleted
+    merge_item(conn, link.item_id, paper_id)
     conn.commit()
     return Merged(link.item_id, paper_id, imported.created)
