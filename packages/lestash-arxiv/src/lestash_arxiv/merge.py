@@ -199,8 +199,9 @@ def merge_link(
         if link_pdf:
             # The link holds the paper's own file. An annotation read from it is keyed
             # item-<link>:p<page>:<its id in the file>; the paper's twin has the same
-            # key under item-<paper>. The twin takes it, with anything of yours on it;
-            # an annotation without one moves below with the link's children
+            # key under item-<paper>. A twin with the same title and text takes it,
+            # with anything of yours on it. One edited or read differently (OCR) keeps
+            # its own text: it moves below with the link's children
             link_key, paper_key = f"item-{link.item_id}:", f"item-{paper_id}:"
             twins = conn.execute(
                 """
@@ -208,6 +209,7 @@ def merge_link(
                 JOIN items twin ON twin.source_type = a.source_type
                     AND twin.parent_id = :paper
                     AND twin.source_id = :paper_key || substr(a.source_id, :cut)
+                    AND twin.title IS a.title AND twin.content IS a.content
                 WHERE a.parent_id = :link AND a.source_type = :ann
                     AND substr(a.source_id, 1, :len) = :link_key
                 """,

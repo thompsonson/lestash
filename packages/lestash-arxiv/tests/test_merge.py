@@ -587,6 +587,8 @@ def test_annotations_read_from_the_same_file_are_not_doubled(config: Config) -> 
         twin_b = ann(held, "p0:A2")  # reads the same as A1
         link_b = ann(link, "p0:A2")
         alike = ann(link, "p3:A9")  # reads the same, but the paper has no p3:A9
+        ann(held, "p1:B1", "Margin note")
+        edited = ann(link, "p1:B1", "Margin note, as I corrected it")
         mine = _add(conn, "note", "n1", None, title="My note on it")
         conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (link_b, mine))
         (tag,) = conn.execute("INSERT INTO tags (name) VALUES ('keep') RETURNING id").fetchone()
@@ -605,3 +607,5 @@ def test_annotations_read_from_the_same_file_are_not_doubled(config: Config) -> 
         assert parent(mine) == twin_b
         assert conn.execute("SELECT item_id FROM item_tags").fetchone()[0] == twin_b
         assert parent(twin_a) == held and parent(alike) == held
+        # Its own text differs from its twin's: it keeps it, and moves
+        assert parent(edited) == held
