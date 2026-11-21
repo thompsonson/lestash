@@ -38,6 +38,8 @@ _STAMP = re.compile(
     r"arXiv:(\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7})v\d+\s+"
     r"(?:\[[a-z-]+(?:\.[A-Za-z-]+)?\]\s+)?\d{1,2}\s+[A-Z][a-z]{2}\s+\d{4}"
 )
+# Who links another file of a paper, such as your annotated copy, to the paper (#398)
+COPY_OF_PAPER_ORIGIN = "linker:arxiv"
 PDF_LIMIT = 100 * 1024 * 1024  # bytes; a paper with many figures is a few tens of MB
 TIMEOUT_S = 60
 USER_AGENT = "LeStash (personal knowledge base)"

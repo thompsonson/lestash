@@ -459,3 +459,68 @@ def test_a_links_readable_pdf_replaces_the_papers_gone_one(config: Config) -> No
         ).fetchall()
         assert [r[0] for r in rows] == ["s1/paper.pdf"]
         assert share.has_readable_pdf(conn, config, held)
+
+
+def _stored(config: Config, conn, item_id: int, rel: str, data: bytes) -> None:
+    from lestash.core.database import get_media_dir
+
+    path = get_media_dir(config) / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    conn.execute(
+        "INSERT INTO item_media (item_id, media_type, local_path) VALUES (?, 'source_pdf', ?)",
+        (item_id, rel),
+    )
+
+
+def test_a_links_pdf_that_comes_across_is_read(config: Config, monkeypatch) -> None:
+    read: list[tuple] = []
+
+    def enrich(item_id: int, *, config: Config, force: bool = False) -> EnrichmentResult:
+        read.append((item_id, force))
+        return EnrichmentResult(item_id=item_id, status="enriched")
+
+    monkeypatch.setattr("lestash.core.pdf_enrich.runner.enrich_item", enrich)
+    with get_connection(config) as conn:
+        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
+        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
+        _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 the paper")
+        conn.commit()
+        merged = merge_link(
+            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
+        )
+    assert merged is not None and merged.enriched == "enriched" and not merged.kept
+    assert read == [(held, True)]
+
+
+def test_a_link_with_its_own_copy_stays_linked(config: Config, monkeypatch) -> None:
+    """Your annotated copy isn't lost: the link stays, tied to the paper."""
+    with get_connection(config) as conn:
+        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
+        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
+        _stored(config, conn, held, "p/paper.pdf", b"%PDF-1.4 as arXiv served it")
+        _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 with my notes")
+        conn.commit()
+        merged = merge_link(
+            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
+        )
+        assert merged is not None and merged.kept
+        assert conn.execute("SELECT 1 FROM items WHERE id = ?", (link,)).fetchone()
+        kind = conn.execute(
+            "SELECT kind FROM item_links WHERE from_id = ? AND to_id = ?", (link, held)
+        ).fetchone()[0]
+        assert kind == "alternate_of"
+
+
+def test_a_link_with_the_same_file_merges(config: Config) -> None:
+    with get_connection(config) as conn:
+        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
+        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
+        _stored(config, conn, held, "p/paper.pdf", b"%PDF-1.4 the paper")
+        _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 the paper")
+        conn.commit()
+        merged = merge_link(
+            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
+        )
+        assert merged is not None and not merged.kept and merged.enriched is None
+        assert conn.execute("SELECT 1 FROM items WHERE id = ?", (link,)).fetchone() is None

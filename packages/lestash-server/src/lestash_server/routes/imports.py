@@ -324,10 +324,6 @@ def _held(conn, item) -> bool:
     )
 
 
-# A shared PDF of a paper held with another file: linked to the paper (#398)
-COPY_OF_PAPER_ORIGIN = "linker:arxiv"
-
-
 def _import_arxiv_pdf(
     data: bytes, filename: str, errors: list[str], parent_id: int | None
 ) -> tuple[ImportResponse | None, int | None]:
@@ -406,6 +402,8 @@ def _import_pdf(
         added = add_pdf(conn, get_config(), data, filename)
         _place(conn, added.item_id, parent_id, added.new)
         if copy_of is not None and copy_of != added.item_id:
+            from lestash_arxiv.share import COPY_OF_PAPER_ORIGIN
+
             # Another copy of a paper held: the same paper in two files
             conn.execute(
                 "INSERT OR IGNORE INTO item_links (from_id, to_id, kind, origin, status) "

@@ -281,9 +281,15 @@ class ArxivSource(SourcePlugin):
                         continue
                     if merged is None:
                         console.print(f"[yellow]skipped {label}: not found on arXiv[/yellow]")
+                    elif merged.kept:
+                        console.print(
+                            f"kept {label}: it holds its own copy of the PDF; "
+                            f"linked to item {merged.paper_id}"
+                        )
                     else:
                         made = "new" if merged.created else "held"
-                        console.print(f"merged {label} into item {merged.paper_id} ({made})")
+                        read = f", PDF {merged.enriched}" if merged.enriched else ""
+                        console.print(f"merged {label} into item {merged.paper_id} ({made}{read})")
             if not apply:
                 console.print(f"{len(links)} links; run with --apply to merge them.")
 

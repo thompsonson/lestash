@@ -17,11 +17,13 @@ from lestash.core.config import Config
 
 from lestash_arxiv.client import Paper, get_paper
 from lestash_arxiv.share import (
+    COPY_OF_PAPER_ORIGIN,
     _add_text,
     _metadata,
     arxiv_id_from_url,
     has_readable_pdf,
     import_paper,
+    source_pdf_sha256,
 )
 from lestash_arxiv.source import SOURCE_TYPE
 
@@ -42,6 +44,10 @@ class Merged:
     link_id: int
     paper_id: int
     created: bool  # the paper's arXiv item was made for this merge
+    # The link holds another copy of the PDF, such as your annotated one: it stays, and
+    # is linked to the paper with alternate_of instead
+    kept: bool = False
+    enriched: str | None = None  # the enricher's status, when the link's PDF came across
 
 
 def saved_links(conn: sqlite3.Connection) -> list[Link]:
@@ -94,7 +100,11 @@ def merge_link(
 ) -> Merged | None:
     """Move one saved link into its paper's arXiv item, then delete it. None if arXiv
     has no such paper; MergeError if the link is gone. Commits. ``config`` finds the
-    stored files."""
+    stored files.
+
+    A link holding a PDF other than the paper's stays, linked to the paper (``kept``).
+    A link's PDF the paper lacks comes across, and the paper is read from it.
+    """
     from lestash.core.pdf_enrich.persistence import SOURCE_PDF_MEDIA_TYPE
     from lestash.core.stubs import merge_item
 
@@ -123,6 +133,23 @@ def merge_link(
     if paper_id == link.item_id:
         raise MergeError(f"item {link.item_id} is the paper's own item")
 
+    link_pdf = has_readable_pdf(conn, config, link.item_id)
+    paper_pdf = has_readable_pdf(conn, config, paper_id)
+    if (
+        link_pdf
+        and paper_pdf
+        and source_pdf_sha256(conn, config, link.item_id)
+        != source_pdf_sha256(conn, config, paper_id)
+    ):
+        # Two files of the paper: the link keeps its own, tied to the paper
+        conn.execute(
+            "INSERT OR IGNORE INTO item_links (from_id, to_id, kind, origin, status) "
+            "VALUES (?, ?, 'alternate_of', ?, 'confirmed')",
+            (link.item_id, paper_id, COPY_OF_PAPER_ORIGIN),
+        )
+        conn.commit()
+        return Merged(link.item_id, paper_id, imported.created, kept=True)
+
     for key, text in (("notes", notes), ("shared_text", shared_text)):
         if text:
             _add_text(conn, paper_id, key, text)
@@ -148,9 +175,8 @@ def merge_link(
         conn.execute(
             f"UPDATE OR IGNORE {table} SET item_id = ? WHERE item_id = ?", (paper_id, link.item_id)
         )
-    if has_readable_pdf(conn, config, link.item_id) and not has_readable_pdf(
-        conn, config, paper_id
-    ):
+    pdf_moves = link_pdf and not paper_pdf
+    if pdf_moves:
         # The paper's stored file is gone: the link's readable one takes its place
         conn.execute(
             "DELETE FROM item_media WHERE item_id = ? AND media_type = ?",
@@ -178,4 +204,10 @@ def merge_link(
     # and its embedding are deleted
     merge_item(conn, link.item_id, paper_id)
     conn.commit()
-    return Merged(link.item_id, paper_id, imported.created)
+    enriched = None
+    if pdf_moves:
+        # The text read from it was the link's: the paper reads it now
+        from lestash.core.pdf_enrich import runner
+
+        enriched = runner.enrich_item(paper_id, config=config, force=True).status
+    return Merged(link.item_id, paper_id, imported.created, enriched=enriched)
