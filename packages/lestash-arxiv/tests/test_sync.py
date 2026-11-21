@@ -62,3 +62,12 @@ def test_sync_uses_the_callers_database_not_the_default(tmp_path: Path, monkeypa
     assert checked == [["2401.00001"]]  # its saved paper, checked for updates
     assert {i.source_id for i in items} == {"2401.00001", "2402.00002"}
     assert not paths.legacy_dir().exists() and not paths.data_dir().exists()
+
+
+def test_extract_arxiv_id_keeps_an_old_style_archive() -> None:
+    from lestash_arxiv.client import extract_arxiv_id, extract_version
+
+    assert extract_arxiv_id("http://arxiv.org/abs/hep-th/9901001v3") == "hep-th/9901001"
+    assert extract_arxiv_id("http://arxiv.org/abs/math.GT/0309136v1") == "math.GT/0309136"
+    assert extract_arxiv_id("http://arxiv.org/abs/1706.03762v7") == "1706.03762"
+    assert extract_version("http://arxiv.org/abs/hep-th/9901001v3") == 3

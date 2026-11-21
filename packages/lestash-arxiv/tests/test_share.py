@@ -230,3 +230,59 @@ def test_a_paper_keyed_with_the_old_prefix_is_found(config: Config) -> None:
         assert got is not None and not got.created and got.title == "Cited in the thesis"
         assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
         assert share.pdf_url_of(conn, got.item_id) == "https://arxiv.org/pdf/2406.11233"
+
+
+def test_an_old_style_paper_is_found_when_shared_again(config: Config) -> None:
+    """The id from the address matches the id the paper is stored under."""
+    from lestash_arxiv.client import extract_arxiv_id
+
+    old = _paper("hep-th/9901001")
+    old.arxiv_id = extract_arxiv_id("http://arxiv.org/abs/hep-th/9901001v3")
+    with get_connection(config) as conn:
+        first = share.import_paper(conn, "hep-th/9901001", fetch=lambda _: old)
+        assert first is not None and first.created
+        arxiv_id = share.arxiv_id_from_url("https://arxiv.org/abs/hep-th/9901001v3")
+        again = share.import_paper(conn, arxiv_id or "", fetch=lambda _: None)
+        assert again is not None and again.item_id == first.item_id and not again.created
+
+
+def test_what_came_with_the_share_is_kept(config: Config) -> None:
+    with get_connection(config) as conn:
+        got = share.import_paper(
+            conn,
+            "1602.05629",
+            shared={
+                "shared_text": "Look at this https://arxiv.org/abs/1602.05629",
+                "shared_title": None,
+            },
+            fetch=lambda _: _paper(),
+        )
+        assert got is not None
+        meta = _meta(conn, got.item_id)
+        assert meta["shared_text"] == "Look at this https://arxiv.org/abs/1602.05629"
+        assert "shared_title" not in meta
+        share.import_paper(
+            conn, "1602.05629", shared={"shared_title": "My title"}, fetch=lambda _: None
+        )
+        assert _meta(conn, got.item_id)["shared_title"] == "My title"
+
+
+def test_sync_reads_each_held_paper_when_it_is_yielded(config: Config, monkeypatch) -> None:
+    """A note added while the sync runs isn't overwritten by an older reading."""
+    with get_connection(config) as conn:
+        for arxiv_id in ("2401.00001", "2401.00002"):
+            share.import_paper(conn, arxiv_id, fetch=lambda i: _paper(i))
+    monkeypatch.setattr(arxiv_source, "get_papers", lambda ids: [_paper(i) for i in ids])
+    plugin = ArxivSource()
+    plugin.app_config = config
+    items = plugin.sync({})
+    next(items)
+    with get_connection(config) as conn:
+        conn.execute(
+            "UPDATE items SET metadata = json_set(metadata, '$.notes', 'Added during the sync') "
+            "WHERE source_id = '2401.00002'"
+        )
+        conn.commit()
+    second = next(items)
+    assert second.source_id == "2401.00002"
+    assert (second.metadata or {})["notes"] == "Added during the sync"

@@ -4,7 +4,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Iterator
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 import typer
 from lestash.core.config import as_list
@@ -47,14 +47,19 @@ def paper_to_item(paper: Paper) -> ItemCreate:
     )
 
 
-def keep_held(item: ItemCreate, held: dict[str, tuple[str | None, dict, bool]]) -> ItemCreate:
+class Held(NamedTuple):
+    content: str | None
+    metadata: dict
+    has_pdf: bool
+
+
+def keep_held(item: ItemCreate, stored: Held | None) -> ItemCreate:
     """A synced paper, keeping what LeStash added to the held one (#395).
 
     The held item's metadata keys that arXiv doesn't send stay, such as a shared
     paper's notes and abstract, and the PDF enricher's record. A paper with its source
     PDF keeps its text: the PDF's, not the abstract.
     """
-    stored = held.get(item.source_id) if item.source_id else None
     if stored is None:
         return item
     content, meta, has_pdf = stored
@@ -426,10 +431,9 @@ class ArxivSource(SourcePlugin):
         3. Update detection for tracked paper IDs
         """
         seen: set[str] = set()
-        held = self._held_papers()
 
         def keep(item: ItemCreate) -> ItemCreate:
-            return keep_held(item, held)
+            return keep_held(item, self._held_paper(item.source_id))
 
         # Phase 1: Legacy keywords from TOML config
         keywords = as_list(config.get("keywords"))
@@ -483,33 +487,36 @@ class ArxivSource(SourcePlugin):
                     seen.add(paper.arxiv_id)
                     yield keep(paper_to_item(paper))
 
-    def _held_papers(self) -> dict[str, tuple[str | None, dict, bool]]:
-        """Each held paper's text, metadata, and whether it has its source PDF."""
+    def _held_paper(self, source_id: str | None) -> Held | None:
+        """The held paper's text, metadata, and whether it has its source PDF, read
+        when the paper is yielded, so a note or PDF added during the sync is kept."""
+        if not source_id:
+            return None
         try:
             from lestash.core.database import get_connection
 
             with get_connection(self.app_config) as conn:
-                rows = conn.execute(
+                row = conn.execute(
                     """
-                    SELECT i.source_id, i.content, i.metadata,
+                    SELECT i.content, i.metadata,
                            EXISTS (SELECT 1 FROM item_media m WHERE m.item_id = i.id
                                    AND m.media_type = 'source_pdf'
                                    AND m.local_path IS NOT NULL)
-                    FROM items i WHERE i.source_type = ?
+                    FROM items i WHERE i.source_type = ? AND i.source_id = ?
                     """,
-                    (SOURCE_TYPE,),
-                ).fetchall()
+                    (SOURCE_TYPE, source_id),
+                ).fetchone()
         except Exception:
-            self.logger.warning("Could not read held papers from DB")
-            return {}
-        held: dict[str, tuple[str | None, dict, bool]] = {}
-        for source_id, content, raw, has_pdf in rows:
-            try:
-                meta = json.loads(raw) if raw else {}
-            except ValueError:
-                meta = {}
-            held[source_id] = (content, meta if isinstance(meta, dict) else {}, bool(has_pdf))
-        return held
+            self.logger.warning("Could not read held paper %s from DB", source_id)
+            return None
+        if row is None:
+            return None
+        content, raw, has_pdf = row
+        try:
+            meta = json.loads(raw) if raw else {}
+        except ValueError:
+            meta = {}
+        return Held(content, meta if isinstance(meta, dict) else {}, bool(has_pdf))
 
     def configure(self) -> dict:
         """Interactive configuration."""

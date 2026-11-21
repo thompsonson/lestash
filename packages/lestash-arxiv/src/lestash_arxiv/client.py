@@ -40,7 +40,13 @@ def extract_arxiv_id(entry_id: str) -> str:
     Examples:
         http://arxiv.org/abs/1706.03762v7 -> 1706.03762
         2301.00001v1 -> 2301.00001
+        http://arxiv.org/abs/hep-th/9901001v3 -> hep-th/9901001
     """
+    # An old-style id keeps its archive: hep-th/9901001 (#395)
+    old_style = re.search(r"([a-z-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?$", entry_id)
+    if old_style:
+        return old_style.group(1)
+
     # Remove URL prefix if present
     if "/" in entry_id:
         entry_id = entry_id.split("/")[-1]

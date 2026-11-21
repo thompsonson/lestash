@@ -11,7 +11,7 @@ import json
 import re
 import sqlite3
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -75,13 +75,13 @@ def _metadata(conn: sqlite3.Connection, item_id: int) -> dict[str, Any]:
         return {}
 
 
-def _add_note(conn: sqlite3.Connection, item_id: int, note: str) -> None:
-    """Keep a note shared with a paper already held, after any notes it has."""
+def _add_text(conn: sqlite3.Connection, item_id: int, key: str, text: str) -> None:
+    """Keep text shared with a paper already held, after any it has under ``key``."""
     meta = _metadata(conn, item_id)
-    notes = meta.get("notes")
-    if notes and note in notes:
+    held = meta.get(key)
+    if held and text in held:
         return
-    meta["notes"] = f"{notes}\n\n{note}" if notes else note
+    meta[key] = f"{held}\n\n{text}" if held else text
     conn.execute("UPDATE items SET metadata = ? WHERE id = ?", (json.dumps(meta), item_id))
 
 
@@ -90,16 +90,23 @@ def import_paper(
     arxiv_id: str,
     *,
     note: str | None = None,
+    shared: Mapping[str, str | None] | None = None,
     parent_id: int | None = None,
     fetch: Callable[[str], Paper | None] = get_paper,
 ) -> Imported | None:
     """Save the paper as its arXiv item, or reuse the one held. None if arXiv has no such
-    paper. Records the share on the Timeline and commits; the PDF is ``attach_pdf``'s."""
+    paper. Records the share on the Timeline and commits; the PDF is ``attach_pdf``'s.
+
+    ``shared`` is what came with the share, such as ``shared_text`` and
+    ``shared_title``; each is kept in the item's metadata, as a link's would be.
+    """
+    kept = {key: text for key, text in (shared or {}).items() if text}
     held = find_paper(conn, arxiv_id)
     if held is not None:
         # Shared again: a new time on the Timeline; a held paper stays where it is
-        if note:
-            _add_note(conn, held, note)
+        for key, text in ({"notes": note} | kept).items():
+            if text:
+                _add_text(conn, held, key, text)
         record_saved(conn, held)
         conn.commit()
         row = conn.execute("SELECT title FROM items WHERE id = ?", (held,)).fetchone()
@@ -111,7 +118,7 @@ def import_paper(
         return None
     item = paper_to_item(paper)
     # The enricher replaces the text with the PDF's, so the abstract is kept here
-    item.metadata = {**(item.metadata or {}), "abstract": paper.abstract}
+    item.metadata = {**(item.metadata or {}), "abstract": paper.abstract, **kept}
     if note:
         item.metadata["notes"] = note
     item.parent_id = parent_id

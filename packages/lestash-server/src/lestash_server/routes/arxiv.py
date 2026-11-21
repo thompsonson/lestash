@@ -16,6 +16,9 @@ class ImportPaperRequest(BaseModel):
 
     url: str
     note: str | None = None
+    # What came with the share, kept in the paper's metadata
+    shared_text: str | None = None
+    shared_title: str | None = None
     # A new paper goes under this item (+ Add → New link); one already held stays put
     parent_id: int | None = None
 
@@ -58,7 +61,13 @@ def import_paper(body: ImportPaperRequest, background: BackgroundTasks):
 
     try:
         with get_db() as conn:
-            imported = save_paper(conn, arxiv_id, note=body.note, parent_id=body.parent_id)
+            imported = save_paper(
+                conn,
+                arxiv_id,
+                note=body.note,
+                shared={"shared_text": body.shared_text, "shared_title": body.shared_title},
+                parent_id=body.parent_id,
+            )
     except Exception as e:
         logger.exception("Failed to import arXiv paper %s", arxiv_id)
         raise HTTPException(status_code=502, detail="arXiv could not be reached") from e

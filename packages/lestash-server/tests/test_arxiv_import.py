@@ -7,7 +7,7 @@ from lestash_arxiv.share import Imported
 def test_a_new_paper_is_saved_and_its_pdf_fetched(client, monkeypatch):
     calls: list[tuple] = []
 
-    def save(conn, arxiv_id, *, note=None, parent_id=None):
+    def save(conn, arxiv_id, *, note=None, shared=None, parent_id=None):
         calls.append(("save", arxiv_id, note, parent_id))
         return Imported(41, "A paper", created=True, has_pdf=False)
 
@@ -89,3 +89,18 @@ def test_arxiv_unreachable(client, monkeypatch):
         "/api/arxiv/import-paper", json={"url": "https://arxiv.org/abs/1602.05629"}
     )
     assert response.status_code == 502
+
+
+def test_the_shared_text_and_title_reach_the_paper(client, monkeypatch):
+    seen: dict = {}
+
+    def save(conn, arxiv_id, *, note=None, shared=None, parent_id=None):
+        seen.update(shared or {})
+        return Imported(1, "P", created=True, has_pdf=True)
+
+    monkeypatch.setattr(share, "import_paper", save)
+    client.post(
+        "/api/arxiv/import-paper",
+        json={"url": "https://arxiv.org/abs/1602.05629", "shared_text": "t", "shared_title": "T"},
+    )
+    assert seen == {"shared_text": "t", "shared_title": "T"}
