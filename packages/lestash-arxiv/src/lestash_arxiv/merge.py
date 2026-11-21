@@ -109,6 +109,7 @@ def merge_link(
     A link's PDF the paper lacks comes across, and the paper is read from it.
     """
     from lestash.core.pdf_enrich.persistence import (
+        ANNOTATION_SOURCE_TYPE,
         ENRICHER_ORIGIN,
         SOURCE_PDF_MEDIA_TYPE,
         SOURCE_PDF_VERSION_MEDIA_TYPE,
@@ -195,6 +196,14 @@ def merge_link(
             "UPDATE item_media SET item_id = ? WHERE item_id = ?", (paper_id, link.item_id)
         )
     else:
+        if link_pdf:
+            # The link holds the paper's own file: the annotations read from it are
+            # the paper's already. One with something filed under it still moves
+            conn.execute(
+                "DELETE FROM items WHERE parent_id = ? AND source_type = ? "
+                "AND NOT EXISTS (SELECT 1 FROM items c WHERE c.parent_id = items.id)",
+                (link.item_id, ANNOTATION_SOURCE_TYPE),
+            )
         # The paper keeps its own PDF and what was read from it; only the link's other
         # media come across
         conn.execute(
