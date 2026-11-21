@@ -89,22 +89,6 @@ def test_extract_pictures_renders_a_diagram_drawn_as_shapes(tmp_path):
     assert image.bbox == (90.0, 90.0, 310.0, 310.0)
 
 
-def test_extract_pictures_keeps_a_raster_image_as_stored(make_pdf, red_dot_png):
-    import pymupdf
-    from lestash.core.pdf_enrich.images import extract_pictures
-    from lestash.core.text_extract import PictureRegion
-
-    pdf = make_pdf([{"images": [((100, 100, 200, 200), red_dot_png)]}])
-    doc = pymupdf.open(pdf)
-    try:
-        stored = doc.extract_image(doc[0].get_images()[0][0])["image"]
-        images = extract_pictures(doc, [PictureRegion(0, (98.0, 98.0, 202.0, 202.0))])
-    finally:
-        doc.close()
-
-    assert [img.bytes_ for img in images] == [stored]
-
-
 def test_extract_pictures_keeps_each_picture_on_its_own_placeholder(tmp_path):
     """A picture with no position is skipped; the next keeps its own index."""
     import pymupdf
@@ -121,27 +105,6 @@ def test_extract_pictures_keeps_each_picture_on_its_own_placeholder(tmp_path):
         doc.close()
 
     assert [img.placeholder_index for img in images] == [2]
-
-
-def test_extract_pictures_renders_a_diagram_drawn_over_a_page_background(tmp_path, red_dot_png):
-    """A raster image much larger than the picture is not the picture."""
-    import pymupdf
-    from lestash.core.pdf_enrich.images import extract_pictures
-    from lestash.core.text_extract import PictureRegion
-
-    doc = pymupdf.open()
-    page = doc.new_page(width=612, height=792)
-    page.insert_image(page.rect, stream=red_dot_png)
-    page.draw_rect(pymupdf.Rect(100, 100, 300, 200), fill=(0, 0, 1))
-    try:
-        background = doc.extract_image(page.get_images()[0][0])["image"]
-        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 300.0, 200.0))])
-    finally:
-        doc.close()
-
-    assert len(images) == 1
-    assert images[0].bytes_ != background
-    assert images[0].mime_type == "image/png"
 
 
 def test_regions_fit_needs_a_usable_region_for_every_placeholder(tmp_path):
@@ -162,20 +125,62 @@ def test_regions_fit_needs_a_usable_region_for_every_placeholder(tmp_path):
         doc.close()
 
 
-def test_extract_pictures_renders_a_photo_with_labels_drawn_over_it(make_pdf, red_dot_png):
-    """A stored photo would lose the arrow drawn over it, so the region is rendered."""
+def _photo_png(size: int) -> bytes:
+    import pymupdf
+
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, size, size), False)
+    pix.set_rect(pix.irect, (200, 30, 30))
+    return pix.tobytes("png")
+
+
+def test_extract_pictures_renders_a_photo_at_its_own_resolution(make_pdf):
+    """A 400-pixel photo in a 100-point box is 288 dpi; the picture keeps that."""
     import pymupdf
     from lestash.core.pdf_enrich.images import extract_pictures
     from lestash.core.text_extract import PictureRegion
 
-    pdf = make_pdf([{"images": [((100, 100, 200, 200), red_dot_png)]}])
+    pdf = make_pdf([{"images": [((100, 100, 200, 200), _photo_png(400))]}])
     doc = pymupdf.open(pdf)
     try:
-        doc[0].draw_line(pymupdf.Point(110, 150), pymupdf.Point(190, 150), color=(0, 0, 0))
-        stored = doc.extract_image(doc[0].get_images()[0][0])["image"]
         images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 200.0, 200.0))])
     finally:
         doc.close()
 
     assert len(images) == 1
-    assert images[0].bytes_ != stored
+    assert images[0].mime_type == "image/jpeg"
+    assert pymupdf.Pixmap(images[0].bytes_).width == 400
+
+
+def test_extract_pictures_caps_the_resolution(make_pdf):
+    import pymupdf
+    from lestash.core.pdf_enrich.images import MAX_RENDER_DPI, extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    pdf = make_pdf([{"images": [((100, 100, 110, 110), _photo_png(400))]}])
+    doc = pymupdf.open(pdf)
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 110.0, 110.0))])
+    finally:
+        doc.close()
+
+    expected = round(10 * MAX_RENDER_DPI / 72)
+    assert abs(pymupdf.Pixmap(images[0].bytes_).width - expected) <= 1
+
+
+def test_extract_pictures_keeps_what_is_drawn_over_a_photo(make_pdf):
+    """An arrow drawn over a photo is in the picture, which a stored photo would lose."""
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    pdf = make_pdf([{"images": [((100, 100, 200, 200), _photo_png(100))]}])
+    doc = pymupdf.open(pdf)
+    region = [PictureRegion(0, (100.0, 100.0, 200.0, 200.0))]
+    try:
+        plain = extract_pictures(doc, region)[0].bytes_
+        doc[0].draw_line(pymupdf.Point(110, 150), pymupdf.Point(190, 150), width=4)
+        drawn = extract_pictures(doc, region)[0].bytes_
+    finally:
+        doc.close()
+
+    assert plain != drawn

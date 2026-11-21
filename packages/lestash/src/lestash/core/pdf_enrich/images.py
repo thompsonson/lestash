@@ -85,9 +85,8 @@ def extract_images(doc: pymupdf.Document) -> list[ExtractedImage]:
 # A picture is rendered at twice PDF resolution, so a diagram's small text stays legible
 RENDER_DPI = 144
 
-# A raster image is the picture when each covers this share of the other: the image
-# fills the region, and is no larger, so a page background never stands in for a diagram
-RASTER_COVER = 0.8
+# A photo inside a picture raises the resolution to its own, up to this
+MAX_RENDER_DPI = 300
 
 
 def extract_pictures(
@@ -95,9 +94,9 @@ def extract_pictures(
 ) -> list[ExtractedImage]:
     """Return one ExtractedImage per picture Docling found, by placeholder index.
 
-    A raster image that fills the picture's region is kept as stored. Anything
-    else, such as a diagram drawn as vector shapes, is rendered from the page,
-    so it is saved as a picture too (#391).
+    Each picture is rendered from its region of the page, so everything in it is
+    kept: shapes, text and any photos (#391). A picture holding a photo is
+    rendered at the photo's own resolution, as a JPEG; any other as a PNG.
     """
     images: list[ExtractedImage] = []
     for index, region in enumerate(regions):
@@ -105,11 +104,10 @@ def extract_pictures(
         if region is None or clip is None:
             continue
         page = doc[region.page]
-        stored = _raster_filling(doc, page, clip) if _only_an_image(page, clip) else None
-        if stored is not None:
-            data, ext = stored
-        else:
-            data, ext = page.get_pixmap(clip=clip, dpi=RENDER_DPI).tobytes("png"), "png"
+        photo_dpi = _photo_dpi(page, clip)
+        dpi = min(max(RENDER_DPI, photo_dpi or 0), MAX_RENDER_DPI)
+        ext = "jpeg" if photo_dpi is not None else "png"
+        data = page.get_pixmap(clip=clip, dpi=round(dpi)).tobytes(ext)
         images.append(
             ExtractedImage(
                 placeholder_index=index,
@@ -123,24 +121,20 @@ def extract_pictures(
     return images
 
 
-def _raster_filling(
-    doc: pymupdf.Document, page: pymupdf.Page, clip: pymupdf.Rect
-) -> tuple[bytes, str] | None:
-    """The stored bytes and extension of a raster image that fills `clip`, if any."""
+def _photo_dpi(page: pymupdf.Page, clip: pymupdf.Rect) -> float | None:
+    """The highest resolution of any raster image showing in `clip`, or None if none does."""
+    best: float | None = None
     for info in page.get_images(full=True):
-        xref = info[0]
+        xref, width_px = info[0], info[2]
         try:
             rects = page.get_image_rects(xref)
         except Exception:
             continue
-        if any(_same_place(rect, clip) for rect in rects):
-            try:
-                extracted = doc.extract_image(xref)
-            except Exception:
-                logger.exception("Failed to extract image xref=%s", xref)
-                return None
-            return extracted["image"], extracted.get("ext", "png")
-    return None
+        for rect in rects:
+            if rect.width > 0 and not (rect & clip).is_empty:
+                dpi = width_px / rect.width * 72
+                best = dpi if best is None else max(best, dpi)
+    return best
 
 
 def _clip(doc: pymupdf.Document, region: PictureRegion | None) -> pymupdf.Rect | None:
@@ -151,25 +145,6 @@ def _clip(doc: pymupdf.Document, region: PictureRegion | None) -> pymupdf.Rect |
         return None
     clip = pymupdf.Rect(region.bbox) & doc[region.page].rect
     return None if clip.is_empty else clip
-
-
-def _only_an_image(page: pymupdf.Page, clip: pymupdf.Rect) -> bool:
-    """True if no text or drawing lies in the region, so a stored image shows all of it.
-
-    Labels or arrows drawn over a photo would be lost from the photo's own bytes.
-    """
-    if page.get_text("words", clip=clip):
-        return False
-    # Compared edge by edge: a straight line's box has no area, so `&` would miss it
-    return not any(
-        r.x0 <= clip.x1 and r.x1 >= clip.x0 and r.y0 <= clip.y1 and r.y1 >= clip.y0
-        for r in (d["rect"] for d in page.get_drawings())
-    )
-
-
-def _same_place(rect: pymupdf.Rect, clip: pymupdf.Rect) -> bool:
-    overlap = (rect & clip).get_area()
-    return overlap >= RASTER_COVER * clip.get_area() and overlap >= RASTER_COVER * rect.get_area()
 
 
 def regions_fit(
