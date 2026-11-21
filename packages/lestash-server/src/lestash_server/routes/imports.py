@@ -324,14 +324,59 @@ def _held(conn, item) -> bool:
     )
 
 
+def _import_arxiv_pdf(
+    data: bytes, filename: str, errors: list[str], parent_id: int | None
+) -> ImportResponse | None:
+    """A shared arXiv paper's PDF: the paper's arXiv item, with this file as its source
+    PDF (#398). None if the file isn't an arXiv paper, or arXiv can't be reached, so
+    it is added as a plain PDF."""
+    try:
+        from lestash_arxiv.share import arxiv_id_from_pdf, attach_pdf, import_paper
+    except ImportError:
+        return None
+    arxiv_id = arxiv_id_from_pdf(data, filename)
+    if arxiv_id is None:
+        return None
+    try:
+        with get_db() as conn:
+            imported = import_paper(conn, arxiv_id, parent_id=parent_id)
+    except Exception:
+        logger.exception("Could not fetch arXiv paper %s; adding the PDF as it is", arxiv_id)
+        return None
+    if imported is None:
+        return None
+    if not imported.has_pdf:
+        try:
+            status = attach_pdf(imported.item_id, config=get_config(), data=data)
+            if status == "failed":
+                errors.append("enrich: the PDF could not be read")
+        except Exception as e:
+            logger.exception("Failed to store the PDF of arXiv item %d", imported.item_id)
+            errors.append(f"enrich: {e}")
+    return ImportResponse(
+        status="completed",
+        source_type="arxiv",
+        items_added=1 if imported.created else 0,
+        items_updated=0,
+        errors=errors,
+        item_id=imported.item_id,
+        items_held=0 if imported.created else 1,
+    )
+
+
 def _import_pdf(
     data: bytes, filename: str, errors: list[str], parent_id: int | None = None
 ) -> ImportResponse:
     """Import a PDF: extract markdown via Docling, save original as media.
 
-    A file already held is not added again (#338).
+    A file already held is not added again (#338). An arXiv paper becomes its arXiv
+    item instead (#398).
     """
     from lestash.core.pdfs import add_pdf
+
+    paper = _import_arxiv_pdf(data, filename, errors, parent_id)
+    if paper is not None:
+        return paper
 
     with get_db() as conn:
         added = add_pdf(conn, get_config(), data, filename)

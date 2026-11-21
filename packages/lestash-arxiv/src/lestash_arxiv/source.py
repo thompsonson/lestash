@@ -241,6 +241,87 @@ class ArxivSource(SourcePlugin):
             console.print(f"[green]Saved: {paper.title}[/green]")
             console.print(f"[dim]arXiv:{paper.arxiv_id}[/dim]")
 
+        @app.command("merge-links")
+        def merge_links_cmd(
+            apply: Annotated[
+                bool, typer.Option("--apply", help="Merge them; without it, only list them")
+            ] = False,
+            pause: Annotated[float, typer.Option(help="Seconds between arXiv requests")] = 3.0,
+        ) -> None:
+            """Merge saved links to arXiv papers into the papers' arXiv items (#398).
+
+            Each link's note, shared text, share date, links, collections and tags move
+            to the paper; then the link is deleted. Back up the database first.
+            """
+            import time
+
+            from lestash.core.config import Config
+            from lestash.core.database import get_connection
+
+            from lestash_arxiv.merge import merge_link, saved_links
+
+            with get_connection(Config.load()) as conn:
+                links = saved_links(conn)
+                if not links:
+                    console.print("No saved links to arXiv papers.")
+                    return
+                for n, link in enumerate(links):
+                    label = f"{link.item_id} ({link.source_type}) → arXiv {link.arxiv_id}"
+                    if not apply:
+                        console.print(f"would merge {label}: {link.title or ''}")
+                        continue
+                    if n:
+                        time.sleep(pause)  # arXiv answers 429 to quick requests
+                    try:
+                        merged = merge_link(conn, link)
+                    except Exception as e:
+                        conn.rollback()
+                        console.print(f"[red]failed {label}: {e}[/red]")
+                        continue
+                    if merged is None:
+                        console.print(f"[yellow]skipped {label}: not found on arXiv[/yellow]")
+                    else:
+                        made = "new" if merged.created else "held"
+                        console.print(f"merged {label} into item {merged.paper_id} ({made})")
+            if not apply:
+                console.print(f"{len(links)} links; run with --apply to merge them.")
+
+        @app.command("fetch-pdfs")
+        def fetch_pdfs_cmd(
+            apply: Annotated[
+                bool, typer.Option("--apply", help="Fetch them; without it, only list them")
+            ] = False,
+            limit: Annotated[int, typer.Option(help="At most this many papers")] = 0,
+            pause: Annotated[float, typer.Option(help="Seconds between downloads")] = 3.0,
+        ) -> None:
+            """Store the PDF of each arXiv item that lacks one, and read it (#398)."""
+            import time
+
+            from lestash.core.config import Config
+            from lestash.core.database import get_connection
+
+            from lestash_arxiv.share import attach_pdf, papers_without_pdf
+
+            config = Config.load()
+            with get_connection(config) as conn:
+                papers = papers_without_pdf(conn)
+            if limit:
+                papers = papers[:limit]
+            for n, (item_id, arxiv_id, title) in enumerate(papers):
+                if not apply:
+                    console.print(f"would fetch {item_id} arXiv {arxiv_id}: {title or ''}")
+                    continue
+                if n:
+                    time.sleep(pause)  # arXiv asks for a few seconds between requests
+                try:
+                    status = attach_pdf(item_id, config=config)
+                except Exception as e:
+                    console.print(f"[red]failed {item_id} arXiv {arxiv_id}: {e}[/red]")
+                    continue
+                console.print(f"{status} {item_id} arXiv {arxiv_id}: {title or ''}")
+            if not apply:
+                console.print(f"{len(papers)} papers; run with --apply to fetch them.")
+
         @app.command("track")
         def track_cmd(
             value: Annotated[str, typer.Argument(help="Search query or arXiv paper ID")],
