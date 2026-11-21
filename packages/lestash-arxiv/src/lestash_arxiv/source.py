@@ -17,6 +17,8 @@ from lestash_arxiv.client import Paper, get_paper, get_papers, search_papers
 
 console = Console()
 
+SOURCE_TYPE = "arxiv"
+
 
 def paper_to_item(paper: Paper) -> ItemCreate:
     """Convert Paper to ItemCreate."""
@@ -25,7 +27,7 @@ def paper_to_item(paper: Paper) -> ItemCreate:
         media = [MediaCreate(media_type="pdf", url=paper.pdf_url)]
 
     return ItemCreate(
-        source_type="arxiv",
+        source_type=SOURCE_TYPE,
         source_id=paper.arxiv_id,
         url=paper.url,
         title=paper.title,
@@ -43,6 +45,23 @@ def paper_to_item(paper: Paper) -> ItemCreate:
         },
         media=media,
     )
+
+
+def keep_held(item: ItemCreate, held: dict[str, tuple[str | None, dict, bool]]) -> ItemCreate:
+    """A synced paper, keeping what LeStash added to the held one (#395).
+
+    The held item's metadata keys that arXiv doesn't send stay, such as a shared
+    paper's notes and abstract, and the PDF enricher's record. A paper with its source
+    PDF keeps its text: the PDF's, not the abstract.
+    """
+    stored = held.get(item.source_id) if item.source_id else None
+    if stored is None:
+        return item
+    content, meta, has_pdf = stored
+    update: dict = {"metadata": {**meta, **(item.metadata or {})}}
+    if has_pdf and content:
+        update["content"] = content
+    return item.model_copy(update=update)
 
 
 def display_paper(paper: Paper, verbose: bool = False) -> None:
@@ -407,6 +426,10 @@ class ArxivSource(SourcePlugin):
         3. Update detection for tracked paper IDs
         """
         seen: set[str] = set()
+        held = self._held_papers()
+
+        def keep(item: ItemCreate) -> ItemCreate:
+            return keep_held(item, held)
 
         # Phase 1: Legacy keywords from TOML config
         keywords = as_list(config.get("keywords"))
@@ -417,7 +440,7 @@ class ArxivSource(SourcePlugin):
             for paper in papers:
                 if paper.arxiv_id not in seen:
                     seen.add(paper.arxiv_id)
-                    yield paper_to_item(paper)
+                    yield keep(paper_to_item(paper))
 
         # Phase 2+3: Tracked queries and papers from DB config
         try:
@@ -446,7 +469,7 @@ class ArxivSource(SourcePlugin):
             for paper in papers:
                 if paper.arxiv_id not in seen:
                     seen.add(paper.arxiv_id)
-                    yield paper_to_item(paper)
+                    yield keep(paper_to_item(paper))
 
         # Phase 3: Update detection for all saved papers (minus untracked)
         untracked = set(tracking.get("untracked_papers", []))
@@ -458,7 +481,35 @@ class ArxivSource(SourcePlugin):
             for paper in papers:
                 if paper.arxiv_id not in seen:
                     seen.add(paper.arxiv_id)
-                    yield paper_to_item(paper)
+                    yield keep(paper_to_item(paper))
+
+    def _held_papers(self) -> dict[str, tuple[str | None, dict, bool]]:
+        """Each held paper's text, metadata, and whether it has its source PDF."""
+        try:
+            from lestash.core.database import get_connection
+
+            with get_connection(self.app_config) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT i.source_id, i.content, i.metadata,
+                           EXISTS (SELECT 1 FROM item_media m WHERE m.item_id = i.id
+                                   AND m.media_type = 'source_pdf'
+                                   AND m.local_path IS NOT NULL)
+                    FROM items i WHERE i.source_type = ?
+                    """,
+                    (SOURCE_TYPE,),
+                ).fetchall()
+        except Exception:
+            self.logger.warning("Could not read held papers from DB")
+            return {}
+        held: dict[str, tuple[str | None, dict, bool]] = {}
+        for source_id, content, raw, has_pdf in rows:
+            try:
+                meta = json.loads(raw) if raw else {}
+            except ValueError:
+                meta = {}
+            held[source_id] = (content, meta if isinstance(meta, dict) else {}, bool(has_pdf))
+        return held
 
     def configure(self) -> dict:
         """Interactive configuration."""
