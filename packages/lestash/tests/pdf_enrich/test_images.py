@@ -327,3 +327,42 @@ def test_a_screenshot_stored_as_png_stays_a_png(make_pdf):
 
     assert images[0].mime_type == "image/png"
     assert pymupdf.Pixmap(images[0].bytes_).width == 400
+
+
+def test_a_small_photo_in_a_diagram_leaves_it_a_png(tmp_path):
+    """A JPEG thumbnail filling a fifth of a diagram doesn't make the diagram a JPEG."""
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    page.draw_rect(pymupdf.Rect(100, 100, 300, 300), color=(0, 0, 1))
+    page.insert_image(pymupdf.Rect(110, 110, 200, 200), stream=_photo_jpeg(400))
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 300.0, 300.0))])
+    finally:
+        doc.close()
+
+    assert images[0].mime_type == "image/png"
+
+
+def test_an_inline_jpeg_photo_is_a_jpeg(tmp_path):
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    jpeg = _photo_jpeg(400)
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    page.draw_rect(pymupdf.Rect(0, 0, 1, 1))  # gives the page a content stream
+    inline = b"\nq 100 0 0 100 100 592 cm BI /W 400 /H 400 /CS /RGB /BPC 8 /F /DCT ID "
+    xref = page.get_contents()[0]
+    doc.update_stream(xref, doc.xref_stream(xref) + inline + jpeg + b"\nEI Q\n")
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 200.0, 200.0))])
+    finally:
+        doc.close()
+
+    assert images[0].mime_type == "image/jpeg"
+    assert pymupdf.Pixmap(images[0].bytes_).width == 400

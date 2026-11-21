@@ -85,13 +85,16 @@ def extract_images(doc: pymupdf.Document) -> list[ExtractedImage]:
 # A picture is rendered at twice PDF resolution, so a diagram's small text stays legible
 RENDER_DPI = 144
 
-# A photo inside a picture raises the resolution to its own, up to this
+# An image inside a picture raises the resolution to its own, up to this
 MAX_RENDER_DPI = 300
 
-# A photo is part of a picture when this share of it lies inside the region...
+# An image is part of a picture when this share of its part on the page lies inside
+# the region, and it fills at least PHOTO_SHARE of the region
 PHOTO_INSIDE = 0.5
-# ...and it fills at least this share of the region
 PHOTO_SHARE = 0.1
+
+# A picture is a JPEG when images stored as JPEG cover this share of it
+JPEG_SHARE = 0.5
 
 
 def extract_pictures(
@@ -101,18 +104,21 @@ def extract_pictures(
 
     Each picture is rendered from its region of the page, so everything in it is
     kept: shapes, text and any images (#391). A picture holding an image is
-    rendered at the image's own resolution. It is a JPEG only if one of its images
-    was stored as a JPEG already, so a diagram, screenshot or chart stays a PNG.
+    rendered at the image's own resolution. It is a JPEG only when images stored
+    as JPEG cover most of it, so a diagram, screenshot or chart stays a PNG.
     """
     images: list[ExtractedImage] = []
+    blocks_by_page: dict[int, list[dict]] = {}
     for index, region in enumerate(regions):
         clip = _clip(doc, region)
         if region is None or clip is None:
             continue
         page = doc[region.page]
-        image_dpi, has_jpeg = _images_in(doc, page, clip)
+        if region.page not in blocks_by_page:
+            blocks_by_page[region.page] = _image_blocks(page)
+        image_dpi, jpeg_area = _images_in(blocks_by_page[region.page], page, clip)
         dpi = min(max(RENDER_DPI, image_dpi), MAX_RENDER_DPI)
-        ext = "jpeg" if has_jpeg else "png"
+        ext = "jpeg" if jpeg_area >= JPEG_SHARE * clip.get_area() else "png"
         data = page.get_pixmap(clip=clip, dpi=round(dpi)).tobytes(ext)
         images.append(
             ExtractedImage(
@@ -127,8 +133,18 @@ def extract_pictures(
     return images
 
 
-def _images_in(doc: pymupdf.Document, page: pymupdf.Page, clip: pymupdf.Rect) -> tuple[float, bool]:
-    """The highest resolution of the images that are part of `clip`, and whether one is a JPEG.
+def _image_blocks(page: pymupdf.Page) -> list[dict]:
+    """Every image drawn on the page, inline ones included, with its stored format."""
+    try:
+        return [b for b in page.get_text("dict")["blocks"] if b.get("type") == 1]
+    except Exception:
+        logger.exception("Could not list the images on page %d", page.number)
+        return []
+
+
+def _images_in(blocks: list[dict], page: pymupdf.Page, clip: pymupdf.Rect) -> tuple[float, float]:
+    """The highest resolution of the images that are part of `clip`, and the area
+    of `clip` that images stored as JPEG cover.
 
     An image is part of the picture when most of its part on the page lies inside
     the region and it fills a fair share of it, so a page background or a small
@@ -139,36 +155,24 @@ def _images_in(doc: pymupdf.Document, page: pymupdf.Page, clip: pymupdf.Rect) ->
 
     import pymupdf
 
-    best, has_jpeg = 0.0, False
-    # get_image_info lists inline images too, which get_images (by xref) misses
-    for info in page.get_image_info(xrefs=True):
-        rect, matrix = pymupdf.Rect(info["bbox"]), pymupdf.Matrix(info["transform"])
-        shown = rect & page.rect
+    best, jpeg_area = 0.0, 0.0
+    for block in blocks:
+        shown = pymupdf.Rect(block["bbox"]) & page.rect
         inside = (shown & clip).get_area()
         if shown.is_empty or inside < PHOTO_INSIDE * shown.get_area():
             continue
         if inside < PHOTO_SHARE * clip.get_area():
             continue
-        # The matrix maps the photo's unit square onto the page, so each of its
+        # The matrix maps the image's unit square onto the page, so each of its
         # axes' length in points holds, whatever the rotation or scaling
+        matrix = pymupdf.Matrix(block["transform"])
         x_points, y_points = math.hypot(matrix.a, matrix.b), math.hypot(matrix.c, matrix.d)
         if x_points == 0 or y_points == 0:
             continue
-        dpi = max(info["width"] / x_points, info["height"] / y_points) * 72
-        best = max(best, dpi)
-        has_jpeg = has_jpeg or _stored_as_jpeg(doc, info.get("xref", 0))
-    return best, has_jpeg
-
-
-def _stored_as_jpeg(doc: pymupdf.Document, xref: int) -> bool:
-    """True if the image's stream is JPEG (DCT) or JPEG 2000 data. An inline image is not."""
-    if xref <= 0:
-        return False
-    try:
-        kind, value = doc.xref_get_key(xref, "Filter")
-    except Exception:
-        return False
-    return kind != "null" and ("DCTDecode" in value or "JPXDecode" in value)
+        best = max(best, max(block["width"] / x_points, block["height"] / y_points) * 72)
+        if block.get("ext") in ("jpeg", "jpx"):
+            jpeg_area += inside
+    return best, jpeg_area
 
 
 def _clip(doc: pymupdf.Document, region: PictureRegion | None) -> pymupdf.Rect | None:
