@@ -101,11 +101,8 @@ def has_source_pdf(conn: sqlite3.Connection, item_id: int) -> bool:
     return row is not None
 
 
-def source_pdf_sha256(conn: sqlite3.Connection, config: Config, item_id: int) -> str | None:
-    """The SHA-256 of the item's stored source PDF, or None if it has none to read:
-    no row, or a file gone from both the store and the media folder."""
-    import hashlib
-
+def _source_pdf_file(conn: sqlite3.Connection, config: Config, item_id: int) -> Any:
+    """The item's stored source PDF row and file: (row, path), path None if gone."""
     from lestash.core.blobs import media_file
     from lestash.core.pdf_enrich.persistence import SOURCE_PDF_MEDIA_TYPE
 
@@ -115,8 +112,21 @@ def source_pdf_sha256(conn: sqlite3.Connection, config: Config, item_id: int) ->
         (item_id, SOURCE_PDF_MEDIA_TYPE),
     ).fetchone()
     if row is None:
-        return None
-    path = media_file({"local_path": row[0], "sha256": row[1]}, config)
+        return None, None
+    return row, media_file({"local_path": row[0], "sha256": row[1]}, config)
+
+
+def has_readable_pdf(conn: sqlite3.Connection, config: Config, item_id: int) -> bool:
+    """True if the item's stored source PDF is there to read. Doesn't read it."""
+    return _source_pdf_file(conn, config, item_id)[1] is not None
+
+
+def source_pdf_sha256(conn: sqlite3.Connection, config: Config, item_id: int) -> str | None:
+    """The SHA-256 of the item's stored source PDF, or None if it has none to read:
+    no row, or a file gone from both the store and the media folder."""
+    import hashlib
+
+    row, path = _source_pdf_file(conn, config, item_id)
     if path is None:
         return None
     return str(row[1]) if row[1] else hashlib.sha256(path.read_bytes()).hexdigest()
@@ -202,7 +212,7 @@ def papers_without_pdf(
     return [
         (r[0], r[1].removeprefix("arxiv:"), r[2])
         for r in rows
-        if source_pdf_sha256(conn, config, r[0]) is None
+        if not has_readable_pdf(conn, config, r[0])
     ]
 
 
@@ -246,7 +256,7 @@ def attach_pdf(
 
     with get_connection(config) as conn:
         # A stored PDF that can't be read is replaced, as if there were none
-        if source_pdf_sha256(conn, config, item_id) is not None:
+        if has_readable_pdf(conn, config, item_id):
             return "held"
         url = pdf_url_of(conn, item_id)
         row = conn.execute("SELECT source_id FROM items WHERE id = ?", (item_id,)).fetchone()

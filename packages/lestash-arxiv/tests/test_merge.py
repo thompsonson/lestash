@@ -222,6 +222,7 @@ def test_a_share_moves_into_a_new_paper(config: Config) -> None:
             conn,
             Link(share_id, "share", "2603.15401", "2603.15401v1.pdf"),
             fetch=lambda _: _paper(),
+            config=config,
         )
         assert merged is not None and merged.created
         paper = merged.paper_id
@@ -274,7 +275,10 @@ def test_a_page_moves_into_the_paper_already_held(config: Config) -> None:
             )
         conn.commit()
         merged = merge_link(
-            conn, Link(page, "web", "2512.20660", "[2512.20660] Dual-State"), fetch=no_fetch
+            conn,
+            Link(page, "web", "2512.20660", "[2512.20660] Dual-State"),
+            fetch=no_fetch,
+            config=config,
         )
         assert merged is not None and merged.paper_id == held and not merged.created
         links = conn.execute("SELECT from_id, to_id FROM item_links ORDER BY from_id").fetchall()
@@ -292,7 +296,9 @@ def test_a_saved_pages_text_is_not_copied(config: Config) -> None:
             conn, "web", "w1", "https://arxiv.org/abs/2603.15401", content="The whole page " * 500
         )
         conn.commit()
-        merged = merge_link(conn, Link(page, "web", "2603.15401", None), fetch=lambda _: _paper())
+        merged = merge_link(
+            conn, Link(page, "web", "2603.15401", None), fetch=lambda _: _paper(), config=config
+        )
         assert merged is not None
         assert "shared_text" not in _meta(conn, merged.paper_id)
 
@@ -306,7 +312,9 @@ def test_a_paper_filed_under_its_link_moves_up(config: Config) -> None:
         conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (top, link))
         conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (link, held))
         conn.commit()
-        merge_link(conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None)
+        merge_link(
+            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
+        )
         assert (
             conn.execute("SELECT parent_id FROM items WHERE id = ?", (held,)).fetchone()[0] == top
         )
@@ -320,7 +328,9 @@ def test_a_link_under_the_papers_own_child_does_not_loop(config: Config) -> None
         conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (held, note))
         conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (note, link))
         conn.commit()
-        merge_link(conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None)
+        merge_link(
+            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
+        )
         assert (
             conn.execute("SELECT parent_id FROM items WHERE id = ?", (held,)).fetchone()[0] is None
         )
@@ -337,7 +347,9 @@ def test_a_links_media_come_across(config: Config) -> None:
             (link,),
         )
         conn.commit()
-        merged = merge_link(conn, Link(link, "share", "2603.15401", None), fetch=lambda _: _paper())
+        merged = merge_link(
+            conn, Link(link, "share", "2603.15401", None), fetch=lambda _: _paper(), config=config
+        )
         assert merged is not None
         kinds = conn.execute(
             "SELECT media_type FROM item_media WHERE item_id = ? ORDER BY media_type",
@@ -348,7 +360,9 @@ def test_a_links_media_come_across(config: Config) -> None:
 
 def test_a_link_that_is_gone(config: Config) -> None:
     with get_connection(config) as conn, pytest.raises(MergeError, match="no longer exists"):
-        merge_link(conn, Link(99999, "share", "2603.15401", None), fetch=lambda _: _paper())
+        merge_link(
+            conn, Link(99999, "share", "2603.15401", None), fetch=lambda _: _paper(), config=config
+        )
 
 
 def test_a_paper_arxiv_does_not_have_leaves_the_link(config: Config) -> None:
@@ -356,7 +370,10 @@ def test_a_paper_arxiv_does_not_have_leaves_the_link(config: Config) -> None:
         link = _add(conn, "share", "s1", "https://arxiv.org/abs/9999.99999")
         conn.commit()
         assert (
-            merge_link(conn, Link(link, "share", "9999.99999", None), fetch=lambda _: None) is None
+            merge_link(
+                conn, Link(link, "share", "9999.99999", None), fetch=lambda _: None, config=config
+            )
+            is None
         )
         assert conn.execute("SELECT 1 FROM items WHERE id = ?", (link,)).fetchone()
 
@@ -369,7 +386,9 @@ def test_a_paper_further_down_under_its_link_does_not_loop(config: Config) -> No
         conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (link, note))
         conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (note, held))
         conn.commit()
-        merge_link(conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None)
+        merge_link(
+            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
+        )
         assert (
             conn.execute("SELECT parent_id FROM items WHERE id = ?", (held,)).fetchone()[0] is None
         )
@@ -413,3 +432,30 @@ def test_a_stored_blob_that_is_gone_counts_as_no_pdf(config: Config) -> None:
         conn.commit()
         assert share.source_pdf_sha256(conn, config, got.item_id) is None
         assert [p[0] for p in share.papers_without_pdf(conn, config)] == [got.item_id]
+
+
+def test_a_links_readable_pdf_replaces_the_papers_gone_one(config: Config) -> None:
+    from lestash.core.database import get_media_dir
+
+    with get_connection(config) as conn:
+        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
+        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
+        path = get_media_dir(config) / "s1" / "paper.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF-1.4 the link's copy")
+        for item_id, rel in ((held, "gone/paper.pdf"), (link, "s1/paper.pdf")):
+            conn.execute(
+                "INSERT INTO item_media (item_id, media_type, local_path) "
+                "VALUES (?, 'source_pdf', ?)",
+                (item_id, rel),
+            )
+        conn.commit()
+        merge_link(
+            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
+        )
+        rows = conn.execute(
+            "SELECT local_path FROM item_media WHERE item_id = ? AND media_type = 'source_pdf'",
+            (held,),
+        ).fetchall()
+        assert [r[0] for r in rows] == ["s1/paper.pdf"]
+        assert share.has_readable_pdf(conn, config, held)

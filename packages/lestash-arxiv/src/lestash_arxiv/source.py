@@ -260,7 +260,8 @@ class ArxivSource(SourcePlugin):
 
             from lestash_arxiv.merge import merge_link, saved_links
 
-            with get_connection(Config.load()) as conn:
+            config = Config.load()
+            with get_connection(config) as conn:
                 links = saved_links(conn)
                 if not links:
                     console.print("No saved links to arXiv papers.")
@@ -273,7 +274,7 @@ class ArxivSource(SourcePlugin):
                     if n:
                         time.sleep(pause)  # arXiv answers 429 to quick requests
                     try:
-                        merged = merge_link(conn, link)
+                        merged = merge_link(conn, link, config=config)
                     except Exception as e:
                         conn.rollback()
                         console.print(f"[red]failed {label}: {e}[/red]")

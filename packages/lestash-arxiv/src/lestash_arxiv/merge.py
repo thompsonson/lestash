@@ -13,8 +13,16 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from lestash.core.config import Config
+
 from lestash_arxiv.client import Paper, get_paper
-from lestash_arxiv.share import _add_text, _metadata, arxiv_id_from_url, import_paper
+from lestash_arxiv.share import (
+    _add_text,
+    _metadata,
+    arxiv_id_from_url,
+    has_readable_pdf,
+    import_paper,
+)
 from lestash_arxiv.source import SOURCE_TYPE
 
 # Rows of an item that merge_item leaves; a row the paper already has stays its own
@@ -81,10 +89,12 @@ def merge_link(
     conn: sqlite3.Connection,
     link: Link,
     *,
+    config: Config,
     fetch: Callable[[str], Paper | None] = get_paper,
 ) -> Merged | None:
     """Move one saved link into its paper's arXiv item, then delete it. None if arXiv
-    has no such paper; MergeError if the link is gone. Commits."""
+    has no such paper; MergeError if the link is gone. Commits. ``config`` finds the
+    stored files."""
     from lestash.core.pdf_enrich.persistence import SOURCE_PDF_MEDIA_TYPE
     from lestash.core.stubs import merge_item
 
@@ -137,6 +147,14 @@ def merge_link(
     for table in _MOVED:
         conn.execute(
             f"UPDATE OR IGNORE {table} SET item_id = ? WHERE item_id = ?", (paper_id, link.item_id)
+        )
+    if has_readable_pdf(conn, config, link.item_id) and not has_readable_pdf(
+        conn, config, paper_id
+    ):
+        # The paper's stored file is gone: the link's readable one takes its place
+        conn.execute(
+            "DELETE FROM item_media WHERE item_id = ? AND media_type = ?",
+            (paper_id, SOURCE_PDF_MEDIA_TYPE),
         )
     conn.execute(
         "UPDATE item_media SET item_id = :to WHERE item_id = :from AND (media_type != :pdf "
