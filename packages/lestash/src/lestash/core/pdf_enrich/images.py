@@ -110,15 +110,16 @@ def extract_pictures(
     as JPEG cover most of it, so a diagram, screenshot or chart stays a PNG.
     """
     images: list[ExtractedImage] = []
-    blocks_by_page: dict[int, list[dict]] = {}
+    # Docling's pictures come in page order, so one page's image list is kept at a time
+    blocks_page, blocks = -1, []
     for index, region in enumerate(regions):
         clip = _clip(doc, region)
         if region is None or clip is None:
             continue
         page = doc[region.page]
-        if region.page not in blocks_by_page:
-            blocks_by_page[region.page] = _image_blocks(page)
-        image_dpi, jpeg_area = _images_in(blocks_by_page[region.page], page, clip)
+        if region.page != blocks_page:
+            blocks_page, blocks = region.page, _image_blocks(page)
+        image_dpi, jpeg_area = _images_in(blocks, page, clip)
         dpi = min(max(RENDER_DPI, image_dpi), MAX_RENDER_DPI)
         ext = "jpeg" if jpeg_area >= JPEG_SHARE * clip.get_area() else "png"
         data = page.get_pixmap(clip=clip, dpi=round(dpi)).tobytes(ext)
@@ -136,9 +137,17 @@ def extract_pictures(
 
 
 def _image_blocks(page: pymupdf.Page) -> list[dict]:
-    """Every image drawn on the page, inline ones included, with its stored format."""
+    """Every image drawn on the page, inline ones included, with its stored format.
+
+    Only the fields measured are kept; each block's image data is dropped at once.
+    """
+    keep = ("bbox", "transform", "width", "height", "ext")
     try:
-        return [b for b in page.get_text("dict")["blocks"] if b.get("type") == 1]
+        return [
+            {key: b.get(key) for key in keep}
+            for b in page.get_text("dict")["blocks"]
+            if b.get("type") == 1
+        ]
     except Exception:
         logger.exception("Could not list the images on page %d", page.number)
         return []

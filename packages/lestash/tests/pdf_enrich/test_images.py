@@ -453,3 +453,18 @@ def test_a_photo_on_a_rotated_page_is_found_where_it_shows():
 
     assert images[0].mime_type == "image/jpeg"
     assert red[0] > 150 and red[1] < 100
+
+
+def test_image_blocks_keep_no_image_data(make_pdf):
+    import pymupdf
+    from lestash.core.pdf_enrich.images import _image_blocks
+
+    pdf = make_pdf([{"images": [((100, 100, 200, 200), _photo_jpeg(400))]}])
+    doc = pymupdf.open(pdf)
+    try:
+        blocks = _image_blocks(doc[0])
+    finally:
+        doc.close()
+
+    assert len(blocks) == 1
+    assert set(blocks[0]) == {"bbox", "transform", "width", "height", "ext"}
