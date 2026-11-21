@@ -63,7 +63,7 @@ def _saves(conn, item_id: int) -> int:
         ("https://export.arxiv.org/abs/2401.12345#top", "2401.12345"),
         ("https://arxiv.org/html/2401.12345v1/", "2401.12345"),
         ("https://arxiv.org/abs/hep-th/9901001v3", "hep-th/9901001"),
-        ("https://arxiv.org/abs/math.GT/0309136", "math.GT/0309136"),
+        ("https://arxiv.org/abs/math.GT/0309136", "math/0309136"),
         ("  https://arxiv.org/abs/1602.05629 ", "1602.05629"),
         ("https://arxiv.org/list/cs.LG/recent", None),
         ("https://example.com/abs/1602.05629", None),
@@ -290,7 +290,7 @@ def test_sync_reads_each_held_paper_when_it_is_yielded(config: Config, monkeypat
 
 def test_an_old_style_id_is_read_in_arxivs_case() -> None:
     assert share.arxiv_id_from_url("https://arxiv.org/abs/HEP-TH/9901001") == "hep-th/9901001"
-    assert share.arxiv_id_from_url("https://arxiv.org/abs/MATH.gt/0309136") == "math.GT/0309136"
+    assert share.arxiv_id_from_url("https://arxiv.org/abs/MATH.gt/0309136") == "math/0309136"
 
 
 def test_a_paper_stored_under_a_bare_number_is_rekeyed(config: Config) -> None:
@@ -316,3 +316,16 @@ def test_a_held_paper_added_under_an_item_keeps_its_notes(config: Config) -> Non
         )
         meta = _meta(conn, first.item_id)
         assert meta["notes"] == "Mine" and "shared_title" not in meta
+
+
+def test_an_address_with_a_subject_class_finds_the_paper(config: Config) -> None:
+    """arXiv keys math.GT/0309136 as math/0309136; a re-share must find it."""
+    from lestash_arxiv.client import extract_arxiv_id
+
+    paper = _paper(extract_arxiv_id("http://arxiv.org/abs/math/0309136v1"))
+    with get_connection(config) as conn:
+        first = share.import_paper(conn, "math/0309136", fetch=lambda _: paper)
+        arxiv_id = share.arxiv_id_from_url("https://arxiv.org/abs/math.GT/0309136v1")
+        again = share.import_paper(conn, arxiv_id or "", fetch=lambda _: None)
+        assert first is not None and again is not None
+        assert again.item_id == first.item_id and not again.created
