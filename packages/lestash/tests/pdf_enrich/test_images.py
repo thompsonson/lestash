@@ -259,3 +259,29 @@ def test_an_unevenly_scaled_photo_takes_its_finer_axis(tmp_path):
         doc.close()
 
     assert pymupdf.Pixmap(images[0].bytes_).width == 400  # 100 points at 288 dpi
+
+
+def test_an_inline_photo_counts(tmp_path):
+    """An image written into the page's content (BI … ID … EI) has no xref, but counts."""
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    page.draw_rect(pymupdf.Rect(0, 0, 1, 1))  # gives the page a content stream
+    pixels = bytes([200, 30, 30]) * (400 * 400)
+    # 400 pixels across 100 points, at (100, 100)-(200, 200) from the top-left: 288 dpi
+    inline = (
+        b"\nq 100 0 0 100 100 592 cm BI /W 400 /H 400 /CS /RGB /BPC 8 ID " + pixels + b"\nEI Q\n"
+    )
+    xref = page.get_contents()[0]
+    doc.update_stream(xref, doc.xref_stream(xref) + inline)
+    try:
+        assert doc[0].get_images() == []
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 200.0, 200.0))])
+    finally:
+        doc.close()
+
+    assert images[0].mime_type == "image/jpeg"
+    assert pymupdf.Pixmap(images[0].bytes_).width == 400

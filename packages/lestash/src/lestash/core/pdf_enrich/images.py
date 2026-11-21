@@ -136,27 +136,25 @@ def _photo_dpi(page: pymupdf.Page, clip: pymupdf.Rect) -> float | None:
     """
     import math
 
+    import pymupdf
+
     best: float | None = None
-    for info in page.get_images(full=True):
-        xref, width_px, height_px = info[0], info[2], info[3]
-        try:
-            placements = page.get_image_rects(xref, transform=True)
-        except Exception:
+    # get_image_info lists inline images too, which get_images (by xref) misses
+    for info in page.get_image_info():
+        rect, matrix = pymupdf.Rect(info["bbox"]), pymupdf.Matrix(info["transform"])
+        shown = rect & page.rect
+        inside = (shown & clip).get_area()
+        if shown.is_empty or inside < PHOTO_INSIDE * shown.get_area():
             continue
-        for rect, matrix in placements:
-            shown = rect & page.rect
-            inside = (shown & clip).get_area()
-            if shown.is_empty or inside < PHOTO_INSIDE * shown.get_area():
-                continue
-            if inside < PHOTO_SHARE * clip.get_area():
-                continue
-            # The matrix maps the photo's unit square onto the page, so each of its
-            # axes' length in points holds, whatever the rotation or scaling
-            x_points, y_points = math.hypot(matrix.a, matrix.b), math.hypot(matrix.c, matrix.d)
-            if x_points == 0 or y_points == 0:
-                continue
-            dpi = max(width_px / x_points, height_px / y_points) * 72
-            best = dpi if best is None else max(best, dpi)
+        if inside < PHOTO_SHARE * clip.get_area():
+            continue
+        # The matrix maps the photo's unit square onto the page, so each of its
+        # axes' length in points holds, whatever the rotation or scaling
+        x_points, y_points = math.hypot(matrix.a, matrix.b), math.hypot(matrix.c, matrix.d)
+        if x_points == 0 or y_points == 0:
+            continue
+        dpi = max(info["width"] / x_points, info["height"] / y_points) * 72
+        best = dpi if best is None else max(best, dpi)
     return best
 
 
