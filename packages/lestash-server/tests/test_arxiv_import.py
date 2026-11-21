@@ -109,12 +109,23 @@ def test_the_shared_text_and_title_reach_the_paper(client, monkeypatch):
 # A shared arXiv PDF file becomes the paper (#398)
 
 
-def _upload(client, name: str = "2603.15401v1.pdf"):
+def _stamped_pdf() -> bytes:
+    import pymupdf
+
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), "arXiv:2603.15401v1  [cs.AI]  2 Apr 2026")
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+PAPER_PDF = _stamped_pdf()
+
+
+def _upload(client, name: str = "2603.15401v1.pdf", data: bytes = PAPER_PDF):
     import io
 
-    return client.post(
-        "/api/import", files={"file": (name, io.BytesIO(b"%PDF-1.4 a paper"), "application/pdf")}
-    )
+    return client.post("/api/import", files={"file": (name, io.BytesIO(data), "application/pdf")})
 
 
 def test_a_shared_arxiv_pdf_becomes_the_paper(client, monkeypatch):
@@ -135,7 +146,7 @@ def test_a_shared_arxiv_pdf_becomes_the_paper(client, monkeypatch):
     body = response.json()
     assert (body["source_type"], body["item_id"], body["items_added"]) == ("arxiv", 41, 1)
     # The shared file is the source PDF: not downloaded again
-    assert calls == [("save", "2603.15401", None), ("pdf", 41, b"%PDF-1.4 a paper")]
+    assert calls == [("save", "2603.15401", None), ("pdf", 41, PAPER_PDF)]
 
 
 def test_a_held_paper_with_its_pdf_is_returned(client, monkeypatch):
@@ -171,5 +182,5 @@ def test_a_pdf_that_is_not_from_arxiv_is_a_pdf(client, monkeypatch):
 
     monkeypatch.setattr(share, "import_paper", save)
     with patch("lestash.core.text_extract.convert_to_markdown", return_value="# Report"):
-        body = _upload(client, "report.pdf").json()
+        body = _upload(client, "report.pdf", b"%PDF-1.4 a report").json()
     assert body["source_type"] == "pdf"
