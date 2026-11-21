@@ -100,8 +100,9 @@ def extract_pictures(
     """Return one ExtractedImage per picture Docling found, by placeholder index.
 
     Each picture is rendered from its region of the page, so everything in it is
-    kept: shapes, text and any photos (#391). A picture holding a photo is
-    rendered at the photo's own resolution, as a JPEG; any other as a PNG.
+    kept: shapes, text and any images (#391). A picture holding an image is
+    rendered at the image's own resolution. It is a JPEG if one of its images is
+    a photo, and a PNG otherwise, as for a diagram or black-and-white line art.
     """
     images: list[ExtractedImage] = []
     for index, region in enumerate(regions):
@@ -109,9 +110,9 @@ def extract_pictures(
         if region is None or clip is None:
             continue
         page = doc[region.page]
-        photo_dpi = _photo_dpi(page, clip)
-        dpi = min(max(RENDER_DPI, photo_dpi or 0), MAX_RENDER_DPI)
-        ext = "jpeg" if photo_dpi is not None else "png"
+        image_dpi, has_photo = _images_in(page, clip)
+        dpi = min(max(RENDER_DPI, image_dpi), MAX_RENDER_DPI)
+        ext = "jpeg" if has_photo else "png"
         data = page.get_pixmap(clip=clip, dpi=round(dpi)).tobytes(ext)
         images.append(
             ExtractedImage(
@@ -126,19 +127,20 @@ def extract_pictures(
     return images
 
 
-def _photo_dpi(page: pymupdf.Page, clip: pymupdf.Rect) -> float | None:
-    """The highest resolution of any photo that is part of `clip`, or None if none is.
+def _images_in(page: pymupdf.Page, clip: pymupdf.Rect) -> tuple[float, bool]:
+    """The highest resolution of the images that are part of `clip`, and whether one is a photo.
 
-    A photo is part of the picture when most of its part on the page lies inside
+    An image is part of the picture when most of its part on the page lies inside
     the region and it fills a fair share of it, so a page background or a small
-    icon doesn't count. A photo cropped by a clipping path is measured by its
-    whole placement, which PyMuPDF reports; see #393.
+    icon doesn't count. An image cropped by a clipping path is measured by its
+    whole placement, which PyMuPDF reports; see #393. A 1-bit image, such as a
+    stencil mask or scanned line art, is not a photo.
     """
     import math
 
     import pymupdf
 
-    best: float | None = None
+    best, has_photo = 0.0, False
     # get_image_info lists inline images too, which get_images (by xref) misses
     for info in page.get_image_info():
         rect, matrix = pymupdf.Rect(info["bbox"]), pymupdf.Matrix(info["transform"])
@@ -154,8 +156,9 @@ def _photo_dpi(page: pymupdf.Page, clip: pymupdf.Rect) -> float | None:
         if x_points == 0 or y_points == 0:
             continue
         dpi = max(info["width"] / x_points, info["height"] / y_points) * 72
-        best = dpi if best is None else max(best, dpi)
-    return best
+        best = max(best, dpi)
+        has_photo = has_photo or info["bpc"] > 1
+    return best, has_photo
 
 
 def _clip(doc: pymupdf.Document, region: PictureRegion | None) -> pymupdf.Rect | None:

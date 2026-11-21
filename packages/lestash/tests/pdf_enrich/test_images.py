@@ -285,3 +285,25 @@ def test_an_inline_photo_counts(tmp_path):
 
     assert images[0].mime_type == "image/jpeg"
     assert pymupdf.Pixmap(images[0].bytes_).width == 400
+
+
+def test_black_and_white_line_art_stays_a_png_at_its_own_resolution(tmp_path):
+    """A 1-bit image is line art, not a photo: PNG, but at its 288 dpi."""
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    page.draw_rect(pymupdf.Rect(0, 0, 1, 1))  # gives the page a content stream
+    bits = bytes([0b10101010]) * (400 * 400 // 8)
+    inline = b"\nq 100 0 0 100 100 592 cm BI /W 400 /H 400 /CS /G /BPC 1 ID " + bits + b"\nEI Q\n"
+    xref = page.get_contents()[0]
+    doc.update_stream(xref, doc.xref_stream(xref) + inline)
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 200.0, 200.0))])
+    finally:
+        doc.close()
+
+    assert images[0].mime_type == "image/png"
+    assert pymupdf.Pixmap(images[0].bytes_).width == 400
