@@ -101,8 +101,8 @@ def extract_pictures(
 
     Each picture is rendered from its region of the page, so everything in it is
     kept: shapes, text and any images (#391). A picture holding an image is
-    rendered at the image's own resolution. It is a JPEG if one of its images is
-    a photo, and a PNG otherwise, as for a diagram or black-and-white line art.
+    rendered at the image's own resolution. It is a JPEG only if one of its images
+    was stored as a JPEG already, so a diagram, screenshot or chart stays a PNG.
     """
     images: list[ExtractedImage] = []
     for index, region in enumerate(regions):
@@ -110,9 +110,9 @@ def extract_pictures(
         if region is None or clip is None:
             continue
         page = doc[region.page]
-        image_dpi, has_photo = _images_in(page, clip)
+        image_dpi, has_jpeg = _images_in(doc, page, clip)
         dpi = min(max(RENDER_DPI, image_dpi), MAX_RENDER_DPI)
-        ext = "jpeg" if has_photo else "png"
+        ext = "jpeg" if has_jpeg else "png"
         data = page.get_pixmap(clip=clip, dpi=round(dpi)).tobytes(ext)
         images.append(
             ExtractedImage(
@@ -127,22 +127,21 @@ def extract_pictures(
     return images
 
 
-def _images_in(page: pymupdf.Page, clip: pymupdf.Rect) -> tuple[float, bool]:
-    """The highest resolution of the images that are part of `clip`, and whether one is a photo.
+def _images_in(doc: pymupdf.Document, page: pymupdf.Page, clip: pymupdf.Rect) -> tuple[float, bool]:
+    """The highest resolution of the images that are part of `clip`, and whether one is a JPEG.
 
     An image is part of the picture when most of its part on the page lies inside
     the region and it fills a fair share of it, so a page background or a small
     icon doesn't count. An image cropped by a clipping path is measured by its
-    whole placement, which PyMuPDF reports; see #393. A 1-bit image, such as a
-    stencil mask or scanned line art, is not a photo.
+    whole placement, which PyMuPDF reports; see #393.
     """
     import math
 
     import pymupdf
 
-    best, has_photo = 0.0, False
+    best, has_jpeg = 0.0, False
     # get_image_info lists inline images too, which get_images (by xref) misses
-    for info in page.get_image_info():
+    for info in page.get_image_info(xrefs=True):
         rect, matrix = pymupdf.Rect(info["bbox"]), pymupdf.Matrix(info["transform"])
         shown = rect & page.rect
         inside = (shown & clip).get_area()
@@ -157,8 +156,19 @@ def _images_in(page: pymupdf.Page, clip: pymupdf.Rect) -> tuple[float, bool]:
             continue
         dpi = max(info["width"] / x_points, info["height"] / y_points) * 72
         best = max(best, dpi)
-        has_photo = has_photo or info["bpc"] > 1
-    return best, has_photo
+        has_jpeg = has_jpeg or _stored_as_jpeg(doc, info.get("xref", 0))
+    return best, has_jpeg
+
+
+def _stored_as_jpeg(doc: pymupdf.Document, xref: int) -> bool:
+    """True if the image's stream is JPEG (DCT) or JPEG 2000 data. An inline image is not."""
+    if xref <= 0:
+        return False
+    try:
+        kind, value = doc.xref_get_key(xref, "Filter")
+    except Exception:
+        return False
+    return kind != "null" and ("DCTDecode" in value or "JPXDecode" in value)
 
 
 def _clip(doc: pymupdf.Document, region: PictureRegion | None) -> pymupdf.Rect | None:

@@ -125,12 +125,13 @@ def test_regions_fit_needs_a_usable_region_for_every_placeholder(tmp_path):
         doc.close()
 
 
-def _photo_png(size: int) -> bytes:
+def _photo_jpeg(size: int) -> bytes:
+    """A photo as a camera would store it: JPEG data."""
     import pymupdf
 
     pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, size, size), False)
     pix.set_rect(pix.irect, (200, 30, 30))
-    return pix.tobytes("png")
+    return pix.tobytes("jpeg")
 
 
 def test_extract_pictures_renders_a_photo_at_its_own_resolution(make_pdf):
@@ -139,7 +140,7 @@ def test_extract_pictures_renders_a_photo_at_its_own_resolution(make_pdf):
     from lestash.core.pdf_enrich.images import extract_pictures
     from lestash.core.text_extract import PictureRegion
 
-    pdf = make_pdf([{"images": [((100, 100, 200, 200), _photo_png(400))]}])
+    pdf = make_pdf([{"images": [((100, 100, 200, 200), _photo_jpeg(400))]}])
     doc = pymupdf.open(pdf)
     try:
         images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 200.0, 200.0))])
@@ -156,7 +157,7 @@ def test_extract_pictures_caps_the_resolution(make_pdf):
     from lestash.core.pdf_enrich.images import MAX_RENDER_DPI, extract_pictures
     from lestash.core.text_extract import PictureRegion
 
-    pdf = make_pdf([{"images": [((100, 100, 110, 110), _photo_png(400))]}])
+    pdf = make_pdf([{"images": [((100, 100, 110, 110), _photo_jpeg(400))]}])
     doc = pymupdf.open(pdf)
     try:
         images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 110.0, 110.0))])
@@ -173,7 +174,7 @@ def test_extract_pictures_keeps_what_is_drawn_over_a_photo(make_pdf):
     from lestash.core.pdf_enrich.images import extract_pictures
     from lestash.core.text_extract import PictureRegion
 
-    pdf = make_pdf([{"images": [((100, 100, 200, 200), _photo_png(100))]}])
+    pdf = make_pdf([{"images": [((100, 100, 200, 200), _photo_jpeg(100))]}])
     doc = pymupdf.open(pdf)
     region = [PictureRegion(0, (100.0, 100.0, 200.0, 200.0))]
     try:
@@ -193,8 +194,8 @@ def test_a_page_background_or_small_icon_leaves_a_diagram_a_png(tmp_path):
 
     doc = pymupdf.open()
     page = doc.new_page(width=612, height=792)
-    page.insert_image(page.rect, stream=_photo_png(600))  # background
-    page.insert_image(pymupdf.Rect(105, 105, 115, 115), stream=_photo_png(400))  # icon
+    page.insert_image(page.rect, stream=_photo_jpeg(600))  # background
+    page.insert_image(pymupdf.Rect(105, 105, 115, 115), stream=_photo_jpeg(400))  # icon
     page.draw_rect(pymupdf.Rect(100, 100, 300, 300), color=(0, 0, 1))
     try:
         images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 300.0, 300.0))])
@@ -215,7 +216,7 @@ def test_a_rotated_photo_keeps_its_resolution(tmp_path):
     pix.set_rect(pix.irect, (30, 200, 30))
     doc = pymupdf.open()
     page = doc.new_page(width=612, height=792)
-    page.insert_image(pymupdf.Rect(100, 100, 150, 200), stream=pix.tobytes("png"), rotate=90)
+    page.insert_image(pymupdf.Rect(100, 100, 150, 200), stream=pix.tobytes("jpeg"), rotate=90)
     try:
         images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 150.0, 200.0))])
     finally:
@@ -233,7 +234,7 @@ def test_a_photo_running_off_the_page_is_measured_by_its_part_on_the_page(tmp_pa
     doc = pymupdf.open()
     page = doc.new_page(width=612, height=792)
     # 100 points wide, 70 of them past the right edge; the region holds the 30 that show
-    page.insert_image(pymupdf.Rect(582, 100, 682, 200), stream=_photo_png(400))
+    page.insert_image(pymupdf.Rect(582, 100, 682, 200), stream=_photo_jpeg(400))
     try:
         images = extract_pictures(doc, [PictureRegion(0, (580.0, 100.0, 612.0, 200.0))])
     finally:
@@ -251,7 +252,7 @@ def test_an_unevenly_scaled_photo_takes_its_finer_axis(tmp_path):
     doc = pymupdf.open()
     page = doc.new_page(width=612, height=792)
     page.insert_image(
-        pymupdf.Rect(100, 100, 200, 300), stream=_photo_png(400), keep_proportion=False
+        pymupdf.Rect(100, 100, 200, 300), stream=_photo_jpeg(400), keep_proportion=False
     )
     try:
         images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 200.0, 300.0))])
@@ -261,7 +262,7 @@ def test_an_unevenly_scaled_photo_takes_its_finer_axis(tmp_path):
     assert pymupdf.Pixmap(images[0].bytes_).width == 400  # 100 points at 288 dpi
 
 
-def test_an_inline_photo_counts(tmp_path):
+def test_an_inline_image_counts(tmp_path):
     """An image written into the page's content (BI … ID … EI) has no xref, but counts."""
     import pymupdf
     from lestash.core.pdf_enrich.images import extract_pictures
@@ -283,12 +284,12 @@ def test_an_inline_photo_counts(tmp_path):
     finally:
         doc.close()
 
-    assert images[0].mime_type == "image/jpeg"
+    assert images[0].mime_type == "image/png"
     assert pymupdf.Pixmap(images[0].bytes_).width == 400
 
 
 def test_black_and_white_line_art_stays_a_png_at_its_own_resolution(tmp_path):
-    """A 1-bit image is line art, not a photo: PNG, but at its 288 dpi."""
+    """A 1-bit image is line art: PNG, but at its 288 dpi."""
     import pymupdf
     from lestash.core.pdf_enrich.images import extract_pictures
     from lestash.core.text_extract import PictureRegion
@@ -300,6 +301,25 @@ def test_black_and_white_line_art_stays_a_png_at_its_own_resolution(tmp_path):
     inline = b"\nq 100 0 0 100 100 592 cm BI /W 400 /H 400 /CS /G /BPC 1 ID " + bits + b"\nEI Q\n"
     xref = page.get_contents()[0]
     doc.update_stream(xref, doc.xref_stream(xref) + inline)
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 200.0, 200.0))])
+    finally:
+        doc.close()
+
+    assert images[0].mime_type == "image/png"
+    assert pymupdf.Pixmap(images[0].bytes_).width == 400
+
+
+def test_a_screenshot_stored_as_png_stays_a_png(make_pdf):
+    """A chart or screenshot pasted as a PNG is not turned into a lossy JPEG."""
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 400, 400), False)
+    pix.set_rect(pix.irect, (255, 255, 255))
+    pdf = make_pdf([{"images": [((100, 100, 200, 200), pix.tobytes("png"))]}])
+    doc = pymupdf.open(pdf)
     try:
         images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 200.0, 200.0))])
     finally:
