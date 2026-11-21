@@ -96,7 +96,12 @@ def test_a_new_paper_is_saved_with_its_abstract_and_note(config: Config) -> None
         assert _saves(conn, got.item_id) == 1
 
 
-def test_a_held_paper_is_reused_and_keeps_both_notes(config: Config) -> None:
+def test_a_held_paper_is_reused_and_keeps_both_notes(config: Config, monkeypatch) -> None:
+    # Count the saves recorded: shares in the same instant are one activity row
+    saved: list[int] = []
+    record = share.record_saved
+    monkeypatch.setattr(share, "record_saved", lambda c, i: saved.append(i) or record(c, i))
+
     def no_fetch(_: str) -> Paper:
         raise AssertionError("a held paper is not fetched again")
 
@@ -110,7 +115,8 @@ def test_a_held_paper_is_reused_and_keeps_both_notes(config: Config) -> None:
         assert _meta(conn, first.item_id)["notes"] == "First\n\nSecond"
         assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
         assert conn.execute("SELECT parent_id FROM items").fetchone()[0] is None
-        assert _saves(conn, first.item_id) == 3  # each share is a time on the Timeline
+        assert saved == [first.item_id] * 3  # each share is a time on the Timeline
+        assert _saves(conn, first.item_id) >= 1
 
 
 def test_an_unknown_paper_is_none(config: Config) -> None:
