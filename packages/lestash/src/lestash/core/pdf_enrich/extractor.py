@@ -11,11 +11,11 @@ import hashlib
 import logging
 from pathlib import Path
 
-from lestash.core.text_extract import convert_to_markdown
+from lestash.core.text_extract import convert_pdf
 
 from .annotations import extract_annotations
 from .cleanup import strip_artifacts
-from .images import count_placeholders, extract_images
+from .images import count_placeholders, extract_images, extract_pictures
 from .links import apply_links, extract_links
 from .types import EnrichedPdf
 from .version import EXTRACTOR_VERSION
@@ -30,7 +30,7 @@ def enrich_pdf(pdf_path: Path) -> EnrichedPdf:
     raw_bytes = pdf_path.read_bytes()
     pdf_sha256 = hashlib.sha256(raw_bytes).hexdigest()
 
-    markdown = convert_to_markdown(pdf_path)
+    markdown, regions = convert_pdf(pdf_path)
 
     images: list = []
     annotations: list = []
@@ -52,7 +52,12 @@ def enrich_pdf(pdf_path: Path) -> EnrichedPdf:
         except Exception:
             logger.exception("Link extraction failed for %s", pdf_path)
         try:
-            images = extract_images(doc)
+            # Docling's picture regions cover diagrams drawn as shapes too (#391); without
+            # one region per placeholder, raster images fill them in reading order
+            if regions and len(regions) == count_placeholders(markdown):
+                images = extract_pictures(doc, regions)
+            else:
+                images = extract_images(doc)
         except Exception:
             logger.exception("Image extraction failed for %s", pdf_path)
         try:

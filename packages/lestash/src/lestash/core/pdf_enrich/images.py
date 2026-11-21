@@ -24,6 +24,8 @@ from .types import ExtractedImage
 if TYPE_CHECKING:
     import pymupdf
 
+    from lestash.core.text_extract import PictureRegion
+
 logger = logging.getLogger(__name__)
 
 _IMAGE_PLACEHOLDER = re.compile(r"<!-- image -->", re.IGNORECASE)
@@ -78,6 +80,70 @@ def extract_images(doc: pymupdf.Document) -> list[ExtractedImage]:
             placeholder_idx += 1
 
     return images
+
+
+# A picture is rendered at twice PDF resolution, so a diagram's small text stays legible
+RENDER_DPI = 144
+
+# A raster image counts as the picture when it covers this share of the picture's region
+RASTER_COVER = 0.8
+
+
+def extract_pictures(
+    doc: pymupdf.Document, regions: list[PictureRegion | None]
+) -> list[ExtractedImage]:
+    """Return one ExtractedImage per picture Docling found, by placeholder index.
+
+    A raster image that fills the picture's region is kept as stored. Anything
+    else, such as a diagram drawn as vector shapes, is rendered from the page,
+    so it is saved as a picture too (#391).
+    """
+    import pymupdf
+
+    images: list[ExtractedImage] = []
+    for index, region in enumerate(regions):
+        if region is None or not 0 <= region.page < doc.page_count:
+            continue
+        page = doc[region.page]
+        clip = pymupdf.Rect(region.bbox) & page.rect
+        if clip.is_empty:
+            continue
+        stored = _raster_filling(doc, page, clip)
+        if stored is not None:
+            data, ext = stored
+        else:
+            data, ext = page.get_pixmap(clip=clip, dpi=RENDER_DPI).tobytes("png"), "png"
+        images.append(
+            ExtractedImage(
+                placeholder_index=index,
+                page=region.page,
+                bbox=(clip.x0, clip.y0, clip.x1, clip.y1),
+                bytes_=data,
+                mime_type=_mime_for_ext(ext),
+                xref_hash=hashlib.sha256(data).hexdigest(),
+            )
+        )
+    return images
+
+
+def _raster_filling(
+    doc: pymupdf.Document, page: pymupdf.Page, clip: pymupdf.Rect
+) -> tuple[bytes, str] | None:
+    """The stored bytes and extension of a raster image that fills `clip`, if any."""
+    for info in page.get_images(full=True):
+        xref = info[0]
+        try:
+            rects = page.get_image_rects(xref)
+        except Exception:
+            continue
+        if any((rect & clip).get_area() >= RASTER_COVER * clip.get_area() for rect in rects):
+            try:
+                extracted = doc.extract_image(xref)
+            except Exception:
+                logger.exception("Failed to extract image xref=%s", xref)
+                return None
+            return extracted["image"], extracted.get("ext", "png")
+    return None
 
 
 def apply_images(markdown: str, replacements: dict[int, str]) -> str:

@@ -48,8 +48,8 @@ def config() -> Iterator[Config]:
 @pytest.fixture(autouse=True)
 def _no_docling():
     with patch(
-        "lestash.core.pdf_enrich.extractor.convert_to_markdown",
-        return_value="document body",
+        "lestash.core.pdf_enrich.extractor.convert_pdf",
+        return_value=("document body", []),
     ):
         yield
 
