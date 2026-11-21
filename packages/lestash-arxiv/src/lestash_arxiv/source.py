@@ -251,7 +251,8 @@ class ArxivSource(SourcePlugin):
             """Merge saved links to arXiv papers into the papers' arXiv items (#398).
 
             Each link's note, shared text, share date, links, collections and tags move
-            to the paper; then the link is deleted. Back up the database first.
+            to the paper; then the link is deleted. A link with a PDF file of its own is
+            kept, linked to the paper. Back up the database first.
             """
             import time
 
@@ -294,7 +295,7 @@ class ArxivSource(SourcePlugin):
                         made = "new" if merged.created else "held"
                         console.print(f"merged {label} into item {merged.paper_id} ({made})")
             if not apply:
-                console.print(f"{len(links)} links; run with --apply to merge them.")
+                console.print(f"{len(links)} links; run with --apply to merge or keep them.")
 
         @app.command("fetch-pdfs")
         def fetch_pdfs_cmd(

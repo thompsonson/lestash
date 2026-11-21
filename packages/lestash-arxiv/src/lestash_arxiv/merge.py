@@ -4,6 +4,9 @@ Before #395 a shared arXiv link was saved as a plain link (a ``share``, or a ``w
 page). Each one moves into its paper's arXiv item: your note, the shared text and
 title, when you shared it, its links, collections, tags, places and children. Then the
 link is deleted; the paper keeps a record of it under ``merged_from``.
+
+A link that has a PDF file of its own is kept instead, with what was read from it,
+and linked to the paper with ``alternate_of``.
 """
 
 from __future__ import annotations

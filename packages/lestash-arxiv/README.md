@@ -16,4 +16,6 @@ lestash arxiv fetch-pdfs [--apply]    # Store and read the PDF of each arXiv ite
 
 - A shared arXiv address becomes the paper's arXiv item, with its PDF (`POST /api/arxiv/import-paper`, #395).
 - A shared arXiv PDF file does too, with the shared file as its source PDF (#398).
-- `merge-links` moves links saved before that into the papers: notes, share date, links, collections and tags. Back up the database before `--apply`.
+- `merge-links` moves links saved before that into the papers: notes, share date, links, collections and tags.
+  - A link with a PDF file of its own is kept, linked to the paper with `alternate_of`.
+  - Back up the database before `--apply`.
