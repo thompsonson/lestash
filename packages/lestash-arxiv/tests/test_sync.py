@@ -62,3 +62,31 @@ def test_sync_uses_the_callers_database_not_the_default(tmp_path: Path, monkeypa
     assert checked == [["2401.00001"]]  # its saved paper, checked for updates
     assert {i.source_id for i in items} == {"2401.00001", "2402.00002"}
     assert not paths.legacy_dir().exists() and not paths.data_dir().exists()
+
+
+def test_extract_arxiv_id_keeps_an_old_style_archive() -> None:
+    from lestash_arxiv.client import extract_arxiv_id, extract_version
+
+    assert extract_arxiv_id("http://arxiv.org/abs/hep-th/9901001v3") == "hep-th/9901001"
+    assert extract_arxiv_id("http://arxiv.org/abs/math.GT/0309136v1") == "math/0309136"
+    assert extract_arxiv_id("http://arxiv.org/abs/math/0309136v1") == "math/0309136"
+    assert extract_arxiv_id("http://arxiv.org/abs/1706.03762v7") == "1706.03762"
+    assert extract_version("http://arxiv.org/abs/hep-th/9901001v3") == 3
+
+
+def test_sync_rekeys_a_paper_stored_under_a_bare_number(tmp_path: Path, monkeypatch) -> None:
+    config = Config(general=GeneralConfig(database_path=str(tmp_path / "test.db")))
+    init_database(config)
+    with get_connection(config) as conn:
+        conn.execute(
+            "INSERT INTO items (source_type, source_id, url, title, content) VALUES "
+            "('arxiv', '9901001v3', 'http://arxiv.org/abs/hep-th/9901001v3', 'Old', '')"
+        )
+        conn.commit()
+    checked: list[list[str]] = []
+    monkeypatch.setattr(arxiv_source, "get_papers", lambda ids: checked.append(ids) or [])
+    forbid_default_config(monkeypatch, config)
+    plugin = ArxivSource()
+    plugin.app_config = config
+    list(plugin.sync({}))
+    assert checked == [["hep-th/9901001"]]

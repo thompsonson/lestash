@@ -2093,6 +2093,11 @@ function _isYouTubeUrl(url) {
   return /youtube\.com\/watch|youtu\.be\//.test(url || '');
 }
 
+// An arXiv paper's page or PDF; saved as the paper, with its PDF (#395)
+function _isArxivUrl(url) {
+  return /^https?:\/\/(www\.|export\.)?arxiv\.org\/(abs|pdf|html)\//i.test(url || '');
+}
+
 let _captureParent = null;  // the item page the new item was added from, if any
 
 // A share from another app, or + Add → Link or text on an item page (attachTo): a
@@ -2197,6 +2202,19 @@ async function saveNewLink() {
       } catch (e) {
         message = 'Saved as a link (the video\'s details were unavailable)';
       }
+    } else if (_isArxivUrl(url)) {
+      btn.textContent = 'Importing paper...';
+      try {
+        const paper = await post('/api/arxiv/import-paper', {
+          url, note: notes || null, shared_title: title || null, parent_id: parent.id,
+        });
+        // A paper already held stays where it is; the link and its notes are saved here
+        saved = paper.created;
+        message = paper.created ? 'Paper saved; its PDF is being read' : 'Saved here as a link; the paper was already in LeStash';
+        if (!paper.created && !title) document.getElementById('capture-title').value = paper.title;
+      } catch (e) {
+        message = 'Saved as a link (the paper\'s details were unavailable)';
+      }
     }
     let linkId = null;
     if (!saved) {
@@ -2275,7 +2293,27 @@ async function saveCaptureItem() {
         // Fall back to a generic capture so the share is never lost.
       }
     }
-    if (!savedYouTube) {
+    // A shared arXiv link is the paper: its arXiv item, with its PDF (#395)
+    let savedPaper = null;
+    if (mode === 'new' && _isArxivUrl(url)) {
+      btn.textContent = 'Importing paper...';
+      try {
+        savedPaper = await api('/api/arxiv/import-paper', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          // The shared text and title are kept with the paper, as a link keeps them
+          body: JSON.stringify({
+            url,
+            note: notes || null,
+            shared_text: content && content !== url ? content : null,
+            shared_title: title || null,
+          }),
+        });
+      } catch (e) {
+        // Fall back to a generic capture so the share is never lost.
+      }
+    }
+    if (!savedYouTube && !savedPaper) {
       await api('/api/items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2320,7 +2358,13 @@ async function saveCaptureItem() {
         showToast('Saved (transcript unavailable)', 'ok');
       }
     } else {
-      showToast(savedYouTube ? 'Saved video' : 'Saved', 'ok');
+      let saved = 'Saved';
+      if (savedYouTube) saved = 'Saved video';
+      else if (savedPaper) {
+        const what = savedPaper.created ? 'Saved paper' : 'Saved again; the paper was already in LeStash';
+        saved = savedPaper.fetching_pdf ? `${what}; its PDF is being read` : what;
+      }
+      showToast(saved, 'ok');
     }
     closeCaptureDialog();
     refreshTimeline();
@@ -3498,7 +3542,7 @@ setInterval(checkHealth, 30000);
 // Inline handlers (onclick="…") in the markup and in rendered HTML call these by name.
 // A module's functions are not global, so these are; new code uses addEventListener.
 Object.assign(window, {
-  _isDriveOrDocsUrl, _isYouTubeUrl, addMoreImages, addToCollection, attachPickerKind, attachPickerSearch, attachPickerSelect,
+  _isArxivUrl, _isDriveOrDocsUrl, _isYouTubeUrl, addMoreImages, addToCollection, attachPickerKind, attachPickerSearch, attachPickerSelect,
   closeCaptureDialog, closeHtmlImportDialog, closeImageCaptureDialog, closeItemView,
   closeLinkDialog, closeLinkedInCompose, closeMicroblogCompose,
   closeMultiImageCaptureDialog, closeProcessDialog, closeSettings, completeAudibleAuth,

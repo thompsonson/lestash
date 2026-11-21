@@ -894,6 +894,23 @@ Dedup-safe: if the video's item already exists, it gets a new `saved` time and i
 returned (`created: false`) instead of creating a duplicate. Requires `lestash-youtube`
 plugin and YouTube auth to fetch metadata for a new video.
 
+## arXiv
+
+### `POST /api/arxiv/import-paper`
+
+Import a shared arXiv paper as its `arxiv` item, with its PDF (#395), and record a `saved` activity.
+
+**Request:** `{ "url": "https://arxiv.org/abs/1602.05629", "note": "optional note", "shared_text": null, "shared_title": null, "parent_id": null }`
+**Response:** `{ "item_id": 123, "title": "Paper Title", "created": true, "fetching_pdf": true }`
+
+- The address may be an `abs`, `pdf` or `html` page, with or without a version.
+- A new paper keeps its abstract and the note in `metadata.abstract` and `metadata.notes`.
+- `shared_text` and `shared_title`, what came with the share, are kept in the metadata under those names.
+- After answering, the server downloads the PDF, stores it as the item's `source_pdf` and runs the PDF enricher; the item's text becomes the paper's.
+- A paper already held is returned (`created: false`) with a new `saved` time; a note is added to its notes, and it stays where it is. With `parent_id`, the caller saves the note on its own link, so the held paper isn't given it.
+- `fetching_pdf` is false when the item already has its PDF.
+- Errors: 400 for an address that isn't an arXiv paper, 404 for a paper arXiv doesn't have, 502 when arXiv can't be reached.
+
 ---
 
 ## Shared Response Models

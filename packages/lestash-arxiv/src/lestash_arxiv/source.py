@@ -4,7 +4,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Iterator
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 import typer
 from lestash.core.config import as_list
@@ -13,9 +13,17 @@ from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 from rich.table import Table
 
-from lestash_arxiv.client import Paper, get_paper, get_papers, search_papers
+from lestash_arxiv.client import (
+    Paper,
+    extract_arxiv_id,
+    get_paper,
+    get_papers,
+    search_papers,
+)
 
 console = Console()
+
+SOURCE_TYPE = "arxiv"
 
 
 def paper_to_item(paper: Paper) -> ItemCreate:
@@ -25,7 +33,7 @@ def paper_to_item(paper: Paper) -> ItemCreate:
         media = [MediaCreate(media_type="pdf", url=paper.pdf_url)]
 
     return ItemCreate(
-        source_type="arxiv",
+        source_type=SOURCE_TYPE,
         source_id=paper.arxiv_id,
         url=paper.url,
         title=paper.title,
@@ -43,6 +51,52 @@ def paper_to_item(paper: Paper) -> ItemCreate:
         },
         media=media,
     )
+
+
+def rekey_old_style(conn: sqlite3.Connection) -> int:
+    """Re-key papers stored under a bare number before #397: hep-th/9901001 was kept as
+    ``9901001v3``. Each takes its full id from its address, unless that id is held.
+    Returns how many were re-keyed. Does not commit."""
+    rows = conn.execute(
+        "SELECT id, url FROM items WHERE source_type = ? "
+        "AND source_id GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' "
+        "AND source_id NOT LIKE '%.%'",
+        (SOURCE_TYPE,),
+    ).fetchall()
+    moved = 0
+    for item_id, url in rows:
+        full = extract_arxiv_id(url or "")
+        if "/" not in full:
+            continue
+        taken = conn.execute(
+            "SELECT 1 FROM items WHERE source_type = ? AND source_id = ?", (SOURCE_TYPE, full)
+        ).fetchone()
+        if taken is None:
+            conn.execute("UPDATE items SET source_id = ? WHERE id = ?", (full, item_id))
+            moved += 1
+    return moved
+
+
+class Held(NamedTuple):
+    content: str | None
+    metadata: dict
+    has_pdf: bool
+
+
+def keep_held(item: ItemCreate, stored: Held | None) -> ItemCreate:
+    """A synced paper, keeping what LeStash added to the held one (#395).
+
+    The held item's metadata keys that arXiv doesn't send stay, such as a shared
+    paper's notes and abstract, and the PDF enricher's record. A paper with its source
+    PDF keeps its text: the PDF's, not the abstract.
+    """
+    if stored is None:
+        return item
+    content, meta, has_pdf = stored
+    update: dict = {"metadata": {**meta, **(item.metadata or {})}}
+    if has_pdf and content:
+        update["content"] = content
+    return item.model_copy(update=update)
 
 
 def display_paper(paper: Paper, verbose: bool = False) -> None:
@@ -407,6 +461,17 @@ class ArxivSource(SourcePlugin):
         3. Update detection for tracked paper IDs
         """
         seen: set[str] = set()
+        try:
+            from lestash.core.database import get_connection
+
+            with get_connection(self.app_config) as conn:
+                if rekey_old_style(conn):
+                    conn.commit()
+        except Exception:
+            self.logger.warning("Could not re-key old-style arXiv ids")
+
+        def keep(item: ItemCreate) -> ItemCreate:
+            return keep_held(item, self._held_paper(item.source_id))
 
         # Phase 1: Legacy keywords from TOML config
         keywords = as_list(config.get("keywords"))
@@ -417,7 +482,7 @@ class ArxivSource(SourcePlugin):
             for paper in papers:
                 if paper.arxiv_id not in seen:
                     seen.add(paper.arxiv_id)
-                    yield paper_to_item(paper)
+                    yield keep(paper_to_item(paper))
 
         # Phase 2+3: Tracked queries and papers from DB config
         try:
@@ -446,7 +511,7 @@ class ArxivSource(SourcePlugin):
             for paper in papers:
                 if paper.arxiv_id not in seen:
                     seen.add(paper.arxiv_id)
-                    yield paper_to_item(paper)
+                    yield keep(paper_to_item(paper))
 
         # Phase 3: Update detection for all saved papers (minus untracked)
         untracked = set(tracking.get("untracked_papers", []))
@@ -458,7 +523,38 @@ class ArxivSource(SourcePlugin):
             for paper in papers:
                 if paper.arxiv_id not in seen:
                     seen.add(paper.arxiv_id)
-                    yield paper_to_item(paper)
+                    yield keep(paper_to_item(paper))
+
+    def _held_paper(self, source_id: str | None) -> Held | None:
+        """The held paper's text, metadata, and whether it has its source PDF, read
+        when the paper is yielded, so a note or PDF added during the sync is kept."""
+        if not source_id:
+            return None
+        try:
+            from lestash.core.database import get_connection
+
+            with get_connection(self.app_config) as conn:
+                row = conn.execute(
+                    """
+                    SELECT i.content, i.metadata,
+                           EXISTS (SELECT 1 FROM item_media m WHERE m.item_id = i.id
+                                   AND m.media_type = 'source_pdf'
+                                   AND m.local_path IS NOT NULL)
+                    FROM items i WHERE i.source_type = ? AND i.source_id = ?
+                    """,
+                    (SOURCE_TYPE, source_id),
+                ).fetchone()
+        except Exception:
+            self.logger.warning("Could not read held paper %s from DB", source_id)
+            return None
+        if row is None:
+            return None
+        content, raw, has_pdf = row
+        try:
+            meta = json.loads(raw) if raw else {}
+        except ValueError:
+            meta = {}
+        return Held(content, meta if isinstance(meta, dict) else {}, bool(has_pdf))
 
     def configure(self) -> dict:
         """Interactive configuration."""

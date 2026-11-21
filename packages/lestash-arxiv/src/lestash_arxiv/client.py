@@ -40,7 +40,14 @@ def extract_arxiv_id(entry_id: str) -> str:
     Examples:
         http://arxiv.org/abs/1706.03762v7 -> 1706.03762
         2301.00001v1 -> 2301.00001
+        http://arxiv.org/abs/hep-th/9901001v3 -> hep-th/9901001
+        http://arxiv.org/abs/math.GT/0309136v1 -> math/0309136
     """
+    # An old-style id keeps its archive: hep-th/9901001 (#395)
+    old_style = re.search(r"([a-z-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?$", entry_id, re.I)
+    if old_style:
+        return canonical_id(old_style.group(1))
+
     # Remove URL prefix if present
     if "/" in entry_id:
         entry_id = entry_id.split("/")[-1]
@@ -51,6 +58,16 @@ def extract_arxiv_id(entry_id: str) -> str:
         return match.group(1)
 
     return entry_id
+
+
+def canonical_id(arxiv_id: str) -> str:
+    """An id as arXiv keys it: an old-style archive in lower case, without a subject
+    class. Addresses may carry one (math.GT/0309136), but arXiv's id is math/0309136,
+    and a lookup with the subject class finds nothing."""
+    if "/" not in arxiv_id:
+        return arxiv_id
+    archive, number = arxiv_id.split("/", 1)
+    return f"{archive.partition('.')[0].lower()}/{number}"
 
 
 def extract_version(entry_id: str) -> int | None:

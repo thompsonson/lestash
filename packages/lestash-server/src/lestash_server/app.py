@@ -96,6 +96,11 @@ def create_app(static_dir: str | None = None) -> FastAPI:
     except ImportError:
         pass
 
+    # arXiv routes; importing a paper answers 501 if lestash-arxiv isn't installed
+    from lestash_server.routes import arxiv
+
+    app.include_router(arxiv.router)
+
     # Optional YouTube routes (only if lestash-youtube is installed)
     try:
         from lestash_server.routes import youtube
