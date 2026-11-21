@@ -115,3 +115,24 @@ class TestExtractContent:
         path = tmp_path / "missing.txt"
         # File does not exist → read_text raises → caught → ""
         assert extract_content(Path(path), "text/plain") == ""
+
+
+class TestPictureRegions:
+    def test_each_picture_gets_a_top_left_box_in_markdown_order(self):
+        from docling_core.types.doc import (
+            BoundingBox,
+            CoordOrigin,
+            DoclingDocument,
+            ProvenanceItem,
+            Size,
+        )
+        from lestash.core.text_extract import PictureRegion, picture_regions
+
+        document = DoclingDocument(name="t")
+        document.add_page(page_no=2, size=Size(width=595, height=841))
+        box = BoundingBox(l=40, t=480, r=556, b=31, coord_origin=CoordOrigin.BOTTOMLEFT)
+        document.add_picture(prov=ProvenanceItem(page_no=2, bbox=box, charspan=(0, 0)))
+        document.add_picture()  # no position known
+
+        assert document.export_to_markdown().count("<!-- image -->") == 2
+        assert picture_regions(document) == [PictureRegion(1, (40.0, 361.0, 556.0, 810.0)), None]

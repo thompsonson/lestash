@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import re
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,8 @@ from .types import ExtractedImage
 
 if TYPE_CHECKING:
     import pymupdf
+
+    from lestash.core.text_extract import PictureRegion
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +81,167 @@ def extract_images(doc: pymupdf.Document) -> list[ExtractedImage]:
             placeholder_idx += 1
 
     return images
+
+
+# A picture is rendered at twice PDF resolution, so a diagram's small text stays legible
+RENDER_DPI = 144
+
+# An image inside a picture raises the resolution to its own, up to this
+MAX_RENDER_DPI = 300
+
+# An image is part of a picture when this share of its part on the page lies inside
+# the region. The picture takes the highest resolution that images filling at least
+# PHOTO_SHARE of it all reach, so a small sharp icon doesn't set it
+PHOTO_INSIDE = 0.5
+PHOTO_SHARE = 0.1
+
+# A picture is a JPEG when images stored as JPEG cover this share of it
+JPEG_SHARE = 0.5
+
+
+def extract_pictures(
+    doc: pymupdf.Document, regions: list[PictureRegion | None]
+) -> list[ExtractedImage]:
+    """Return one ExtractedImage per picture Docling found, by placeholder index.
+
+    Each picture is rendered from its region of the page, so everything in it is
+    kept: shapes, text and any images (#391). A picture holding an image is
+    rendered at the image's own resolution. It is a JPEG only when images stored
+    as JPEG cover most of it, so a diagram, screenshot or chart stays a PNG.
+    """
+    images: list[ExtractedImage] = []
+    # Docling's pictures come in page order, so one page's image list is kept at a time
+    blocks_page, blocks = -1, []
+    for index, region in enumerate(regions):
+        clip = _clip(doc, region)
+        if region is None or clip is None:
+            continue
+        page = doc[region.page]
+        if region.page != blocks_page:
+            blocks_page, blocks = region.page, _image_blocks(page)
+        image_dpi, jpeg_area = _images_in(blocks, page, clip)
+        dpi = min(max(RENDER_DPI, image_dpi), MAX_RENDER_DPI)
+        ext = "jpeg" if jpeg_area >= JPEG_SHARE * clip.get_area() else "png"
+        data = page.get_pixmap(clip=clip, dpi=round(dpi)).tobytes(ext)
+        images.append(
+            ExtractedImage(
+                placeholder_index=index,
+                page=region.page,
+                bbox=(clip.x0, clip.y0, clip.x1, clip.y1),
+                bytes_=data,
+                mime_type=_mime_for_ext(ext),
+                xref_hash=hashlib.sha256(data).hexdigest(),
+            )
+        )
+    return images
+
+
+def _image_blocks(page: pymupdf.Page) -> list[dict]:
+    """Every image drawn on the page, inline ones included, with its stored format.
+
+    Only the fields measured are kept; each block's image data is dropped at once.
+    """
+    keep = ("bbox", "transform", "width", "height", "ext")
+    try:
+        return [
+            {key: b.get(key) for key in keep}
+            for b in page.get_text("dict")["blocks"]
+            if b.get("type") == 1
+        ]
+    except Exception:
+        logger.exception("Could not list the images on page %d", page.number)
+        return []
+
+
+def _images_in(blocks: list[dict], page: pymupdf.Page, clip: pymupdf.Rect) -> tuple[float, float]:
+    """The resolution to render `clip` at for its images, and the area of `clip`
+    that images stored as JPEG cover.
+
+    The resolution is the highest that images covering PHOTO_SHARE of the region
+    together all reach, or 0 if they cover less. An image is part of the picture
+    when most of its part on the page lies inside the region, so a page background
+    doesn't count. Areas are of the images' union, so tiles of one photo add up and
+    overlaps count once. An image cropped by a clipping path is measured by its
+    whole placement, which PyMuPDF reports; see #393.
+    """
+    import pymupdf
+
+    parts: list[tuple[float, pymupdf.Rect]] = []
+    jpeg: list[pymupdf.Rect] = []
+    for block in blocks:
+        # Image boxes are in the unrotated page's frame; the region and the render's
+        # clip are in the page as shown, so a /Rotate page needs turning
+        shown = (pymupdf.Rect(block["bbox"]) * page.rotation_matrix) & page.rect
+        part = shown & clip
+        if shown.is_empty or part.get_area() < PHOTO_INSIDE * shown.get_area():
+            continue
+        # The matrix maps the image's unit square onto the page, so each of its
+        # axes' length in points holds, whatever the rotation or scaling
+        matrix = pymupdf.Matrix(block["transform"])
+        x_points, y_points = math.hypot(matrix.a, matrix.b), math.hypot(matrix.c, matrix.d)
+        if x_points == 0 or y_points == 0:
+            continue
+        parts.append((max(block["width"] / x_points, block["height"] / y_points) * 72, part))
+        if block.get("ext") in ("jpeg", "jpx"):
+            jpeg.append(part)
+
+    # Sharpest first, the fewest images that cover enough; the area they cover only
+    # grows with each one added, so a binary search finds how many
+    parts.sort(key=lambda p: -p[0])
+    needed = PHOTO_SHARE * clip.get_area()
+    rects = [part for _dpi, part in parts]
+    if not parts or _union_area(rects, clip) < needed:
+        return 0.0, _union_area(jpeg, clip)
+    low, high = 1, len(parts)
+    while low < high:
+        middle = (low + high) // 2
+        if _union_area(rects[:middle], clip) >= needed:
+            high = middle
+        else:
+            low = middle + 1
+    return parts[low - 1][0], _union_area(jpeg, clip)
+
+
+# _union_area measures on a grid of this many cells a side over the region
+AREA_GRID = 64
+
+
+def _union_area(rects: list[pymupdf.Rect], clip: pymupdf.Rect) -> float:
+    """The area of `clip` the rectangles cover together, overlaps counted once.
+
+    Counted on a fixed grid of cells, so many small tiles cost little; a cell
+    counts when its centre is covered.
+    """
+    if not rects or clip.is_empty:
+        return 0.0
+    cell_w, cell_h = clip.width / AREA_GRID, clip.height / AREA_GRID
+    covered = bytearray(AREA_GRID * AREA_GRID)
+    for r in rects:
+        # Cells whose centres lie inside r
+        c0 = max(0, math.ceil((r.x0 - clip.x0) / cell_w - 0.5))
+        c1 = min(AREA_GRID, math.ceil((r.x1 - clip.x0) / cell_w - 0.5))
+        r0 = max(0, math.ceil((r.y0 - clip.y0) / cell_h - 0.5))
+        r1 = min(AREA_GRID, math.ceil((r.y1 - clip.y0) / cell_h - 0.5))
+        for row in range(r0, r1):
+            covered[row * AREA_GRID + c0 : row * AREA_GRID + c1] = b"\x01" * max(0, c1 - c0)
+    return sum(covered) * cell_w * cell_h
+
+
+def _clip(doc: pymupdf.Document, region: PictureRegion | None) -> pymupdf.Rect | None:
+    """The region's box on its page, or None if it has no area there."""
+    import pymupdf
+
+    if region is None or not 0 <= region.page < doc.page_count:
+        return None
+    clip = pymupdf.Rect(region.bbox) & doc[region.page].rect
+    return None if clip.is_empty else clip
+
+
+def regions_fit(
+    doc: pymupdf.Document, regions: list[PictureRegion | None], placeholders: int
+) -> bool:
+    """True if every placeholder has a region with some area on a page of this document."""
+    return len(regions) == placeholders > 0 and all(_clip(doc, r) is not None for r in regions)
 
 
 def apply_images(markdown: str, replacements: dict[int, str]) -> str:
