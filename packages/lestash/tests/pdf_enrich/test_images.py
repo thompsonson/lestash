@@ -395,12 +395,27 @@ def test_overlapping_photos_count_once():
     import pymupdf
     from lestash.core.pdf_enrich.images import _union_area
 
-    a, b = pymupdf.Rect(0, 0, 10, 10), pymupdf.Rect(5, 0, 15, 10)
-    assert _union_area([a, b]) == 150
-    assert _union_area([a, a, a]) == 100
-    assert _union_area([]) == 0
-    c = pymupdf.Rect(0, 20, 10, 30)  # apart from a, in the same slab
-    assert _union_area([a, c, b]) == 250
+    region = pymupdf.Rect(0, 0, 64, 64)
+    a, b = pymupdf.Rect(0, 0, 32, 32), pymupdf.Rect(16, 0, 48, 32)
+    assert _union_area([a, b], region) == 48 * 32
+    assert _union_area([a, a, a], region) == 32 * 32
+    assert _union_area([a, pymupdf.Rect(0, 40, 32, 48)], region) == 32 * 32 + 32 * 8
+    assert _union_area([], region) == 0
+
+
+def test_many_tiles_are_measured_quickly():
+    import time
+
+    import pymupdf
+    from lestash.core.pdf_enrich.images import _union_area
+
+    region = pymupdf.Rect(0, 0, 500, 500)
+    tiles = [
+        pymupdf.Rect(x, y, x + 10, y + 10) for x in range(0, 500, 10) for y in range(0, 500, 10)
+    ]
+    start = time.monotonic()
+    assert _union_area(tiles, region) == 500 * 500
+    assert time.monotonic() - start < 1
 
 
 def test_a_small_sharp_icon_does_not_set_the_resolution(tmp_path):
@@ -419,3 +434,22 @@ def test_a_small_sharp_icon_does_not_set_the_resolution(tmp_path):
         doc.close()
 
     assert pymupdf.Pixmap(images[0].bytes_).width == 200  # 100 points at 144 dpi
+
+
+def test_a_photo_on_a_rotated_page_is_found_where_it_shows():
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=600, height=800)
+    page.insert_image(pymupdf.Rect(100, 100, 200, 200), stream=_photo_jpeg(400))
+    page.set_rotation(90)  # the photo now shows at (600, 100)-(700, 200)
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (600.0, 100.0, 700.0, 200.0))])
+        red = pymupdf.Pixmap(images[0].bytes_).pixel(200, 200)
+    finally:
+        doc.close()
+
+    assert images[0].mime_type == "image/jpeg"
+    assert red[0] > 150 and red[1] < 100

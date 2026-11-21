@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import re
 from typing import TYPE_CHECKING
 
@@ -154,14 +155,14 @@ def _images_in(blocks: list[dict], page: pymupdf.Page, clip: pymupdf.Rect) -> tu
     overlaps count once. An image cropped by a clipping path is measured by its
     whole placement, which PyMuPDF reports; see #393.
     """
-    import math
-
     import pymupdf
 
     parts: list[tuple[float, pymupdf.Rect]] = []
     jpeg: list[pymupdf.Rect] = []
     for block in blocks:
-        shown = pymupdf.Rect(block["bbox"]) & page.rect
+        # Image boxes are in the unrotated page's frame; the region and the render's
+        # clip are in the page as shown, so a /Rotate page needs turning
+        shown = (pymupdf.Rect(block["bbox"]) * page.rotation_matrix) & page.rect
         part = shown & clip
         if shown.is_empty or part.get_area() < PHOTO_INSIDE * shown.get_area():
             continue
@@ -180,39 +181,41 @@ def _images_in(blocks: list[dict], page: pymupdf.Page, clip: pymupdf.Rect) -> tu
     parts.sort(key=lambda p: -p[0])
     needed = PHOTO_SHARE * clip.get_area()
     rects = [part for _dpi, part in parts]
-    if not parts or _union_area(rects) < needed:
-        return 0.0, _union_area(jpeg)
+    if not parts or _union_area(rects, clip) < needed:
+        return 0.0, _union_area(jpeg, clip)
     low, high = 1, len(parts)
     while low < high:
         middle = (low + high) // 2
-        if _union_area(rects[:middle]) >= needed:
+        if _union_area(rects[:middle], clip) >= needed:
             high = middle
         else:
             low = middle + 1
-    return parts[low - 1][0], _union_area(jpeg)
+    return parts[low - 1][0], _union_area(jpeg, clip)
 
 
-def _union_area(rects: list[pymupdf.Rect]) -> float:
-    """The area the rectangles cover together, overlaps counted once.
+# _union_area measures on a grid of this many cells a side over the region
+AREA_GRID = 64
 
-    Sweeps across x; in each slab the covering rectangles' y spans are merged.
+
+def _union_area(rects: list[pymupdf.Rect], clip: pymupdf.Rect) -> float:
+    """The area of `clip` the rectangles cover together, overlaps counted once.
+
+    Counted on a fixed grid of cells, so many small tiles cost little; a cell
+    counts when its centre is covered.
     """
-    xs = sorted({x for r in rects for x in (r.x0, r.x1)})
-    area = 0.0
-    for x0, x1 in zip(xs, xs[1:], strict=False):
-        spans = sorted((r.y0, r.y1) for r in rects if r.x0 <= x0 and x1 <= r.x1)
-        covered, top, bottom = 0.0, None, None
-        for y0, y1 in spans:
-            if bottom is None or y0 > bottom:
-                if bottom is not None and top is not None:
-                    covered += bottom - top
-                top, bottom = y0, y1
-            else:
-                bottom = max(bottom, y1)
-        if bottom is not None and top is not None:
-            covered += bottom - top
-        area += (x1 - x0) * covered
-    return area
+    if not rects or clip.is_empty:
+        return 0.0
+    cell_w, cell_h = clip.width / AREA_GRID, clip.height / AREA_GRID
+    covered = bytearray(AREA_GRID * AREA_GRID)
+    for r in rects:
+        # Cells whose centres lie inside r
+        c0 = max(0, math.ceil((r.x0 - clip.x0) / cell_w - 0.5))
+        c1 = min(AREA_GRID, math.ceil((r.x1 - clip.x0) / cell_w - 0.5))
+        r0 = max(0, math.ceil((r.y0 - clip.y0) / cell_h - 0.5))
+        r1 = min(AREA_GRID, math.ceil((r.y1 - clip.y0) / cell_h - 0.5))
+        for row in range(r0, r1):
+            covered[row * AREA_GRID + c0 : row * AREA_GRID + c1] = b"\x01" * max(0, c1 - c0)
+    return sum(covered) * cell_w * cell_h
 
 
 def _clip(doc: pymupdf.Document, region: PictureRegion | None) -> pymupdf.Rect | None:
