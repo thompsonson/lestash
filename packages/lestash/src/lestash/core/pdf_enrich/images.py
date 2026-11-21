@@ -85,7 +85,8 @@ def extract_images(doc: pymupdf.Document) -> list[ExtractedImage]:
 # A picture is rendered at twice PDF resolution, so a diagram's small text stays legible
 RENDER_DPI = 144
 
-# A raster image counts as the picture when it covers this share of the picture's region
+# A raster image is the picture when each covers this share of the other: the image
+# fills the region, and is no larger, so a page background never stands in for a diagram
 RASTER_COVER = 0.8
 
 
@@ -136,7 +137,7 @@ def _raster_filling(
             rects = page.get_image_rects(xref)
         except Exception:
             continue
-        if any((rect & clip).get_area() >= RASTER_COVER * clip.get_area() for rect in rects):
+        if any(_same_place(rect, clip) for rect in rects):
             try:
                 extracted = doc.extract_image(xref)
             except Exception:
@@ -144,6 +145,20 @@ def _raster_filling(
                 return None
             return extracted["image"], extracted.get("ext", "png")
     return None
+
+
+def _same_place(rect: pymupdf.Rect, clip: pymupdf.Rect) -> bool:
+    overlap = (rect & clip).get_area()
+    return overlap >= RASTER_COVER * clip.get_area() and overlap >= RASTER_COVER * rect.get_area()
+
+
+def regions_fit(
+    doc: pymupdf.Document, regions: list[PictureRegion | None], placeholders: int
+) -> bool:
+    """True if every placeholder has a region on a page of this document."""
+    return len(regions) == placeholders > 0 and all(
+        r is not None and 0 <= r.page < doc.page_count for r in regions
+    )
 
 
 def apply_images(markdown: str, replacements: dict[int, str]) -> str:

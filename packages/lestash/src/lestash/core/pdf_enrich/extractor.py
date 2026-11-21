@@ -15,7 +15,7 @@ from lestash.core.text_extract import convert_pdf
 
 from .annotations import extract_annotations
 from .cleanup import strip_artifacts
-from .images import count_placeholders, extract_images, extract_pictures
+from .images import count_placeholders, extract_images, extract_pictures, regions_fit
 from .links import apply_links, extract_links
 from .types import EnrichedPdf
 from .version import EXTRACTOR_VERSION
@@ -53,8 +53,8 @@ def enrich_pdf(pdf_path: Path) -> EnrichedPdf:
             logger.exception("Link extraction failed for %s", pdf_path)
         try:
             # Docling's picture regions cover diagrams drawn as shapes too (#391); without
-            # one region per placeholder, raster images fill them in reading order
-            if regions and len(regions) == count_placeholders(markdown):
+            # a usable region for every placeholder, raster images fill them in reading order
+            if regions_fit(doc, regions, count_placeholders(markdown)):
                 images = extract_pictures(doc, regions)
             else:
                 images = extract_images(doc)

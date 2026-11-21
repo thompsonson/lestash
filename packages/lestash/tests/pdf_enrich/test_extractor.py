@@ -162,3 +162,13 @@ def test_enrich_pdf_falls_back_to_raster_order_when_regions_do_not_match(make_pd
 
     assert [img.placeholder_index for img in result.images] == [0]
     assert result.images[0].bbox == (100.0, 100.0, 200.0, 200.0)
+
+
+def test_enrich_pdf_falls_back_when_a_picture_has_no_position(make_pdf, red_dot_png):
+    from lestash.core.pdf_enrich import enrich_pdf
+
+    pdf = make_pdf([{"images": [((100, 100, 200, 200), red_dot_png)]}])
+    with _stub_docling("<!-- image -->\n", [None]):
+        result = enrich_pdf(pdf)
+
+    assert [img.placeholder_index for img in result.images] == [0]

@@ -121,3 +121,41 @@ def test_extract_pictures_keeps_each_picture_on_its_own_placeholder(tmp_path):
         doc.close()
 
     assert [img.placeholder_index for img in images] == [2]
+
+
+def test_extract_pictures_renders_a_diagram_drawn_over_a_page_background(tmp_path, red_dot_png):
+    """A raster image much larger than the picture is not the picture."""
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_image(page.rect, stream=red_dot_png)
+    page.draw_rect(pymupdf.Rect(100, 100, 300, 200), fill=(0, 0, 1))
+    try:
+        background = doc.extract_image(page.get_images()[0][0])["image"]
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 300.0, 200.0))])
+    finally:
+        doc.close()
+
+    assert len(images) == 1
+    assert images[0].bytes_ != background
+    assert images[0].mime_type == "image/png"
+
+
+def test_regions_fit_needs_a_usable_region_for_every_placeholder(tmp_path):
+    import pymupdf
+    from lestash.core.pdf_enrich.images import regions_fit
+    from lestash.core.text_extract import PictureRegion
+
+    doc = pymupdf.open(_diagram_pdf(tmp_path))
+    good = PictureRegion(0, (0, 0, 10, 10))
+    try:
+        assert regions_fit(doc, [good], 1)
+        assert not regions_fit(doc, [good], 2)
+        assert not regions_fit(doc, [], 0)
+        assert not regions_fit(doc, [good, None], 2)
+        assert not regions_fit(doc, [good, PictureRegion(3, (0, 0, 10, 10))], 2)
+    finally:
+        doc.close()
