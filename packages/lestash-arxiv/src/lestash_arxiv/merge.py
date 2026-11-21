@@ -9,7 +9,6 @@ link is deleted; the paper keeps a record of it under ``merged_from``.
 from __future__ import annotations
 
 import json
-import logging
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -22,13 +21,9 @@ from lestash_arxiv.share import (
     _add_text,
     _metadata,
     arxiv_id_from_url,
-    has_readable_pdf,
     import_paper,
-    source_pdf_sha256,
 )
 from lestash_arxiv.source import SOURCE_TYPE
-
-logger = logging.getLogger(__name__)
 
 # Rows of an item that merge_item leaves; a row the paper already has stays its own
 _MOVED = ("item_places", "syndications")
@@ -50,7 +45,6 @@ class Merged:
     # The link holds another copy of the PDF, such as your annotated one: it stays, and
     # is linked to the paper with alternate_of instead
     kept: bool = False
-    enriched: str | None = None  # the enricher's status, when the link's PDF came across
 
 
 def saved_links(conn: sqlite3.Connection) -> list[Link]:
@@ -105,15 +99,11 @@ def merge_link(
     has no such paper; MergeError if the link is gone. Commits. ``config`` finds the
     stored files.
 
-    A link holding a PDF other than the paper's stays, linked to the paper (``kept``).
-    A link's PDF the paper lacks comes across, and the paper is read from it.
+    A link holding a PDF file of its own is not merged: its file, and what was read
+    from it, stay with it. It is linked to the paper with ``alternate_of`` instead
+    (``kept``), as a shared copy of a paper is on import.
     """
-    from lestash.core.pdf_enrich.persistence import (
-        ANNOTATION_SOURCE_TYPE,
-        ENRICHER_ORIGIN,
-        SOURCE_PDF_MEDIA_TYPE,
-        SOURCE_PDF_VERSION_MEDIA_TYPE,
-    )
+    from lestash.core.pdf_enrich.persistence import SOURCE_PDF_MEDIA_TYPE
     from lestash.core.stubs import merge_item
 
     row = conn.execute(
@@ -132,6 +122,10 @@ def merge_link(
         shared_text = _shared_text(content, notes)
     if shared_text and shared_text.strip() == (url or "").strip():
         shared_text = None
+    has_file = conn.execute(
+        "SELECT 1 FROM item_media WHERE item_id = ? AND media_type = ?",
+        (link.item_id, SOURCE_PDF_MEDIA_TYPE),
+    ).fetchone()
 
     # The share's own saved activity moves below, so the paper isn't saved "now" as well
     imported = import_paper(conn, link.arxiv_id, record_share=False, fetch=fetch)
@@ -141,15 +135,7 @@ def merge_link(
     if paper_id == link.item_id:
         raise MergeError(f"item {link.item_id} is the paper's own item")
 
-    link_pdf = has_readable_pdf(conn, config, link.item_id)
-    paper_pdf = has_readable_pdf(conn, config, paper_id)
-    if (
-        link_pdf
-        and paper_pdf
-        and source_pdf_sha256(conn, config, link.item_id)
-        != source_pdf_sha256(conn, config, paper_id)
-    ):
-        # Two files of the paper: the link keeps its own, tied to the paper
+    if has_file:
         conn.execute(
             "INSERT OR IGNORE INTO item_links (from_id, to_id, kind, origin, status) "
             "VALUES (?, ?, 'alternate_of', ?, 'confirmed')",
@@ -177,68 +163,13 @@ def merge_link(
     if paper_parent is None and parent_id is not None and not _under(conn, parent_id, paper_id):
         conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (parent_id, paper_id))
 
-    # What merge_item doesn't carry: places and syndications, and media. The paper may
-    # hold its PDF address already, so only a source PDF it lacks comes across
+    # What merge_item doesn't carry: places and syndications, and media. The link has no
+    # PDF file, so its media (pictures, addresses) all come across
     for table in _MOVED:
         conn.execute(
             f"UPDATE OR IGNORE {table} SET item_id = ? WHERE item_id = ?", (paper_id, link.item_id)
         )
-    pdf_moves = link_pdf and not paper_pdf
-    if pdf_moves:
-        # The paper's stored file is gone, if it had one: the link's readable one takes
-        # its place, with its earlier versions and the pictures read from it. The
-        # paper is read again from it below
-        conn.execute(
-            "DELETE FROM item_media WHERE item_id = ? AND media_type = ?",
-            (paper_id, SOURCE_PDF_MEDIA_TYPE),
-        )
-        conn.execute(
-            "UPDATE item_media SET item_id = ? WHERE item_id = ?", (paper_id, link.item_id)
-        )
-    else:
-        if link_pdf:
-            # The link holds the paper's own file. An annotation read from it is keyed
-            # item-<link>:p<page>:<its id in the file>; the paper's twin has the same
-            # key under item-<paper>. A twin with the same title and text takes it,
-            # with anything of yours on it. One edited or read differently (OCR) keeps
-            # its own text: it moves below with the link's children
-            link_key, paper_key = f"item-{link.item_id}:", f"item-{paper_id}:"
-            twins = conn.execute(
-                """
-                SELECT a.id, twin.id FROM items a
-                JOIN items twin ON twin.source_type = a.source_type
-                    AND twin.parent_id = :paper
-                    AND twin.source_id = :paper_key || substr(a.source_id, :cut)
-                    AND twin.title IS a.title AND twin.content IS a.content
-                WHERE a.parent_id = :link AND a.source_type = :ann
-                    AND substr(a.source_id, 1, :len) = :link_key
-                """,
-                {
-                    "link": link.item_id,
-                    "paper": paper_id,
-                    "ann": ANNOTATION_SOURCE_TYPE,
-                    "link_key": link_key,
-                    "paper_key": paper_key,
-                    "len": len(link_key),
-                    "cut": len(link_key) + 1,
-                },
-            ).fetchall()
-            for annotation_id, twin_id in twins:
-                if twin_id is not None:
-                    merge_item(conn, annotation_id, twin_id)
-        # The paper keeps its own PDF and what was read from it; only the link's other
-        # media come across
-        conn.execute(
-            "UPDATE item_media SET item_id = ? WHERE item_id = ? AND source_origin IS NOT ? "
-            "AND media_type NOT IN (?, ?)",
-            (
-                paper_id,
-                link.item_id,
-                ENRICHER_ORIGIN,
-                SOURCE_PDF_MEDIA_TYPE,
-                SOURCE_PDF_VERSION_MEDIA_TYPE,
-            ),
-        )
+    conn.execute("UPDATE item_media SET item_id = ? WHERE item_id = ?", (paper_id, link.item_id))
 
     record = {
         "item_id": link.item_id,
@@ -256,16 +187,4 @@ def merge_link(
     # and its embedding are deleted
     merge_item(conn, link.item_id, paper_id)
     conn.commit()
-    enriched = None
-    if pdf_moves:
-        # The text read from it was the link's: the paper reads it now
-        from lestash.core.pdf_enrich import runner
-
-        # The merge is done: a failure here leaves the paper to the next fetch-pdfs
-        # or `lestash enrich item`, and is reported as the status
-        try:
-            enriched = runner.enrich_item(paper_id, config=config, force=True).status
-        except Exception as e:
-            logger.exception("Could not read the PDF of item %d after merging", paper_id)
-            enriched = f"failed ({e})"
-    return Merged(link.item_id, paper_id, imported.created, enriched=enriched)
+    return Merged(link.item_id, paper_id, imported.created)

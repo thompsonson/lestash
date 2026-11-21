@@ -434,33 +434,6 @@ def test_a_stored_blob_that_is_gone_counts_as_no_pdf(config: Config) -> None:
         assert [p[0] for p in share.papers_without_pdf(conn, config)] == [got.item_id]
 
 
-def test_a_links_readable_pdf_replaces_the_papers_gone_one(config: Config) -> None:
-    from lestash.core.database import get_media_dir
-
-    with get_connection(config) as conn:
-        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
-        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
-        path = get_media_dir(config) / "s1" / "paper.pdf"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"%PDF-1.4 the link's copy")
-        for item_id, rel in ((held, "gone/paper.pdf"), (link, "s1/paper.pdf")):
-            conn.execute(
-                "INSERT INTO item_media (item_id, media_type, local_path) "
-                "VALUES (?, 'source_pdf', ?)",
-                (item_id, rel),
-            )
-        conn.commit()
-        merge_link(
-            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
-        )
-        rows = conn.execute(
-            "SELECT local_path FROM item_media WHERE item_id = ? AND media_type = 'source_pdf'",
-            (held,),
-        ).fetchall()
-        assert [r[0] for r in rows] == ["s1/paper.pdf"]
-        assert share.has_readable_pdf(conn, config, held)
-
-
 def _stored(config: Config, conn, item_id: int, rel: str, data: bytes) -> None:
     from lestash.core.database import get_media_dir
 
@@ -473,139 +446,43 @@ def _stored(config: Config, conn, item_id: int, rel: str, data: bytes) -> None:
     )
 
 
-def test_a_links_pdf_that_comes_across_is_read(config: Config, monkeypatch) -> None:
-    read: list[tuple] = []
-
-    def enrich(item_id: int, *, config: Config, force: bool = False) -> EnrichmentResult:
-        read.append((item_id, force))
-        return EnrichmentResult(item_id=item_id, status="enriched")
-
-    monkeypatch.setattr("lestash.core.pdf_enrich.runner.enrich_item", enrich)
+@pytest.mark.parametrize(
+    ("held_file", "link_file"),
+    [
+        (b"%PDF-1.4 as arXiv served it", b"%PDF-1.4 with my notes"),
+        (b"%PDF-1.4 the paper", b"%PDF-1.4 the paper"),
+        (None, b"%PDF-1.4 the paper"),
+        (b"%PDF-1.4 the paper", None),  # its file is gone
+    ],
+)
+def test_a_link_with_a_pdf_file_of_its_own_is_kept(
+    config: Config, held_file: bytes | None, link_file: bytes | None
+) -> None:
+    """Its file and what was read from it stay with it; it is tied to the paper."""
     with get_connection(config) as conn:
         held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
         link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
-        _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 the paper")
+        if held_file is not None:
+            _stored(config, conn, held, "p/paper.pdf", held_file)
+        if link_file is not None:
+            _stored(config, conn, link, "s1/paper.pdf", link_file)
+        else:
+            conn.execute(
+                "INSERT INTO item_media (item_id, media_type, local_path) "
+                "VALUES (?, 'source_pdf', 'gone/paper.pdf')",
+                (link,),
+            )
+        note = _add(conn, "pdf_annotation", f"item-{link}:p0:A1", None, title="Highlight")
+        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (link, note))
         conn.commit()
         merged = merge_link(
             conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
         )
-    assert merged is not None and merged.enriched == "enriched" and not merged.kept
-    assert read == [(held, True)]
-
-
-def test_a_link_with_its_own_copy_stays_linked(config: Config, monkeypatch) -> None:
-    """Your annotated copy isn't lost: the link stays, tied to the paper."""
-    with get_connection(config) as conn:
-        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
-        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
-        _stored(config, conn, held, "p/paper.pdf", b"%PDF-1.4 as arXiv served it")
-        _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 with my notes")
-        conn.commit()
-        merged = merge_link(
-            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
+        assert merged is not None and merged.kept and merged.paper_id == held
+        assert (
+            conn.execute("SELECT parent_id FROM items WHERE id = ?", (note,)).fetchone()[0] == link
         )
-        assert merged is not None and merged.kept
-        assert conn.execute("SELECT 1 FROM items WHERE id = ?", (link,)).fetchone()
         kind = conn.execute(
             "SELECT kind FROM item_links WHERE from_id = ? AND to_id = ?", (link, held)
         ).fetchone()[0]
         assert kind == "alternate_of"
-
-
-def test_a_link_with_the_same_file_merges(config: Config) -> None:
-    with get_connection(config) as conn:
-        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
-        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
-        _stored(config, conn, held, "p/paper.pdf", b"%PDF-1.4 the paper")
-        _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 the paper")
-        conn.commit()
-        merged = merge_link(
-            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
-        )
-        assert merged is not None and not merged.kept and merged.enriched is None
-        assert conn.execute("SELECT 1 FROM items WHERE id = ?", (link,)).fetchone() is None
-
-
-def test_what_was_read_from_a_links_pdf_stays_off_a_paper_with_its_own(config: Config) -> None:
-    with get_connection(config) as conn:
-        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
-        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
-        _stored(config, conn, held, "p/paper.pdf", b"%PDF-1.4 the paper")
-        _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 the paper")
-        for kind, origin in (
-            ("image", "enricher"),
-            ("image", "share"),
-            ("source_pdf_version", "sync"),
-        ):
-            conn.execute(
-                "INSERT INTO item_media (item_id, media_type, url, source_origin) "
-                "VALUES (?, ?, ?, ?)",
-                (link, kind, f"https://x/{kind}-{origin}", origin),
-            )
-        conn.commit()
-        merge_link(
-            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
-        )
-        urls = conn.execute(
-            "SELECT url FROM item_media WHERE item_id = ? AND url IS NOT NULL", (held,)
-        ).fetchall()
-        assert [u[0] for u in urls] == ["https://x/image-share"]
-
-
-def test_a_failed_read_after_a_merge_is_reported_not_raised(config: Config, monkeypatch) -> None:
-    def enrich(item_id: int, *, config: Config, force: bool = False) -> EnrichmentResult:
-        raise RuntimeError("database is locked")
-
-    monkeypatch.setattr("lestash.core.pdf_enrich.runner.enrich_item", enrich)
-    with get_connection(config) as conn:
-        _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
-        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
-        _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 the paper")
-        conn.commit()
-        merged = merge_link(
-            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
-        )
-        assert merged is not None and (merged.enriched or "").startswith("failed")
-        assert conn.execute("SELECT 1 FROM items WHERE id = ?", (link,)).fetchone() is None
-
-
-def test_annotations_read_from_the_same_file_are_not_doubled(config: Config) -> None:
-    """An annotation of the link's copy merges into its twin on the paper: the one
-    with the same key in the file, not one that merely reads the same."""
-    with get_connection(config) as conn:
-        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
-        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
-        _stored(config, conn, held, "p/paper.pdf", b"%PDF-1.4 the paper")
-        _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 the paper")
-
-        def ann(owner: int, key: str, title: str = "Highlight") -> int:
-            item_id = _add(conn, "pdf_annotation", f"item-{owner}:{key}", None, title=title)
-            conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (owner, item_id))
-            return item_id
-
-        twin_a = ann(held, "p0:A1")
-        twin_b = ann(held, "p0:A2")  # reads the same as A1
-        link_b = ann(link, "p0:A2")
-        alike = ann(link, "p3:A9")  # reads the same, but the paper has no p3:A9
-        ann(held, "p1:B1", "Margin note")
-        edited = ann(link, "p1:B1", "Margin note, as I corrected it")
-        mine = _add(conn, "note", "n1", None, title="My note on it")
-        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (link_b, mine))
-        (tag,) = conn.execute("INSERT INTO tags (name) VALUES ('keep') RETURNING id").fetchone()
-        conn.execute("INSERT INTO item_tags (item_id, tag_id) VALUES (?, ?)", (link_b, tag))
-        conn.commit()
-        merge_link(
-            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
-        )
-
-        def parent(item_id: int) -> int | None:
-            row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (item_id,)).fetchone()
-            return row[0] if row else None
-
-        assert conn.execute("SELECT 1 FROM items WHERE id = ?", (link_b,)).fetchone() is None
-        # What was yours on it is on its twin, not on the look-alike A1
-        assert parent(mine) == twin_b
-        assert conn.execute("SELECT item_id FROM item_tags").fetchone()[0] == twin_b
-        assert parent(twin_a) == held and parent(alike) == held
-        # Its own text differs from its twin's: it keeps it, and moves
-        assert parent(edited) == held
