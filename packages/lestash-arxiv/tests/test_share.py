@@ -286,3 +286,33 @@ def test_sync_reads_each_held_paper_when_it_is_yielded(config: Config, monkeypat
     second = next(items)
     assert second.source_id == "2401.00002"
     assert (second.metadata or {})["notes"] == "Added during the sync"
+
+
+def test_an_old_style_id_is_read_in_arxivs_case() -> None:
+    assert share.arxiv_id_from_url("https://arxiv.org/abs/HEP-TH/9901001") == "hep-th/9901001"
+    assert share.arxiv_id_from_url("https://arxiv.org/abs/MATH.gt/0309136") == "math.GT/0309136"
+
+
+def test_a_paper_stored_under_a_bare_number_is_rekeyed(config: Config) -> None:
+    """Papers stored before #397 lost their archive; they take it back, not a twin."""
+    with get_connection(config) as conn:
+        conn.execute(
+            "INSERT INTO items (source_type, source_id, url, title, content) VALUES "
+            "('arxiv', '9901001v3', 'http://arxiv.org/abs/hep-th/9901001v3', 'Old', '')"
+        )
+        conn.commit()
+        got = share.import_paper(conn, "hep-th/9901001", fetch=lambda _: None)
+        assert got is not None and not got.created and got.title == "Old"
+        assert [r[0] for r in conn.execute("SELECT source_id FROM items")] == ["hep-th/9901001"]
+
+
+def test_a_held_paper_added_under_an_item_keeps_its_notes(config: Config) -> None:
+    """+ Add → New link saves the note on the link; the held paper isn't given it too."""
+    with get_connection(config) as conn:
+        first = share.import_paper(conn, "1602.05629", note="Mine", fetch=lambda _: _paper())
+        assert first is not None
+        share.import_paper(
+            conn, "1602.05629", note="On the link", shared={"shared_title": "T"}, parent_id=3
+        )
+        meta = _meta(conn, first.item_id)
+        assert meta["notes"] == "Mine" and "shared_title" not in meta

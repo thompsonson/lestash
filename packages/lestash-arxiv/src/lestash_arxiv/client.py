@@ -59,6 +59,16 @@ def extract_arxiv_id(entry_id: str) -> str:
     return entry_id
 
 
+def canonical_id(arxiv_id: str) -> str:
+    """An id as arXiv writes it: an old-style archive in lower case, its subject class
+    in upper case (math.GT/0309136), whatever case it was typed in."""
+    if "/" not in arxiv_id:
+        return arxiv_id
+    archive, number = arxiv_id.split("/", 1)
+    name, dot, subject = archive.partition(".")
+    return f"{name.lower()}{dot}{subject.upper()}/{number}"
+
+
 def extract_version(entry_id: str) -> int | None:
     """Extract version number from arXiv entry ID.
 

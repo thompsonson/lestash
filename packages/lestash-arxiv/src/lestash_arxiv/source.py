@@ -13,7 +13,13 @@ from lestash.plugins.base import SourcePlugin
 from rich.console import Console
 from rich.table import Table
 
-from lestash_arxiv.client import Paper, get_paper, get_papers, search_papers
+from lestash_arxiv.client import (
+    Paper,
+    extract_arxiv_id,
+    get_paper,
+    get_papers,
+    search_papers,
+)
 
 console = Console()
 
@@ -45,6 +51,30 @@ def paper_to_item(paper: Paper) -> ItemCreate:
         },
         media=media,
     )
+
+
+def rekey_old_style(conn: sqlite3.Connection) -> int:
+    """Re-key papers stored under a bare number before #397: hep-th/9901001 was kept as
+    ``9901001v3``. Each takes its full id from its address, unless that id is held.
+    Returns how many were re-keyed. Does not commit."""
+    rows = conn.execute(
+        "SELECT id, url FROM items WHERE source_type = ? "
+        "AND source_id GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' "
+        "AND source_id NOT LIKE '%.%'",
+        (SOURCE_TYPE,),
+    ).fetchall()
+    moved = 0
+    for item_id, url in rows:
+        full = extract_arxiv_id(url or "")
+        if "/" not in full:
+            continue
+        taken = conn.execute(
+            "SELECT 1 FROM items WHERE source_type = ? AND source_id = ?", (SOURCE_TYPE, full)
+        ).fetchone()
+        if taken is None:
+            conn.execute("UPDATE items SET source_id = ? WHERE id = ?", (full, item_id))
+            moved += 1
+    return moved
 
 
 class Held(NamedTuple):
@@ -431,6 +461,14 @@ class ArxivSource(SourcePlugin):
         3. Update detection for tracked paper IDs
         """
         seen: set[str] = set()
+        try:
+            from lestash.core.database import get_connection
+
+            with get_connection(self.app_config) as conn:
+                if rekey_old_style(conn):
+                    conn.commit()
+        except Exception:
+            self.logger.warning("Could not re-key old-style arXiv ids")
 
         def keep(item: ItemCreate) -> ItemCreate:
             return keep_held(item, self._held_paper(item.source_id))

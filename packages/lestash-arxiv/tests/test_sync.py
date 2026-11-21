@@ -71,3 +71,21 @@ def test_extract_arxiv_id_keeps_an_old_style_archive() -> None:
     assert extract_arxiv_id("http://arxiv.org/abs/math.GT/0309136v1") == "math.GT/0309136"
     assert extract_arxiv_id("http://arxiv.org/abs/1706.03762v7") == "1706.03762"
     assert extract_version("http://arxiv.org/abs/hep-th/9901001v3") == 3
+
+
+def test_sync_rekeys_a_paper_stored_under_a_bare_number(tmp_path: Path, monkeypatch) -> None:
+    config = Config(general=GeneralConfig(database_path=str(tmp_path / "test.db")))
+    init_database(config)
+    with get_connection(config) as conn:
+        conn.execute(
+            "INSERT INTO items (source_type, source_id, url, title, content) VALUES "
+            "('arxiv', '9901001v3', 'http://arxiv.org/abs/hep-th/9901001v3', 'Old', '')"
+        )
+        conn.commit()
+    checked: list[list[str]] = []
+    monkeypatch.setattr(arxiv_source, "get_papers", lambda ids: checked.append(ids) or [])
+    forbid_default_config(monkeypatch, config)
+    plugin = ArxivSource()
+    plugin.app_config = config
+    list(plugin.sync({}))
+    assert checked == [["hep-th/9901001"]]

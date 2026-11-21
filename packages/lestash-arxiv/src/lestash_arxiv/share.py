@@ -19,8 +19,8 @@ from lestash.core.activities import record_saved
 from lestash.core.config import Config
 from lestash.core.database import upsert_item
 
-from lestash_arxiv.client import Paper, get_paper
-from lestash_arxiv.source import SOURCE_TYPE, paper_to_item
+from lestash_arxiv.client import Paper, canonical_id, get_paper
+from lestash_arxiv.source import SOURCE_TYPE, paper_to_item, rekey_old_style
 
 # New ids (1602.05629) and old ones (hep-th/9901001, math.GT/0309136), with a version
 _ID = r"(\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?"
@@ -44,7 +44,7 @@ class Imported:
 def arxiv_id_from_url(url: str) -> str | None:
     """The paper's arXiv id, without its version, from an arXiv address; else None."""
     match = _ADDRESS.match(url.strip())
-    return match.group(1) if match else None
+    return canonical_id(match.group(1)) if match else None
 
 
 def find_paper(conn: sqlite3.Connection, arxiv_id: str) -> int | None:
@@ -101,12 +101,15 @@ def import_paper(
     ``shared_title``; each is kept in the item's metadata, as a link's would be.
     """
     kept = {key: text for key, text in (shared or {}).items() if text}
+    rekey_old_style(conn)
     held = find_paper(conn, arxiv_id)
     if held is not None:
-        # Shared again: a new time on the Timeline; a held paper stays where it is
-        for key, text in ({"notes": note} | kept).items():
-            if text:
-                _add_text(conn, held, key, text)
+        # Shared again: a new time on the Timeline; a held paper stays where it is.
+        # Added under an item, the link made there keeps the note and title instead.
+        if parent_id is None:
+            for key, text in ({"notes": note} | kept).items():
+                if text:
+                    _add_text(conn, held, key, text)
         record_saved(conn, held)
         conn.commit()
         row = conn.execute("SELECT title FROM items WHERE id = ?", (held,)).fetchone()
