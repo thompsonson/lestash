@@ -197,17 +197,29 @@ def merge_link(
         )
     else:
         if link_pdf:
-            # The link holds the paper's own file. An annotation read from it that the
-            # paper has too (same title and text) is merged into that twin, with
-            # anything of yours on it; the rest move below with the link's children
+            # The link holds the paper's own file. An annotation read from it is keyed
+            # item-<link>:p<page>:<its id in the file>; the paper's twin has the same
+            # key under item-<paper>. The twin takes it, with anything of yours on it;
+            # an annotation without one moves below with the link's children
+            link_key, paper_key = f"item-{link.item_id}:", f"item-{paper_id}:"
             twins = conn.execute(
                 """
-                SELECT a.id, (SELECT twin.id FROM items twin WHERE twin.parent_id = :paper
-                              AND twin.source_type = :ann AND twin.title IS a.title
-                              AND twin.content IS a.content ORDER BY twin.id LIMIT 1)
-                FROM items a WHERE a.parent_id = :link AND a.source_type = :ann
+                SELECT a.id, twin.id FROM items a
+                JOIN items twin ON twin.source_type = a.source_type
+                    AND twin.parent_id = :paper
+                    AND twin.source_id = :paper_key || substr(a.source_id, :cut)
+                WHERE a.parent_id = :link AND a.source_type = :ann
+                    AND substr(a.source_id, 1, :len) = :link_key
                 """,
-                {"link": link.item_id, "paper": paper_id, "ann": ANNOTATION_SOURCE_TYPE},
+                {
+                    "link": link.item_id,
+                    "paper": paper_id,
+                    "ann": ANNOTATION_SOURCE_TYPE,
+                    "link_key": link_key,
+                    "paper_key": paper_key,
+                    "len": len(link_key),
+                    "cut": len(link_key) + 1,
+                },
             ).fetchall()
             for annotation_id, twin_id in twins:
                 if twin_id is not None:

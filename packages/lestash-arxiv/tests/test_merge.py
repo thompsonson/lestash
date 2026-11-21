@@ -570,46 +570,38 @@ def test_a_failed_read_after_a_merge_is_reported_not_raised(config: Config, monk
 
 
 def test_annotations_read_from_the_same_file_are_not_doubled(config: Config) -> None:
+    """An annotation of the link's copy merges into its twin on the paper: the one
+    with the same key in the file, not one that merely reads the same."""
     with get_connection(config) as conn:
         held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
         link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
         _stored(config, conn, held, "p/paper.pdf", b"%PDF-1.4 the paper")
         _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 the paper")
-        twin = _add(conn, "pdf_annotation", "p:a1", None, title="Highlight", content="x")
-        _add(conn, "pdf_annotation", "p:a2", None, title="Highlight with a note", content="y")
-        conn.execute("UPDATE items SET parent_id = ? WHERE source_id LIKE 'p:%'", (held,))
-        plain = _add(conn, "pdf_annotation", "s1:a1", None, title="Highlight", content="x")
-        noted = _add(
-            conn, "pdf_annotation", "s1:a2", None, title="Highlight with a note", content="y"
-        )
-        tagged = _add(conn, "pdf_annotation", "s1:a3", None, title="Highlight", content="x")
-        only = _add(conn, "pdf_annotation", "s1:a4", None, title="Only on the link", content="z")
+
+        def ann(owner: int, key: str, title: str = "Highlight") -> int:
+            item_id = _add(conn, "pdf_annotation", f"item-{owner}:{key}", None, title=title)
+            conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (owner, item_id))
+            return item_id
+
+        twin_a = ann(held, "p0:A1")
+        twin_b = ann(held, "p0:A2")  # reads the same as A1
+        link_b = ann(link, "p0:A2")
+        alike = ann(link, "p3:A9")  # reads the same, but the paper has no p3:A9
         mine = _add(conn, "note", "n1", None, title="My note on it")
-        conn.execute(
-            "UPDATE items SET parent_id = ? WHERE id IN (?, ?, ?, ?)",
-            (link, plain, noted, tagged, only),
-        )
-        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (noted, mine))
+        conn.execute("UPDATE items SET parent_id = ? WHERE id = ?", (link_b, mine))
         (tag,) = conn.execute("INSERT INTO tags (name) VALUES ('keep') RETURNING id").fetchone()
-        conn.execute("INSERT INTO item_tags (item_id, tag_id) VALUES (?, ?)", (tagged, tag))
+        conn.execute("INSERT INTO item_tags (item_id, tag_id) VALUES (?, ?)", (link_b, tag))
         conn.commit()
         merge_link(
             conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
         )
 
-        # A twin merges into the paper's annotation, taking what's yours with it
         def parent(item_id: int) -> int | None:
             row = conn.execute("SELECT parent_id FROM items WHERE id = ?", (item_id,)).fetchone()
             return row[0] if row else None
 
-        for gone in (plain, noted, tagged):
-            assert conn.execute("SELECT 1 FROM items WHERE id = ?", (gone,)).fetchone() is None
-        assert parent(twin) == held
-        assert parent(mine) not in (None, noted)  # under the paper's twin now
-        assert conn.execute("SELECT item_id FROM item_tags").fetchone()[0] == twin
-        assert parent(only) == held  # no twin on the paper: it moves
-        count = conn.execute(
-            "SELECT COUNT(*) FROM items WHERE parent_id = ? AND source_type = 'pdf_annotation'",
-            (held,),
-        ).fetchone()[0]
-        assert count == 3
+        assert conn.execute("SELECT 1 FROM items WHERE id = ?", (link_b,)).fetchone() is None
+        # What was yours on it is on its twin, not on the look-alike A1
+        assert parent(mine) == twin_b
+        assert conn.execute("SELECT item_id FROM item_tags").fetchone()[0] == twin_b
+        assert parent(twin_a) == held and parent(alike) == held
