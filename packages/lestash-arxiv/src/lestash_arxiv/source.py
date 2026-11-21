@@ -304,7 +304,7 @@ class ArxivSource(SourcePlugin):
 
             config = Config.load()
             with get_connection(config) as conn:
-                papers = papers_without_pdf(conn)
+                papers = papers_without_pdf(conn, config)
             if limit:
                 papers = papers[:limit]
             for n, (item_id, arxiv_id, title) in enumerate(papers):

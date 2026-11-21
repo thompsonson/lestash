@@ -134,7 +134,7 @@ def test_a_shared_pdf_is_stored_without_downloading(config: Config, monkeypatch)
     assert status == "enriched"
     with get_connection(config) as conn:
         assert share.has_source_pdf(conn, got.item_id)
-        assert share.papers_without_pdf(conn) == []
+        assert share.papers_without_pdf(conn, config) == []
 
 
 def test_papers_without_pdf(config: Config) -> None:
@@ -144,7 +144,7 @@ def test_papers_without_pdf(config: Config) -> None:
             "VALUES ('arxiv', 'arxiv:2406.11233', 'Cited', '')"
         )
         conn.commit()
-        assert [p[1:] for p in share.papers_without_pdf(conn)] == [("2406.11233", "Cited")]
+        assert [p[1:] for p in share.papers_without_pdf(conn, config)] == [("2406.11233", "Cited")]
 
 
 # --------------------------------------------------------------------------- #
@@ -397,3 +397,19 @@ def test_a_stored_pdf_that_is_gone_is_fetched_again(config: Config, monkeypatch)
     assert status == "enriched"
     with get_connection(config) as conn:
         assert share.source_pdf_sha256(conn, config, got.item_id) is not None
+
+
+def test_a_stored_blob_that_is_gone_counts_as_no_pdf(config: Config) -> None:
+    """Recorded in the store, its file gone: fetch-pdfs lists the paper again."""
+    with get_connection(config) as conn:
+        got = share.import_paper(conn, "2603.15401", fetch=lambda _: _paper())
+        assert got is not None
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            "INSERT INTO item_media (item_id, media_type, local_path, sha256) "
+            "VALUES (?, 'source_pdf', 'gone/file.pdf', ?)",
+            (got.item_id, "a" * 64),
+        )
+        conn.commit()
+        assert share.source_pdf_sha256(conn, config, got.item_id) is None
+        assert [p[0] for p in share.papers_without_pdf(conn, config)] == [got.item_id]

@@ -102,7 +102,8 @@ def has_source_pdf(conn: sqlite3.Connection, item_id: int) -> bool:
 
 
 def source_pdf_sha256(conn: sqlite3.Connection, config: Config, item_id: int) -> str | None:
-    """The SHA-256 of the item's stored source PDF, or None if it has none to read."""
+    """The SHA-256 of the item's stored source PDF, or None if it has none to read:
+    no row, or a file gone from both the store and the media folder."""
     import hashlib
 
     from lestash.core.blobs import media_file
@@ -115,10 +116,10 @@ def source_pdf_sha256(conn: sqlite3.Connection, config: Config, item_id: int) ->
     ).fetchone()
     if row is None:
         return None
-    if row[1]:
-        return str(row[1])
-    path = media_file({"local_path": row[0], "sha256": None}, config)
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path is not None else None
+    path = media_file({"local_path": row[0], "sha256": row[1]}, config)
+    if path is None:
+        return None
+    return str(row[1]) if row[1] else hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _metadata(conn: sqlite3.Connection, item_id: int) -> dict[str, Any]:
@@ -189,21 +190,20 @@ def import_paper(
     return Imported(item_id, paper.title, created=True, has_pdf=False)
 
 
-def papers_without_pdf(conn: sqlite3.Connection) -> list[tuple[int, str, str | None]]:
-    """Each arXiv item with no stored source PDF: its id, arXiv id and title."""
-    from lestash.core.pdf_enrich.persistence import SOURCE_PDF_MEDIA_TYPE
-
+def papers_without_pdf(
+    conn: sqlite3.Connection, config: Config
+) -> list[tuple[int, str, str | None]]:
+    """Each arXiv item with no source PDF to read: its id, arXiv id and title. A paper
+    whose stored file is gone counts, so it is fetched again."""
     rows = conn.execute(
-        """
-        SELECT i.id, i.source_id, i.title FROM items i
-        WHERE i.source_type = ? AND NOT EXISTS (
-            SELECT 1 FROM item_media m WHERE m.item_id = i.id AND m.media_type = ?
-            AND m.local_path IS NOT NULL)
-        ORDER BY i.id
-        """,
-        (SOURCE_TYPE, SOURCE_PDF_MEDIA_TYPE),
+        "SELECT id, source_id, title FROM items WHERE source_type = ? ORDER BY id",
+        (SOURCE_TYPE,),
     ).fetchall()
-    return [(r[0], r[1].removeprefix("arxiv:"), r[2]) for r in rows]
+    return [
+        (r[0], r[1].removeprefix("arxiv:"), r[2])
+        for r in rows
+        if source_pdf_sha256(conn, config, r[0]) is None
+    ]
 
 
 def pdf_url_of(conn: sqlite3.Connection, item_id: int) -> str | None:
