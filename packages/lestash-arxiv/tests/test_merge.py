@@ -524,3 +524,46 @@ def test_a_link_with_the_same_file_merges(config: Config) -> None:
         )
         assert merged is not None and not merged.kept and merged.enriched is None
         assert conn.execute("SELECT 1 FROM items WHERE id = ?", (link,)).fetchone() is None
+
+
+def test_what_was_read_from_a_links_pdf_stays_off_a_paper_with_its_own(config: Config) -> None:
+    with get_connection(config) as conn:
+        held = _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
+        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
+        _stored(config, conn, held, "p/paper.pdf", b"%PDF-1.4 the paper")
+        _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 the paper")
+        for kind, origin in (
+            ("image", "enricher"),
+            ("image", "share"),
+            ("source_pdf_version", "sync"),
+        ):
+            conn.execute(
+                "INSERT INTO item_media (item_id, media_type, url, source_origin) "
+                "VALUES (?, ?, ?, ?)",
+                (link, kind, f"https://x/{kind}-{origin}", origin),
+            )
+        conn.commit()
+        merge_link(
+            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
+        )
+        urls = conn.execute(
+            "SELECT url FROM item_media WHERE item_id = ? AND url IS NOT NULL", (held,)
+        ).fetchall()
+        assert [u[0] for u in urls] == ["https://x/image-share"]
+
+
+def test_a_failed_read_after_a_merge_is_reported_not_raised(config: Config, monkeypatch) -> None:
+    def enrich(item_id: int, *, config: Config, force: bool = False) -> EnrichmentResult:
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr("lestash.core.pdf_enrich.runner.enrich_item", enrich)
+    with get_connection(config) as conn:
+        _add(conn, "arxiv", "2512.20660", "http://arxiv.org/abs/2512.20660v1")
+        link = _add(conn, "share", "s1", "https://arxiv.org/abs/2512.20660")
+        _stored(config, conn, link, "s1/paper.pdf", b"%PDF-1.4 the paper")
+        conn.commit()
+        merged = merge_link(
+            conn, Link(link, "share", "2512.20660", None), fetch=lambda _: None, config=config
+        )
+        assert merged is not None and (merged.enriched or "").startswith("failed")
+        assert conn.execute("SELECT 1 FROM items WHERE id = ?", (link,)).fetchone() is None

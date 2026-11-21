@@ -9,6 +9,7 @@ link is deleted; the paper keeps a record of it under ``merged_from``.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -26,6 +27,8 @@ from lestash_arxiv.share import (
     source_pdf_sha256,
 )
 from lestash_arxiv.source import SOURCE_TYPE
+
+logger = logging.getLogger(__name__)
 
 # Rows of an item that merge_item leaves; a row the paper already has stays its own
 _MOVED = ("item_places", "syndications")
@@ -105,7 +108,11 @@ def merge_link(
     A link holding a PDF other than the paper's stays, linked to the paper (``kept``).
     A link's PDF the paper lacks comes across, and the paper is read from it.
     """
-    from lestash.core.pdf_enrich.persistence import SOURCE_PDF_MEDIA_TYPE
+    from lestash.core.pdf_enrich.persistence import (
+        ENRICHER_ORIGIN,
+        SOURCE_PDF_MEDIA_TYPE,
+        SOURCE_PDF_VERSION_MEDIA_TYPE,
+    )
     from lestash.core.stubs import merge_item
 
     row = conn.execute(
@@ -177,16 +184,30 @@ def merge_link(
         )
     pdf_moves = link_pdf and not paper_pdf
     if pdf_moves:
-        # The paper's stored file is gone: the link's readable one takes its place
+        # The paper's stored file is gone, if it had one: the link's readable one takes
+        # its place, with its earlier versions and the pictures read from it. The
+        # paper is read again from it below
         conn.execute(
             "DELETE FROM item_media WHERE item_id = ? AND media_type = ?",
             (paper_id, SOURCE_PDF_MEDIA_TYPE),
         )
-    conn.execute(
-        "UPDATE item_media SET item_id = :to WHERE item_id = :from AND (media_type != :pdf "
-        "OR NOT EXISTS (SELECT 1 FROM item_media WHERE item_id = :to AND media_type = :pdf))",
-        {"to": paper_id, "from": link.item_id, "pdf": SOURCE_PDF_MEDIA_TYPE},
-    )
+        conn.execute(
+            "UPDATE item_media SET item_id = ? WHERE item_id = ?", (paper_id, link.item_id)
+        )
+    else:
+        # The paper keeps its own PDF and what was read from it; only the link's other
+        # media come across
+        conn.execute(
+            "UPDATE item_media SET item_id = ? WHERE item_id = ? AND source_origin IS NOT ? "
+            "AND media_type NOT IN (?, ?)",
+            (
+                paper_id,
+                link.item_id,
+                ENRICHER_ORIGIN,
+                SOURCE_PDF_MEDIA_TYPE,
+                SOURCE_PDF_VERSION_MEDIA_TYPE,
+            ),
+        )
 
     record = {
         "item_id": link.item_id,
@@ -209,5 +230,11 @@ def merge_link(
         # The text read from it was the link's: the paper reads it now
         from lestash.core.pdf_enrich import runner
 
-        enriched = runner.enrich_item(paper_id, config=config, force=True).status
+        # The merge is done: a failure here leaves the paper to the next fetch-pdfs
+        # or `lestash enrich item`, and is reported as the status
+        try:
+            enriched = runner.enrich_item(paper_id, config=config, force=True).status
+        except Exception as e:
+            logger.exception("Could not read the PDF of item %d after merging", paper_id)
+            enriched = f"failed ({e})"
     return Merged(link.item_id, paper_id, imported.created, enriched=enriched)
