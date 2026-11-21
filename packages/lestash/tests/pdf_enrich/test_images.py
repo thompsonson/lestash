@@ -184,3 +184,42 @@ def test_extract_pictures_keeps_what_is_drawn_over_a_photo(make_pdf):
         doc.close()
 
     assert plain != drawn
+
+
+def test_a_page_background_or_small_icon_leaves_a_diagram_a_png(tmp_path):
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_image(page.rect, stream=_photo_png(600))  # background
+    page.insert_image(pymupdf.Rect(105, 105, 115, 115), stream=_photo_png(400))  # icon
+    page.draw_rect(pymupdf.Rect(100, 100, 300, 300), color=(0, 0, 1))
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 300.0, 300.0))])
+    finally:
+        doc.close()
+
+    assert images[0].mime_type == "image/png"
+    assert pymupdf.Pixmap(images[0].bytes_).width == 400  # 200 points at 144 dpi
+
+
+def test_a_rotated_photo_keeps_its_resolution(tmp_path):
+    """A 400 x 200 photo turned 90° into a 50 x 100 point box is 288 dpi."""
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 400, 200), False)
+    pix.set_rect(pix.irect, (30, 200, 30))
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_image(pymupdf.Rect(100, 100, 150, 200), stream=pix.tobytes("png"), rotate=90)
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 150.0, 200.0))])
+    finally:
+        doc.close()
+
+    assert images[0].mime_type == "image/jpeg"
+    assert pymupdf.Pixmap(images[0].bytes_).height == 400  # 100 points at 288 dpi

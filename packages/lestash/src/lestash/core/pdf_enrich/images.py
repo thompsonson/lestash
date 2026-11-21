@@ -88,6 +88,11 @@ RENDER_DPI = 144
 # A photo inside a picture raises the resolution to its own, up to this
 MAX_RENDER_DPI = 300
 
+# A photo is part of a picture when this share of it lies inside the region...
+PHOTO_INSIDE = 0.5
+# ...and it fills at least this share of the region
+PHOTO_SHARE = 0.1
+
 
 def extract_pictures(
     doc: pymupdf.Document, regions: list[PictureRegion | None]
@@ -122,18 +127,27 @@ def extract_pictures(
 
 
 def _photo_dpi(page: pymupdf.Page, clip: pymupdf.Rect) -> float | None:
-    """The highest resolution of any raster image showing in `clip`, or None if none does."""
+    """The highest resolution of any photo that is part of `clip`, or None if none is.
+
+    A photo is part of the picture when most of it lies inside the region and it
+    fills a fair share of it, so a page background or a small icon doesn't count.
+    """
     best: float | None = None
     for info in page.get_images(full=True):
-        xref, width_px = info[0], info[2]
+        xref, width_px, height_px = info[0], info[2], info[3]
         try:
             rects = page.get_image_rects(xref)
         except Exception:
             continue
         for rect in rects:
-            if rect.width > 0 and not (rect & clip).is_empty:
-                dpi = width_px / rect.width * 72
-                best = dpi if best is None else max(best, dpi)
+            inside = (rect & clip).get_area()
+            if rect.is_empty or inside < PHOTO_INSIDE * rect.get_area():
+                continue
+            if inside < PHOTO_SHARE * clip.get_area():
+                continue
+            # Longest side against longest side, so a photo turned 90° measures right
+            dpi = max(width_px, height_px) / max(rect.width, rect.height) * 72
+            best = dpi if best is None else max(best, dpi)
     return best
 
 
