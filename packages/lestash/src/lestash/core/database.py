@@ -9,9 +9,12 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
+import os
+import shutil
 import sqlite3
+import tempfile
 from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1274,11 +1277,34 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> int:
     return applied
 
 
+# A database already at SCHEMA_VERSION, set by the test plugin (lestash.testing). A new
+# database copies it rather than running every migration again (#405). None elsewhere.
+template_database: Path | None = None
+
+
+def _copy_template(template: Path, db_path: Path) -> None:
+    """Copy the template to a temp file, then link it in: never half a file, never over one."""
+    fd, tmp = tempfile.mkstemp(dir=db_path.parent, prefix=f".{db_path.name}.")
+    os.close(fd)
+    try:
+        shutil.copyfile(template, tmp)
+        # Made first by another connection: leave theirs alone. No hard links here: no
+        # copy, and init_database migrates from scratch.
+        with suppress(OSError):
+            os.link(tmp, db_path)
+    finally:
+        os.unlink(tmp)
+
+
 def init_database(config: Config | None = None) -> None:
     """Initialize the database with schema and apply migrations."""
     db_path = get_db_path(config)
     # Readable only by you when made here (#189)
     db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if template_database is not None and not db_path.exists():
+        # Then migrate as usual: nothing to do on the copy, and whoever made it first is
+        # brought up to date
+        _copy_template(template_database, db_path)
 
     with sqlite3.connect(db_path) as conn:
         # Apply base schema
