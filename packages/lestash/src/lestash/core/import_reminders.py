@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final
 
+from lestash.core.activities import activity_time
+
 IMPORTED: Final = "imported"  # the activity verb
 DEFAULT_SNOOZE_DAYS: Final = 7
 FAILED_RUNS: Final = 3  # this many failed syncs in a row lists a source as failing
@@ -50,7 +52,8 @@ MANUAL_SOURCES: Final[tuple[ManualSource, ...]] = (
         "google-takeout",
         "Google Takeout",
         60,
-        item_sources=("gemini", "notebooklm", "google-keep"),
+        # Only Takeout brings these; a Gemini chat can also come from a shared page
+        item_sources=("notebooklm", "google-keep"),
         checkpoint_source="takeout",
         export_url="https://takeout.google.com",
         how="drive",
@@ -95,11 +98,6 @@ IMPORT_KINDS: Final[Mapping[str, str]] = {
 }
 
 
-def _utc_text(when: datetime) -> str:
-    """The form activities are stored in: UTC, 'YYYY-MM-DDTHH:MM:SS'."""
-    return when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
-
-
 def _parse(text: str | None) -> datetime | None:
     """A stored time as UTC; one with no zone is taken as UTC."""
     if not text:
@@ -135,7 +133,7 @@ def record_import(
     conn.execute(
         "INSERT OR IGNORE INTO activities (verb, item_id, occurred_at, source, details)"
         " VALUES (?, NULL, ?, ?, ?)",
-        (IMPORTED, _utc_text(at or datetime.now(UTC)), f"import:{key}", json.dumps(details)),
+        (IMPORTED, activity_time(at or datetime.now(UTC)), f"import:{key}", json.dumps(details)),
     )
     return True
 
@@ -225,7 +223,7 @@ def snooze(
     conn.execute(
         "INSERT INTO import_reminders (key, snoozed_until) VALUES (?, ?)"
         " ON CONFLICT(key) DO UPDATE SET snoozed_until = excluded.snoozed_until",
-        (key, None if days == 0 else _utc_text(until)),
+        (key, None if days == 0 else activity_time(until)),
     )
     return until
 

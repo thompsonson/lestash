@@ -114,7 +114,7 @@ export async function dueCardHtml() {
   const r = data.imports.find(i => i.due);
   if (!r) return '';
   const since = r.days === null ? 'No import of it is logged yet.'
-    : `${r.days} days since you last imported it.`;
+    : `${r.days} ${r.days === 1 ? 'day' : 'days'} since you last imported it.`;
   const act = r.how === 'upload' || r.how === 'drive'
     ? '<button class="sync-btn" data-act="import">Import</button>'
     : (r.how ? `<code class="ir-cmd">${escHtml(r.how)}</code>` : '');

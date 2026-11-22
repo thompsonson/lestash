@@ -45,7 +45,8 @@ def test_an_import_is_logged_as_an_activity_even_adding_nothing(test_db) -> None
         row = conn.execute(
             "SELECT item_id, occurred_at, source, details FROM activities WHERE verb = 'imported'"
         ).fetchone()
-        assert tuple(row)[:3] == (None, "2026-11-20T12:00:00", "import:mistral")
+        # Like every activity: UTC to the millisecond, with its zone
+        assert tuple(row)[:3] == (None, "2026-11-20T12:00:00.000Z", "import:mistral")
         assert '"name": "m.zip"' in row[3]
         mistral = _by_key(conn)["mistral"]
     assert (mistral.days, mistral.due) == (2, False)
@@ -75,9 +76,16 @@ def test_items_fetched_before_logging_began_count_as_an_import(test_db) -> None:
     assert claude.days == 237
 
 
+def test_a_gemini_chat_saved_from_a_page_is_no_takeout(test_db) -> None:
+    # Gemini chats also come from a shared or uploaded page, so they don't count
+    with get_connection(test_db) as conn:
+        _item(conn, "gemini", NOW - timedelta(days=1))
+        assert _by_key(conn)["google-takeout"].last_import is None
+
+
 def test_the_latest_sign_wins(test_db) -> None:
     with get_connection(test_db) as conn:
-        _item(conn, "gemini", NOW - timedelta(days=90))
+        _item(conn, "notebooklm", NOW - timedelta(days=90))
         conn.execute(
             "INSERT INTO sync_checkpoints (source, key, value, updated_at) VALUES"
             " ('takeout', 'zip-1', '{}', ?)",
@@ -114,7 +122,7 @@ def test_due_ones_come_first_then_the_longest_since(test_db) -> None:
     with get_connection(test_db) as conn:
         _item(conn, "mistral", NOW - timedelta(days=5))
         _item(conn, "claude", NOW - timedelta(days=200))
-        _item(conn, "gemini", NOW - timedelta(days=70))
+        _item(conn, "google-keep", NOW - timedelta(days=70))
         order = [s.source.key for s in r.statuses(conn, NOW)]
     # due: google-takeout 70, linkedin-export never; then claude 200 (unreadable), mistral 5
     assert order == ["google-takeout", "linkedin-export", "claude", "mistral"]
