@@ -1288,8 +1288,9 @@ def _copy_template(template: Path, db_path: Path) -> None:
     os.close(fd)
     try:
         shutil.copyfile(template, tmp)
-        # If another connection made it first, leave theirs alone
-        with suppress(FileExistsError):
+        # Made first by another connection: leave theirs alone. No hard links here: no
+        # copy, and init_database migrates from scratch.
+        with suppress(OSError):
             os.link(tmp, db_path)
     finally:
         os.unlink(tmp)
