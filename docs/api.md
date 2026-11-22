@@ -556,7 +556,7 @@ Imports you run yourself, and syncs that keep failing (#403).
 {
   "imports": [{
     "key": "mistral", "label": "Mistral export", "note": null,
-    "how": "upload", "export_url": "https://chat.mistral.ai",
+    "how": "upload", "sync": null, "export_url": "https://chat.mistral.ai",
     "last_import": "2026-04-02T20:00:39Z", "days": 234,
     "aim_days": 30, "default_aim_days": 30,
     "snoozed_until": null, "due": true
@@ -569,8 +569,8 @@ Imports you run yourself, and syncs that keep failing (#403).
 ```
 
 - `imports` lists due ones first, then the longest since import.
-- `how`: `upload` or `drive` (Sources → Import), a CLI command, or `null` when LeStash can't read the export yet. One with `how: null` is never due.
-- `last_import` is the latest of: an `imported` activity, written by every import from #403 on; the newest item first fetched from the source; and, for Takeout, the newest zip its Drive sync handled.
+- `how`: `upload` (Sources → Import), `drive` (read from Drive by the sync named in `sync`; Takeout parts are far over the upload limit), a CLI command, or `null` when LeStash can't read the export yet. One with `how: null` is never due.
+- `last_import` is the latest of: an `imported` activity, written by every import from #403 on; the newest item first fetched from the source; and, for Takeout, the request time of the newest zip its Drive sync imported.
 - `days` is whole days since; `null` if never. `aim_days` 0 means never remind.
 - `failing` lists enabled sources whose last 3 syncs all failed. `failed_runs` counts the failures since the last sync that completed.
 

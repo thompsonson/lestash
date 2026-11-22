@@ -80,6 +80,7 @@ def _reminders(conn) -> ImportRemindersResponse:
                 label=s.source.label,
                 note=s.source.note,
                 how=s.source.how,
+                sync=s.source.checkpoint_source if s.source.how == "drive" else None,
                 export_url=s.source.export_url,
                 last_import=_iso(s.last_import),
                 days=s.days,

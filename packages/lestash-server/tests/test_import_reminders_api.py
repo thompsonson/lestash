@@ -28,6 +28,12 @@ def test_every_manual_import_is_listed(client) -> None:
     claude = imports["claude"]
     assert claude["how"] is None  # LeStash can't read it yet
     assert claude["aim_days"] == claude["default_aim_days"] == 30
+    # A Takeout is read from Drive by the takeout sync, not uploaded (parts are GBs)
+    assert (imports["google-takeout"]["how"], imports["google-takeout"]["sync"]) == (
+        "drive",
+        "takeout",
+    )
+    assert imports["mistral"]["sync"] is None
 
 
 def test_an_uploaded_takeout_is_an_import_even_adding_nothing(client, test_config) -> None:

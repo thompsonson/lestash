@@ -21,13 +21,28 @@ const sinceText = r => r.days === null ? 'No import logged yet'
 const exportLink = r => r.export_url
   ? `<a class="ir-export" href="${escHtml(r.export_url)}" target="_blank" rel="noopener">Ask for export ↗</a>` : '';
 
-// What bringing it in takes: the Import button, a command to run on pop-mini, or why not
+// What bringing it in takes: Import (an upload), Sync now (read from Drive: a Takeout
+// is far over the upload limit), a command to run on pop-mini, or nothing yet
 function howHtml(r) {
-  if (r.how === 'upload' || r.how === 'drive') {
-    return '<button class="sync-btn ir-import" data-act="import">Import</button>';
+  if (r.how === 'upload') return '<button class="sync-btn ir-import" data-act="import">Import</button>';
+  if (r.how === 'drive' && r.sync) {
+    return `<button class="sync-btn ir-import" data-act="sync" data-sync="${escHtml(r.sync)}">Sync now</button>`;
   }
   if (r.how) return `<code class="ir-cmd" title="Run on pop-mini: ${escHtml(r.how)}">${escHtml(r.how)}</code>`;
   return '';
+}
+
+// Ask the server to read the export from Drive now
+async function syncNow(button) {
+  const name = button.dataset.sync;
+  button.disabled = true;
+  try {
+    await api(`/api/sources/${encodeURIComponent(name)}/sync`, { method: 'POST' });
+    showToast('Reading new exports from Drive…', 'ok');
+  } catch (err) {
+    showToast(`Could not start the sync: ${err.message}`, 'error');
+    button.disabled = false;
+  }
 }
 
 function aimSelect(r) {
@@ -84,6 +99,8 @@ export async function loadImportReminders() {
     box.dataset.wired = '1';
     box.addEventListener('click', e => {
       if (e.target.closest('[data-act="import"]')) startImport();
+      const sync = e.target.closest('[data-act="sync"]');
+      if (sync) syncNow(sync);
     });
     box.addEventListener('change', async e => {
       const select = e.target.closest('.ir-aim');
@@ -115,9 +132,7 @@ export async function dueCardHtml() {
   if (!r) return '';
   const since = r.days === null ? 'No import of it is logged yet.'
     : `${r.days} ${r.days === 1 ? 'day' : 'days'} since you last imported it.`;
-  const act = r.how === 'upload' || r.how === 'drive'
-    ? '<button class="sync-btn" data-act="import">Import</button>'
-    : (r.how ? `<code class="ir-cmd">${escHtml(r.how)}</code>` : '');
+  const act = howHtml(r);
   return `<div class="t-due" data-key="${escHtml(r.key)}" role="status">
     <div><b>${escHtml(r.label)} due</b> · ${escHtml(since)}</div>
     <div class="t-due-acts">${act}${exportLink(r)}
@@ -133,6 +148,8 @@ export function wireDueCard(list, redraw) {
     const card = e.target.closest('.t-due');
     if (!card) return;
     if (e.target.closest('[data-act="import"]')) return startImport();
+    const sync = e.target.closest('[data-act="sync"]');
+    if (sync) return syncNow(sync);
     if (!e.target.closest('[data-act="snooze"]')) return;
     try {
       await api(`/api/sources/imports/${encodeURIComponent(card.dataset.key)}/snooze`, json('POST', { days: 7 }));

@@ -45,7 +45,8 @@ class ManualSource:
     # Where to ask for the export
     export_url: str | None = None
     # How it comes in: "upload" (Sources → Import), "drive" (read from Drive by the
-    # sync, or uploaded), a CLI command, or None when LeStash can't read it yet
+    # sync named in checkpoint_source: Takeout parts are far over the upload limit),
+    # a CLI command, or None when LeStash can't read it yet
     how: str | None = "upload"
     note: str | None = None
 
@@ -120,7 +121,10 @@ def _requested(name: str | None) -> datetime | None:
     m = _REQUESTED.search(name or "")
     if not m:
         return None
-    return datetime.strptime(m[1], "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
+    try:
+        return datetime.strptime(m[1], "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
+    except ValueError:  # digits that are no date, such as month 13
+        return None
 
 
 def record_import(

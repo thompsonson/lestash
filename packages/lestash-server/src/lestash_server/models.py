@@ -107,6 +107,7 @@ class ImportReminder(BaseModel):
     label: str
     note: str | None = None
     how: str | None = None  # "upload", "drive", a CLI command, or None: can't be read yet
+    sync: str | None = None  # for "drive": the source whose sync reads it
     export_url: str | None = None
     last_import: str | None = None  # UTC, ISO 8601
     days: int | None = None  # whole days since; None if never

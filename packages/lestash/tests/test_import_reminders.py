@@ -105,6 +105,14 @@ def test_only_imported_takeout_zips_count_by_when_they_were_asked_for(test_db) -
         assert _by_key(conn)["google-takeout"].days == 20
 
 
+def test_a_zip_name_with_no_real_date_is_skipped() -> None:
+    assert r._requested("takeout-20261399T250000Z-001.zip") is None
+    assert r._requested("export.zip") is None
+    assert r._requested("takeout-20261113T050346Z-1-001.zip") == datetime(
+        2026, 11, 13, 5, 3, 46, tzinfo=UTC
+    )
+
+
 def test_the_latest_sign_wins(test_db) -> None:
     with get_connection(test_db) as conn:
         _item(conn, "notebooklm", NOW - timedelta(days=90))
