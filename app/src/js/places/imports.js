@@ -7,6 +7,7 @@ import { api } from '../api.js';
 import { navigate } from '../router.js';
 import { escHtml, relTime } from '../util.js';
 import { showToast } from '../toast.js';
+import { redrawTimeline } from './timeline.js';
 
 const AIMS = [[30, 'Monthly'], [60, 'Every 2 months'], [90, 'Quarterly'], [0, 'Never remind']];
 
@@ -129,7 +130,8 @@ export async function loadImportReminders() {
     box.addEventListener('click', e => {
       if (e.target.closest('[data-act="import"]')) startImport();
       const sync = e.target.closest('[data-act="sync"]');
-      if (sync) syncNow(sync, loadImportReminders);
+      // When it ends, this list and the Timeline's card both show the result
+      if (sync) syncNow(sync, () => { redrawTimeline(); loadImportReminders(); });
     });
     box.addEventListener('change', async e => {
       const select = e.target.closest('.ir-aim');
@@ -137,6 +139,7 @@ export async function loadImportReminders() {
       const key = select.closest('[data-key]').dataset.key;
       try {
         draw(box, await api(`/api/sources/imports/${encodeURIComponent(key)}`, json('PUT', { aim_days: Number(select.value) })));
+        redrawTimeline();  // today's card may be due, or no longer, under the new aim
       } catch (err) {
         showToast(`Could not save: ${err.message}`, 'error');
       }
