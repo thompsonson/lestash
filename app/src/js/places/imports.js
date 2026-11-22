@@ -51,9 +51,15 @@ async function syncNow(button, done) {
     showToast('The Drive sync did not start; see Sync history below', 'error');
     return reset();
   }
+  if (res.status === 'pending') {
+    // Not begun after 30 s: it has no row to wait on yet, so don't guess its result
+    showToast('The Drive sync is slow to start; its result will show under Sync history', 'ok');
+    reset();
+    return done();
+  }
   showToast(res.status === 'started' ? 'Reading new exports from Drive…' : 'A Drive sync is already running…', 'ok');
-  // Wait for the run the server named; with none named (one already running, or not
-  // begun yet), wait until no run of this source is going
+  // Wait for the run the server named; with one already running, wait until no run of
+  // this source is going (the running one's row is written as it takes the lock)
   const started = Date.now();
   while (Date.now() - started < POLL_FOR_MS) {
     await new Promise(r => setTimeout(r, POLL_MS));
