@@ -1301,8 +1301,9 @@ def init_database(config: Config | None = None) -> None:
     # Readable only by you when made here (#189)
     db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if template_database is not None and not db_path.exists():
+        # Then migrate as usual: nothing to do on the copy, and whoever made it first is
+        # brought up to date
         _copy_template(template_database, db_path)
-        return
 
     with sqlite3.connect(db_path) as conn:
         # Apply base schema

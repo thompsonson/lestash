@@ -13,7 +13,7 @@ def test_new_database_copies_template_and_keeps_existing(tmp_path):
     database.init_database(config)
     with database.get_connection(config) as conn:
         assert database.get_schema_version(conn) == database.SCHEMA_VERSION
-    assert [p.name for p in tmp_path.iterdir()] == ["new.db"]  # no temp copy left
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".new.db.")]  # no temp copy
 
     existing = tmp_path / "existing.db"
     existing.write_bytes(b"")
