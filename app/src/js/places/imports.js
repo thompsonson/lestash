@@ -32,17 +32,36 @@ function howHtml(r) {
   return '';
 }
 
-// Ask the server to read the export from Drive now
-async function syncNow(button) {
+// Ask the server to read the export from Drive now, then call `done` once the sync
+// has ended, so the row or card shows what it brought in
+const POLL_MS = 5000, POLL_FOR_MS = 15 * 60 * 1000;
+async function syncNow(button, done) {
   const name = button.dataset.sync;
   button.disabled = true;
+  button.textContent = 'Syncing…';
+  const started = Date.now();
   try {
     await api(`/api/sources/${encodeURIComponent(name)}/sync`, { method: 'POST' });
     showToast('Reading new exports from Drive…', 'ok');
   } catch (err) {
     showToast(`Could not start the sync: ${err.message}`, 'error');
     button.disabled = false;
+    button.textContent = 'Sync now';
+    return;
   }
+  // The sync runs in the background: wait for its log row to end
+  while (Date.now() - started < POLL_FOR_MS) {
+    await new Promise(r => setTimeout(r, POLL_MS));
+    let runs;
+    try { runs = await api('/api/sources/status'); } catch { continue; }
+    const run = runs.find(r => r.source_type === name);
+    if (run && run.status !== 'running' && new Date(run.started_at) >= new Date(started - 60000)) {
+      showToast(run.status === 'completed' ? `Drive sync done: ${run.items_added} new` : `Drive sync ${run.status}`,
+        run.status === 'completed' ? 'ok' : 'error');
+      break;
+    }
+  }
+  done();
 }
 
 function aimSelect(r) {
@@ -100,7 +119,7 @@ export async function loadImportReminders() {
     box.addEventListener('click', e => {
       if (e.target.closest('[data-act="import"]')) startImport();
       const sync = e.target.closest('[data-act="sync"]');
-      if (sync) syncNow(sync);
+      if (sync) syncNow(sync, loadImportReminders);
     });
     box.addEventListener('change', async e => {
       const select = e.target.closest('.ir-aim');
@@ -149,7 +168,7 @@ export function wireDueCard(list, redraw) {
     if (!card) return;
     if (e.target.closest('[data-act="import"]')) return startImport();
     const sync = e.target.closest('[data-act="sync"]');
-    if (sync) return syncNow(sync);
+    if (sync) return syncNow(sync, redraw);
     if (!e.target.closest('[data-act="snooze"]')) return;
     try {
       await api(`/api/sources/imports/${encodeURIComponent(card.dataset.key)}/snooze`, json('POST', { days: 7 }));
