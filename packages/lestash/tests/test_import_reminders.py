@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 from lestash.core import import_reminders as r
@@ -83,14 +84,31 @@ def test_a_gemini_chat_saved_from_a_page_is_no_takeout(test_db) -> None:
         assert _by_key(conn)["google-takeout"].last_import is None
 
 
+def _checkpoint(conn, key: str, status: str, requested: datetime) -> None:
+    name = f"takeout-{requested:%Y%m%dT%H%M%S}Z-001.zip"
+    conn.execute(
+        "INSERT INTO sync_checkpoints (source, key, value, updated_at) VALUES ('takeout', ?, ?, ?)",
+        (key, json.dumps({"name": name, "status": status}), NOW.strftime("%Y-%m-%d %H:%M:%S")),
+    )
+
+
+def test_only_imported_takeout_zips_count_by_when_they_were_asked_for(test_db) -> None:
+    with get_connection(test_db) as conn:
+        _checkpoint(conn, "a", "imported", NOW - timedelta(days=20))
+        _checkpoint(conn, "b", "failed", NOW - timedelta(days=2))
+        _checkpoint(conn, "c", "unrecognized", NOW - timedelta(days=3))
+        conn.execute(  # a NotebookLM export index, rewritten today
+            "INSERT INTO sync_checkpoints (source, key, value) VALUES"
+            " ('takeout', 'notebooklm:takeout-x', '{\"indexed\": true}')"
+        )
+        # updated_at is now for all of them; the request time in the name decides
+        assert _by_key(conn)["google-takeout"].days == 20
+
+
 def test_the_latest_sign_wins(test_db) -> None:
     with get_connection(test_db) as conn:
         _item(conn, "notebooklm", NOW - timedelta(days=90))
-        conn.execute(
-            "INSERT INTO sync_checkpoints (source, key, value, updated_at) VALUES"
-            " ('takeout', 'zip-1', '{}', ?)",
-            ((NOW - timedelta(days=9)).strftime("%Y-%m-%d %H:%M:%S"),),
-        )
+        _checkpoint(conn, "zip-1", "imported", NOW - timedelta(days=9))
         assert _by_key(conn)["google-takeout"].days == 9
         r.record_import(conn, "takeout", 0, at=NOW - timedelta(days=1))
         assert _by_key(conn)["google-takeout"].days == 1

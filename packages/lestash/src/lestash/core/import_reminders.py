@@ -17,6 +17,7 @@ is listed too (``failing_syncs``), so a sync that stops is noticed.
 """
 
 import json
+import re
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -37,7 +38,9 @@ class ManualSource:
     aim_days: int  # the default; 0 means never remind
     # Items first fetched from these sources count as an import of this one
     item_sources: tuple[str, ...] = ()
-    # The newest of this source's sync checkpoints counts too (one per zip handled)
+    # Zips this sync source imported count too, dated by the export request time in
+    # their names (takeout-20261113T050346Z-001.zip): a checkpoint's updated_at moves
+    # whenever an export is read again
     checkpoint_source: str | None = None
     # Where to ask for the export
     export_url: str | None = None
@@ -109,6 +112,17 @@ def _parse(text: str | None) -> datetime | None:
     return when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
 
 
+_REQUESTED = re.compile(r"takeout-(\d{8}T\d{6})Z")
+
+
+def _requested(name: str | None) -> datetime | None:
+    """When a Takeout export was asked for, from its zip's name; None if not there."""
+    m = _REQUESTED.search(name or "")
+    if not m:
+        return None
+    return datetime.strptime(m[1], "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
+
+
 def record_import(
     conn: sqlite3.Connection,
     kind: str,
@@ -157,12 +171,17 @@ def last_import(conn: sqlite3.Connection, source: ManualSource) -> datetime | No
         if (when := _parse(row[0])) is not None:
             found.append(when)
     if source.checkpoint_source:
-        row = conn.execute(
-            "SELECT max(updated_at) FROM sync_checkpoints WHERE source = ?",
+        # Only zips that were imported: not ones that failed or held nothing known,
+        # nor the NotebookLM export indexes kept beside them
+        names = conn.execute(
+            "SELECT json_extract(value, '$.name') FROM sync_checkpoints"
+            " WHERE source = ? AND json_valid(value)"
+            " AND json_extract(value, '$.status') = 'imported'",
             (source.checkpoint_source,),
-        ).fetchone()
-        if (when := _parse(row[0])) is not None:
-            found.append(when)
+        ).fetchall()
+        requested = [w for (n,) in names if (w := _requested(n)) is not None]
+        if requested:
+            found.append(max(requested))
     return max(found) if found else None
 
 
