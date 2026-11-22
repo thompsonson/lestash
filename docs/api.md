@@ -538,11 +538,14 @@ Recent sync history (last 20 entries). `?source=takeout` gives one source's 20 n
 
 ### `POST /api/sources/{source_name}/sync`
 
-Trigger a sync for a source plugin. Returns immediately; sync runs in background.
+Start a sync for a source plugin. It runs in the background; the reply comes once it has begun.
 
 ```json
-{ "status": "started", "source": "linkedin" }
+{ "status": "started", "source": "linkedin", "run_id": 4211 }
 ```
+
+- `status` is `started`, or `already_running` when another sync of the source holds its lock.
+- `run_id` is the `sync_log` id of the run to watch, as `id` in `GET /api/sources/status`; `null` if the sync never began.
 
 Returns 404 if source not found.
 

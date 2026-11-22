@@ -143,3 +143,36 @@ def test_sync_history_of_one_source(client, test_config) -> None:
     assert all(r["source_type"] == "youtube" for r in client.get("/api/sources/status").json())
     runs = client.get("/api/sources/status", params={"source": "takeout"}).json()
     assert [r["started_at"] for r in runs] == ["2026-11-01 10:00:00"]
+
+
+def test_a_sync_request_names_the_run_to_watch(client, test_config, monkeypatch) -> None:
+    # Sync now waits for exactly this run: the new one, or one already running
+    import lestash_server.routes.sources as routes
+    from lestash.core.sync import SyncRun
+
+    class Plugin:
+        app_config = None
+
+        def sync(self, _config):
+            return iter(())
+
+    monkeypatch.setattr(routes, "load_plugins", lambda: {"voice": Plugin()})
+    resp = client.post("/api/sources/voice/sync").json()
+    assert resp["status"] == "started" and resp["run_id"]
+
+    import time
+
+    for _ in range(100):  # the first run finishes in its own thread
+        runs = client.get("/api/sources/status", params={"source": "voice"}).json()
+        if runs and runs[0]["status"] != "running":
+            break
+        time.sleep(0.05)
+    assert runs[0]["id"] == resp["run_id"] and runs[0]["status"] == "completed"
+
+    with get_connection(test_config) as conn, SyncRun.start(conn, "voice") as held:
+        resp = client.post("/api/sources/voice/sync").json()
+        assert resp == {"status": "already_running", "source": "voice", "run_id": held.id}
+        held.finish("completed")
+
+    runs = client.get("/api/sources/status", params={"source": "voice"}).json()
+    assert {r["id"] for r in runs} >= {held.id}

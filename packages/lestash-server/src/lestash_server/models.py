@@ -142,6 +142,7 @@ class ImportSnoozeRequest(BaseModel):
 class SyncLogEntry(BaseModel):
     """A single sync log entry."""
 
+    id: int | None = None
     source_type: str
     started_at: str | None = None
     completed_at: str | None = None

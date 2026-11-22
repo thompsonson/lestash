@@ -39,32 +39,25 @@ async function syncNow(button, done) {
   const name = button.dataset.sync;
   button.disabled = true;
   button.textContent = 'Syncing…';
-  // Rows are told apart by the server's own start text: it has no zone, so it can't be
-  // set against this clock. A sync already running makes ours a no-op, so then that
-  // one is the run to wait for.
-  const latest = async () => {
-    const runs = await api(`/api/sources/status?source=${encodeURIComponent(name)}`);
-    return runs[0] || null;
-  };
-  let before = null;
-  try { before = await latest(); } catch { /* none to tell apart: any finished row is ours */ }
-  const started = Date.now();
+  let runId = null;
   try {
-    await api(`/api/sources/${encodeURIComponent(name)}/sync`, { method: 'POST' });
-    showToast('Reading new exports from Drive…', 'ok');
+    // The reply names the run to watch: the one it began, or one already running
+    const res = await api(`/api/sources/${encodeURIComponent(name)}/sync`, { method: 'POST' });
+    runId = res.run_id;
+    showToast(res.status === 'already_running' ? 'A Drive sync is already running…' : 'Reading new exports from Drive…', 'ok');
   } catch (err) {
     showToast(`Could not start the sync: ${err.message}`, 'error');
     button.disabled = false;
     button.textContent = 'Sync now';
     return;
   }
-  // The sync runs in the background: wait for its log row to end
-  while (Date.now() - started < POLL_FOR_MS) {
+  const started = Date.now();
+  while (runId !== null && Date.now() - started < POLL_FOR_MS) {
     await new Promise(r => setTimeout(r, POLL_MS));
-    let run;
-    try { run = await latest(); } catch { continue; }
-    const ours = run && (!before || before.status === 'running' || run.started_at !== before.started_at);
-    if (ours && run.status !== 'running') {
+    let runs;
+    try { runs = await api(`/api/sources/status?source=${encodeURIComponent(name)}`); } catch { continue; }
+    const run = runs.find(r => r.id === runId);
+    if (run && run.status !== 'running') {
       showToast(run.status === 'completed' ? `Drive sync done: ${run.items_added} new` : `Drive sync ${run.status}`,
         run.status === 'completed' ? 'ok' : 'error');
       break;

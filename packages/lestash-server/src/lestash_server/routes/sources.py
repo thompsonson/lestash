@@ -1,9 +1,11 @@
 """Source API endpoints."""
 
 import logging
+import threading
+from collections.abc import Callable
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from lestash.core import import_reminders as reminders
 from lestash.core.config import Config
 from lestash.core.database import get_connection
@@ -22,6 +24,8 @@ from lestash_server.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+START_WAIT_S = 30  # how long a sync request waits for the sync to begin
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 
@@ -57,7 +61,7 @@ def source_status(source: str | None = None):
     with get_db() as conn:
         rows = conn.execute(
             f"""
-            SELECT source_type, started_at, completed_at, status,
+            SELECT id, source_type, started_at, completed_at, status,
                    items_added, items_updated, error_message
             FROM sync_log
             {"WHERE source_type = ?" if source else ""}
@@ -136,8 +140,28 @@ def snooze_import(key: str, body: ImportSnoozeRequest | None = None):
         return _reminders(conn)
 
 
-def _run_sync(source_name: str) -> None:
+# Told when a sync begins: "started" and its sync_log id, or "already_running" and
+# the id of the run holding the lock; ("skipped", None) if it never got that far
+OnStart = Callable[[str, int | None], None]
+
+
+def _run_sync(source_name: str, on_start: OnStart | None = None) -> None:
     """Run a sync in the background."""
+    told = False
+
+    def tell(status: str, run_id: int | None) -> None:
+        nonlocal told
+        if on_start is not None and not told:
+            told = True
+            on_start(status, run_id)
+
+    try:
+        _sync(source_name, tell)
+    finally:
+        tell("skipped", None)  # never left waiting, whatever happened
+
+
+def _sync(source_name: str, tell: OnStart) -> None:
     plugins = load_plugins()
     plugin = plugins.get(source_name)
     if not plugin:
@@ -160,7 +184,13 @@ def _run_sync(source_name: str) -> None:
             run = SyncRun.start(conn, source_name, store)
         except SyncAlreadyRunning as e:
             logger.warning(f"Sync skipped for {source_name}: {e}")
+            row = conn.execute(
+                "SELECT max(id) FROM sync_log WHERE source_type = ? AND status = 'running'",
+                (source_name,),
+            ).fetchone()
+            tell("already_running", row[0])
             return
+        tell("started", run.id)
 
         with run:
             error_message = None
@@ -184,11 +214,25 @@ def _run_sync(source_name: str) -> None:
 
 
 @router.post("/{source_name}/sync")
-def sync_source(source_name: str, background_tasks: BackgroundTasks):
-    """Trigger a sync for a source plugin."""
+def sync_source(source_name: str):
+    """Start a sync for a source plugin; returns once it has begun.
+
+    ``status`` is ``started``, or ``already_running`` when another sync of the source
+    holds its lock; ``run_id`` is the sync_log id of the run to watch.
+    """
     plugins = load_plugins()
     if source_name not in plugins:
         raise HTTPException(status_code=404, detail=f"Unknown source: {source_name}")
 
-    background_tasks.add_task(_run_sync, source_name)
-    return {"status": "started", "source": source_name}
+    # The sync runs in its own thread; the reply waits only until it has begun, so it
+    # can name the run to watch: this one, or one already running (#403)
+    began: dict[str, object] = {"status": "started", "run_id": None}
+    ready = threading.Event()
+
+    def note(status: str, run_id: int | None) -> None:
+        began.update(status=status, run_id=run_id)
+        ready.set()
+
+    threading.Thread(target=_run_sync, args=(source_name, note), daemon=True).start()
+    ready.wait(START_WAIT_S)
+    return {"status": began["status"], "source": source_name, "run_id": began["run_id"]}
