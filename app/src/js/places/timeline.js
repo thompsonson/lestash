@@ -8,6 +8,7 @@ import { escHtml, sourceLabel } from '../util.js';
 import { kindIcon } from '../objects/item/kinds.js';
 import { openFiltersWhenWide } from '../util.js';
 import { reactionText } from '../reactions.js';
+import { dueCardHtml, wireDueCard } from './imports.js';
 
 // Verbs that fold into one line once a day has more than FOLD_AT of one kind
 const FOLDING = new Set(['watched', 'viewed', 'liked', 'reacted', 'disliked', 'shared', 'searched']);
@@ -16,7 +17,7 @@ const FOLD_AT = 3;
 const VERB_WORDS = {
   watched: 'watched', viewed: 'viewed', liked: 'liked', reacted: 'reacted to', disliked: 'disliked', shared: 'shared',
   searched: 'searched for', prompted: 'prompted', listened: 'listened to', read: 'read', annotated: 'annotated',
-  saved: 'saved',
+  saved: 'saved', imported: 'imported',
 };
 const MADE_WORDS = {
   post: 'posted', comment: 'replied', note: 'wrote a note', chat: 'chatted', notebook: 'made a notebook',
@@ -31,7 +32,7 @@ const PLURALS = {
 const VERB_FILTERS = [
   ['', 'Everything'], ['made', 'Made by you'], ['watched', 'Watched'], ['viewed', 'Viewed'],
   ['liked', 'Liked'], ['reacted', 'Reacted'], ['prompted', 'Prompted'], ['searched', 'Searched'], ['shared', 'Shared'],
-  ['saved', 'Saved'],
+  ['saved', 'Saved'], ['imported', 'Imported'],
 ];
 const KIND_FILTERS = [
   ['', 'All kinds'], ['video', 'Videos'], ['post', 'Posts'], ['chat', 'Chats'], ['notebook', 'Notebooks'],
@@ -241,8 +242,16 @@ function stubTitle(item) {
   return `${what} from ${day}, ${clock(at)}`;
 }
 
+// An import you ran (#403): "214 new items · takeout-001.zip"
+function importTitle(d) {
+  const n = Number(d.items_added) || 0;
+  const what = n ? `${n.toLocaleString()} new ${n === 1 ? 'item' : 'items'}` : 'nothing new';
+  return d.name ? `${what} · ${d.name}` : what;
+}
+
 function entryTitle(e) {
   const item = e.item;
+  if (e.verb === 'imported' && e.details) return importTitle(e.details);
   if (!item) return (e.details && e.details.query) || '(nothing named)';
   if (item.held === false && !item.title) return stubTitle(item);
   // A search's title repeats the verb: "Searched YouTube: sleep science"
@@ -253,8 +262,9 @@ function entryTitle(e) {
 // The service, with the item's kind icon: "▶ YouTube"
 function source(e) {
   const item = e.item;
-  const icon = item ? kindIcon(item) : '·';
-  const name = item ? sourceLabel(item.source_type) : '';
+  const icon = item ? kindIcon(item) : (e.verb === 'imported' ? '⇩' : '·');
+  const name = item ? sourceLabel(item.source_type)
+    : (e.verb === 'imported' && e.details ? e.details.label || e.details.source || '' : '');
   return `<span class="t-src"><span class="t-icon" aria-hidden="true">${icon}</span>${escHtml(name)}</span>`;
 }
 
@@ -298,8 +308,8 @@ function verbFor(e) {
 }
 
 function line(e) {
-  const kind = e.item ? e.item.kind : 'other';
-  const landmark = e.verb === 'made' ? ' landmark' : '';
+  const kind = e.item ? e.item.kind : (e.verb === 'imported' ? 'import' : 'other');
+  const landmark = e.verb === 'made' || e.verb === 'imported' ? ' landmark' : '';
   return `<li class="t-row${landmark} kind-${kind}">${head(e, escHtml(verbFor(e)), clock(e.at))}${titleLine(e)}</li>`;
 }
 
@@ -426,13 +436,17 @@ async function drawDay(day, url) {
   shown = key;
   const list = tab.querySelector('.timeline-list');
   list.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+  wireDueCard(list, refresh);
+  // Today, unfiltered, opens with the most overdue import, if any (#403)
+  const isToday = isoDay(day) === isoDay(new Date());
+  const duePromise = isToday && !params.get('verb') && !params.get('kind') ? dueCardHtml() : Promise.resolve('');
   const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
   const end = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
   const q = new URLSearchParams({ start: start.toISOString(), end: end.toISOString() });
   if (params.get('verb')) q.set('verb', params.get('verb'));
   if (params.get('kind')) q.set('kind', params.get('kind'));
   try {
-    const data = await api(`/api/timeline?${q}`);
+    const [data, due] = await Promise.all([api(`/api/timeline?${q}`), duePromise]);
     if (shown !== key) return;  // the user moved on meanwhile
     for (const [step, when] of [['previous', data.previous], ['next', data.next]]) {
       const a = tab.querySelector(`[data-step="${step}"]`);
@@ -448,13 +462,13 @@ async function drawDay(day, url) {
       const last = data.previous
         ? ` <a href="${dayAddress(new Date(data.previous), params)}">Go to ${escHtml(new Date(data.previous).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }))}</a>, the last day with activity.`
         : '';
-      list.innerHTML = `<div class="empty-state">Nothing on this day.${last}</div>`;
+      list.innerHTML = `${due}<div class="empty-state">Nothing on this day.${last}</div>`;
       return;
     }
     const parts = fold(data.entries).map(p => p.group ? groupHtml(p.group) : line(p.entry));
     const kindless = new URLSearchParams(params);
     kindless.delete('kind');
-    list.innerHTML = (params.get('kind') ? '' : summaryHtml(data.entries, kindless))
+    list.innerHTML = due + (params.get('kind') ? '' : summaryHtml(data.entries, kindless))
       + `<ul class="timeline">${parts.join('')}</ul>`
       + (data.truncated ? '<div class="muted">Only the newest entries are shown.</div>' : '');
   } catch (e) {

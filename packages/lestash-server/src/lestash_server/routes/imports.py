@@ -8,6 +8,7 @@ from fastapi import APIRouter, Form, HTTPException, UploadFile
 from lestash.core.activities import record_activities, record_saved
 from lestash.core.agents import link_agents
 from lestash.core.database import resolve_parent_id
+from lestash.core.import_reminders import record_import
 from lestash.core.links import link_items
 from lestash.core.sync import dedupe_notebooks
 from lestash.core.text_files import SOURCE_TYPE as TEXT_SOURCE
@@ -125,6 +126,9 @@ async def import_file(
             conn, items, saved=one_page, parent_id=parent_id if one_page else None, placed=placed
         )
         errors.extend(import_errors)
+        # An export brought in counts for its import reminder (#403), even adding nothing
+        if not one_page and record_import(conn, source_type, items_added, name=filename or None):
+            conn.commit()
 
     return ImportResponse(
         status="completed",
@@ -474,6 +478,8 @@ def import_from_drive(body: DriveImportRequest):
 
             with get_db() as conn:
                 items_added, import_errors = _insert_items_with_parents(conn, items)
+                if record_import(conn, source_type, items_added, name=path.name):
+                    conn.commit()
 
             results.append(
                 ImportResponse(

@@ -170,6 +170,30 @@ def test_import_twice_adds_nothing(config: Config, export: Path) -> None:
         assert conn.execute("SELECT count(*) FROM items").fetchone()[0] == count
 
 
+def test_each_import_counts_for_its_reminder(config: Config, export: Path) -> None:
+    # Even one adding nothing: the reminder counts from when you last brought it in (#403)
+    with get_connection(config) as conn:
+        _held(conn)
+        import_export(conn, export)
+        import_export(conn, export)
+        rows = conn.execute(
+            "SELECT source, json_extract(details, '$.items_added') FROM activities"
+            " WHERE verb = 'imported' ORDER BY id"
+        ).fetchall()
+    assert [r[0] for r in rows] == ["import:linkedin-export"] * 2
+    assert rows[0][1] > 0 and rows[1][1] == 0
+
+
+def test_not_an_export_is_no_import(config: Config, tmp_path: Path) -> None:
+    path = tmp_path / "other.zip"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("readme.txt", "hi")
+    with get_connection(config) as conn:
+        with pytest.raises(ValueError):
+            import_export(conn, path)
+        assert conn.execute("SELECT count(*) FROM activities").fetchone()[0] == 0
+
+
 def test_an_article_held_by_hand_gets_the_full_text(config: Config, export: Path) -> None:
     with get_connection(config) as conn:
         upsert_item(

@@ -4,13 +4,22 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
+from lestash.core import import_reminders as reminders
 from lestash.core.config import Config
 from lestash.core.database import get_connection
 from lestash.core.sync import SyncAlreadyRunning, SyncRun, SyncStore
 from lestash.plugins.loader import load_plugins
 
 from lestash_server.deps import get_config, get_db
-from lestash_server.models import SourceResponse, SyncLogEntry
+from lestash_server.models import (
+    FailingSyncEntry,
+    ImportAimRequest,
+    ImportReminder,
+    ImportRemindersResponse,
+    ImportSnoozeRequest,
+    SourceResponse,
+    SyncLogEntry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +66,71 @@ def source_status():
         ).fetchall()
 
     return [SyncLogEntry(**dict(row)) for row in rows]
+
+
+def _iso(when: datetime | None) -> str | None:
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ") if when else None
+
+
+def _reminders(conn) -> ImportRemindersResponse:
+    return ImportRemindersResponse(
+        imports=[
+            ImportReminder(
+                key=s.source.key,
+                label=s.source.label,
+                note=s.source.note,
+                how=s.source.how,
+                export_url=s.source.export_url,
+                last_import=_iso(s.last_import),
+                days=s.days,
+                aim_days=s.aim_days,
+                default_aim_days=s.source.aim_days,
+                snoozed_until=_iso(s.snoozed_until),
+                due=s.due,
+            )
+            for s in reminders.statuses(conn)
+        ],
+        failing=[
+            FailingSyncEntry(
+                source=f.source,
+                failed_runs=f.failed_runs,
+                last_error=f.last_error,
+                last_ok=_iso(f.last_ok),
+            )
+            for f in reminders.failing_syncs(conn)
+        ],
+    )
+
+
+@router.get("/imports", response_model=ImportRemindersResponse)
+def import_reminders():
+    """Imports you run yourself, most overdue first, and syncs that keep failing (#403)."""
+    with get_db() as conn:
+        return _reminders(conn)
+
+
+@router.put("/imports/{key}", response_model=ImportRemindersResponse)
+def set_import_aim(key: str, body: ImportAimRequest):
+    """Set how often you mean to run an import, in days; 0 never reminds, null resets."""
+    with get_db() as conn:
+        try:
+            reminders.set_aim(conn, key, body.aim_days)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Unknown import: {key}") from None
+        conn.commit()
+        return _reminders(conn)
+
+
+@router.post("/imports/{key}/snooze", response_model=ImportRemindersResponse)
+def snooze_import(key: str, body: ImportSnoozeRequest | None = None):
+    """Hold an import's reminder for some days (7 unless given); 0 ends the snooze."""
+    with get_db() as conn:
+        try:
+            reminders.snooze(conn, key, body.days if body else reminders.DEFAULT_SNOOZE_DAYS)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Unknown import: {key}") from None
+        conn.commit()
+        return _reminders(conn)
 
 
 def _run_sync(source_name: str) -> None:

@@ -6,13 +6,13 @@ import logging
 import signal
 import sqlite3
 import threading
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
-from typing import IO, Self
+from typing import IO, Final, Self
 
 from lestash.core import paths
 from lestash.core.activities import record_activities
@@ -24,6 +24,7 @@ from lestash.core.database import (
     save_checkpoint,
 )
 from lestash.core.extract import content_on_import
+from lestash.core.import_reminders import record_import
 from lestash.core.links import link_items
 from lestash.core.pdfs import link_copies
 from lestash.importers import merge_with_stored
@@ -263,6 +264,10 @@ class SyncStore:
 INTERRUPTED = "interrupted"
 
 
+# Syncs that read an export you asked for, and the import kind each counts as
+SYNCED_IMPORTS: Final[Mapping[str, str]] = {"takeout": "takeout"}
+
+
 class SyncAlreadyRunning(RuntimeError):
     """Another sync of the same source holds its lock."""
 
@@ -343,6 +348,9 @@ class SyncRun:
             items_added = counts.added
         if items_updated is None:
             items_updated = counts.updated
+        if status == "completed" and items_added and self.source in SYNCED_IMPORTS:
+            # A Takeout the sync read from Drive is an import you asked for (#403)
+            record_import(self.conn, SYNCED_IMPORTS[self.source], items_added)
         self.conn.execute(
             """
             UPDATE sync_log SET completed_at = ?, status = ?, items_added = ?,

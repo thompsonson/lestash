@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 38
+SCHEMA_VERSION = 39
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -843,6 +843,18 @@ MIGRATIONS = [
               SELECT 1 FROM activities a
               WHERE a.verb = 'saved' AND a.item_id = i.id AND a.source = 'app:share'
           );
+        """,
+    ),
+    (
+        39,
+        "Import reminders: your aim and snooze per manual import (#403)",
+        # aim_days null: the default in core/import_reminders.py; 0: never remind
+        """
+        CREATE TABLE IF NOT EXISTS import_reminders (
+            key TEXT PRIMARY KEY,
+            aim_days INTEGER CHECK (aim_days IS NULL OR aim_days >= 0),
+            snoozed_until TEXT
+        );
         """,
     ),
 ]

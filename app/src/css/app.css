@@ -1047,3 +1047,21 @@ body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
 
 /* Parts below a chat thread: notes and anything else that is not a turn (#367) */
 .chat-parts { margin-top: 0.9rem; }
+
+/* Import reminders (#403): Settings › Sources rows and the Timeline's due card */
+.ir-head { font-size: 0.85rem; color: var(--muted); margin: 0 0 0.5rem; }
+.ir-list { list-style: none; padding: 0; margin: 0 0 1rem; }
+.ir-row { display: flex; gap: 0.6rem; align-items: center; background: var(--surface); border-radius: var(--radius); padding: 0.55rem 0.7rem; margin-bottom: 0.4rem; border-left: 3px solid transparent; }
+.ir-row.due { border-left-color: var(--warn); }
+.ir-row.due .ir-since { color: var(--warn); }
+.ir-row.failing { border-left-color: var(--error); }
+.ir-row.failing .ir-since { color: var(--error); }
+.ir-main { flex: 1; min-width: 0; }
+.ir-name { font-weight: 600; font-size: 0.9rem; }
+.ir-since, .ir-note { font-size: 0.78rem; }
+.ir-links { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-top: 0.3rem; font-size: 0.78rem; }
+.ir-aim { font-size: 0.78rem; padding: 0.15rem 0.3rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
+.ir-cmd { font-size: 0.72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.t-due { background: var(--surface); border-left: 3px solid var(--warn); border-radius: 0 var(--radius) var(--radius) 0; padding: 0.6rem 0.7rem; margin: 0 0 0.6rem; font-size: 0.85rem; }
+.t-due-acts { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-top: 0.45rem; font-size: 0.8rem; }
+.kind-import { --k: var(--ok); }

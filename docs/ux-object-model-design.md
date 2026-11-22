@@ -539,3 +539,11 @@ You manage collections in LeStash; the Kobo is a reader that shows the ones you 
 - **Direction:** LeStash writes collections at each plug-in, after the snapshot. Collections made on the Kobo are never read or changed. From the Kobo come highlights, typed notes, dog-ears and pen marks (as now), pen notes on PDFs (#200), notebooks (#202) and reading activity (#201).
 - **Reading order (#317):** a Collection's items have a place in a reading order, shown on its page with a way to move each. The Kobo keeps no order inside a collection, so it shows only in LeStash; numbered names ("0 Introducing ontology") order the collections themselves on the Kobo.
 - **Built (first version):** the switch, status line, badge and plug-in write. Linking Kobo books to their arXiv or Drive copies is not yet automatic: a collection holding only those shows them as "not on the Kobo" until an `alternate_of` link exists.
+
+## Import reminders (22 Nov 2026, #403)
+
+- **Source stays configuration.** "Last import" is its attribute and **Import** its action, in Settings › Sources.
+- **An import is an Activity:** the verb `imported`, shown on the Timeline on its day, with what it added.
+- **One reminder at a time:** today's Timeline opens with the most overdue import, with **Import** and **Snooze a week**.
+- **Manual imports only:** a Takeout, a Mistral export, a LinkedIn data export and the Claude export. The Claude export is listed but never due until LeStash can read it (#88).
+- **A sync that keeps failing** shows in red under Sources, so one that stops is noticed.
