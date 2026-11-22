@@ -3,6 +3,9 @@
 Registered as a ``pytest11`` entry point of the ``lestash`` package, so it loads for the
 tests of every package in the workspace without a conftest.
 
+A session fixture migrates one template database, which each test's new database
+copies (#405).
+
 The test environment sets HOME to an empty temp folder for each test, and clears the
 ``XDG_*`` folder variables and the ``LESTASH_*`` setting variables, so every default
 place in ``lestash.core.paths`` is under that folder. Code that loads the default config
@@ -30,6 +33,23 @@ if TYPE_CHECKING:
 
 
 _XDG_FOLDERS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME")
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _lestash_template_database(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Migrate one database per session; each test's new database copies it (#405).
+
+    Running every migration commits dozens of times, about 10 s of fsyncs on disk per
+    test database. A database file that already exists still migrates as before.
+    """
+    from lestash.core import database
+    from lestash.core.config import Config, GeneralConfig
+
+    path = tmp_path_factory.mktemp("template") / "lestash.db"
+    database.init_database(Config(general=GeneralConfig(database_path=str(path))))
+    database.template_database = path
+    yield
+    database.template_database = None
 
 
 @pytest.fixture(autouse=True)

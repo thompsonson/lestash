@@ -9,6 +9,7 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
+import shutil
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -1274,11 +1275,19 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> int:
     return applied
 
 
+# A database already at SCHEMA_VERSION, set by the test plugin (lestash.testing). A new
+# database copies it rather than running every migration again (#405). None elsewhere.
+template_database: Path | None = None
+
+
 def init_database(config: Config | None = None) -> None:
     """Initialize the database with schema and apply migrations."""
     db_path = get_db_path(config)
     # Readable only by you when made here (#189)
     db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if template_database is not None and not db_path.exists():
+        shutil.copyfile(template_database, db_path)
+        return
 
     with sqlite3.connect(db_path) as conn:
         # Apply base schema
