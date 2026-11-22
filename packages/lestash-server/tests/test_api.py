@@ -527,12 +527,15 @@ class TestSources:
         import lestash_server.routes.sources as sources_routes
 
         started = []
-        monkeypatch.setattr(sources_routes, "_run_sync", started.append)
+
+        def fake(name, on_start):
+            started.append(name)
+            on_start("started", 7)
+
+        monkeypatch.setattr(sources_routes, "_run_sync", fake)
         resp = client.post("/api/sources/arxiv/sync")
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "started"
-        assert data["source"] == "arxiv"
+        assert resp.json() == {"status": "started", "source": "arxiv", "run_id": 7}
         assert started == ["arxiv"]
 
 

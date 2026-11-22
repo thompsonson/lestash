@@ -100,9 +100,49 @@ class SourceResponse(BaseModel):
     last_sync: str | None = None
 
 
+class ImportReminder(BaseModel):
+    """A manual import: how long since you last ran it, and whether it's due (#403)."""
+
+    key: str
+    label: str
+    note: str | None = None
+    how: str | None = None  # "upload", "drive", a CLI command, or None: can't be read yet
+    sync: str | None = None  # for "drive": the source whose sync reads it
+    export_url: str | None = None
+    last_import: str | None = None  # UTC, ISO 8601
+    days: int | None = None  # whole days since; None if never
+    aim_days: int  # 0: never remind
+    default_aim_days: int
+    snoozed_until: str | None = None
+    due: bool
+
+
+class FailingSyncEntry(BaseModel):
+    """A source whose recent syncs all failed."""
+
+    source: str
+    failed_runs: int
+    last_error: str | None = None
+    last_ok: str | None = None  # UTC, ISO 8601
+
+
+class ImportRemindersResponse(BaseModel):
+    imports: list[ImportReminder]
+    failing: list[FailingSyncEntry]
+
+
+class ImportAimRequest(BaseModel):
+    aim_days: int | None = Field(None, ge=0, le=365)  # None: back to the default
+
+
+class ImportSnoozeRequest(BaseModel):
+    days: int = Field(7, ge=0, le=90)  # 0 ends a snooze
+
+
 class SyncLogEntry(BaseModel):
     """A single sync log entry."""
 
+    id: int | None = None
     source_type: str
     started_at: str | None = None
     completed_at: str | None = None

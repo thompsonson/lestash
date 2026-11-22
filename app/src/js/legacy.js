@@ -22,6 +22,7 @@ import { startTimeline, redrawTimeline } from './places/timeline.js';
 import { startPeople, redrawPeople } from './places/people.js';
 import { startLibrary, redrawLibrary } from './places/library.js';
 import { startHelp } from './places/help.js';
+import { loadImportReminders } from './places/imports.js';
 import {
   actionsHtml, fetchPreview, replyTitle, saveCopy, saveScreenshot, setAnsweredPost, wireItemActions,
 } from './objects/item/actions.js';
@@ -236,7 +237,7 @@ function showTab(tab) {
   const loads = {
     recent: () => [loadRecent()],
     notes: () => [loadSavedNotes(), checkSttModel()],
-    sources: () => [loadSources(), loadGoogleAuth(), loadAudibleAuth(), loadLinkedInAuth()],
+    sources: () => [loadImportReminders(), loadSources(), loadGoogleAuth(), loadAudibleAuth(), loadLinkedInAuth()],
     stats: () => [loadStats()],
     collections: () => [loadCollections(), loadThemes(showToast)],
     debug: () => [renderDebugInfo(), renderDebugLog()],
@@ -2956,6 +2957,8 @@ async function uploadImport(file) {
     }
     result.innerHTML = html;
     showToast(`Imported ${data.items_added} items`, 'ok');
+    loadImportReminders();  // the import resets its reminder (#403)
+    redrawTimeline();
   } catch (e) {
     result.style.display = '';
     result.innerHTML = `<span style="color:var(--error)">Import failed: ${escHtml(e.message)}</span>`;

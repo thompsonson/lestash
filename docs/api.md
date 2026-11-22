@@ -366,6 +366,8 @@ What you did and what you made between two times, newest first (#262).
 
 Each entry has `at` (UTC), `verb` (an activity's verb, or `made`), `item` (id, title, kind, kind_label, kind_detail, source_type, parent, channel), `context` (e.g. the notebook a prompt used), `details`, and for `prompted` entries `prompt`: the start of what you asked (up to 280 characters), from your turn in the chat at that time. `made` entries are posts, replies, notes, notebooks, chats, generated items, projects and email threads, on the day they were made. `previous` and `next` are the nearest times outside the span with entries. Up to 5,000 entries; `truncated` says when there were more.
 
+An `imported` entry is an export you brought in (#403). It has no `item`; its `details` hold `source` (the import's key), `label`, `items_added` and, when known, `name` (the file).
+
 ## Library
 
 ### `GET /api/library`
@@ -520,7 +522,7 @@ List installed source plugins with sync status.
 
 ### `GET /api/sources/status`
 
-Recent sync history (last 20 entries).
+Recent sync history (last 20 entries). `?source=takeout` gives one source's 20 newest runs.
 
 ```json
 [{
@@ -536,13 +538,54 @@ Recent sync history (last 20 entries).
 
 ### `POST /api/sources/{source_name}/sync`
 
-Trigger a sync for a source plugin. Returns immediately; sync runs in background.
+Start a sync for a source plugin. It runs in the background; the reply comes once it has begun.
 
 ```json
-{ "status": "started", "source": "linkedin" }
+{ "status": "started", "source": "linkedin", "run_id": 4211 }
 ```
 
+- `status`: `started`; `already_running` when another sync of the source holds its lock; `pending` if it hadn't begun within 30 s; `skipped` if it stopped before it began.
+- `run_id`: for `started`, the `sync_log` id of the run, as `id` in `GET /api/sources/status`; otherwise `null`.
+
 Returns 404 if source not found.
+
+---
+
+### `GET /api/sources/imports`
+
+Imports you run yourself, and syncs that keep failing (#403).
+
+```json
+{
+  "imports": [{
+    "key": "mistral", "label": "Mistral export", "note": null,
+    "how": "upload", "sync": null, "export_url": "https://chat.mistral.ai",
+    "last_import": "2026-04-02T20:00:39Z", "days": 234,
+    "aim_days": 30, "default_aim_days": 30,
+    "snoozed_until": null, "due": true
+  }],
+  "failing": [{
+    "source": "voice", "failed_runs": 3,
+    "last_error": "...", "last_ok": "2026-11-18T09:01:00Z"
+  }]
+}
+```
+
+- `imports` lists due ones first, then the longest since import.
+- `how`: `upload` (Sources → Import), `drive` (read from Drive by the sync named in `sync`; Takeout parts are far over the upload limit), a CLI command, or `null` when LeStash can't read the export yet. One with `how: null` is never due.
+- `last_import` is the latest of: an `imported` activity, written by every import from #403 on; the newest item first fetched from the source; and, for Takeout, the request time of the newest zip its Drive sync imported.
+- `days` is whole days since; `null` if never. `aim_days` 0 means never remind.
+- `failing` lists enabled sources whose last 3 syncs all failed. `failed_runs` counts the failures since the last sync that completed.
+
+The import kinds that count: a Takeout uploaded or read from Drive (Gemini, NotebookLM, Keep, YouTube history), a Mistral export, and `lestash linkedin import`.
+
+### `PUT /api/sources/imports/{key}`
+
+Set how often you mean to run an import. Body: `{"aim_days": 60}`; 0 never reminds, `null` goes back to the default. Returns the same as `GET /api/sources/imports`. 404 for an unknown key; 422 outside 0–365.
+
+### `POST /api/sources/imports/{key}/snooze`
+
+Hold an import's reminder. Body, optional: `{"days": 7}` (the default); 0 ends a snooze. Returns the same as `GET /api/sources/imports`. 404 for an unknown key; 422 outside 0–90.
 
 ---
 
@@ -709,6 +752,8 @@ Import from an uploaded file (multipart/form-data, max 50MB).
 **Optional form fields:**
 - `parent_id` — put a single `.html`, `.pdf`, `.txt` or `.md` under that item (+ Add → File). A new item goes under it; one already held is not moved. 404 if the item doesn't exist; 400 for a `.zip` or `.json`.
 - `page_type`, `source_url`, `notes` — for `.html` pages.
+
+A `.zip` or `.json` export that is a manual import (a Takeout, a Mistral export) is logged as an `imported` activity, even if it adds nothing, so its reminder counts from it (#403).
 
 A single page or file is recorded as `saved` now, also when held already (#357).
 

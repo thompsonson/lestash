@@ -42,6 +42,7 @@ from urllib.parse import unquote
 
 from lestash.core.blobs import BlobStore
 from lestash.core.database import mark_recent_history, max_history_id, upsert_person_profile
+from lestash.core.import_reminders import record_import
 from lestash.core.sync import SyncStore
 from lestash.models.item import ItemCreate
 
@@ -599,6 +600,9 @@ def import_export(
     with zipfile.ZipFile(zip_path) as zf:
         run.report.people_named = name_message_senders(conn, zf)
     resolve_linkedin_parents(conn)  # comments to their posts; stubs for posts not held
+    added = run.report.posts_added + run.report.comments_added + run.report.articles_added
+    if record_import(conn, "linkedin-export", added, name=zip_path.name):  # #403
+        conn.commit()
     if store is not None:
         with zipfile.ZipFile(zip_path) as zf:
             run.report.media = import_media(conn, zf, store, fetch or fetch_url)
