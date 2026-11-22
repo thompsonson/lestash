@@ -231,6 +231,8 @@ def sync_source(source_name: str):
         began.update(status=status, run_id=run_id)
         ready.set()
 
-    threading.Thread(target=_run_sync, args=(source_name, note), daemon=True).start()
+    # Not a daemon: a server stopping waits for the sync to finish and log its end,
+    # as it did for the background task this replaces
+    threading.Thread(target=_run_sync, args=(source_name, note), name=f"sync-{source_name}").start()
     ready.wait(START_WAIT_S)
     return {"status": began["status"], "source": source_name, "run_id": began["run_id"]}

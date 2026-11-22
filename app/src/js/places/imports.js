@@ -48,12 +48,12 @@ async function syncNow(button, done) {
     return reset();
   }
   if (res.status === 'skipped') {
-    showToast('The Drive sync did not start; see Sync history below', 'error');
+    showToast('The Drive sync did not start; its error is under Settings › Sources', 'error');
     return reset();
   }
   if (res.status === 'pending') {
     // Not begun after 30 s: it has no row to wait on yet, so don't guess its result
-    showToast('The Drive sync is slow to start; its result will show under Sync history', 'ok');
+    showToast('The Drive sync is slow to start; its result will show under Settings › Sources', 'ok');
     reset();
     return done();
   }
