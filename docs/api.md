@@ -544,8 +544,8 @@ Start a sync for a source plugin. It runs in the background; the reply comes onc
 { "status": "started", "source": "linkedin", "run_id": 4211 }
 ```
 
-- `status` is `started`, or `already_running` when another sync of the source holds its lock.
-- `run_id` is the `sync_log` id of the run to watch, as `id` in `GET /api/sources/status`; `null` if the sync never began.
+- `status`: `started`; `already_running` when another sync of the source holds its lock; `pending` if it hadn't begun within 30 s; `skipped` if it stopped before it began.
+- `run_id`: for `started`, the `sync_log` id of the run, as `id` in `GET /api/sources/status`; otherwise `null`.
 
 Returns 404 if source not found.
 

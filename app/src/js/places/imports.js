@@ -37,31 +37,33 @@ function howHtml(r) {
 const POLL_MS = 5000, POLL_FOR_MS = 15 * 60 * 1000;
 async function syncNow(button, done) {
   const name = button.dataset.sync;
+  const reset = () => { button.disabled = false; button.textContent = 'Sync now'; };
   button.disabled = true;
   button.textContent = 'Syncing…';
-  let runId = null;
+  let res;
   try {
-    // The reply names the run to watch: the one it began, or one already running
-    const res = await api(`/api/sources/${encodeURIComponent(name)}/sync`, { method: 'POST' });
-    runId = res.run_id;
-    showToast(res.status === 'already_running' ? 'A Drive sync is already running…' : 'Reading new exports from Drive…', 'ok');
+    res = await api(`/api/sources/${encodeURIComponent(name)}/sync`, { method: 'POST' });
   } catch (err) {
     showToast(`Could not start the sync: ${err.message}`, 'error');
-    button.disabled = false;
-    button.textContent = 'Sync now';
-    return;
+    return reset();
   }
+  if (res.status === 'skipped') {
+    showToast('The Drive sync did not start; see Sync history below', 'error');
+    return reset();
+  }
+  showToast(res.status === 'started' ? 'Reading new exports from Drive…' : 'A Drive sync is already running…', 'ok');
+  // Wait for the run the server named; with none named (one already running, or not
+  // begun yet), wait until no run of this source is going
   const started = Date.now();
-  while (runId !== null && Date.now() - started < POLL_FOR_MS) {
+  while (Date.now() - started < POLL_FOR_MS) {
     await new Promise(r => setTimeout(r, POLL_MS));
     let runs;
     try { runs = await api(`/api/sources/status?source=${encodeURIComponent(name)}`); } catch { continue; }
-    const run = runs.find(r => r.id === runId);
-    if (run && run.status !== 'running') {
-      showToast(run.status === 'completed' ? `Drive sync done: ${run.items_added} new` : `Drive sync ${run.status}`,
-        run.status === 'completed' ? 'ok' : 'error');
-      break;
-    }
+    const run = res.run_id ? runs.find(r => r.id === res.run_id) : runs[0];
+    if (!run || run.status === 'running' || (!res.run_id && runs.some(r => r.status === 'running'))) continue;
+    showToast(run.status === 'completed' ? `Drive sync done: ${run.items_added} new` : `Drive sync ${run.status}`,
+      run.status === 'completed' ? 'ok' : 'error');
+    break;
   }
   done();
 }

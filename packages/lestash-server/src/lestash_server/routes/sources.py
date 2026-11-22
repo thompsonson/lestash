@@ -140,8 +140,9 @@ def snooze_import(key: str, body: ImportSnoozeRequest | None = None):
         return _reminders(conn)
 
 
-# Told when a sync begins: "started" and its sync_log id, or "already_running" and
-# the id of the run holding the lock; ("skipped", None) if it never got that far
+# Told when a sync begins: ("started", its sync_log id); ("already_running", None)
+# when another sync holds the lock (its row may not be written yet, so it isn't
+# named); or ("skipped", None) if it never got that far
 OnStart = Callable[[str, int | None], None]
 
 
@@ -184,11 +185,7 @@ def _sync(source_name: str, tell: OnStart) -> None:
             run = SyncRun.start(conn, source_name, store)
         except SyncAlreadyRunning as e:
             logger.warning(f"Sync skipped for {source_name}: {e}")
-            row = conn.execute(
-                "SELECT max(id) FROM sync_log WHERE source_type = ? AND status = 'running'",
-                (source_name,),
-            ).fetchone()
-            tell("already_running", row[0])
+            tell("already_running", None)
             return
         tell("started", run.id)
 
@@ -217,8 +214,9 @@ def _sync(source_name: str, tell: OnStart) -> None:
 def sync_source(source_name: str):
     """Start a sync for a source plugin; returns once it has begun.
 
-    ``status`` is ``started``, or ``already_running`` when another sync of the source
-    holds its lock; ``run_id`` is the sync_log id of the run to watch.
+    ``status``: ``started``, with ``run_id``, its sync_log id; ``already_running`` when
+    another sync of the source holds its lock; ``pending`` if it hadn't begun within
+    START_WAIT_S; ``skipped`` if it stopped before it began.
     """
     plugins = load_plugins()
     if source_name not in plugins:
@@ -226,7 +224,7 @@ def sync_source(source_name: str):
 
     # The sync runs in its own thread; the reply waits only until it has begun, so it
     # can name the run to watch: this one, or one already running (#403)
-    began: dict[str, object] = {"status": "started", "run_id": None}
+    began: dict[str, object] = {"status": "pending", "run_id": None}  # not begun in time
     ready = threading.Event()
 
     def note(status: str, run_id: int | None) -> None:

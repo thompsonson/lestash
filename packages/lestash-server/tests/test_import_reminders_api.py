@@ -171,7 +171,7 @@ def test_a_sync_request_names_the_run_to_watch(client, test_config, monkeypatch)
 
     with get_connection(test_config) as conn, SyncRun.start(conn, "voice") as held:
         resp = client.post("/api/sources/voice/sync").json()
-        assert resp == {"status": "already_running", "source": "voice", "run_id": held.id}
+        assert resp == {"status": "already_running", "source": "voice", "run_id": None}
         held.finish("completed")
 
     runs = client.get("/api/sources/status", params={"source": "voice"}).json()
