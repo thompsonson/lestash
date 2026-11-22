@@ -522,7 +522,7 @@ List installed source plugins with sync status.
 
 ### `GET /api/sources/status`
 
-Recent sync history (last 20 entries).
+Recent sync history (last 20 entries). `?source=takeout` gives one source's 20 newest runs.
 
 ```json
 [{

@@ -124,3 +124,22 @@ def test_an_import_shows_on_the_timeline(client) -> None:
     assert len(imported) == 1
     assert imported[0]["item"] is None
     assert imported[0]["details"]["source"] == "google-takeout"
+
+
+def test_sync_history_of_one_source(client, test_config) -> None:
+    # Sync now waits on its own source's runs, which others' can't push out of the list
+    with get_connection(test_config) as conn:
+        conn.execute(
+            "INSERT INTO sync_log (source_type, started_at, status)"
+            " VALUES ('takeout', '2026-11-01 10:00:00', 'completed')"
+        )
+        for i in range(25):
+            conn.execute(
+                "INSERT INTO sync_log (source_type, started_at, status)"
+                " VALUES ('youtube', ?, 'completed')",
+                (f"2026-11-02 10:{i:02d}:00",),
+            )
+        conn.commit()
+    assert all(r["source_type"] == "youtube" for r in client.get("/api/sources/status").json())
+    runs = client.get("/api/sources/status", params={"source": "takeout"}).json()
+    assert [r["started_at"] for r in runs] == ["2026-11-01 10:00:00"]

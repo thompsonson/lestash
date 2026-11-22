@@ -39,11 +39,12 @@ async function syncNow(button, done) {
   const name = button.dataset.sync;
   button.disabled = true;
   button.textContent = 'Syncing…';
-  // This run is the first log row newer than the latest one now. Rows are told apart by
-  // the server's own start text: it has no zone, so it can't be set against this clock.
+  // Rows are told apart by the server's own start text: it has no zone, so it can't be
+  // set against this clock. A sync already running makes ours a no-op, so then that
+  // one is the run to wait for.
   const latest = async () => {
-    const runs = await api('/api/sources/status');
-    return runs.find(r => r.source_type === name) || null;
+    const runs = await api(`/api/sources/status?source=${encodeURIComponent(name)}`);
+    return runs[0] || null;
   };
   let before = null;
   try { before = await latest(); } catch { /* none to tell apart: any finished row is ours */ }
@@ -62,7 +63,7 @@ async function syncNow(button, done) {
     await new Promise(r => setTimeout(r, POLL_MS));
     let run;
     try { run = await latest(); } catch { continue; }
-    const ours = run && (!before || run.started_at !== before.started_at);
+    const ours = run && (!before || before.status === 'running' || run.started_at !== before.started_at);
     if (ours && run.status !== 'running') {
       showToast(run.status === 'completed' ? `Drive sync done: ${run.items_added} new` : `Drive sync ${run.status}`,
         run.status === 'completed' ? 'ok' : 'error');

@@ -52,17 +52,19 @@ def list_sources():
 
 
 @router.get("/status", response_model=list[SyncLogEntry])
-def source_status():
-    """Show recent sync history."""
+def source_status(source: str | None = None):
+    """Show recent sync history: the 20 newest runs, of one source if given."""
     with get_db() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT source_type, started_at, completed_at, status,
                    items_added, items_updated, error_message
             FROM sync_log
+            {"WHERE source_type = ?" if source else ""}
             ORDER BY started_at DESC
             LIMIT 20
-            """
+            """,
+            (source,) if source else (),
         ).fetchall()
 
     return [SyncLogEntry(**dict(row)) for row in rows]
