@@ -436,8 +436,9 @@ async function drawDay(day, url) {
   shown = key;
   const list = tab.querySelector('.timeline-list');
   list.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
-  // Sync now ends minutes later: draw the day again only if the Timeline is still shown
-  wireDueCard(list, () => { if (onTimeline(tab)) refresh(); });
+  // Sync now ends minutes later: draw the day again now if the Timeline is shown, else
+  // when it next is (forget the day drawn, so coming back fetches it)
+  wireDueCard(list, () => { if (onTimeline(tab)) refresh(); else shown = null; });
   // Today, unfiltered, opens with the most overdue import, if any (#403)
   const isToday = isoDay(day) === isoDay(new Date());
   const duePromise = isToday && !params.get('verb') && !params.get('kind') ? dueCardHtml() : Promise.resolve('');
