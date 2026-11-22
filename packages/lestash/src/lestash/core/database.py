@@ -9,10 +9,12 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
+import os
 import shutil
 import sqlite3
+import tempfile
 from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1280,13 +1282,26 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> int:
 template_database: Path | None = None
 
 
+def _copy_template(template: Path, db_path: Path) -> None:
+    """Copy the template to a temp file, then link it in: never half a file, never over one."""
+    fd, tmp = tempfile.mkstemp(dir=db_path.parent, prefix=f".{db_path.name}.")
+    os.close(fd)
+    try:
+        shutil.copyfile(template, tmp)
+        # If another connection made it first, leave theirs alone
+        with suppress(FileExistsError):
+            os.link(tmp, db_path)
+    finally:
+        os.unlink(tmp)
+
+
 def init_database(config: Config | None = None) -> None:
     """Initialize the database with schema and apply migrations."""
     db_path = get_db_path(config)
     # Readable only by you when made here (#189)
     db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if template_database is not None and not db_path.exists():
-        shutil.copyfile(template_database, db_path)
+        _copy_template(template_database, db_path)
         return
 
     with sqlite3.connect(db_path) as conn:
