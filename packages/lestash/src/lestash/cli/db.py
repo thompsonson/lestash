@@ -530,6 +530,9 @@ def backup_verify(
     console.print(f"Verifying {backup_path.name}...")
     result = verify_backup(backup_path)
 
+    if result.get("unchecked"):
+        console.print(f"[yellow]Unchecked:[/yellow] {result['error']}")
+        raise typer.Exit(1)
     if result["valid"]:
         console.print(
             f"[green]Valid:[/green] schema v{result['schema_version']}, "

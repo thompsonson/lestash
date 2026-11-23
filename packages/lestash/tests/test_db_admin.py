@@ -479,6 +479,37 @@ class TestCompressedBackup:
         dest.write_bytes(bytes(data))
         assert verify_backup(dest)["valid"] is False
 
+    def test_a_truncated_compressed_backup_fails_and_never_extracts(self, test_db, tmp_path):
+        dest = create_backup(get_db_path(test_db))
+        dest.write_bytes(dest.read_bytes()[: dest.stat().st_size // 2])
+        result = verify_backup(dest)
+        assert result["valid"] is False and "truncated" in result["error"]
+        with pytest.raises(Exception, match="truncated"):
+            extract_backup(dest, tmp_path / "out.db")
+        assert not (tmp_path / "out.db").exists()
+
+    def test_two_checks_at_once_use_their_own_files(self, test_db, monkeypatch):
+        import lestash.core.db_admin as d
+
+        dest = create_backup(get_db_path(test_db))
+        names = []
+        real = d._decompress
+
+        def spy(src, out):
+            names.append(out.name)
+            real(src, out)
+
+        monkeypatch.setattr(d, "_decompress", spy)
+        verify_backup(dest)
+        verify_backup(dest)
+        assert len(set(names)) == 2 and all(n.endswith(".partial") for n in names)
+
+    def test_extract_never_writes_beside_a_journal(self, test_db, tmp_path):
+        dest = create_backup(get_db_path(test_db))
+        (tmp_path / "out.db-journal").write_text("x")
+        with pytest.raises(FileExistsError):
+            extract_backup(dest, tmp_path / "out.db")
+
     def test_a_plain_backup_with_a_wal_is_left_alone(self, test_db, tmp_path):
         db_path = get_db_path(test_db)
         plain = create_backup(db_path, label="walled", compress=False)

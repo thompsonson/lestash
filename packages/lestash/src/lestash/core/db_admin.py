@@ -479,8 +479,16 @@ def _decompress(src: Path, dest: Path) -> None:
     """Decompress ``src`` into ``dest`` (made new), then flush it to disk."""
     import zstandard
 
+    # One frame, read to its end: copy_stream stops quietly at a cut-short file, before
+    # the checksum, so a truncated backup would come out short but "fine"
+    dobj = zstandard.ZstdDecompressor().decompressobj()
     with src.open("rb") as fin, dest.open("xb") as fout:
-        zstandard.ZstdDecompressor().copy_stream(fin, fout)
+        while chunk := fin.read(1 << 20):
+            if dobj.eof:
+                raise zstandard.ZstdError("data after the end of the backup's frame")
+            fout.write(dobj.decompress(chunk))
+        if not dobj.eof:
+            raise zstandard.ZstdError("the backup ends before its frame does: truncated")
         fout.flush()
         os.fsync(fout.fileno())
 
@@ -625,9 +633,11 @@ def _verify_compressed(backup_path: Path) -> dict:
     import zstandard
 
     result: dict = {"path": str(backup_path), "valid": False}
-    plain = backup_path.with_name(f"{backup_path.name}.verify{PARTIAL_SUFFIX}")
+    # A name of its own, so two checks at once never share a file. One left by a check
+    # that was killed is a stale .partial, which the next create removes.
+    token = f"{os.getpid()}-{os.urandom(4).hex()}"
+    plain = backup_path.with_name(f"{backup_path.name}.verify-{token}{PARTIAL_SUFFIX}")
     try:
-        plain.unlink(missing_ok=True)  # left by a check that was killed
         _decompress(backup_path, plain)
     except zstandard.ZstdError as e:
         plain.unlink(missing_ok=True)
@@ -698,14 +708,15 @@ def prune_backups(
 def extract_backup(backup_path: Path, dest: Path) -> Path:
     """Write the database a backup holds to ``dest``, decompressing a ``.zst`` one.
 
-    For a restore. Never writes over a file, or beside a ``-wal`` or ``-shm`` one,
+    For a restore. Never writes over a file, or beside a ``-wal``, ``-shm`` or ``-journal`` one,
     which SQLite would read as part of it.
     """
     if not backup_path.is_file():
         raise FileNotFoundError(f"no such file: {backup_path}")
     if _has_wal(backup_path):
         raise ValueError(f"{backup_path.name} has a -wal beside it; open it with SQLite instead")
-    for p in (dest, dest.with_name(dest.name + "-wal"), dest.with_name(dest.name + "-shm")):
+    # SQLite reads a -wal, -shm or hot -journal beside a database as part of it
+    for p in [dest] + [dest.with_name(dest.name + s) for s in ("-wal", "-shm", "-journal")]:
         if p.exists():
             raise FileExistsError(f"{p} exists; move it aside first")
     partial = dest.with_name(dest.name + PARTIAL_SUFFIX)
