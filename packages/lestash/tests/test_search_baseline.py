@@ -119,15 +119,21 @@ def test_it_records_each_mode_and_where_expected_items_rank(server: str, tmp_pat
     assert report["vector_search"] is False  # so hybrid was keyword-only
     assert report["results"][0]["hybrid_partial"] == ["semantic"]
     entry = report["results"][0]
-    assert entry["keyword"][0] == {
-        "rank": 1,
-        "id": 7,
-        "key": "arxiv:2512.20660",
-        "title": "Dual-State",
-    }
-    assert entry["keyword"][1]["key"] == "youtube:liked:x"
+    # Only rank, id and the expected key it matched: no other key or title (#407)
+    assert entry["keyword"] == [
+        {"rank": 1, "id": 7, "expected": "arxiv:2512.20660"},
+        {"rank": 2, "id": 9},
+    ]
+    assert "Dual-State" not in out.read_text() and "liked:x" not in out.read_text()
     assert "error" in entry["semantic"]
     assert baseline.expected_ranks(entry, "hybrid") == "1, -"
     assert baseline.expected_ranks(entry, "semantic") == "error"
     assert {p["mode"][0] for p in _Search.seen} == {"keyword", "semantic", "hybrid"}
     assert all(p["limit"] == ["10"] for p in _Search.seen)
+
+
+def test_a_grouped_result_matches_by_its_part() -> None:
+    hits = [{"rank": 1, "id": 3, "key": "claude:chat", "part": "claude:chat:turn-2", "title": "T"}]
+    assert baseline.redact(hits, ["claude:chat:turn-2"]) == [
+        {"rank": 1, "id": 3, "expected": "claude:chat:turn-2"}
+    ]
