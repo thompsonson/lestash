@@ -467,7 +467,8 @@ def _compress(src: Path, dest: Path) -> None:
     """Compress ``src`` into ``dest`` (made new), then flush it to disk."""
     import zstandard
 
-    cctx = zstandard.ZstdCompressor(level=_ZSTD_LEVEL, threads=-1)
+    # The checksum makes decompressing a damaged file fail, rather than give wrong bytes
+    cctx = zstandard.ZstdCompressor(level=_ZSTD_LEVEL, threads=-1, write_checksum=True)
     with src.open("rb") as fin, dest.open("xb") as fout:
         cctx.copy_stream(fin, fout)
         fout.flush()
@@ -597,19 +598,7 @@ def verify_backup(backup_path: Path) -> dict:
         result["error"] = f"no such file: {backup_path}"
         return result
     if is_compressed(backup_path):
-        plain = backup_path.with_name(f"{backup_path.name}.verify{PARTIAL_SUFFIX}")
-        try:
-            plain.unlink(missing_ok=True)  # left by a check that was killed
-            _decompress(backup_path, plain)
-        except Exception as e:
-            plain.unlink(missing_ok=True)
-            result["error"] = f"cannot decompress: {e}"
-            return result
-        try:
-            checked = verify_backup(plain)
-        finally:
-            plain.unlink(missing_ok=True)
-        return {**checked, "path": str(backup_path)}
+        return _verify_compressed(backup_path)
     try:
         # Read-only: checking a backup never changes it, or creates a file.
         conn = sqlite3.connect(f"{backup_path.resolve().as_uri()}?mode=ro", uri=True)
@@ -625,6 +614,41 @@ def verify_backup(backup_path: Path) -> dict:
     except Exception as e:
         result["error"] = str(e)
     return result
+
+
+def _verify_compressed(backup_path: Path) -> dict:
+    """Check a zstd backup by reading it back into a temporary file beside it.
+
+    A file that won't decompress is invalid. One that can't be written out, say for want
+    of space, is ``unchecked``: it says nothing about the backup, so it is not invalid.
+    """
+    import zstandard
+
+    result: dict = {"path": str(backup_path), "valid": False}
+    plain = backup_path.with_name(f"{backup_path.name}.verify{PARTIAL_SUFFIX}")
+    try:
+        plain.unlink(missing_ok=True)  # left by a check that was killed
+        _decompress(backup_path, plain)
+    except zstandard.ZstdError as e:
+        plain.unlink(missing_ok=True)
+        result["error"] = f"cannot decompress: {e}"
+        return result
+    except OSError as e:
+        plain.unlink(missing_ok=True)
+        result["unchecked"] = True
+        result["error"] = f"could not check it: {e}"
+        return result
+    try:
+        checked = verify_backup(plain)
+    finally:
+        plain.unlink(missing_ok=True)
+    return {**checked, "path": str(backup_path)}
+
+
+def _has_wal(p: Path) -> bool:
+    """A plain backup with a non-empty ``-wal`` beside it: part of it is in that file."""
+    wal = p.with_name(p.name + "-wal")
+    return wal.is_file() and wal.stat().st_size > 0
 
 
 _SCHEDULED = re.compile(rf"^{BACKUP_PREFIX}\d{{8}}-\d{{6}}\.db(\.zst)?$")
@@ -679,6 +703,8 @@ def extract_backup(backup_path: Path, dest: Path) -> Path:
     """
     if not backup_path.is_file():
         raise FileNotFoundError(f"no such file: {backup_path}")
+    if _has_wal(backup_path):
+        raise ValueError(f"{backup_path.name} has a -wal beside it; open it with SQLite instead")
     for p in (dest, dest.with_name(dest.name + "-wal"), dest.with_name(dest.name + "-shm")):
         if p.exists():
             raise FileExistsError(f"{p} exists; move it aside first")
@@ -703,6 +729,8 @@ def compress_backup(backup_path: Path) -> Path:
     """
     if is_compressed(backup_path):
         return backup_path
+    if _has_wal(backup_path):
+        raise ValueError(f"{backup_path.name} has a -wal beside it, left as it is")
     before = verify_backup(backup_path)
     if not before["valid"]:
         raise ValueError(
@@ -716,17 +744,18 @@ def compress_backup(backup_path: Path) -> Path:
     partial.unlink(missing_ok=True)
     try:
         _compress(backup_path, partial)
+        # Checked before it takes its name, so a cut-short run leaves only a .partial
+        after = _verify_compressed(partial)
+        if not after["valid"] or after["item_count"] != before["item_count"]:
+            raise ValueError(
+                f"the compressed copy of {backup_path.name} did not read back "
+                f"({after.get('error', after.get('integrity'))}); the original is kept"
+            )
+        st = backup_path.stat()
+        os.utime(partial, (st.st_atime, st.st_mtime))
         _link_into_place(partial, dest)
     finally:
         partial.unlink(missing_ok=True)
-    after = verify_backup(dest)
-    if not after["valid"] or after["item_count"] != before["item_count"]:
-        dest.unlink(missing_ok=True)
-        raise ValueError(
-            f"the compressed copy of {backup_path.name} did not read back; the original is kept"
-        )
-    st = backup_path.stat()
-    os.utime(dest, (st.st_atime, st.st_mtime))
     backup_path.unlink()
     for sidecar in ("-wal", "-shm", "-journal"):
         backup_path.with_name(backup_path.name + sidecar).unlink(missing_ok=True)

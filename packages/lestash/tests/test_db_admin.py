@@ -460,6 +460,48 @@ class TestCompressedBackup:
         prune_backups(db_path, keep=1)
         assert not old.exists() and newer.exists()
 
+    def test_a_check_that_cannot_write_is_unchecked_not_invalid(self, test_db, monkeypatch):
+        import lestash.core.db_admin as d
+
+        dest = create_backup(get_db_path(test_db))
+
+        def no_space(src, out):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(d, "_decompress", no_space)
+        result = verify_backup(dest)
+        assert result["valid"] is False and result["unchecked"] is True
+
+    def test_a_damaged_compressed_backup_fails_its_check(self, test_db):
+        dest = create_backup(get_db_path(test_db))
+        data = bytearray(dest.read_bytes())
+        data[len(data) // 2] ^= 0xFF
+        dest.write_bytes(bytes(data))
+        assert verify_backup(dest)["valid"] is False
+
+    def test_a_plain_backup_with_a_wal_is_left_alone(self, test_db, tmp_path):
+        db_path = get_db_path(test_db)
+        plain = create_backup(db_path, label="walled", compress=False)
+        plain.with_name(plain.name + "-wal").write_bytes(b"x" * 32)
+        with pytest.raises(ValueError):
+            compress_backup(plain)
+        with pytest.raises(ValueError):
+            extract_backup(plain, tmp_path / "out.db")
+        assert plain.exists() and not plain.with_name(plain.name + ".zst").exists()
+
+    def test_a_cut_short_compress_leaves_only_the_original(self, test_db, monkeypatch):
+        import lestash.core.db_admin as d
+
+        plain = create_backup(get_db_path(test_db), label="cut", compress=False)
+
+        def interrupted(path):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(d, "_verify_compressed", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            compress_backup(plain)
+        assert sorted(p.name for p in plain.parent.glob("lestash-backup-*")) == [plain.name]
+
     def test_a_time_taken_by_a_plain_backup_is_not_reused(self, test_db, monkeypatch):
         import lestash.core.db_admin as d
 
@@ -602,6 +644,31 @@ class TestCli:
         assert verify_backup(out)["valid"]
         result = runner.invoke(cli_app, ["backup", "extract", old.name + ".zst", "--to", str(out)])
         assert result.exit_code == 1 and "exists" in result.output
+        nowhere = tmp_path / "no-such-folder" / "x.db"
+        result = runner.invoke(
+            cli_app, ["backup", "extract", old.name + ".zst", "--to", str(nowhere)]
+        )
+        assert result.exit_code == 1  # an OS error is reported, not raised
+        assert not isinstance(result.exception, OSError)
+
+    def test_backup_create_keeps_an_unchecked_copy_and_does_not_prune(
+        self, runner, cli_app, test_db, monkeypatch
+    ):
+        import lestash.core.db_admin as d
+
+        db_path = get_db_path(test_db)
+        for i in range(3):
+            (db_path.parent / f"lestash-backup-20260101-00000{i}.db").write_bytes(
+                db_path.read_bytes()
+            )
+
+        def no_space(src, out):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(d, "_decompress", no_space)
+        result = runner.invoke(cli_app, ["backup", "create", "--keep", "1"])
+        assert result.exit_code == 1 and "unchecked" in result.output
+        assert len(list_backups(db_path)) == 4
 
     def test_a_backup_under_another_name_is_never_pruned(self, runner, cli_app, test_db):
         db_path = get_db_path(test_db)

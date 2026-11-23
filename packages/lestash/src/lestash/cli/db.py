@@ -424,6 +424,10 @@ def backup_create(
         console.print(f"[red]{e}; try again in a second.[/red]")
         raise typer.Exit(1) from e
     result = verify_backup(dest)
+    if result.get("unchecked"):
+        # Not shown bad: keep it, but don't prune on the strength of it
+        console.print(f"[yellow]Backup kept, unchecked:[/yellow] {dest.name}: {result['error']}")
+        raise typer.Exit(1)
     if not result["valid"]:
         dest.unlink(missing_ok=True)
         err = result.get("error", result.get("integrity", "unknown"))
@@ -472,7 +476,7 @@ def backup_extract(
     backup_path = find_backup(get_db_path(), filename)
     try:
         dest = extract_backup(backup_path, Path(to).expanduser())
-    except (FileNotFoundError, FileExistsError) as e:
+    except (OSError, ValueError) as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(1) from e
     console.print(f"[green]Extracted[/green] {backup_path.name} to {dest}")
@@ -492,7 +496,7 @@ def backup_compress() -> None:
     for b in plain:
         try:
             dest = compress_backup(Path(b["path"]))
-        except (ValueError, FileExistsError) as e:
+        except (ValueError, OSError) as e:
             failed += 1
             console.print(f"[red]Not compressed:[/red] {e}")
             continue

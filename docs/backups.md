@@ -25,6 +25,9 @@ LeStash backs up its own database. sysbak, or any file backup, copies those back
 
 - Backups are `~/.local/share/lestash/backups/lestash-backup-<UTC time>[-<label>].db.zst`.
 - They are compressed with zstd (#414): a 1.34 GB database became 0.41 GB, in under 3 s.
+- Each carries a checksum, so a damaged file fails to decompress rather than give wrong data.
+- If `verify` can't write its temporary copy, say for want of space, the backup is reported unchecked, not invalid; `create` keeps it, exits 1 and does not prune.
+- A plain `.db` backup with a non-empty `-wal` beside it is left as it is by `compress` and `extract`.
 - Backups made before #414 end in `.db`. They are listed, checked and pruned the same way; `compress` converts them.
 - `verify` decompresses a `.zst` backup into a temporary `….verify.partial` beside it, checks that, and removes it. So a pass shows the backup can be restored. It needs free space for one uncompressed copy while it runs.
 - A copy is one file: no `-wal` or `-shm` beside it.
