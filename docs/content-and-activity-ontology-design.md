@@ -125,7 +125,8 @@ A machine-readable version would use `owl:equivalentClass`, `rdfs:subClassOf` an
 | Topic kind (`tags.kind`: `ad-hoc`, `category`) | `skos:ConceptScheme` | exact | one scheme per kind; a topic is `skos:inScheme` its kind's scheme |
 | Theme (suggested, `themes`) | `prov:Collection` | broad | a proposed collection, not yet confirmed |
 | Collection | `prov:Collection`; ordered: `co:List`, `schema:ItemList` | exact | |
-| Membership place and note | `co:ListItem` with `co:index`; `schema:ListItem` with `schema:position` | exact | |
+| Membership place | `co:ListItem` with `co:index`; `schema:ListItem` with `schema:position` | exact | |
+| Membership note | — | none | neither vocabulary gives a list entry a note; `schema:ListItem` has only `description` |
 | Section | DoCO `doco:Section` | close | a part of an item that isn't an item |
 | File (by SHA-256) | `schema:MediaObject` | close | |
 | Vector | — | none | an index, not an object |
@@ -153,7 +154,7 @@ A machine-readable version would use `owl:equivalentClass`, `rdfs:subClassOf` an
 | `project` | `schema:CreativeWork` | broad | not `schema:Project`, which is an organisation |
 | `image` | `schema:ImageObject` | exact | |
 | `other` | `schema:CreativeWork` | broad | |
-| `email` | `schema:EmailMessage` | exact | a thread; each message is a `message` |
+| `email` | `schema:Conversation` of `schema:EmailMessage`s | close | a thread; each message in it is a `message` |
 | `transcript` | `schema:DigitalDocument` | broad | schema.org has `transcript` only as a property of media |
 
 **Links between items**
@@ -210,7 +211,7 @@ A machine-readable version would use `owl:equivalentClass`, `rdfs:subClassOf` an
 
 - **A new term takes the published term's local name**, such as `references`, `alternate_of` or `creator`, in LeStash's own casing.
 - **Stored names stay as they are.** Renaming a kind, link kind or verb needs a migration; the crosswalk maps the stored name instead.
-- **A term with no match says so** in the crosswalk ("none" or "broad"), with a note on why.
+- **A term without an exact match says how close it is** in the crosswalk (close, broad or none), with a note on why.
 - **Before adding a term, check the leading vocabulary for its concern**, then the others in the table above.
 - **The same word is never used for two meanings.** For example, `related` is the vector-suggestion link, so a field stating "this points to that" is `references`.
 
