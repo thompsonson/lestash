@@ -423,6 +423,9 @@ def backup_create(
     except FileExistsError as e:
         console.print(f"[red]{e}; try again in a second.[/red]")
         raise typer.Exit(1) from e
+    except OSError as e:  # say, no space for the copy; nothing is left half-made
+        console.print(f"[red]Backup not made:[/red] {e}")
+        raise typer.Exit(1) from e
     result = verify_backup(dest)
     if result.get("unchecked"):
         # Not shown bad: keep it, but don't prune on the strength of it

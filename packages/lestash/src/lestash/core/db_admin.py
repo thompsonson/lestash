@@ -511,6 +511,35 @@ def _partial_for(dest: Path) -> Path:
     return dest.with_name(f"{dest.name}.{os.getpid()}-{os.urandom(4).hex()}{PARTIAL_SUFFIX}")
 
 
+def _frame_end(src: Path, header: bytes) -> int:
+    """Where the zstd frame starting ``src`` ends, found by walking its block headers.
+
+    So data after the frame, or a frame cut short, shows against the file's size
+    without decompressing. Raises ZstdError for a reserved block type.
+    """
+    import zstandard
+
+    pos = zstandard.frame_header_size(header)
+    has_checksum = bool(header[4] & 0x04)  # the frame header descriptor's checksum flag
+    reader = _Reader(src)
+    try:
+        f = reader.f
+        while True:
+            f.seek(pos)
+            block = reader.read(3)
+            if len(block) < 3:
+                return pos + len(block) + 1  # cut short inside a block header: past the end
+            value = int.from_bytes(block, "little")
+            last, kind, size = value & 1, (value >> 1) & 3, value >> 3
+            if kind == 3:
+                raise zstandard.ZstdError("a reserved block type: not a zstd backup")
+            pos += 3 + (1 if kind == 1 else size)  # an RLE block stores one byte
+            if last:
+                return pos + (4 if has_checksum else 0)
+    finally:
+        reader.close()
+
+
 def _decompress(src: Path, dest: Path) -> None:
     """Decompress ``src`` into ``dest`` (made new), then flush it to disk.
 
@@ -527,6 +556,11 @@ def _decompress(src: Path, dest: Path) -> None:
     expected = zstandard.get_frame_parameters(header).content_size
     if expected == zstandard.CONTENTSIZE_UNKNOWN:
         raise zstandard.ZstdError("the backup's frame does not record its size")
+    end, size = _frame_end(src, header), src.stat().st_size
+    if end > size:
+        raise zstandard.ZstdError("the backup ends before its frame does: truncated")
+    if end < size:
+        raise zstandard.ZstdError(f"{size - end:,} bytes after the end of the backup's frame")
     reader = _Reader(src)
     written = 0
     try:
@@ -539,8 +573,6 @@ def _decompress(src: Path, dest: Path) -> None:
                 while chunk := r.read(1 << 20):
                     fout.write(chunk)
                     written += len(chunk)
-            if reader.read(1):
-                raise zstandard.ZstdError("data after the end of the backup's frame")
             # A cut-short file ends early without an error: its size shows it
             if written != expected:
                 raise zstandard.ZstdError(

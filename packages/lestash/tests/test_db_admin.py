@@ -493,6 +493,14 @@ class TestCompressedBackup:
         dest.write_bytes(dest.read_bytes() + b"junk")
         assert verify_backup(dest)["valid"] is False
 
+    def test_a_few_bytes_after_the_frame_fail_the_check(self, test_db, tmp_path):
+        dest = create_backup(get_db_path(test_db))
+        dest.write_bytes(dest.read_bytes() + b"x")
+        result = verify_backup(dest)
+        assert result["valid"] is False and "after the end" in result["error"]
+        with pytest.raises(Exception, match="after the end"):
+            extract_backup(dest, tmp_path / "out.db")
+
     def test_two_checks_at_once_use_their_own_files(self, test_db, monkeypatch):
         import lestash.core.db_admin as d
 
@@ -712,6 +720,18 @@ class TestCli:
             cli_app, ["backup", "extract", damaged.name, "--to", str(tmp_path / "d.db")]
         )
         assert result.exit_code == 1 and "truncated" in result.output
+
+    def test_backup_create_reports_a_failed_write(self, runner, cli_app, test_db, monkeypatch):
+        import lestash.core.db_admin as d
+
+        def no_space(src, dest):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(d, "_compress", no_space)
+        result = runner.invoke(cli_app, ["backup", "create"])
+        assert result.exit_code == 1 and "No space left" in result.output
+        assert not isinstance(result.exception, OSError)
+        assert list_backups(get_db_path(test_db)) == []
 
     def test_backup_create_keeps_an_unchecked_copy_and_does_not_prune(
         self, runner, cli_app, test_db, monkeypatch
