@@ -6,6 +6,7 @@
 
 LeStash can import a folder of markdown notes kept in a git repository.
 This document says what it reads from each note, and how each field becomes part of an item.
+A note is a file whose name ends in `.md`, in lower case; other files are only attachments.
 
 - The schema is the contract between a notes repository and LeStash.
 - A repository can adopt it directly, or a reformatter outside LeStash can map its own conventions onto it.
@@ -59,11 +60,14 @@ So a sidecar value replaces a broken frontmatter value before any check.
 
 - The source's sync stops before changing anything, because the sidecar may hold skips and captures.
 
-**A sidecar key names no note at the synced commit:**
+**A sidecar key names no file at the synced commit**, for example after a note moved or was deleted:
 
-- If the note moved, LeStash follows git's rename history from the key to the note's current path, and the entry applies there.
-- If the note was deleted, or the source's settings leave it out, the entry is ignored.
-- Either way, the sync carries on. Regenerate the sidecar in the same commit as any move or deletion to keep it clean.
+- The source's sync stops before changing anything, and reports the key.
+- LeStash doesn't guess where a note went: git's rename detection is a guess, and a wrong guess would move a note's protecting fields to another note.
+- A key for a file the source's settings leave out still names a file, so it is fine.
+
+LeStash trusts the sidecar as it stands at the synced commit. Keeping it current is the notes repository's job.
+Regenerate it in the same commit as any move, deletion or new note at an old path, for example with a pre-commit hook that fails when it is out of date.
 
 Every held-back note, ignored field and stopped sync is listed, with the reason, in the source's sync report.
 
