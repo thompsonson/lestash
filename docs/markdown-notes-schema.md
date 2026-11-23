@@ -57,8 +57,11 @@ So a sidecar value replaces a broken frontmatter value before any check.
 **After the merge, a field breaks the schema:**
 
 - `lestash`, `own`, `creator` or `capture`: the note is held back. These fields decide whether, and as whose work, it is imported.
-- An `author` field with no `creator`: the note is held back too. Otherwise it would be credited to the repository's owner.
 - Any other field, such as `note_class: model`: that field is ignored, and the note's other fields still apply.
+
+**An `author` field with no `creator`, on a note that is its owner's**: the note is held back.
+It would otherwise be credited to the repository's owner. A capture, or a note with `own: false`, has no owner fallback, so it imports.
+The JSON Schema states this rule too.
 
 **The sidecar itself is broken**: it isn't valid JSON, its `schema` isn't 1, `notes` isn't an object, an entry isn't an object, or a key isn't a normalised path.
 
@@ -107,7 +110,7 @@ Every held-back note, ignored field, unknown field and stopped sync is listed, w
 | `status` | a short phrase, such as `draft`, `open` or `confirmed` | the label `status:<value>` | `schema:creativeWorkStatus`, exact |
 | `type` | the repository's own word for the note, such as `review` or `position` | the label `type:<value>` | `dcterms:type`, close: Dublin Core prefers its own type vocabulary |
 | `scope_note` | a phrase: what the note covers | a line under the title | `skos:scopeNote`, close: SKOS defines it for concepts |
-| `change_note` | a list; each entry is `{date, summary}`, or a string `"YYYY-MM-DD — summary"`, where the dash may be `—`, `–` or `-` | "Changed N times, last on …" on the item's page | `skos:changeNote`, close: SKOS defines it for concepts |
+| `change_note` | a list; each entry is `{date, summary}`, or a string `"YYYY-MM-DD — summary"`, where the date may be `YYYY`, `YYYY-MM` or `YYYY-MM-DD`, and the dash `—`, `–` or `-`, with a space each side | "Changed N times, last on …" on the item's page | `skos:changeNote`, close: SKOS defines it for concepts |
 
 The three classes say how far to trust a note today:
 

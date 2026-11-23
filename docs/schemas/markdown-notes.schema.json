@@ -100,7 +100,7 @@
           },
           {
             "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2} [-\u2013\u2014] .+"
+            "pattern": "^\\d{4}(-\\d{2}(-\\d{2})?)? [-\u2013\u2014] .+"
           }
         ]
       }
@@ -194,5 +194,35 @@
       "description": "Sidecar only: false means the entry stands in for the note's frontmatter, which is then not read.",
       "type": "boolean"
     }
+  },
+  "if": {
+    "required": [
+      "author"
+    ],
+    "not": {
+      "required": [
+        "creator"
+      ]
+    }
+  },
+  "then": {
+    "description": "An author with no creator would be credited to the repository's owner, so the note must say it isn't its owner's.",
+    "anyOf": [
+      {
+        "required": [
+          "capture"
+        ]
+      },
+      {
+        "required": [
+          "own"
+        ],
+        "properties": {
+          "own": {
+            "const": false
+          }
+        }
+      }
+    ]
   }
 }
