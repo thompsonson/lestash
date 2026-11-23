@@ -41,10 +41,10 @@
       "type": "string",
       "minLength": 1
     },
-    "date": {
+    "created": {
       "$ref": "#/$defs/date"
     },
-    "summary": {
+    "abstract": {
       "type": "string"
     },
     "medium": {
@@ -59,7 +59,7 @@
     "own": {
       "type": "boolean"
     },
-    "author": {
+    "creator": {
       "type": "string"
     },
     "note_class": {
@@ -77,10 +77,10 @@
       "type": "string",
       "maxLength": 40
     },
-    "scope": {
+    "scope_note": {
       "type": "string"
     },
-    "amended": {
+    "change_note": {
       "type": "array",
       "items": {
         "oneOf": [
@@ -105,10 +105,7 @@
         ]
       }
     },
-    "superseded_by": {
-      "$ref": "#/$defs/ref"
-    },
-    "tags": {
+    "subject": {
       "type": "array",
       "items": {
         "type": "string",
@@ -136,7 +133,7 @@
         "$ref": "#/$defs/strings"
       }
     },
-    "related": {
+    "references": {
       "$ref": "#/$defs/refs"
     },
     "derived_from": {
@@ -145,29 +142,32 @@
     "alternate_of": {
       "$ref": "#/$defs/refs"
     },
-    "revision_of": {
+    "replaces": {
       "$ref": "#/$defs/refs"
     },
     "capture": {
       "type": "object",
       "required": [
-        "type"
+        "relation"
       ],
       "properties": {
-        "type": {
+        "relation": {
           "enum": [
-            "verbatim",
-            "reference",
-            "generated"
+            "quoted",
+            "derived"
           ]
         },
-        "url": {
+        "generated_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
           "type": "string"
         },
         "repo": {
           "type": "string"
         },
-        "ref": {
+        "commit": {
           "type": "string"
         },
         "path": {
@@ -190,8 +190,8 @@
         "skip"
       ]
     },
-    "replaces_frontmatter": {
-      "description": "Sidecar only: the entry stands in for the note's frontmatter, which is then not read.",
+    "read_frontmatter": {
+      "description": "Sidecar only: false means the entry stands in for the note's frontmatter, which is then not read.",
       "type": "boolean"
     }
   }
