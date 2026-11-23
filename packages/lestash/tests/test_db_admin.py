@@ -763,6 +763,21 @@ class TestCli:
         result = runner.invoke(cli_app, ["backup", "create"])
         assert result.exit_code == 1 and "disk is full" in result.output
 
+    def test_a_compression_failure_is_reported(self, runner, cli_app, test_db, monkeypatch):
+        import lestash.core.db_admin as d
+        import zstandard
+
+        def fails(src, dest):
+            raise zstandard.ZstdError("compression failed")
+
+        monkeypatch.setattr(d, "_compress", fails)
+        result = runner.invoke(cli_app, ["backup", "create"])
+        assert result.exit_code == 1 and "compression failed" in result.output
+        db_path = get_db_path(test_db)
+        (db_path.parent / "lestash-backup-20200101-000000.db").write_bytes(db_path.read_bytes())
+        result = runner.invoke(cli_app, ["backup", "compress"])
+        assert result.exit_code == 1 and "compression failed" in result.output
+
     def test_backup_create_keeps_an_unchecked_copy_and_does_not_prune(
         self, runner, cli_app, test_db, monkeypatch
     ):

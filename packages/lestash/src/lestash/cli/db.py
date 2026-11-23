@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 
 import typer
+import zstandard
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -424,7 +425,7 @@ def backup_create(
     except FileExistsError as e:
         console.print(f"[red]{e}; try again in a second.[/red]")
         raise typer.Exit(1) from e
-    except (OSError, sqlite3.Error) as e:  # say, no space; nothing is left half-made
+    except (OSError, sqlite3.Error, zstandard.ZstdError) as e:  # nothing is left half-made
         console.print(f"[red]Backup not made:[/red] {e}")
         raise typer.Exit(1) from e
     result = verify_backup(dest)
@@ -502,7 +503,7 @@ def backup_compress() -> None:
     for b in plain:
         try:
             dest = compress_backup(Path(b["path"]))
-        except (ValueError, OSError) as e:
+        except (ValueError, OSError, zstandard.ZstdError) as e:
             failed += 1
             console.print(f"[red]Not compressed:[/red] {e}")
             continue
