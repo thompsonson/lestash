@@ -15,6 +15,7 @@ import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import IO, cast
 
 logger = logging.getLogger(__name__)
 
@@ -467,10 +468,11 @@ def _compress(src: Path, dest: Path) -> None:
     """Compress ``src`` into ``dest`` (made new), then flush it to disk."""
     import zstandard
 
-    # The checksum makes decompressing a damaged file fail, rather than give wrong bytes
+    # The checksum makes a damaged file fail to decompress, rather than give wrong bytes.
+    # The size in the frame's header shows a cut-short file: it decompresses short.
     cctx = zstandard.ZstdCompressor(level=_ZSTD_LEVEL, threads=-1, write_checksum=True)
     with src.open("rb") as fin, dest.open("xb") as fout:
-        cctx.copy_stream(fin, fout)
+        cctx.copy_stream(fin, fout, size=os.fstat(fin.fileno()).st_size)
         fout.flush()
         os.fsync(fout.fileno())
 
@@ -479,45 +481,75 @@ class BackupUnreadable(OSError):
     """The backup itself could not be read: a fault in the backup, not in the check."""
 
 
-def _read_chunks(src: Path):
-    """``src`` in 1 MiB pieces; a failure to open or read it is BackupUnreadable."""
-    try:
-        fin = src.open("rb")
-    except OSError as e:
-        raise BackupUnreadable(e.errno, f"cannot read {src.name}: {e.strerror}") from e
-    with fin:
-        while True:
-            try:
-                chunk = fin.read(1 << 20)
-            except OSError as e:
-                raise BackupUnreadable(e.errno, f"cannot read {src.name}: {e.strerror}") from e
-            if not chunk:
-                return
-            yield chunk
+class _Reader:
+    """A file whose open and read failures are BackupUnreadable, so they are told apart
+    from failures to write the copy."""
+
+    def __init__(self, src: Path) -> None:
+        self.name = src.name
+        try:
+            self.f = src.open("rb")
+        except OSError as e:
+            raise BackupUnreadable(e.errno, f"cannot read {self.name}: {e.strerror}") from e
+
+    def read(self, n: int = -1) -> bytes:
+        try:
+            return self.f.read(n)
+        except OSError as e:
+            raise BackupUnreadable(e.errno, f"cannot read {self.name}: {e.strerror}") from e
+
+    def close(self) -> None:
+        self.f.close()
 
 
 def _partial_for(dest: Path) -> Path:
     """A temporary name beside ``dest``, its own, so two runs at once never share one.
-    One left by a killed run is a stale .partial, which a later create removes."""
+
+    One a killed run leaves in a backup folder is a stale .partial, which a later
+    create removes; one left beside an ``extract`` destination is not, and stays.
+    """
     return dest.with_name(f"{dest.name}.{os.getpid()}-{os.urandom(4).hex()}{PARTIAL_SUFFIX}")
 
 
 def _decompress(src: Path, dest: Path) -> None:
-    """Decompress ``src`` into ``dest`` (made new), then flush it to disk."""
+    """Decompress ``src`` into ``dest`` (made new), then flush it to disk.
+
+    Raises ZstdError for a file that is damaged, cut short, or has data after its one
+    frame; BackupUnreadable if ``src`` can't be read.
+    """
     import zstandard
 
-    # One frame, read to its end: copy_stream stops quietly at a cut-short file, before
-    # the checksum, so a truncated backup would come out short but "fine"
-    dobj = zstandard.ZstdDecompressor().decompressobj()
-    with dest.open("xb") as fout:
-        for chunk in _read_chunks(src):
-            if dobj.eof:
+    head = _Reader(src)
+    try:
+        header = head.read(18)  # a zstd frame header is at most 18 bytes
+    finally:
+        head.close()
+    expected = zstandard.get_frame_parameters(header).content_size
+    if expected == zstandard.CONTENTSIZE_UNKNOWN:
+        raise zstandard.ZstdError("the backup's frame does not record its size")
+    reader = _Reader(src)
+    written = 0
+    try:
+        with dest.open("xb") as fout:
+            dctx = zstandard.ZstdDecompressor()
+            # It only calls read(), which _Reader has
+            source = cast("IO[bytes]", reader)
+            with dctx.stream_reader(source, read_across_frames=False, closefd=False) as r:
+                # Bounded: at most 1 MiB of output in memory at a time
+                while chunk := r.read(1 << 20):
+                    fout.write(chunk)
+                    written += len(chunk)
+            if reader.read(1):
                 raise zstandard.ZstdError("data after the end of the backup's frame")
-            fout.write(dobj.decompress(chunk))
-        if not dobj.eof:
-            raise zstandard.ZstdError("the backup ends before its frame does: truncated")
-        fout.flush()
-        os.fsync(fout.fileno())
+            # A cut-short file ends early without an error: its size shows it
+            if written != expected:
+                raise zstandard.ZstdError(
+                    f"the backup decompresses to {written:,} of {expected:,} bytes: truncated"
+                )
+            fout.flush()
+            os.fsync(fout.fileno())
+    finally:
+        reader.close()
 
 
 def _link_into_place(partial: Path, dest: Path) -> None:

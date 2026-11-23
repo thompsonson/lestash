@@ -471,12 +471,14 @@ def backup_extract(
     ),
 ) -> None:
     """Write the database a backup holds to a file, decompressing it: for a restore."""
+    import zstandard
+
     from lestash.core.database import get_db_path
 
     backup_path = find_backup(get_db_path(), filename)
     try:
         dest = extract_backup(backup_path, Path(to).expanduser())
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, zstandard.ZstdError) as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(1) from e
     console.print(f"[green]Extracted[/green] {backup_path.name} to {dest}")

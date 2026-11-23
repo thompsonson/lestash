@@ -488,6 +488,11 @@ class TestCompressedBackup:
             extract_backup(dest, tmp_path / "out.db")
         assert not (tmp_path / "out.db").exists()
 
+    def test_data_after_the_frame_fails_the_check(self, test_db):
+        dest = create_backup(get_db_path(test_db))
+        dest.write_bytes(dest.read_bytes() + b"junk")
+        assert verify_backup(dest)["valid"] is False
+
     def test_two_checks_at_once_use_their_own_files(self, test_db, monkeypatch):
         import lestash.core.db_admin as d
 
@@ -509,11 +514,10 @@ class TestCompressedBackup:
 
         dest = create_backup(get_db_path(test_db))
 
-        def bad_sector(src):
+        def bad_sector(self, n=-1):
             raise d.BackupUnreadable(5, "cannot read it: Input/output error")
-            yield b""
 
-        monkeypatch.setattr(d, "_read_chunks", bad_sector)
+        monkeypatch.setattr(d._Reader, "read", bad_sector)
         result = verify_backup(dest)
         assert result["valid"] is False and not result.get("unchecked")
 
@@ -702,6 +706,12 @@ class TestCli:
         )
         assert result.exit_code == 1  # an OS error is reported, not raised
         assert not isinstance(result.exception, OSError)
+        damaged = old.with_name(old.name + ".zst")
+        damaged.write_bytes(damaged.read_bytes()[:-100])
+        result = runner.invoke(
+            cli_app, ["backup", "extract", damaged.name, "--to", str(tmp_path / "d.db")]
+        )
+        assert result.exit_code == 1 and "truncated" in result.output
 
     def test_backup_create_keeps_an_unchecked_copy_and_does_not_prune(
         self, runner, cli_app, test_db, monkeypatch
