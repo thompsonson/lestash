@@ -26,6 +26,7 @@ LeStash reads a note's fields from two places, in this order:
    - A sidecar entry replaces the note's own value field by field, at the top level only.
      A list or map in the sidecar, such as `tags` or `labels`, replaces the note's whole value; nothing is merged.
    - A reformatter can generate it, so the notes themselves stay untouched.
+   - An entry with `replaces_frontmatter: true` stands in for the note's frontmatter, which is then not read at all.
 
 ```json
 {
@@ -40,21 +41,23 @@ LeStash reads a note's fields from two places, in this order:
 
 The frontmatter block is never part of the body, so an unparsed block never becomes the summary.
 
-**A note's frontmatter isn't valid YAML** (a common cause is an unquoted value holding `": "`):
+LeStash first merges the sidecar entry over the note's frontmatter, then checks the result against the schema.
+So a sidecar value replaces a broken frontmatter value before any check.
 
-- With a sidecar entry, the note imports with the sidecar's fields alone. The sidecar can carry the fields until the note is fixed.
-- Without one, the note is held back: not imported, and an existing item from it is left as it was.
-  It can't be imported safely, because its unread fields may say `lestash: skip`, or mark it a capture of someone else's work.
+**The frontmatter can't be read**: it isn't valid YAML, or it isn't a mapping. A common cause is an unquoted value holding `": "`.
 
-**A field parses but breaks the schema:**
+- If the note's sidecar entry has `replaces_frontmatter: true`, the note imports with the sidecar's fields alone.
+- Otherwise the note is held back: not imported, and an existing item from it is left as it was.
+  Its unread fields may say `lestash: skip`, or mark it a capture of someone else's work, so importing it could be wrong.
 
-- `lestash`, `own`, `author` or `capture` broken: the note is held back, as above. These fields decide whether and as whose work it is imported.
-- Any other field broken, such as `note_class: model`: that field is ignored, and the note's other fields still apply.
+**After the merge, a field breaks the schema:**
 
-**The sidecar isn't valid JSON, or breaks the sidecar schema at its top level:**
+- `lestash`, `own`, `author` or `capture`: the note is held back. These fields decide whether, and as whose work, it is imported.
+- Any other field, such as `note_class: model`: that field is ignored, and the note's other fields still apply.
+
+**The sidecar itself is broken**: it isn't valid JSON, its `schema` isn't 1, `notes` isn't an object, a key isn't a note path, or an entry isn't an object.
 
 - The source's sync stops before changing anything, because the sidecar may hold skips and captures.
-- One entry with a broken field is handled field by field, by the same rules as frontmatter.
 
 Every held-back note, ignored field and stopped sync is listed, with the reason, in the source's sync report.
 
@@ -105,7 +108,7 @@ The field is `note_class`, not `class`, and its values have two words each, beca
 
 | Field | Type | Becomes |
 |---|---|---|
-| `tags` | list of strings with no `:` | topics (`tags`, kind `ad-hoc`), named as written |
+| `tags` | list of strings | topics (`tags`, kind `ad-hoc`), named as written |
 | `labels` | map of a facet name to a list of strings | topics named `<facet>:<value>`, with the facet as their kind, such as `chapter:Ch3` |
 
 ```yaml
@@ -117,7 +120,8 @@ labels:
 - A facet becomes a filter in the Library, such as "Chapter: Ch3".
 - The note's folder is always a label too, named `folder:<path>`. It needs no field.
 - Every label LeStash makes is named `<facet>:<value>`, with the facet as its kind: `labels`, `note_class`, `status`, `type`, `medium`, folders and vocabulary mentions.
-- A topic name is unique across kinds. The prefix keeps labels apart from each other, and a tag can't hold `:`, so tags never collide with labels.
+- A topic name is unique across kinds, and any source or the app can make a topic of any name.
+  If a label's name already exists as a topic of another kind, the note gets that existing topic, and the sync report lists the clash.
 - So these facet names are reserved, and the schema rejects them under `labels`: `ad-hoc`, `category`, `folder`, `mention`, `note_class`, `status`, `type` and `medium`.
 
 ### Links

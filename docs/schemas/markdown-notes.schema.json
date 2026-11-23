@@ -112,8 +112,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "minLength": 1,
-        "pattern": "^[^:]+$"
+        "minLength": 1
       }
     },
     "labels": {
@@ -190,6 +189,10 @@
       "enum": [
         "skip"
       ]
+    },
+    "replaces_frontmatter": {
+      "description": "Sidecar only: the entry stands in for the note's frontmatter, which is then not read.",
+      "type": "boolean"
     }
   }
 }
