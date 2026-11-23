@@ -493,6 +493,22 @@ class TestCompressedBackup:
         dest.write_bytes(dest.read_bytes() + b"junk")
         assert verify_backup(dest)["valid"] is False
 
+    def test_two_creates_in_one_second_use_their_own_temp_files(self, test_db, monkeypatch):
+        import lestash.core.db_admin as d
+
+        names = []
+        real = d._partial_for
+
+        def spy(dest):
+            p = real(dest)
+            names.append(p.name)
+            return p
+
+        monkeypatch.setattr(d, "_partial_for", spy)
+        create_backup(get_db_path(test_db), label="one")
+        create_backup(get_db_path(test_db), label="two")
+        assert len(set(names)) == len(names) >= 4
+
     def test_a_few_bytes_after_the_frame_fail_the_check(self, test_db, tmp_path):
         dest = create_backup(get_db_path(test_db))
         dest.write_bytes(dest.read_bytes() + b"x")
@@ -732,6 +748,20 @@ class TestCli:
         assert result.exit_code == 1 and "No space left" in result.output
         assert not isinstance(result.exception, OSError)
         assert list_backups(get_db_path(test_db)) == []
+
+    def test_backup_create_reports_a_full_disk_during_the_copy(
+        self, runner, cli_app, test_db, monkeypatch
+    ):
+        real = sqlite3.connect
+
+        def connect(path, *a, **k):
+            if str(path).endswith(".partial"):
+                raise sqlite3.OperationalError("database or disk is full")
+            return real(path, *a, **k)
+
+        monkeypatch.setattr("lestash.core.db_admin.sqlite3.connect", connect)
+        result = runner.invoke(cli_app, ["backup", "create"])
+        assert result.exit_code == 1 and "disk is full" in result.output
 
     def test_backup_create_keeps_an_unchecked_copy_and_does_not_prune(
         self, runner, cli_app, test_db, monkeypatch

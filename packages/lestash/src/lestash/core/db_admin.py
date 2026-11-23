@@ -620,8 +620,9 @@ def create_backup(
     for name in (plain_name, plain_name + ZSTD_SUFFIX):
         if (dest_dir / name).exists():
             raise FileExistsError(f"a backup named {name} exists already")
-    partial = dest_dir / (plain_name + PARTIAL_SUFFIX)
-    zst_partial = dest_dir / (plain_name + ZSTD_SUFFIX + PARTIAL_SUFFIX)
+    # Names of their own, so a second create in the same second can't remove these
+    partial = _partial_for(dest_dir / plain_name)
+    zst_partial = _partial_for(dest_dir / (plain_name + ZSTD_SUFFIX))
 
     try:
         # The source closes even when the copy's file can't be opened.

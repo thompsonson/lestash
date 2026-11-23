@@ -32,7 +32,7 @@ LeStash backs up its own database. sysbak, or any file backup, copies those back
 - Backups made before #414 end in `.db`. They are listed, checked and pruned the same way; `compress` converts them.
 - `verify` decompresses a `.zst` backup into a temporary `….verify.<id>.partial` beside it, checks that, and removes it. So a pass shows the backup can be restored. It needs free space for one uncompressed copy while it runs.
 - A copy is one file: no `-wal` or `-shm` beside it.
-- A copy is written as `….db.partial`, compressed to `….db.zst.partial`, and moved into place once complete, so a half-made copy is never counted.
+- A copy is written as `….db.<id>.partial`, compressed to `….db.zst.<id>.partial`, and moved into place once complete, so a half-made copy is never counted.
 - A `.partial` over an hour old was cut short; the next `create` removes it.
 - `create` refuses to replace a backup of the same name, made in the same second.
 - `verify` opens a backup read-only, and reports a missing file without creating one.

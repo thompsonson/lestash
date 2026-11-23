@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json as json_mod
+import sqlite3
 from pathlib import Path
 
 import typer
@@ -423,7 +424,7 @@ def backup_create(
     except FileExistsError as e:
         console.print(f"[red]{e}; try again in a second.[/red]")
         raise typer.Exit(1) from e
-    except OSError as e:  # say, no space for the copy; nothing is left half-made
+    except (OSError, sqlite3.Error) as e:  # say, no space; nothing is left half-made
         console.print(f"[red]Backup not made:[/red] {e}")
         raise typer.Exit(1) from e
     result = verify_backup(dest)
