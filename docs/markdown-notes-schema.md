@@ -12,7 +12,8 @@ A file ending in `.markdown`, or in `.md` in another case, is not imported, and 
 - The schema is the contract between a notes repository and LeStash.
 - A repository can adopt it directly, or a reformatter outside LeStash can map its own conventions onto it.
 - Every field is optional. A note with no frontmatter still imports, using the fallbacks below.
-- Fields LeStash doesn't know are kept in the item's metadata, uninterpreted.
+- Fields LeStash doesn't know are kept in the item's metadata, uninterpreted, and the sync report lists them.
+  A common name from other tools is listed with the field it likely means: `date` → `created`, `summary` → `abstract`, `author` → `creator`, `tags` → `subject`.
 - Field names follow LeStash's naming rule: each takes the name of its published term, from the crosswalk in [content-and-activity-ontology-design.md](content-and-activity-ontology-design.md#canonical-sources-23-nov-2026-410).
   Each table below gives the published term and how closely it matches. A field with no published term says "none".
 - Two JSON Schemas state the same rules, so a repository can check its notes:
@@ -72,7 +73,7 @@ LeStash trusts the sidecar as it stands at the synced commit. Keeping it current
 Regenerate it in every commit that changes a note, for example with a pre-commit hook that fails when it is out of date.
 How the source detects an entry left on a reused path is still open in #408.
 
-Every held-back note, ignored field and stopped sync is listed, with the reason, in the source's sync report.
+Every held-back note, ignored field, unknown field and stopped sync is listed, with the reason, in the source's sync report.
 
 ## The fields
 
@@ -250,6 +251,7 @@ It links to one note, one paper and one LeStash item.
 ## Versioning this schema
 
 - The sidecar names the schema version it was written for: `"schema": 1`.
+- Version 1 is the first published version. Field names in earlier drafts were never imported, so they need no version of their own.
 - Version 1 leaves out reply and containment links (`in_reply_to`, `part_of`). A later version can add them.
 - A new field is a minor change. LeStash keeps an unknown field rather than rejecting it.
 - Changing a field's meaning needs a new version number.
