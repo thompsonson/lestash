@@ -4,7 +4,7 @@ Each query in docs/search-baseline/queries.toml runs through GET /api/items/sear
 keyword, semantic and hybrid modes. The top results are saved as JSON, and a summary
 prints where each expected item ranked.
 
-The saved file holds only each result's rank and item id, plus the expected key it
+The saved file holds only each result's rank and item id, plus the expected keys it
 matched. The repository is public, and a result's key or title can name a private
 item (#407); an expected key is already in queries.toml.
 
@@ -102,13 +102,14 @@ def search(base_url: str, q: str, mode: str, limit: int, timeout: float) -> list
 
 
 def redact(hits: list[dict[str, Any]], expect: list[str]) -> list[dict[str, Any]]:
-    """Each hit's rank and item id, and the expected key it matched, if any (#407)."""
+    """Each hit's rank and item id, and the expected keys it matched, if any (#407)."""
     kept = []
     for hit in hits:
         entry = {"rank": hit["rank"], "id": hit["id"]}
-        match = next((k for k in (hit.get("key"), hit.get("part")) if k and k in expect), None)
-        if match:
-            entry["expected"] = match
+        # A grouped result can match both its item's key and its part's
+        matched = [k for k in dict.fromkeys((hit.get("key"), hit.get("part"))) if k and k in expect]
+        if matched:
+            entry["expected"] = matched
         kept.append(entry)
     return kept
 
@@ -155,8 +156,8 @@ def expected_ranks(entry: dict[str, Any], mode: str) -> str:
         return "error"
     ranks: dict[str, int] = {}
     for hit in hits:  # best rank first; a grouped result counts for its part too
-        if hit.get("expected"):
-            ranks.setdefault(hit["expected"], hit["rank"])
+        for key in hit.get("expected", []):
+            ranks.setdefault(key, hit["rank"])
     return ", ".join(str(ranks.get(key, "-")) for key in entry["expect"]) or "(no expect)"
 
 

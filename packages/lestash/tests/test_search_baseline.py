@@ -121,7 +121,7 @@ def test_it_records_each_mode_and_where_expected_items_rank(server: str, tmp_pat
     entry = report["results"][0]
     # Only rank, id and the expected key it matched: no other key or title (#407)
     assert entry["keyword"] == [
-        {"rank": 1, "id": 7, "expected": "arxiv:2512.20660"},
+        {"rank": 1, "id": 7, "expected": ["arxiv:2512.20660"]},
         {"rank": 2, "id": 9},
     ]
     assert "Dual-State" not in out.read_text() and "liked:x" not in out.read_text()
@@ -135,5 +135,9 @@ def test_it_records_each_mode_and_where_expected_items_rank(server: str, tmp_pat
 def test_a_grouped_result_matches_by_its_part() -> None:
     hits = [{"rank": 1, "id": 3, "key": "claude:chat", "part": "claude:chat:turn-2", "title": "T"}]
     assert baseline.redact(hits, ["claude:chat:turn-2"]) == [
-        {"rank": 1, "id": 3, "expected": "claude:chat:turn-2"}
+        {"rank": 1, "id": 3, "expected": ["claude:chat:turn-2"]}
     ]
+    both = baseline.redact(hits, ["claude:chat", "claude:chat:turn-2"])
+    assert both[0]["expected"] == ["claude:chat", "claude:chat:turn-2"]
+    entry = {"expect": ["claude:chat", "claude:chat:turn-2"], "hybrid": both}
+    assert baseline.expected_ranks(entry, "hybrid") == "1, 1"
