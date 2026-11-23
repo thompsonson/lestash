@@ -47,11 +47,12 @@ LeStash reads a note's fields from two places, in this order:
 | `summary` | string, one or two sentences | the preview on cards | the first paragraph |
 | `medium` | `typed`, `voice`, `conversation`, `correspondence`, `mixed` | how the note was made, shown as a label | none |
 | `own` | boolean | whether you wrote it (`is_own_content`) | true, or false under `capture` |
-| `author` | string | the item's author, when `own` is false | the repository's owner |
+| `author` | string | the item's author | the repository's owner when `own` is true; none when `own` is false |
 
 - Every item from this source has the kind `note`; the ontology derives kind from the source.
 - A filename date is either `YYYY-MM-DD` at the start, or a month and year at the end: `_nov2026`.
-- Quote dates: `date: "2026-11-09"`. Most YAML loaders turn an unquoted full date into a date object, which the JSON Schema rejects.
+- Quote every date, wherever it appears: `date: "2026"`, `"2026-11"`, `"2026-11-09"`.
+  Unquoted, YAML reads a year as a number and a full date as a date object, and the JSON Schema rejects both.
   LeStash itself accepts either form.
 - A date given to the month is shown as a month, such as "Nov 2026". LeStash never invents a day.
 - The git commit date is the weakest sign: a bulk move or a rename resets it.
@@ -92,6 +93,7 @@ labels:
 ```
 
 - A facet becomes a filter in the Library, such as "Chapter: Ch3".
+- LeStash reserves some facet names for its own labels: `ad-hoc`, `category`, `folder` and `mention`. The schema rejects them.
 - The note's folder is always a label too. It needs no field.
 
 ### Links
@@ -99,7 +101,8 @@ labels:
 Each field holds one reference or a list of them.
 A reference is one of these:
 
-- a path to another note, relative to the folder's root or to the note: `../design/overview.md`;
+- a path to another note, relative to the note itself, as in a markdown link: `../design/overview.md`;
+- a path from the folder's root, starting with `/`: `/design/overview.md`;
 - a web address: `https://arxiv.org/abs/2401.00001`;
 - a LeStash item: `lestash:12345`.
 
@@ -139,7 +142,7 @@ capture:
 | `reference` | a copy kept for reference, possibly trimmed | "Capture · reference" |
 | `generated` | made by a model, not a primary source | "Capture · generated" |
 
-- `sha1` records the original's checksum, as the capture's source gave it. LeStash stores it and never recomputes it.
+- `sha1` records the original's checksum, as the capture's source gave it, in either case. LeStash stores it and never recomputes it.
 - A `verbatim` capture should never change. When a later commit changes its body, the sync still updates the item, and lists the note in its report.
 
 ### Leaving a note out

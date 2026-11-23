@@ -106,7 +106,15 @@
     "labels": {
       "type": "object",
       "propertyNames": {
-        "pattern": "^[a-z][a-z0-9_-]*$"
+        "pattern": "^[a-z][a-z0-9_-]*$",
+        "not": {
+          "enum": [
+            "ad-hoc",
+            "category",
+            "folder",
+            "mention"
+          ]
+        }
       },
       "additionalProperties": {
         "$ref": "#/$defs/strings"
@@ -154,7 +162,7 @@
         },
         "sha1": {
           "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
+          "pattern": "^[0-9a-fA-F]{40}$"
         },
         "upstream_status": {
           "type": "string"
