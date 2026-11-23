@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/thompsonson/lestash/main/docs/schemas/markdown-notes-sidecar.schema.json",
+  "title": "LeStash markdown notes sidecar (.lestash/notes.json), version 1",
+  "description": "The sidecar's structure: what makes it broken, so the sync stops. Each entry's fields are checked after merging with the note's frontmatter, against markdown-notes.schema.json. See docs/markdown-notes-schema.md.",
+  "type": "object",
+  "required": [
+    "schema",
+    "notes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "notes": {
+      "type": "object",
+      "propertyNames": {
+        "description": "A normalised path from the folder's root: no leading /, no empty, . or .. segments",
+        "pattern": "^(?!/)(?!.*//)(?!(.*/)?\\.{1,2}(/|$)).+\\.md$"
+      },
+      "additionalProperties": {
+        "type": "object"
+      }
+    }
+  }
+}

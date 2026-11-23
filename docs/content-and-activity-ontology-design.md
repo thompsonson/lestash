@@ -319,9 +319,9 @@ Each link kind's allowed ends (its domain and range), with the pairs in the live
 | `in_reply_to` | a reply: `comment`, or a comment's `stub` | the post or comment it answers: `post`, `comment`, or their `stub` | comment → stub 2,655; stub → stub 183; stub → post 17; comment → comment 6 |
 | `references` | any item with text: `post`, `comment`, `turn`, `chat`, `document`, `note`, `message`, `video`, `search` | any item: `post`, `video`, `document`, `paper`, or a `stub` | turn → post 450; post → video 69; turn → video 61; post → post 49; turn → document 43; video → video 38; 18 rarer pairs |
 | `syndication` | `post` | `post` | post → post 76 |
-| `derived_from` | `notebook`, `artifact` | the source it was built from: any held item, or a `stub` | none yet |
+| `derived_from` | `notebook`, `artifact`, `note` | the source it was built from: any held item, or a `stub` | none yet |
 | `alternate_of` | any item | an item of the same kind, or a `book` and a `document` (a Kobo copy; made by its bytes, #338) | none yet |
-| `revision_of` | a `document` | the earlier version of that `document` | none yet |
+| `revision_of` | a `document` or `note` | the earlier version of that `document` or `note` | none yet |
 | `related` | a whole held item | a whole held item from another source; symmetric, stored with the lower id first (#219) | none yet |
 
 - All 3,878 link rows are `confirmed`.

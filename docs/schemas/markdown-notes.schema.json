@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/thompsonson/lestash/main/docs/schemas/markdown-notes.schema.json",
+  "title": "LeStash markdown note frontmatter, version 1",
+  "description": "The fields LeStash reads from a markdown note's YAML frontmatter, or from a sidecar entry. See docs/markdown-notes-schema.md. Quote dates in YAML, or a loader turns them into date objects.",
+  "type": "object",
+  "additionalProperties": true,
+  "$defs": {
+    "date": {
+      "type": "string",
+      "pattern": "^\\d{4}(-\\d{2}(-\\d{2}([T ]\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?)?)?$"
+    },
+    "ref": {
+      "description": "A path to another note, a web address, or lestash:<item id>",
+      "type": "string",
+      "minLength": 1
+    },
+    "refs": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ref"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ref"
+          }
+        }
+      ]
+    },
+    "strings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created": {
+      "$ref": "#/$defs/date"
+    },
+    "abstract": {
+      "type": "string"
+    },
+    "medium": {
+      "enum": [
+        "typed",
+        "voice",
+        "conversation",
+        "correspondence",
+        "mixed"
+      ]
+    },
+    "own": {
+      "type": "boolean"
+    },
+    "creator": {
+      "type": "string"
+    },
+    "note_class": {
+      "enum": [
+        "record-of-exchange",
+        "live-model",
+        "proposal"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "type": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "scope_note": {
+      "type": "string"
+    },
+    "change_note": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "date"
+            ],
+            "properties": {
+              "date": {
+                "$ref": "#/$defs/date"
+              },
+              "summary": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "string",
+            "pattern": "^\\d{4}(-\\d{2}(-\\d{2})?)? [-\u2013\u2014] .+"
+          }
+        ]
+      }
+    },
+    "subject": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "labels": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_-]*$",
+        "not": {
+          "enum": [
+            "ad-hoc",
+            "category",
+            "folder",
+            "mention",
+            "note_class",
+            "status",
+            "type",
+            "medium"
+          ]
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/strings"
+      }
+    },
+    "references": {
+      "$ref": "#/$defs/refs"
+    },
+    "derived_from": {
+      "$ref": "#/$defs/refs"
+    },
+    "alternate_of": {
+      "$ref": "#/$defs/refs"
+    },
+    "replaces": {
+      "$ref": "#/$defs/refs"
+    },
+    "capture": {
+      "type": "object",
+      "required": [
+        "relation"
+      ],
+      "properties": {
+        "relation": {
+          "enum": [
+            "quoted",
+            "derived"
+          ]
+        },
+        "generated_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "retrieved": {
+          "$ref": "#/$defs/date"
+        },
+        "sha1": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40}$"
+        },
+        "upstream_status": {
+          "type": "string"
+        }
+      }
+    },
+    "lestash": {
+      "enum": [
+        "skip"
+      ]
+    },
+    "read_frontmatter": {
+      "description": "Sidecar only: false means the entry stands in for the note's frontmatter, which is then not read.",
+      "type": "boolean"
+    }
+  },
+  "if": {
+    "required": [
+      "author"
+    ],
+    "not": {
+      "required": [
+        "creator"
+      ]
+    }
+  },
+  "then": {
+    "description": "An author with no creator would be credited to the repository's owner, so the note must say it isn't its owner's.",
+    "anyOf": [
+      {
+        "required": [
+          "own"
+        ],
+        "properties": {
+          "own": {
+            "const": false
+          }
+        }
+      },
+      {
+        "required": [
+          "capture"
+        ],
+        "not": {
+          "required": [
+            "own"
+          ],
+          "properties": {
+            "own": {
+              "const": true
+            }
+          }
+        }
+      }
+    ]
+  }
+}

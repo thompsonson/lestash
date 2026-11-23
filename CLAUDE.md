@@ -54,6 +54,7 @@ cd app && npx tauri dev    # Run desktop app
 
 - [`docs/api.md`](docs/api.md) — REST API reference (all endpoints)
 - [`docs/backups.md`](docs/backups.md) — database backups: commands, schedule, sysbak excludes, restore
+- [`docs/markdown-notes-schema.md`](docs/markdown-notes-schema.md) — frontmatter a markdown notes repository uses for LeStash to import it
 - [`docs/content-and-activity-ontology-design.md`](docs/content-and-activity-ontology-design.md) — the ontology: items, links, people, activities
 - [`docs/ux-object-model-design.md`](docs/ux-object-model-design.md) — the app's objects, navigation and wireframes; roadmap #268
 - [`extensions/chrome/README.md`](extensions/chrome/README.md) — Chrome extension usage and architecture
