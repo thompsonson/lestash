@@ -210,16 +210,26 @@
     "anyOf": [
       {
         "required": [
-          "capture"
-        ]
-      },
-      {
-        "required": [
           "own"
         ],
         "properties": {
           "own": {
             "const": false
+          }
+        }
+      },
+      {
+        "required": [
+          "capture"
+        ],
+        "not": {
+          "required": [
+            "own"
+          ],
+          "properties": {
+            "own": {
+              "const": true
+            }
           }
         }
       }
