@@ -64,8 +64,8 @@ LeStash reads a note's fields from two places, in this order:
 | `note_class` | `record-of-exchange`, `live-model`, `proposal` | a label, and a banner on the item's page |
 | `status` | a short phrase, such as `draft`, `open` or `confirmed` | a label |
 | `type` | the repository's own word for the note, such as `review` or `position` | a label, as written |
-| `scope` | a sentence: the question the note addresses | a line under the title |
-| `amended` | a list of `{date, summary}` | "Amended N times, last on …" on the item's page |
+| `scope` | a phrase: what the note covers | a line under the title |
+| `amended` | a list; each entry is `{date, summary}`, or a string `"YYYY-MM-DD — summary"` | "Amended N times, last on …" on the item's page |
 | `superseded_by` | a reference (see below) | a banner linking the newer note |
 
 The three classes say how far to trust a note today:
