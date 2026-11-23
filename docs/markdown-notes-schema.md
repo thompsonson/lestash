@@ -13,7 +13,7 @@ A file ending in `.markdown`, or in `.md` in another case, is not imported, and 
 - A repository can adopt it directly, or a reformatter outside LeStash can map its own conventions onto it.
 - Every field is optional. A note with no frontmatter still imports, using the fallbacks below.
 - Fields LeStash doesn't know are kept in the item's metadata, uninterpreted, and the sync report lists them.
-  A common name from other tools is listed with the field it likely means: `date` → `created`, `summary` → `abstract`, `author` → `creator`, `tags` → `subject`.
+  A common name from other tools is listed with the field it likely means: `date` → `created`, `summary` → `abstract`, `author` → `creator`, `tags` → `subject`, `amended` → `change_note`, `scope` → `scope_note`.
 - Field names follow LeStash's naming rule: each takes the name of its published term, from the crosswalk in [content-and-activity-ontology-design.md](content-and-activity-ontology-design.md#canonical-sources-23-nov-2026-410).
   Each table below gives the published term and how closely it matches. A field with no published term says "none".
 - Two JSON Schemas state the same rules, so a repository can check its notes:
@@ -57,6 +57,7 @@ So a sidecar value replaces a broken frontmatter value before any check.
 **After the merge, a field breaks the schema:**
 
 - `lestash`, `own`, `creator` or `capture`: the note is held back. These fields decide whether, and as whose work, it is imported.
+- An `author` field with no `creator`: the note is held back too. Otherwise it would be credited to the repository's owner.
 - Any other field, such as `note_class: model`: that field is ignored, and the note's other fields still apply.
 
 **The sidecar itself is broken**: it isn't valid JSON, its `schema` isn't 1, `notes` isn't an object, an entry isn't an object, or a key isn't a normalised path.
@@ -106,7 +107,7 @@ Every held-back note, ignored field, unknown field and stopped sync is listed, w
 | `status` | a short phrase, such as `draft`, `open` or `confirmed` | the label `status:<value>` | `schema:creativeWorkStatus`, exact |
 | `type` | the repository's own word for the note, such as `review` or `position` | the label `type:<value>` | `dcterms:type`, close: Dublin Core prefers its own type vocabulary |
 | `scope_note` | a phrase: what the note covers | a line under the title | `skos:scopeNote`, close: SKOS defines it for concepts |
-| `change_note` | a list; each entry is `{date, summary}`, or a string `"YYYY-MM-DD — summary"` | "Changed N times, last on …" on the item's page | `skos:changeNote`, close: SKOS defines it for concepts |
+| `change_note` | a list; each entry is `{date, summary}`, or a string `"YYYY-MM-DD — summary"`, where the dash may be `—`, `–` or `-` | "Changed N times, last on …" on the item's page | `skos:changeNote`, close: SKOS defines it for concepts |
 
 The three classes say how far to trust a note today:
 
