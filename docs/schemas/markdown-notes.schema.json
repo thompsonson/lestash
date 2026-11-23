@@ -109,7 +109,12 @@
       "$ref": "#/$defs/ref"
     },
     "tags": {
-      "$ref": "#/$defs/strings"
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^:]+$"
+      }
     },
     "labels": {
       "type": "object",
@@ -120,7 +125,11 @@
             "ad-hoc",
             "category",
             "folder",
-            "mention"
+            "mention",
+            "note_class",
+            "status",
+            "type",
+            "medium"
           ]
         }
       },

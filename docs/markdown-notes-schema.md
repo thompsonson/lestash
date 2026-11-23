@@ -38,11 +38,25 @@ LeStash reads a note's fields from two places, in this order:
 
 ### When frontmatter doesn't parse, or breaks the schema
 
-- A note whose frontmatter is not valid YAML still imports. A common cause is an unquoted value holding `": "`.
-- LeStash then treats it as a note with no frontmatter, and uses the fallbacks below.
-- A sidecar entry for the note still applies, so it can carry the fields until the note is fixed.
-- A field that parses but breaks the schema, such as `note_class: model`, is ignored. The note's other fields still apply.
-- Either way, the sync carries on and lists the note, with the reason, in its sync report.
+The frontmatter block is never part of the body, so an unparsed block never becomes the summary.
+
+**A note's frontmatter isn't valid YAML** (a common cause is an unquoted value holding `": "`):
+
+- With a sidecar entry, the note imports with the sidecar's fields alone. The sidecar can carry the fields until the note is fixed.
+- Without one, the note is held back: not imported, and an existing item from it is left as it was.
+  It can't be imported safely, because its unread fields may say `lestash: skip`, or mark it a capture of someone else's work.
+
+**A field parses but breaks the schema:**
+
+- `lestash`, `own`, `author` or `capture` broken: the note is held back, as above. These fields decide whether and as whose work it is imported.
+- Any other field broken, such as `note_class: model`: that field is ignored, and the note's other fields still apply.
+
+**The sidecar isn't valid JSON, or breaks the sidecar schema at its top level:**
+
+- The source's sync stops before changing anything, because the sidecar may hold skips and captures.
+- One entry with a broken field is handled field by field, by the same rules as frontmatter.
+
+Every held-back note, ignored field and stopped sync is listed, with the reason, in the source's sync report.
 
 ## The fields
 
@@ -53,7 +67,7 @@ LeStash reads a note's fields from two places, in this order:
 | `title` | string | the item's title (`dcterms:title`) | the first `#` heading, then the filename |
 | `date` | `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, or an ISO 8601 date-time | when it was written (`dcterms:created`); the precision is kept | a date in the filename, then the note's first git commit |
 | `summary` | string, one or two sentences | the preview on cards | the first paragraph |
-| `medium` | `typed`, `voice`, `conversation`, `correspondence`, `mixed` | how the note was made, shown as a label | none |
+| `medium` | `typed`, `voice`, `conversation`, `correspondence`, `mixed` | how the note was made, as the label `medium:<value>` | none |
 | `own` | boolean | whether you wrote it (`is_own_content`) | true, or false under `capture` |
 | `author` | string | the item's author | the repository's owner when `own` is true; none when `own` is false |
 
@@ -69,9 +83,9 @@ LeStash reads a note's fields from two places, in this order:
 
 | Field | Values | Shown as |
 |---|---|---|
-| `note_class` | `record-of-exchange`, `live-model`, `proposal` | a label, and a banner on the item's page |
-| `status` | a short phrase, such as `draft`, `open` or `confirmed` | a label |
-| `type` | the repository's own word for the note, such as `review` or `position` | a label, as written |
+| `note_class` | `record-of-exchange`, `live-model`, `proposal` | the label `note_class:<value>`, and a banner on the item's page |
+| `status` | a short phrase, such as `draft`, `open` or `confirmed` | the label `status:<value>` |
+| `type` | the repository's own word for the note, such as `review` or `position` | the label `type:<value>`, as written |
 | `scope` | a phrase: what the note covers | a line under the title |
 | `amended` | a list; each entry is `{date, summary}`, or a string `"YYYY-MM-DD — summary"` | "Amended N times, last on …" on the item's page |
 | `superseded_by` | a reference (see below) | a banner linking the newer note |
@@ -91,7 +105,7 @@ The field is `note_class`, not `class`, and its values have two words each, beca
 
 | Field | Type | Becomes |
 |---|---|---|
-| `tags` | list of strings | topics (`tags`, kind `ad-hoc`) |
+| `tags` | list of strings with no `:` | topics (`tags`, kind `ad-hoc`), named as written |
 | `labels` | map of a facet name to a list of strings | topics named `<facet>:<value>`, with the facet as their kind, such as `chapter:Ch3` |
 
 ```yaml
@@ -101,9 +115,10 @@ labels:
 ```
 
 - A facet becomes a filter in the Library, such as "Chapter: Ch3".
-- LeStash reserves some facet names for its own labels: `ad-hoc`, `category`, `folder` and `mention`. The schema rejects them.
 - The note's folder is always a label too, named `folder:<path>`. It needs no field.
-- The facet prefix keeps label names apart from `tags`, since a topic name is unique across kinds.
+- Every label LeStash makes is named `<facet>:<value>`, with the facet as its kind: `labels`, `note_class`, `status`, `type`, `medium`, folders and vocabulary mentions.
+- A topic name is unique across kinds. The prefix keeps labels apart from each other, and a tag can't hold `:`, so tags never collide with labels.
+- So these facet names are reserved, and the schema rejects them under `labels`: `ad-hoc`, `category`, `folder`, `mention`, `note_class`, `status`, `type` and `medium`.
 
 ### Links
 
@@ -169,7 +184,7 @@ These belong to the source's settings in LeStash's config, not to any note:
 - a vocabulary file whose headings are matched in notes as "mentions" (see below);
 - the repository that `#123` issue references point to.
 
-A vocabulary match is a label of kind `mention`. It says the note uses the term, never that it defines it.
+A vocabulary match is a label named `mention:<term>`, of kind `mention`. It says the note uses the term, never that it defines it.
 Only headings of two or more words are matched, because single words mislabel too often.
 
 ## Versions and history
@@ -200,7 +215,7 @@ alternate_of: lestash:12345
 ```
 
 Say the note sits in the folder `agents/`.
-LeStash shows it as a proposal dated Sep 2026, labelled `proposal`, `draft`, `position`, `typed`, `agents`, `reliability`, `Ch5` and the folder `agents`.
+LeStash shows it as a proposal dated Sep 2026, with the tags `agents` and `reliability`, and the labels `note_class:proposal`, `status:draft`, `type:position`, `medium:typed`, `chapter:Ch5` and `folder:agents`.
 It links to one note, one paper and one LeStash item.
 
 ## Versioning this schema
