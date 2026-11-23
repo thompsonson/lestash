@@ -60,7 +60,7 @@ So a sidecar value replaces a broken frontmatter value before any check.
 - Any other field, such as `note_class: model`: that field is ignored, and the note's other fields still apply.
 
 **An `author` field with no `creator`, on a note that is its owner's**: the note is held back.
-It would otherwise be credited to the repository's owner. A capture, or a note with `own: false`, has no owner fallback, so it imports.
+It would otherwise be credited to the repository's owner. A note with `own: false`, or a capture that doesn't set `own: true`, has no owner fallback, so it imports.
 The JSON Schema states this rule too.
 
 **The sidecar itself is broken**: it isn't valid JSON, its `schema` isn't 1, `notes` isn't an object, an entry isn't an object, or a key isn't a normalised path.
