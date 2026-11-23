@@ -441,6 +441,28 @@ class TestCompressedBackup:
         assert dest.stat().st_mtime == 1_000_000
         assert verify_backup(dest)["item_count"] == count
 
+    def test_compress_finishes_a_run_cut_short_after_naming(self, test_db):
+        db_path = get_db_path(test_db)
+        plain = create_backup(db_path, label="half", compress=False)
+        zst = compress_backup(plain)
+        # As if killed between naming the .zst and deleting the .db
+        extract_backup(zst, plain)
+        assert compress_backup(plain) == zst
+        assert not plain.exists() and verify_backup(zst)["valid"]
+
+    def test_compress_leaves_both_when_they_differ(self, test_db):
+        db_path = get_db_path(test_db)
+        plain = create_backup(db_path, label="differ", compress=False)
+        zst = compress_backup(plain)
+        extract_backup(zst, plain)
+        with sqlite3.connect(plain) as conn:
+            conn.execute(
+                "INSERT INTO items (source_type, source_id, content) VALUES ('t', 'extra', 'x')"
+            )
+        with pytest.raises(FileExistsError):
+            compress_backup(plain)
+        assert plain.exists() and zst.exists()
+
     def test_compress_leaves_a_backup_that_fails_its_check(self, tmp_path):
         bad = tmp_path / "lestash-backup-20990101-000000.db"
         bad.write_text("not a database")

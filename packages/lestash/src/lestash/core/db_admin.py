@@ -847,7 +847,13 @@ def compress_backup(backup_path: Path) -> Path:
         )
     dest = backup_path.with_name(backup_path.name + ZSTD_SUFFIX)
     if dest.exists():
-        raise FileExistsError(f"a backup named {dest.name} exists already")
+        # A run cut short after naming the compressed copy: finish it if that copy
+        # holds the same database, else leave both
+        done = verify_backup(dest)
+        if not (done["valid"] and done["item_count"] == before["item_count"]):
+            raise FileExistsError(f"a backup named {dest.name} exists already")
+        _remove_plain(backup_path)
+        return dest
     partial = _partial_for(dest)
     try:
         _compress(backup_path, partial)
@@ -864,10 +870,15 @@ def compress_backup(backup_path: Path) -> Path:
     # Its old time once it has its name: an old .partial would look stale to a create
     st = backup_path.stat()
     os.utime(dest, (st.st_atime, st.st_mtime))
+    _remove_plain(backup_path)
+    return dest
+
+
+def _remove_plain(backup_path: Path) -> None:
+    """Delete a plain backup, and any empty sidecar SQLite left beside it."""
     backup_path.unlink()
     for sidecar in ("-wal", "-shm", "-journal"):
         backup_path.with_name(backup_path.name + sidecar).unlink(missing_ok=True)
-    return dest
 
 
 # --------------------------------------------------------------------------- #
