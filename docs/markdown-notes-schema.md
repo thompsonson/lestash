@@ -55,11 +55,15 @@ So a sidecar value replaces a broken frontmatter value before any check.
 - `lestash`, `own`, `author` or `capture`: the note is held back. These fields decide whether, and as whose work, it is imported.
 - Any other field, such as `note_class: model`: that field is ignored, and the note's other fields still apply.
 
-**The sidecar itself is broken**: it isn't valid JSON, its `schema` isn't 1, `notes` isn't an object, an entry isn't an object, or a key names no note at the synced commit.
-
-- A key that names no note is usually a note that moved after the sidecar was made. Regenerate the sidecar in the same commit as any move.
+**The sidecar itself is broken**: it isn't valid JSON, its `schema` isn't 1, `notes` isn't an object, an entry isn't an object, or a key isn't a normalised path.
 
 - The source's sync stops before changing anything, because the sidecar may hold skips and captures.
+
+**A sidecar key names no note at the synced commit:**
+
+- If the note moved, LeStash follows git's rename history from the key to the note's current path, and the entry applies there.
+- If the note was deleted, or the source's settings leave it out, the entry is ignored.
+- Either way, the sync carries on. Regenerate the sidecar in the same commit as any move or deletion to keep it clean.
 
 Every held-back note, ignored field and stopped sync is listed, with the reason, in the source's sync report.
 
@@ -81,7 +85,8 @@ Every held-back note, ignored field and stopped sync is listed, with the reason,
 - Quote every date, wherever it appears: `date: "2026"`, `"2026-11"`, `"2026-11-09"`.
   Unquoted, YAML reads a year as a number and a full date as a date object, and the JSON Schema rejects both.
   Before its own check, LeStash turns a YAML date, or a year read as a number, back into text, so it accepts either form.
-  Quote anything else that looks like a number, such as `capture.ref`; LeStash doesn't convert it.
+  Quote any other value YAML might read as a number or a boolean, such as `ref: "0123456"` or `status: "on"`.
+  YAML 1.1 reads `yes`, `no`, `on` and `off` as booleans. LeStash doesn't convert these.
 - A date given to the month is shown as a month, such as "Nov 2026". LeStash never invents a day.
 - The git commit date is the weakest sign: a bulk move or a rename resets it.
 
@@ -112,7 +117,7 @@ The field is `note_class`, not `class`, and its values have two words each, beca
 | Field | Type | Becomes |
 |---|---|---|
 | `tags` | list of strings | topics (`tags`, kind `ad-hoc`) |
-| `labels` | map of a facet name to a list of strings | topics named `<facet>:<value>`, with the facet as their kind, such as `chapter:Ch3` |
+| `labels` | map of a facet name to a list of strings | topics named `<facet>:<value>`, with the facet as their kind, such as `chapter:ch3` |
 
 ```yaml
 labels:
@@ -122,6 +127,7 @@ labels:
 
 - A facet becomes a filter in the Library, such as "chapter: ch3".
 - Topic names are stored in lower case, so `Ch3` and `ch3` are one label.
+  Folders whose names differ only in case share one folder label too.
 - The note's folder is always a label too, named `folder:<path>`. It needs no field.
 - Every label LeStash makes is named `<facet>:<value>`, with the facet as its kind: `labels`, `note_class`, `status`, `type`, `medium`, folders and vocabulary mentions.
 - A topic name is unique across kinds, and any source or the app can make a topic of any name.
@@ -225,7 +231,7 @@ alternate_of: lestash:12345
 ```
 
 Say the note sits in the folder `agents/`.
-LeStash shows it as a proposal dated Sep 2026, with the tags `agents` and `reliability`, and the labels `note_class:proposal`, `status:draft`, `type:position`, `medium:typed`, `chapter:Ch5` and `folder:agents`.
+LeStash shows it as a proposal dated Sep 2026, with the tags `agents` and `reliability`, and the labels `note_class:proposal`, `status:draft`, `type:position`, `medium:typed`, `chapter:ch5` and `folder:agents`.
 It links to one note, one paper and one LeStash item.
 
 ## Versioning this schema

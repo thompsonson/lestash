@@ -16,7 +16,8 @@
     "notes": {
       "type": "object",
       "propertyNames": {
-        "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+\\.md$"
+        "description": "A normalised path from the folder's root: no leading /, no empty, . or .. segments",
+        "pattern": "^(?!/)(?!.*//)(?!(.*/)?\\.{1,2}(/|$)).+\\.md$"
       },
       "additionalProperties": {
         "type": "object"
