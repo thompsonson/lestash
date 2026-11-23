@@ -36,6 +36,14 @@ LeStash reads a note's fields from two places, in this order:
 }
 ```
 
+### When frontmatter doesn't parse, or breaks the schema
+
+- A note whose frontmatter is not valid YAML still imports. A common cause is an unquoted value holding `": "`.
+- LeStash then treats it as a note with no frontmatter, and uses the fallbacks below.
+- A sidecar entry for the note still applies, so it can carry the fields until the note is fixed.
+- A field that parses but breaks the schema, such as `note_class: model`, is ignored. The note's other fields still apply.
+- Either way, the sync carries on and lists the note, with the reason, in its sync report.
+
 ## The fields
 
 ### Identity and dates
