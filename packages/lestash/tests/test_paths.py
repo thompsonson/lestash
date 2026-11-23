@@ -218,3 +218,17 @@ def test_backups_made_beside_the_default_database_are_still_found(home: Path) ->
     assert [b["path"] for b in list_backups(legacy)] == [str(new), str(old)]
     assert find_backup(legacy, old.name) == old
     assert find_backup(legacy, new.name) == new
+
+
+def test_a_stale_check_file_in_the_old_folder_is_removed(home: Path) -> None:
+    """Backups beside the database are checked there too, so their stale files go (#414)."""
+    import os
+
+    legacy = paths.legacy_dir() / "lestash.db"
+    with get_connection(Config(general=GeneralConfig(database_path=str(legacy)))):
+        pass
+    stale = legacy.parent / "lestash-backup-20200101-000000.db.zst.verify.1-ab.partial"
+    stale.write_text("x")
+    os.utime(stale, (0, 0))
+    create_backup(legacy)
+    assert not stale.exists()

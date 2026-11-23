@@ -475,6 +475,33 @@ def _compress(src: Path, dest: Path) -> None:
         os.fsync(fout.fileno())
 
 
+class BackupUnreadable(OSError):
+    """The backup itself could not be read: a fault in the backup, not in the check."""
+
+
+def _read_chunks(src: Path):
+    """``src`` in 1 MiB pieces; a failure to open or read it is BackupUnreadable."""
+    try:
+        fin = src.open("rb")
+    except OSError as e:
+        raise BackupUnreadable(e.errno, f"cannot read {src.name}: {e.strerror}") from e
+    with fin:
+        while True:
+            try:
+                chunk = fin.read(1 << 20)
+            except OSError as e:
+                raise BackupUnreadable(e.errno, f"cannot read {src.name}: {e.strerror}") from e
+            if not chunk:
+                return
+            yield chunk
+
+
+def _partial_for(dest: Path) -> Path:
+    """A temporary name beside ``dest``, its own, so two runs at once never share one.
+    One left by a killed run is a stale .partial, which a later create removes."""
+    return dest.with_name(f"{dest.name}.{os.getpid()}-{os.urandom(4).hex()}{PARTIAL_SUFFIX}")
+
+
 def _decompress(src: Path, dest: Path) -> None:
     """Decompress ``src`` into ``dest`` (made new), then flush it to disk."""
     import zstandard
@@ -482,8 +509,8 @@ def _decompress(src: Path, dest: Path) -> None:
     # One frame, read to its end: copy_stream stops quietly at a cut-short file, before
     # the checksum, so a truncated backup would come out short but "fine"
     dobj = zstandard.ZstdDecompressor().decompressobj()
-    with src.open("rb") as fin, dest.open("xb") as fout:
-        while chunk := fin.read(1 << 20):
+    with dest.open("xb") as fout:
+        for chunk in _read_chunks(src):
             if dobj.eof:
                 raise zstandard.ZstdError("data after the end of the backup's frame")
             fout.write(dobj.decompress(chunk))
@@ -520,7 +547,8 @@ def create_backup(
     if label is not None and not _LABEL.match(label):
         raise ValueError(f"label must be lower case letters, digits and hyphens: {label!r}")
     dest_dir = _backup_dir(db_path, backup_dir)
-    _remove_stale_partials(dest_dir)
+    for d in _backup_dirs(db_path, backup_dir):  # checks run in each folder backups are in
+        _remove_stale_partials(d)
     ts = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
     plain_name = f"{BACKUP_PREFIX}{ts}{'-' + label if label else ''}.db"
     dest_path = dest_dir / (plain_name + (ZSTD_SUFFIX if compress else ""))
@@ -633,12 +661,13 @@ def _verify_compressed(backup_path: Path) -> dict:
     import zstandard
 
     result: dict = {"path": str(backup_path), "valid": False}
-    # A name of its own, so two checks at once never share a file. One left by a check
-    # that was killed is a stale .partial, which the next create removes.
-    token = f"{os.getpid()}-{os.urandom(4).hex()}"
-    plain = backup_path.with_name(f"{backup_path.name}.verify-{token}{PARTIAL_SUFFIX}")
+    plain = _partial_for(backup_path.with_name(backup_path.name + ".verify"))
     try:
         _decompress(backup_path, plain)
+    except BackupUnreadable as e:
+        plain.unlink(missing_ok=True)
+        result["error"] = str(e)
+        return result
     except zstandard.ZstdError as e:
         plain.unlink(missing_ok=True)
         result["error"] = f"cannot decompress: {e}"
@@ -656,9 +685,11 @@ def _verify_compressed(backup_path: Path) -> dict:
 
 
 def _has_wal(p: Path) -> bool:
-    """A plain backup with a non-empty ``-wal`` beside it: part of it is in that file."""
+    """A plain backup with a non-empty ``-wal``, or a ``-journal``, beside it: SQLite
+    reads that file as part of it, and a plain copy would leave it out."""
     wal = p.with_name(p.name + "-wal")
-    return wal.is_file() and wal.stat().st_size > 0
+    journal = p.with_name(p.name + "-journal")
+    return (wal.is_file() and wal.stat().st_size > 0) or journal.is_file()
 
 
 _SCHEDULED = re.compile(rf"^{BACKUP_PREFIX}\d{{8}}-\d{{6}}\.db(\.zst)?$")
@@ -714,13 +745,14 @@ def extract_backup(backup_path: Path, dest: Path) -> Path:
     if not backup_path.is_file():
         raise FileNotFoundError(f"no such file: {backup_path}")
     if _has_wal(backup_path):
-        raise ValueError(f"{backup_path.name} has a -wal beside it; open it with SQLite instead")
+        raise ValueError(
+            f"{backup_path.name} has a -wal or -journal beside it; open it with SQLite instead"
+        )
     # SQLite reads a -wal, -shm or hot -journal beside a database as part of it
     for p in [dest] + [dest.with_name(dest.name + s) for s in ("-wal", "-shm", "-journal")]:
         if p.exists():
             raise FileExistsError(f"{p} exists; move it aside first")
-    partial = dest.with_name(dest.name + PARTIAL_SUFFIX)
-    partial.unlink(missing_ok=True)
+    partial = _partial_for(dest)
     try:
         if is_compressed(backup_path):
             _decompress(backup_path, partial)
@@ -741,7 +773,7 @@ def compress_backup(backup_path: Path) -> Path:
     if is_compressed(backup_path):
         return backup_path
     if _has_wal(backup_path):
-        raise ValueError(f"{backup_path.name} has a -wal beside it, left as it is")
+        raise ValueError(f"{backup_path.name} has a -wal or -journal beside it, left as it is")
     before = verify_backup(backup_path)
     if not before["valid"]:
         raise ValueError(
@@ -751,8 +783,7 @@ def compress_backup(backup_path: Path) -> Path:
     dest = backup_path.with_name(backup_path.name + ZSTD_SUFFIX)
     if dest.exists():
         raise FileExistsError(f"a backup named {dest.name} exists already")
-    partial = dest.with_name(dest.name + PARTIAL_SUFFIX)
-    partial.unlink(missing_ok=True)
+    partial = _partial_for(dest)
     try:
         _compress(backup_path, partial)
         # Checked before it takes its name, so a cut-short run leaves only a .partial

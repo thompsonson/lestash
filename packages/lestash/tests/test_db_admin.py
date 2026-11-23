@@ -504,6 +504,27 @@ class TestCompressedBackup:
         verify_backup(dest)
         assert len(set(names)) == 2 and all(n.endswith(".partial") for n in names)
 
+    def test_an_unreadable_backup_is_invalid_not_unchecked(self, test_db, monkeypatch):
+        import lestash.core.db_admin as d
+
+        dest = create_backup(get_db_path(test_db))
+
+        def bad_sector(src):
+            raise d.BackupUnreadable(5, "cannot read it: Input/output error")
+            yield b""
+
+        monkeypatch.setattr(d, "_read_chunks", bad_sector)
+        result = verify_backup(dest)
+        assert result["valid"] is False and not result.get("unchecked")
+
+    def test_a_plain_backup_with_a_journal_is_left_alone(self, test_db, tmp_path):
+        plain = create_backup(get_db_path(test_db), label="journalled", compress=False)
+        plain.with_name(plain.name + "-journal").write_text("x")
+        with pytest.raises(ValueError):
+            extract_backup(plain, tmp_path / "out.db")
+        with pytest.raises(ValueError):
+            compress_backup(plain)
+
     def test_extract_never_writes_beside_a_journal(self, test_db, tmp_path):
         dest = create_backup(get_db_path(test_db))
         (tmp_path / "out.db-journal").write_text("x")
