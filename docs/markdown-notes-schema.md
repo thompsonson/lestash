@@ -84,7 +84,7 @@ The field is `note_class`, not `class`, and its values have two words each, beca
 | Field | Type | Becomes |
 |---|---|---|
 | `tags` | list of strings | topics (`tags`, kind `ad-hoc`) |
-| `labels` | map of a facet name to a list of strings | topics with the facet as their kind, such as `chapter` or `project` |
+| `labels` | map of a facet name to a list of strings | topics named `<facet>:<value>`, with the facet as their kind, such as `chapter:Ch3` |
 
 ```yaml
 labels:
@@ -94,7 +94,8 @@ labels:
 
 - A facet becomes a filter in the Library, such as "Chapter: Ch3".
 - LeStash reserves some facet names for its own labels: `ad-hoc`, `category`, `folder` and `mention`. The schema rejects them.
-- The note's folder is always a label too. It needs no field.
+- The note's folder is always a label too, named `folder:<path>`. It needs no field.
+- The facet prefix keeps label names apart from `tags`, since a topic name is unique across kinds.
 
 ### Links
 
@@ -102,7 +103,7 @@ Each field holds one reference or a list of them.
 A reference is one of these:
 
 - a path to another note, relative to the note itself, as in a markdown link: `../design/overview.md`;
-- a path from the folder's root, starting with `/`: `/design/overview.md`;
+- a path from the repository's root, starting with `/`, as GitHub reads it: `/docs/design/overview.md`;
 - a web address: `https://arxiv.org/abs/2401.00001`;
 - a LeStash item: `lestash:12345`.
 
@@ -110,7 +111,7 @@ A reference is one of these:
 |---|---|---|---|
 | `related` | `references` | this note points to it | any item or web address |
 | `derived_from` | `derived_from` | this note was built from it, such as a summary of a talk or a chat | any held item |
-| `alternate_of` | `alternate_of` | the same note kept elsewhere, such as the voice recording it transcribes | another `note` |
+| `alternate_of` | `alternate_of` | the same note kept elsewhere, such as the voice recording it transcribes (LeStash's voice recordings are notes) | another `note` |
 | `revision_of` | `revision_of` | this note is the next version of it | an earlier `note` |
 
 - The allowed ends follow the ontology's link table ([content-and-activity-ontology-design.md](content-and-activity-ontology-design.md#typed-links)).
