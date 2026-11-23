@@ -14,7 +14,7 @@ This document says what it reads from each note, and how each field becomes part
 - Terms reuse the ontology's item kinds and typed links ([content-and-activity-ontology-design.md](content-and-activity-ontology-design.md)).
 - Two JSON Schemas state the same rules, so a repository can check its notes:
   - [`schemas/markdown-notes.schema.json`](schemas/markdown-notes.schema.json) for one note's fields;
-  - [`schemas/markdown-notes-sidecar.schema.json`](schemas/markdown-notes-sidecar.schema.json) for the sidecar file.
+  - [`schemas/markdown-notes-sidecar.schema.json`](schemas/markdown-notes-sidecar.schema.json) for the sidecar's structure; each entry is checked with the note schema after merging.
 
 ## Where the frontmatter comes from
 
@@ -55,7 +55,9 @@ So a sidecar value replaces a broken frontmatter value before any check.
 - `lestash`, `own`, `author` or `capture`: the note is held back. These fields decide whether, and as whose work, it is imported.
 - Any other field, such as `note_class: model`: that field is ignored, and the note's other fields still apply.
 
-**The sidecar itself is broken**: it isn't valid JSON, its `schema` isn't 1, `notes` isn't an object, a key isn't a note path, or an entry isn't an object.
+**The sidecar itself is broken**: it isn't valid JSON, its `schema` isn't 1, `notes` isn't an object, an entry isn't an object, or a key names no note at the synced commit.
+
+- A key that names no note is usually a note that moved after the sidecar was made. Regenerate the sidecar in the same commit as any move.
 
 - The source's sync stops before changing anything, because the sidecar may hold skips and captures.
 
@@ -78,7 +80,8 @@ Every held-back note, ignored field and stopped sync is listed, with the reason,
 - A filename date is either `YYYY-MM-DD` at the start, or a month and year at the end: `_nov2026`.
 - Quote every date, wherever it appears: `date: "2026"`, `"2026-11"`, `"2026-11-09"`.
   Unquoted, YAML reads a year as a number and a full date as a date object, and the JSON Schema rejects both.
-  LeStash itself accepts either form.
+  Before its own check, LeStash turns a YAML date, or a year read as a number, back into text, so it accepts either form.
+  Quote anything else that looks like a number, such as `capture.ref`; LeStash doesn't convert it.
 - A date given to the month is shown as a month, such as "Nov 2026". LeStash never invents a day.
 - The git commit date is the weakest sign: a bulk move or a rename resets it.
 
@@ -88,7 +91,7 @@ Every held-back note, ignored field and stopped sync is listed, with the reason,
 |---|---|---|
 | `note_class` | `record-of-exchange`, `live-model`, `proposal` | the label `note_class:<value>`, and a banner on the item's page |
 | `status` | a short phrase, such as `draft`, `open` or `confirmed` | the label `status:<value>` |
-| `type` | the repository's own word for the note, such as `review` or `position` | the label `type:<value>`, as written |
+| `type` | the repository's own word for the note, such as `review` or `position` | the label `type:<value>` |
 | `scope` | a phrase: what the note covers | a line under the title |
 | `amended` | a list; each entry is `{date, summary}`, or a string `"YYYY-MM-DD — summary"` | "Amended N times, last on …" on the item's page |
 | `superseded_by` | a reference (see below) | a banner linking the newer note |
@@ -108,7 +111,7 @@ The field is `note_class`, not `class`, and its values have two words each, beca
 
 | Field | Type | Becomes |
 |---|---|---|
-| `tags` | list of strings | topics (`tags`, kind `ad-hoc`), named as written |
+| `tags` | list of strings | topics (`tags`, kind `ad-hoc`) |
 | `labels` | map of a facet name to a list of strings | topics named `<facet>:<value>`, with the facet as their kind, such as `chapter:Ch3` |
 
 ```yaml
@@ -117,11 +120,14 @@ labels:
   project: [alpha, beta]
 ```
 
-- A facet becomes a filter in the Library, such as "Chapter: Ch3".
+- A facet becomes a filter in the Library, such as "chapter: ch3".
+- Topic names are stored in lower case, so `Ch3` and `ch3` are one label.
 - The note's folder is always a label too, named `folder:<path>`. It needs no field.
 - Every label LeStash makes is named `<facet>:<value>`, with the facet as its kind: `labels`, `note_class`, `status`, `type`, `medium`, folders and vocabulary mentions.
 - A topic name is unique across kinds, and any source or the app can make a topic of any name.
   If a label's name already exists as a topic of another kind, the note gets that existing topic, and the sync report lists the clash.
+  A facet filter matches topics by their `<facet>:` name prefix, not by kind, so a clash never hides a note from it.
+  A tag spelled like a label, such as `status:draft`, is the same topic as that label.
 - So these facet names are reserved, and the schema rejects them under `labels`: `ad-hoc`, `category`, `folder`, `mention`, `note_class`, `status`, `type` and `medium`.
 
 ### Links
