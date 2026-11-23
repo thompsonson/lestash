@@ -447,18 +447,20 @@ class TestCompressedBackup:
         zst = compress_backup(plain)
         # As if killed between naming the .zst and deleting the .db
         extract_backup(zst, plain)
+        import os
+
+        os.utime(plain, (1_000_000, 1_000_000))
         assert compress_backup(plain) == zst
         assert not plain.exists() and verify_backup(zst)["valid"]
+        assert zst.stat().st_mtime == 1_000_000
 
     def test_compress_leaves_both_when_they_differ(self, test_db):
         db_path = get_db_path(test_db)
         plain = create_backup(db_path, label="differ", compress=False)
         zst = compress_backup(plain)
         extract_backup(zst, plain)
-        with sqlite3.connect(plain) as conn:
-            conn.execute(
-                "INSERT INTO items (source_type, source_id, content) VALUES ('t', 'extra', 'x')"
-            )
+        with sqlite3.connect(plain) as conn:  # same item count, other content
+            conn.execute("CREATE TABLE marker (x)")
         with pytest.raises(FileExistsError):
             compress_backup(plain)
         assert plain.exists() and zst.exists()

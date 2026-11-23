@@ -849,9 +849,10 @@ def compress_backup(backup_path: Path) -> Path:
     if dest.exists():
         # A run cut short after naming the compressed copy: finish it if that copy
         # holds the same database, else leave both
-        done = verify_backup(dest)
-        if not (done["valid"] and done["item_count"] == before["item_count"]):
+        if not (verify_backup(dest)["valid"] and _same_database(backup_path, dest)):
             raise FileExistsError(f"a backup named {dest.name} exists already")
+        st = backup_path.stat()
+        os.utime(dest, (st.st_atime, st.st_mtime))
         _remove_plain(backup_path)
         return dest
     partial = _partial_for(dest)
@@ -872,6 +873,26 @@ def compress_backup(backup_path: Path) -> Path:
     os.utime(dest, (st.st_atime, st.st_mtime))
     _remove_plain(backup_path)
     return dest
+
+
+def _same_database(plain: Path, compressed: Path) -> bool:
+    """Whether ``compressed`` decompresses to exactly the bytes of ``plain``."""
+    import hashlib
+
+    import zstandard
+
+    want = hashlib.sha256()
+    with plain.open("rb") as f:
+        while chunk := f.read(1 << 20):
+            want.update(chunk)
+    got = hashlib.sha256()
+    with (
+        compressed.open("rb") as f,
+        zstandard.ZstdDecompressor().stream_reader(f, read_across_frames=False) as r,
+    ):
+        while chunk := r.read(1 << 20):
+            got.update(chunk)
+    return want.digest() == got.digest()
 
 
 def _remove_plain(backup_path: Path) -> None:
