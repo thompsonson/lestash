@@ -7,9 +7,11 @@ import pytest
 from lestash.core.database import get_connection, get_db_path, upsert_item
 from lestash.core.db_admin import (
     backup_kind,
+    compress_backup,
     count_fk_violations,
     count_history_before,
     create_backup,
+    extract_backup,
     find_duplicate_source_ids,
     find_orphaned_children,
     find_orphaned_tags,
@@ -276,7 +278,7 @@ class TestBackup:
     def test_a_label_goes_in_the_name_and_is_checked(self, test_db):
         db_path = get_db_path(test_db)
         dest = create_backup(db_path, label="pre-deploy-355")
-        assert dest.name.endswith("-pre-deploy-355.db")
+        assert dest.name.endswith("-pre-deploy-355.db.zst")
         assert list_backups(db_path)[0]["filename"] == dest.name
         with pytest.raises(ValueError):
             create_backup(db_path, label="../escape")
@@ -331,7 +333,7 @@ class TestBackup:
         db_path = get_db_path(test_db)
         with sqlite3.connect(db_path) as conn:
             assert conn.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
-        dest = create_backup(db_path)
+        dest = create_backup(db_path, compress=False)
         assert verify_backup(dest)["valid"]
         with sqlite3.connect(dest) as conn:
             assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
@@ -383,6 +385,96 @@ class TestBackup:
         create_backup(db_path)
         prune_backups(db_path, keep=1)
         assert list(db_path.parent.glob("lestash-backup-20200101-000000*")) == []
+
+
+class TestCompressedBackup:
+    """Backups are stored compressed with zstd (#414)."""
+
+    def test_a_backup_is_compressed_and_reads_back(self, test_db):
+        db_path = get_db_path(test_db)
+        with get_connection(test_db) as conn:
+            _insert_item(conn, source_id="z1", content="squeeze me")
+        dest = create_backup(db_path, label="pre-x")
+        assert dest.name.endswith("-pre-x.db.zst")
+        assert dest.read_bytes()[:4] == b"\x28\xb5\x2f\xfd"  # zstd's magic number
+        result = verify_backup(dest)
+        assert result["valid"] is True and result["item_count"] >= 1
+        assert result["path"] == str(dest)
+        # Neither the copy nor the check leaves a file behind
+        assert sorted(p.name for p in dest.parent.glob("lestash-backup-*")) == [dest.name]
+
+    def test_extract_writes_the_database_and_never_over_a_file(self, test_db, tmp_path):
+        db_path = get_db_path(test_db)
+        with get_connection(test_db) as conn:
+            _insert_item(conn, source_id="z2", content="restore me")
+        dest = create_backup(db_path)
+        out = tmp_path / "restored.db"
+        extract_backup(dest, out)
+        with sqlite3.connect(out) as conn:
+            assert conn.execute("SELECT COUNT(*) FROM items WHERE source_id='z2'").fetchone()[0]
+        with pytest.raises(FileExistsError):
+            extract_backup(dest, out)
+        other = tmp_path / "other.db"
+        (tmp_path / "other.db-wal").write_text("")
+        with pytest.raises(FileExistsError):
+            extract_backup(dest, other)
+        assert not other.exists()
+
+    def test_a_broken_compressed_file_fails_its_check(self, tmp_path):
+        bad = tmp_path / "lestash-backup-20990101-000000.db.zst"
+        bad.write_bytes(b"not zstd")
+        result = verify_backup(bad)
+        assert result["valid"] is False and "decompress" in result["error"]
+        assert [p.name for p in tmp_path.iterdir()] == [bad.name]
+
+    def test_compress_replaces_a_plain_backup(self, test_db):
+        import os
+
+        db_path = get_db_path(test_db)
+        with get_connection(test_db) as conn:
+            _insert_item(conn, source_id="z3", content="old style")
+        plain = create_backup(db_path, label="old", compress=False)
+        os.utime(plain, (1_000_000, 1_000_000))
+        count = verify_backup(plain)["item_count"]
+        dest = compress_backup(plain)
+        assert dest.name == plain.name + ".zst" and not plain.exists()
+        assert dest.stat().st_mtime == 1_000_000
+        assert verify_backup(dest)["item_count"] == count
+
+    def test_compress_leaves_a_backup_that_fails_its_check(self, tmp_path):
+        bad = tmp_path / "lestash-backup-20990101-000000.db"
+        bad.write_text("not a database")
+        with pytest.raises(ValueError):
+            compress_backup(bad)
+        assert [p.name for p in tmp_path.iterdir()] == [bad.name]
+
+    def test_plain_and_compressed_backups_are_listed_and_pruned_together(self, test_db):
+        db_path = get_db_path(test_db)
+        old = db_path.parent / "lestash-backup-20200101-000000.db"
+        old.write_bytes(db_path.read_bytes())
+        newer = create_backup(db_path)
+        names = [b["filename"] for b in list_backups(db_path)]
+        assert names == [newer.name, old.name]
+        assert backup_kind(newer.name) == "scheduled"
+        assert backup_kind("lestash-backup-20200101-000000-pre-x.db.zst") == "labelled"
+        prune_backups(db_path, keep=1)
+        assert not old.exists() and newer.exists()
+
+    def test_a_time_taken_by_a_plain_backup_is_not_reused(self, test_db, monkeypatch):
+        import lestash.core.db_admin as d
+
+        db_path = get_db_path(test_db)
+        fixed = d.datetime(2026, 11, 18, 0, 0, 0, tzinfo=d.UTC)
+
+        class Frozen(d.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed
+
+        monkeypatch.setattr(d, "datetime", Frozen)
+        create_backup(db_path, compress=False)
+        with pytest.raises(FileExistsError):
+            create_backup(db_path)
 
 
 class TestHistory:
@@ -492,7 +584,24 @@ class TestCli:
         assert "Pruned 1 labelled backup(s)" in result.output
         names = [b["filename"] for b in list_backups(db_path)]
         (left,) = [n for n in names if is_labelled(n)]
-        assert left.endswith("-pre-test.db")
+        assert left.endswith("-pre-test.db.zst")
+
+    def test_backup_compress_and_extract(self, runner, cli_app, test_db, tmp_path):
+        db_path = get_db_path(test_db)
+        old = db_path.parent / "lestash-backup-20200101-000000-pre-old.db"
+        old.write_bytes(db_path.read_bytes())
+        result = runner.invoke(cli_app, ["backup", "compress"])
+        assert result.exit_code == 0, result.output
+        assert "Compressed lestash-backup-20200101-000000-pre-old.db" in result.output
+        assert not old.exists()
+        result = runner.invoke(cli_app, ["backup", "compress"])
+        assert "compressed already" in result.output
+        out = tmp_path / "restored.db"
+        result = runner.invoke(cli_app, ["backup", "extract", old.name + ".zst", "--to", str(out)])
+        assert result.exit_code == 0, result.output
+        assert verify_backup(out)["valid"]
+        result = runner.invoke(cli_app, ["backup", "extract", old.name + ".zst", "--to", str(out)])
+        assert result.exit_code == 1 and "exists" in result.output
 
     def test_a_backup_under_another_name_is_never_pruned(self, runner, cli_app, test_db):
         db_path = get_db_path(test_db)

@@ -13,24 +13,29 @@ LeStash backs up its own database. sysbak, or any file backup, copies those back
 
 | Command | Does |
 |---|---|
-| `lestash db backup create` | Copies the database, checks its integrity, and keeps it only if it passes |
+| `lestash db backup create` | Copies the database, compresses it, reads it back to check its integrity, and keeps it only if it passes |
 | `lestash db backup create --label pre-deploy-355` | The same, with why in the file name |
 | `lestash db backup create --keep 3` | The same, then deletes all but the newest 3 scheduled (unlabelled) backups |
 | `lestash db backup list` | Lists the backups, newest first |
 | `lestash db backup verify [file]` | Checks a backup, the newest by default; exits 1 if it fails |
 | `lestash db backup prune --keep N` | Deletes all but the newest N scheduled backups |
 | `lestash db backup prune --labelled --keep N` | Deletes all but the newest N labelled backups |
+| `lestash db backup extract <file> --to <path>` | Writes the database a backup holds to `<path>`, decompressed; never over a file |
+| `lestash db backup compress` | Compresses the backups made before compression, each checked before and after |
 
-- Backups are `~/.local/share/lestash/backups/lestash-backup-<UTC time>[-<label>].db`.
+- Backups are `~/.local/share/lestash/backups/lestash-backup-<UTC time>[-<label>].db.zst`.
+- They are compressed with zstd (#414): a 1.34 GB database became 0.41 GB, in under 3 s.
+- Backups made before #414 end in `.db`. They are listed, checked and pruned the same way; `compress` converts them.
+- `verify` decompresses a `.zst` backup into a temporary `….verify.partial` beside it, checks that, and removes it. So a pass shows the backup can be restored. It needs free space for one uncompressed copy while it runs.
 - A copy is one file: no `-wal` or `-shm` beside it.
-- A copy is written as `….db.partial` and moved into place once complete, so a half-made copy is never counted.
+- A copy is written as `….db.partial`, compressed to `….db.zst.partial`, and moved into place once complete, so a half-made copy is never counted.
 - A `.partial` over an hour old was cut short; the next `create` removes it.
 - `create` refuses to replace a backup of the same name, made in the same second.
 - `verify` opens a backup read-only, and reports a missing file without creating one.
 - A copy that fails its integrity check is deleted, and `create` exits 1 before it prunes.
 - Scheduled (unlabelled) and labelled backups are pruned apart: the schedule's `--keep` never deletes a labelled copy.
 - Labelled copies stay until `prune --labelled` removes them; the sysbak drive holds them for weeks after.
-- Only `lestash-backup-<time>.db` and `lestash-backup-<time>-<label>.db` are pruned. A file under any other name, such as one made by hand, never is; delete it yourself.
+- Only `lestash-backup-<time>[-<label>].db` and the same names ending `.db.zst` are pruned. A file under any other name, such as one made by hand, never is; delete it yourself.
 
 ## The schedule
 
@@ -70,7 +75,10 @@ exclude_patterns=(
    `systemctl --user stop lestash-server lestash-sync.timer lestash-backup.timer lestash-sync lestash-extract lestash-embed lestash-backup lestash-kobo 'lestash-kobo-sync@*'`.
 2. Check nothing still has the database open: `fuser ~/.local/share/lestash/lestash.db*` prints nothing.
 3. Check the copy: `lestash db backup verify <file>`.
-4. Keep the current database aside: `mv lestash.db lestash.db.before-restore`, and the same for `-wal` and `-shm`.
-5. Copy the backup in: `cp backups/<file> lestash.db`.
-6. Start again: `systemctl --user start lestash-server lestash-sync.timer lestash-backup.timer`.
+4. Write it out beside the database: `lestash db backup extract <file> --to ~/.local/share/lestash/lestash.db.restore`.
+   It decompresses a `.zst` backup, and never writes over a file.
+   Do this before step 5: any `lestash` command makes an empty `lestash.db` when there is none.
+5. Keep the current database aside: `mv lestash.db lestash.db.before-restore`, and the same for `-wal` and `-shm`.
+6. Put the backup in its place: `mv lestash.db.restore lestash.db`.
+7. Start again: `systemctl --user start lestash-server lestash-sync.timer lestash-backup.timer`.
    The Kobo services start on the next plug-in.
