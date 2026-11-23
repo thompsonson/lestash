@@ -11,7 +11,8 @@ This proposal separates them into vocabularies that meet at the item.
 - **Activity** says what you did and when: watched a video, prompted Gemini, edited a Doc.
 - **People** says who made, voiced or received each item: a channel, an author, Gemini.
 - All three reuse published terms, so LeStash composes an ontology rather than inventing one.
-- **Topics** (`tags`) already exist and stay out of scope.
+- **Topics** (`tags`) already exist. They are SKOS concepts, one concept scheme per tag kind.
+- Every term maps to a published one: see "Canonical sources" below.
 
 ## Why now
 
@@ -74,6 +75,145 @@ Established vocabularies each cover one concern, and they share a split between 
 - **FOAF** `OnlineAccount` models one person's account on one platform.
 - **IndieWeb microformats** (`h-entry`) cover cross-posting and replies.
   The Micro.blog plugin already stores its `syndication` web addresses (156 posts).
+
+## Canonical sources (23 Nov 2026, #410)
+
+LeStash takes its terms from published vocabularies wherever one fits.
+Each concern has one leading vocabulary. Others are listed only where the leader has no term.
+
+### Which vocabulary leads
+
+| Concern | Leads | Also used |
+|---|---|---|
+| What an item is | schema.org (`CreativeWork` and its types) | Web Annotation (`oa:`) for highlights |
+| What you did | schema.org (`Action` types) | ActivityStreams 2.0 for verbs schema.org lacks |
+| How documents relate | Dublin Core terms (`dcterms:`) | microformats for cross-posting |
+| Where a thing came from: versions, derivations, copies | PROV-O (`prov:`) | — |
+| Topics, labels and vocabularies | SKOS (`skos:`) | schema.org `DefinedTerm` says the same |
+| Who: people, organisations, software | PROV-O for the kind, schema.org for the role | ActivityStreams, FOAF `OnlineAccount` for accounts |
+| Collections and their order | PROV-O `Collection` | Collections Ontology (`co:`), schema.org `ItemList` |
+
+schema.org and SKOS cover different things, so they combine without conflict.
+
+- schema.org describes things and events: a book, a comment, a watch.
+- SKOS describes vocabularies: concepts, their labels and how concepts relate.
+- They meet in one place: schema.org's `DefinedTerm` and `DefinedTermSet` play the roles of `skos:Concept` and `skos:ConceptScheme`. LeStash uses the SKOS terms.
+
+### How well a term matches
+
+The crosswalk below uses SKOS's mapping words for how close each LeStash term is to its published term:
+
+- **exact**: the same meaning (`skos:exactMatch`);
+- **close**: near enough to use in most cases (`skos:closeMatch`);
+- **broad**: the published term is wider than LeStash's (`skos:broadMatch`);
+- **none**: no published term fits.
+
+SKOS defines these words between concepts. Here they document match strength.
+A machine-readable version would use `owl:equivalentClass`, `rdfs:subClassOf` and `rdfs:subPropertyOf` for classes and properties.
+
+### Crosswalk
+
+**Objects**
+
+| LeStash term | Published term | Match | Note |
+|---|---|---|---|
+| Item | `prov:Entity`; `schema:CreativeWork` | broad | an item is any thing LeStash holds or points to |
+| Activity | `prov:Activity`; `schema:Action` | exact; close | |
+| Person (the `people` table) | `prov:Agent` | exact | its kind says which agent |
+| Account | `foaf:OnlineAccount` | exact | |
+| Topic (`tags`) | `skos:Concept` | exact | its name is `skos:prefLabel` |
+| Topic kind (`tags.kind`: `ad-hoc`, `category`) | `skos:ConceptScheme` | exact | one scheme per kind; a topic is `skos:inScheme` its kind's scheme |
+| Theme (suggested, `themes`) | `prov:Collection` | broad | a proposed collection, not yet confirmed |
+| Collection | `prov:Collection`; ordered: `co:List`, `schema:ItemList` | exact | |
+| Membership place | `co:ListItem` with `co:index`; `schema:ListItem` with `schema:position` | exact | |
+| Membership note | — | none | neither vocabulary gives a list entry a note; `schema:ListItem` has only `description` |
+| Section | DoCO `doco:Section` | close | a part of an item that isn't an item |
+| File (by SHA-256) | `schema:MediaObject` | close | |
+| Vector | — | none | an index, not an object |
+
+**Item kinds**
+
+| Kind | Published term | Match | Note |
+|---|---|---|---|
+| `video` | `schema:VideoObject` | exact | |
+| `turn` | `schema:Message` | close | one turn of a chat |
+| `post` | `schema:SocialMediaPosting` | exact | |
+| `comment` | `schema:Comment` | exact | |
+| `search` | `schema:SearchAction` | close | an event stored as an item; its query is `schema:query` |
+| `stub` | `schema:CreativeWork` | broad | a thing LeStash points to but doesn't hold |
+| `chat` | `schema:Conversation` | exact | |
+| `reaction` | `schema:ReactAction` | close | an event stored as an item; its record is the activity |
+| `message` | `schema:Message` | exact | |
+| `document` | `schema:DigitalDocument` | exact | |
+| `note` | `schema:NoteDigitalDocument` | exact | |
+| `artifact` | `schema:CreativeWork` | broad | made by software: `prov:wasGeneratedBy` |
+| `highlight` | `oa:Annotation` | exact | |
+| `book` | `schema:Book` | exact | |
+| `paper` | `schema:ScholarlyArticle` | exact | |
+| `notebook` | `schema:CreativeWork` | broad | |
+| `project` | `schema:CreativeWork` | broad | not `schema:Project`, which is an organisation |
+| `image` | `schema:ImageObject` | exact | |
+| `other` | `schema:CreativeWork` | broad | |
+| `email` | `schema:Conversation` of `schema:EmailMessage`s | close | a thread; each message in it is a `message` |
+| `transcript` | `schema:DigitalDocument` | broad | schema.org has `transcript` only as a property of media |
+
+**Links between items**
+
+| Link kind | Published term | Match | Note |
+|---|---|---|---|
+| `parent_id` (containment) | `dcterms:isPartOf`; `schema:isPartOf` | exact | |
+| `references` | `dcterms:references` | exact | |
+| `syndication` | microformats `u-syndication` | exact | |
+| `derived_from` | `prov:wasDerivedFrom` | exact | |
+| `in_reply_to` | ActivityStreams `inReplyTo` | exact | |
+| `alternate_of` | `prov:alternateOf` | exact | |
+| `revision_of` | `prov:wasRevisionOf` | exact | |
+| `related` (vector suggestions, #219) | `dcterms:relation` | close | a suggested likeness, not a stated relation; not `skos:related`, which joins concepts |
+
+**Activity verbs**
+
+| Verb | Published term | Match | Note |
+|---|---|---|---|
+| `watched` | `schema:WatchAction` | exact | |
+| `searched` | `schema:SearchAction` | exact | |
+| `viewed` | `schema:ViewAction` | exact | |
+| `liked` | `schema:LikeAction` | exact | |
+| `reacted` | `schema:ReactAction` | exact | |
+| `shared` | `schema:ShareAction` | exact | |
+| `commented` | `schema:CommentAction` | exact | |
+| `prompted` | `schema:AskAction` | close | |
+| `created` | `schema:CreateAction` | exact | |
+| `edited` | `schema:UpdateAction` | exact | |
+| `annotated` | ActivityStreams `Create` of an `oa:Annotation` | close | schema.org has no annotating action |
+| `listened` | `schema:ListenAction` | exact | |
+| `disliked` | `schema:DislikeAction` | exact | |
+| `read` | `schema:ReadAction` | exact | |
+| `saved` | ActivityStreams `Add` | close | schema.org has no saving action |
+| `imported` (#403) | ActivityStreams `Add` | broad | items brought in by a manual import |
+
+**People**
+
+| LeStash term | Published term | Match |
+|---|---|---|
+| kind `person` | `prov:Person`; `schema:Person` | exact |
+| kind `organization` | `prov:Organization`; `schema:Organization` | exact |
+| kind `group` | ActivityStreams `Group` | exact |
+| kind `software` | `prov:SoftwareAgent`; `schema:SoftwareApplication` | exact |
+| role `author` | `schema:author`; `dcterms:creator` | exact |
+| role `creator` | `schema:creator` | exact |
+| role `narrator` | `schema:readBy` | exact |
+| role `publisher` | `schema:publisher` | exact |
+| role `recipient` | `schema:recipient` | exact |
+| mention | `schema:mentions` | exact |
+| an item's subject | `schema:about`; `dcterms:subject` | exact |
+
+### Naming rule
+
+- **A new term takes the published term's local name**, such as `references`, `alternate_of` or `creator`, in LeStash's own casing.
+- **Stored names stay as they are.** Renaming a kind, link kind or verb needs a migration; the crosswalk maps the stored name instead.
+- **A term without an exact match says how close it is** in the crosswalk (close, broad or none), with a note on why.
+- **Before adding a term, check the leading vocabulary for its concern**, then the others in the table above.
+- **The same word is never used for two meanings.** For example, `related` is the vector-suggestion link, so a field stating "this points to that" is `references`.
 
 ## The content ontology
 
@@ -693,6 +833,7 @@ flowchart LR
 ## Topics
 
 `tags` maps to SKOS concepts and stays as it is. An item's subject is `schema:about`.
+Each tag kind (`ad-hoc`, `category`) is a `skos:ConceptScheme`, and each tag is `skos:inScheme` its kind's scheme (#410).
 
 ## Collections (14 Nov 2026, #315, #317)
 
@@ -820,6 +961,7 @@ Open from the data: #245, rows that point at deleted items.
 - [FOAF OnlineAccount](http://xmlns.com/foaf/spec/#term_OnlineAccount)
 - [microformats h-entry](https://microformats.org/wiki/h-entry)
 - [SKOS](https://www.w3.org/TR/skos-reference/)
+- [DoCO, the Document Components Ontology](http://purl.org/spar/doco) (`doco:`)
 - [Collections Ontology](http://purl.org/co/) (`co:`; Ciccarese & Peroni, Semantic Web 5(6), 2014), [schema.org ItemList](https://schema.org/ItemList)
 - [DCAT 3](https://www.w3.org/TR/vocab-dcat-3/): Dataset and Distribution
 - [Drive Activity API](https://developers.google.com/workspace/drive/activity/v2/reference/rest)
