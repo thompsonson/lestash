@@ -858,11 +858,12 @@ def compress_backup(backup_path: Path) -> Path:
                 f"the compressed copy of {backup_path.name} did not read back "
                 f"({after.get('error', after.get('integrity'))}); the original is kept"
             )
-        st = backup_path.stat()
-        os.utime(partial, (st.st_atime, st.st_mtime))
         _link_into_place(partial, dest)
     finally:
         partial.unlink(missing_ok=True)
+    # Its old time once it has its name: an old .partial would look stale to a create
+    st = backup_path.stat()
+    os.utime(dest, (st.st_atime, st.st_mtime))
     backup_path.unlink()
     for sidecar in ("-wal", "-shm", "-journal"):
         backup_path.with_name(backup_path.name + sidecar).unlink(missing_ok=True)

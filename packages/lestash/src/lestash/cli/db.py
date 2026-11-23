@@ -476,8 +476,6 @@ def backup_extract(
     ),
 ) -> None:
     """Write the database a backup holds to a file, decompressing it: for a restore."""
-    import zstandard
-
     from lestash.core.database import get_db_path
 
     backup_path = find_backup(get_db_path(), filename)
