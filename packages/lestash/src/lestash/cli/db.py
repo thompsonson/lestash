@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json as json_mod
+import sqlite3
 from pathlib import Path
 
 import typer
+import zstandard
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -14,12 +16,15 @@ from lestash.core.db_admin import (
     BACKUP_GLOB,
     _format_bytes,
     backup_kind,
+    compress_backup,
     count_fk_violations,
     count_history_before,
     create_backup,
+    extract_backup,
     find_backup,
     get_history_stats,
     get_status_summary,
+    is_compressed,
     list_backups,
     prune_backups,
     purge_history,
@@ -405,7 +410,8 @@ def backup_create(
 ) -> None:
     """Create a timestamped database backup, then check its integrity.
 
-    A copy that fails the check is deleted, and the command exits 1, so a broken copy
+    The copy is stored compressed (``.db.zst``) and the check reads it back. A copy that
+    fails the check is deleted, and the command exits 1, so a broken copy
     never replaces a good one when ``--keep`` prunes.
     """
     from lestash.core.database import get_db_path
@@ -419,7 +425,14 @@ def backup_create(
     except FileExistsError as e:
         console.print(f"[red]{e}; try again in a second.[/red]")
         raise typer.Exit(1) from e
+    except (OSError, sqlite3.Error, zstandard.ZstdError) as e:  # nothing is left half-made
+        console.print(f"[red]Backup not made:[/red] {e}")
+        raise typer.Exit(1) from e
     result = verify_backup(dest)
+    if result.get("unchecked"):
+        # Not shown bad: keep it, but don't prune on the strength of it
+        console.print(f"[yellow]Backup kept, unchecked:[/yellow] {dest.name}: {result['error']}")
+        raise typer.Exit(1)
     if not result["valid"]:
         dest.unlink(missing_ok=True)
         err = result.get("error", result.get("integrity", "unknown"))
@@ -443,7 +456,7 @@ def backup_list() -> None:
 
     backups = list_backups(get_db_path())
     if not backups:
-        console.print(f"No managed backups found (pattern: {BACKUP_GLOB}).")
+        console.print(f"No managed backups found (pattern: {BACKUP_GLOB}[.zst]).")
         return
 
     t = Table(title="Managed Backups", show_lines=False)
@@ -453,6 +466,51 @@ def backup_list() -> None:
     for b in backups:
         t.add_row(b["filename"], _format_bytes(b["size_bytes"]), b["modified"])
     console.print(t)
+
+
+@backup_app.command("extract")
+def backup_extract(
+    filename: str = typer.Argument(..., help="Backup filename, e.g. from `backup list`."),
+    to: str = typer.Option(
+        ..., "--to", help="Where to write the database; never over an existing file."
+    ),
+) -> None:
+    """Write the database a backup holds to a file, decompressing it: for a restore."""
+    from lestash.core.database import get_db_path
+
+    backup_path = find_backup(get_db_path(), filename)
+    try:
+        dest = extract_backup(backup_path, Path(to).expanduser())
+    except (OSError, ValueError, zstandard.ZstdError) as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+    console.print(f"[green]Extracted[/green] {backup_path.name} to {dest}")
+
+
+@backup_app.command("compress")
+def backup_compress() -> None:
+    """Compress the backups made before compression (#414), each checked first."""
+    from lestash.core.database import get_db_path
+
+    plain = [b for b in list_backups(get_db_path()) if not is_compressed(Path(b["path"]))]
+    plain = [b for b in plain if backup_kind(b["filename"]) is not None]
+    if not plain:
+        console.print("Every backup is compressed already.")
+        return
+    failed = 0
+    for b in plain:
+        try:
+            dest = compress_backup(Path(b["path"]))
+        except (ValueError, OSError, zstandard.ZstdError) as e:
+            failed += 1
+            console.print(f"[red]Not compressed:[/red] {e}")
+            continue
+        console.print(
+            f"Compressed {b['filename']}: {_format_bytes(b['size_bytes'])} → "
+            f"{_format_bytes(dest.stat().st_size)}"
+        )
+    if failed:
+        raise typer.Exit(1)
 
 
 @backup_app.command("verify")
@@ -477,6 +535,9 @@ def backup_verify(
     console.print(f"Verifying {backup_path.name}...")
     result = verify_backup(backup_path)
 
+    if result.get("unchecked"):
+        console.print(f"[yellow]Unchecked:[/yellow] {result['error']}")
+        raise typer.Exit(1)
     if result["valid"]:
         console.print(
             f"[green]Valid:[/green] schema v{result['schema_version']}, "

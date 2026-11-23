@@ -10,10 +10,12 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import IO, cast
 
 logger = logging.getLogger(__name__)
 
@@ -421,7 +423,11 @@ def run_analyze_stats(conn: sqlite3.Connection) -> None:
 # --------------------------------------------------------------------------- #
 
 BACKUP_PREFIX = "lestash-backup-"
-BACKUP_GLOB = f"{BACKUP_PREFIX}*.db"
+BACKUP_GLOB = f"{BACKUP_PREFIX}*.db"  # an uncompressed copy, which SQLite can open
+ZSTD_SUFFIX = ".zst"
+# A backup is stored compressed (#414): 1.34 GB became 0.41 GB. Older ones are plain .db
+BACKUP_GLOBS = (BACKUP_GLOB, f"{BACKUP_GLOB}{ZSTD_SUFFIX}")
+_ZSTD_LEVEL = 3  # 2.6 s for 1.34 GB; higher levels save little more
 
 
 def _backup_dir(db_path: Path, backup_dir: Path | None = None) -> Path:
@@ -454,7 +460,142 @@ def _remove_stale_partials(dest_dir: Path) -> None:
             pass
 
 
-def create_backup(db_path: Path, backup_dir: Path | None = None, label: str | None = None) -> Path:
+def is_compressed(p: Path) -> bool:
+    return p.name.endswith(ZSTD_SUFFIX)
+
+
+def _compress(src: Path, dest: Path) -> None:
+    """Compress ``src`` into ``dest`` (made new), then flush it to disk."""
+    import zstandard
+
+    # The checksum makes a damaged file fail to decompress, rather than give wrong bytes.
+    # The size in the frame's header shows a cut-short file: it decompresses short.
+    cctx = zstandard.ZstdCompressor(level=_ZSTD_LEVEL, threads=-1, write_checksum=True)
+    with src.open("rb") as fin, dest.open("xb") as fout:
+        cctx.copy_stream(fin, fout, size=os.fstat(fin.fileno()).st_size)
+        fout.flush()
+        os.fsync(fout.fileno())
+
+
+class BackupUnreadable(OSError):
+    """The backup itself could not be read: a fault in the backup, not in the check."""
+
+
+class _Reader:
+    """A file whose open and read failures are BackupUnreadable, so they are told apart
+    from failures to write the copy."""
+
+    def __init__(self, src: Path) -> None:
+        self.name = src.name
+        try:
+            self.f = src.open("rb")
+        except OSError as e:
+            raise BackupUnreadable(e.errno, f"cannot read {self.name}: {e.strerror}") from e
+
+    def read(self, n: int = -1) -> bytes:
+        try:
+            return self.f.read(n)
+        except OSError as e:
+            raise BackupUnreadable(e.errno, f"cannot read {self.name}: {e.strerror}") from e
+
+    def close(self) -> None:
+        self.f.close()
+
+
+def _partial_for(dest: Path) -> Path:
+    """A temporary name beside ``dest``, its own, so two runs at once never share one.
+
+    One a killed run leaves in a backup folder is a stale .partial, which a later
+    create removes; one left beside an ``extract`` destination is not, and stays.
+    """
+    return dest.with_name(f"{dest.name}.{os.getpid()}-{os.urandom(4).hex()}{PARTIAL_SUFFIX}")
+
+
+def _frame_end(src: Path, header: bytes) -> int:
+    """Where the zstd frame starting ``src`` ends, found by walking its block headers.
+
+    So data after the frame, or a frame cut short, shows against the file's size
+    without decompressing. Raises ZstdError for a reserved block type.
+    """
+    import zstandard
+
+    pos = zstandard.frame_header_size(header)
+    has_checksum = bool(header[4] & 0x04)  # the frame header descriptor's checksum flag
+    reader = _Reader(src)
+    try:
+        f = reader.f
+        while True:
+            f.seek(pos)
+            block = reader.read(3)
+            if len(block) < 3:
+                return pos + len(block) + 1  # cut short inside a block header: past the end
+            value = int.from_bytes(block, "little")
+            last, kind, size = value & 1, (value >> 1) & 3, value >> 3
+            if kind == 3:
+                raise zstandard.ZstdError("a reserved block type: not a zstd backup")
+            pos += 3 + (1 if kind == 1 else size)  # an RLE block stores one byte
+            if last:
+                return pos + (4 if has_checksum else 0)
+    finally:
+        reader.close()
+
+
+def _decompress(src: Path, dest: Path) -> None:
+    """Decompress ``src`` into ``dest`` (made new), then flush it to disk.
+
+    Raises ZstdError for a file that is damaged, cut short, or has data after its one
+    frame; BackupUnreadable if ``src`` can't be read.
+    """
+    import zstandard
+
+    head = _Reader(src)
+    try:
+        header = head.read(18)  # a zstd frame header is at most 18 bytes
+    finally:
+        head.close()
+    expected = zstandard.get_frame_parameters(header).content_size
+    if expected == zstandard.CONTENTSIZE_UNKNOWN:
+        raise zstandard.ZstdError("the backup's frame does not record its size")
+    end, size = _frame_end(src, header), src.stat().st_size
+    if end > size:
+        raise zstandard.ZstdError("the backup ends before its frame does: truncated")
+    if end < size:
+        raise zstandard.ZstdError(f"{size - end:,} bytes after the end of the backup's frame")
+    reader = _Reader(src)
+    written = 0
+    try:
+        with dest.open("xb") as fout:
+            dctx = zstandard.ZstdDecompressor()
+            # It only calls read(), which _Reader has
+            source = cast("IO[bytes]", reader)
+            with dctx.stream_reader(source, read_across_frames=False, closefd=False) as r:
+                # Bounded: at most 1 MiB of output in memory at a time
+                while chunk := r.read(1 << 20):
+                    fout.write(chunk)
+                    written += len(chunk)
+            # A cut-short file ends early without an error: its size shows it
+            if written != expected:
+                raise zstandard.ZstdError(
+                    f"the backup decompresses to {written:,} of {expected:,} bytes: truncated"
+                )
+            fout.flush()
+            os.fsync(fout.fileno())
+    finally:
+        reader.close()
+
+
+def _link_into_place(partial: Path, dest: Path) -> None:
+    """Give a finished file its name. A hard link fails if the name was taken
+    meanwhile, where rename would replace it."""
+    os.link(partial, dest)
+
+
+def create_backup(
+    db_path: Path,
+    backup_dir: Path | None = None,
+    label: str | None = None,
+    compress: bool = True,
+) -> Path:
     """Create a timestamped backup using SQLite's online backup API.
 
     The copy is consistent while the database is in use, and is one file: its journal
@@ -463,16 +604,25 @@ def create_backup(db_path: Path, backup_dir: Path | None = None, label: str | No
     counts as a backup. ``label`` (lower case, digits, hyphens) says why, e.g.
     ``pre-deploy-355``. Raises FileExistsError rather than replace a backup of the
     same name, made in the same second.
+
+    The copy is stored compressed with zstd, as ``….db.zst`` (#414), unless ``compress``
+    is False. Check it with ``verify_backup``, which reads it back.
     """
     if label is not None and not _LABEL.match(label):
         raise ValueError(f"label must be lower case letters, digits and hyphens: {label!r}")
     dest_dir = _backup_dir(db_path, backup_dir)
-    _remove_stale_partials(dest_dir)
+    for d in _backup_dirs(db_path, backup_dir):  # checks run in each folder backups are in
+        _remove_stale_partials(d)
     ts = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
-    dest_path = dest_dir / f"{BACKUP_PREFIX}{ts}{'-' + label if label else ''}.db"
-    if dest_path.exists():
-        raise FileExistsError(f"a backup named {dest_path.name} exists already")
-    partial = dest_path.with_name(dest_path.name + PARTIAL_SUFFIX)
+    plain_name = f"{BACKUP_PREFIX}{ts}{'-' + label if label else ''}.db"
+    dest_path = dest_dir / (plain_name + (ZSTD_SUFFIX if compress else ""))
+    # One time, one backup: neither form of the name may be taken
+    for name in (plain_name, plain_name + ZSTD_SUFFIX):
+        if (dest_dir / name).exists():
+            raise FileExistsError(f"a backup named {name} exists already")
+    # Names of their own, so a second create in the same second can't remove these
+    partial = _partial_for(dest_dir / plain_name)
+    zst_partial = _partial_for(dest_dir / (plain_name + ZSTD_SUFFIX))
 
     try:
         # The source closes even when the copy's file can't be opened.
@@ -482,10 +632,14 @@ def create_backup(db_path: Path, backup_dir: Path | None = None, label: str | No
         ):
             source_conn.backup(dest_conn)
             dest_conn.execute("PRAGMA journal_mode = DELETE")
-        # A hard link fails if the name was taken meanwhile; rename would replace it.
-        os.link(partial, dest_path)
+        if compress:
+            _compress(partial, zst_partial)
+            _link_into_place(zst_partial, dest_path)
+        else:
+            _link_into_place(partial, dest_path)
     finally:
         partial.unlink(missing_ok=True)
+        zst_partial.unlink(missing_ok=True)
 
     logger.info(f"Backup created: {dest_path} ({dest_path.stat().st_size} bytes)")
     return dest_path
@@ -520,7 +674,7 @@ def _backup_time(p: Path) -> str:
 
 def list_backups(db_path: Path, backup_dir: Path | None = None) -> list[dict]:
     """List managed backups sorted newest-first."""
-    found = [p for d in _backup_dirs(db_path, backup_dir) for p in d.glob(BACKUP_GLOB)]
+    found = [p for d in _backup_dirs(db_path, backup_dir) for g in BACKUP_GLOBS for p in d.glob(g)]
     backups = []
     for p in sorted(found, key=_backup_time, reverse=True):
         backups.append(
@@ -535,11 +689,17 @@ def list_backups(db_path: Path, backup_dir: Path | None = None) -> list[dict]:
 
 
 def verify_backup(backup_path: Path) -> dict:
-    """Verify a backup file's integrity."""
+    """Verify a backup file's integrity.
+
+    A compressed backup is read back into a temporary file beside it, checked, and the
+    file removed: so a pass also shows it can be restored.
+    """
     result: dict = {"path": str(backup_path), "valid": False}
     if not backup_path.is_file():
         result["error"] = f"no such file: {backup_path}"
         return result
+    if is_compressed(backup_path):
+        return _verify_compressed(backup_path)
     try:
         # Read-only: checking a backup never changes it, or creates a file.
         conn = sqlite3.connect(f"{backup_path.resolve().as_uri()}?mode=ro", uri=True)
@@ -557,8 +717,48 @@ def verify_backup(backup_path: Path) -> dict:
     return result
 
 
-_SCHEDULED = re.compile(rf"^{BACKUP_PREFIX}\d{{8}}-\d{{6}}\.db$")
-_LABELLED = re.compile(rf"^{BACKUP_PREFIX}\d{{8}}-\d{{6}}-[a-z0-9][a-z0-9-]*\.db$")
+def _verify_compressed(backup_path: Path) -> dict:
+    """Check a zstd backup by reading it back into a temporary file beside it.
+
+    A file that won't decompress is invalid. One that can't be written out, say for want
+    of space, is ``unchecked``: it says nothing about the backup, so it is not invalid.
+    """
+    import zstandard
+
+    result: dict = {"path": str(backup_path), "valid": False}
+    plain = _partial_for(backup_path.with_name(backup_path.name + ".verify"))
+    try:
+        _decompress(backup_path, plain)
+    except BackupUnreadable as e:
+        plain.unlink(missing_ok=True)
+        result["error"] = str(e)
+        return result
+    except zstandard.ZstdError as e:
+        plain.unlink(missing_ok=True)
+        result["error"] = f"cannot decompress: {e}"
+        return result
+    except OSError as e:
+        plain.unlink(missing_ok=True)
+        result["unchecked"] = True
+        result["error"] = f"could not check it: {e}"
+        return result
+    try:
+        checked = verify_backup(plain)
+    finally:
+        plain.unlink(missing_ok=True)
+    return {**checked, "path": str(backup_path)}
+
+
+def _has_wal(p: Path) -> bool:
+    """A plain backup with a non-empty ``-wal``, or a ``-journal``, beside it: SQLite
+    reads that file as part of it, and a plain copy would leave it out."""
+    wal = p.with_name(p.name + "-wal")
+    journal = p.with_name(p.name + "-journal")
+    return (wal.is_file() and wal.stat().st_size > 0) or journal.is_file()
+
+
+_SCHEDULED = re.compile(rf"^{BACKUP_PREFIX}\d{{8}}-\d{{6}}\.db(\.zst)?$")
+_LABELLED = re.compile(rf"^{BACKUP_PREFIX}\d{{8}}-\d{{6}}-[a-z0-9][a-z0-9-]*\.db(\.zst)?$")
 
 
 def backup_kind(filename: str) -> str | None:
@@ -599,6 +799,107 @@ def prune_backups(
         deleted.append(p)
         logger.info(f"Deleted backup: {p}")
     return deleted
+
+
+def extract_backup(backup_path: Path, dest: Path) -> Path:
+    """Write the database a backup holds to ``dest``, decompressing a ``.zst`` one.
+
+    For a restore. Never writes over a file, or beside a ``-wal``, ``-shm`` or ``-journal`` one,
+    which SQLite would read as part of it.
+    """
+    if not backup_path.is_file():
+        raise FileNotFoundError(f"no such file: {backup_path}")
+    if _has_wal(backup_path):
+        raise ValueError(
+            f"{backup_path.name} has a -wal or -journal beside it; open it with SQLite instead"
+        )
+    # SQLite reads a -wal, -shm or hot -journal beside a database as part of it
+    for p in [dest] + [dest.with_name(dest.name + s) for s in ("-wal", "-shm", "-journal")]:
+        if p.exists():
+            raise FileExistsError(f"{p} exists; move it aside first")
+    partial = _partial_for(dest)
+    try:
+        if is_compressed(backup_path):
+            _decompress(backup_path, partial)
+        else:
+            shutil.copyfile(backup_path, partial)
+        _link_into_place(partial, dest)
+    finally:
+        partial.unlink(missing_ok=True)
+    return dest
+
+
+def compress_backup(backup_path: Path) -> Path:
+    """Compress a plain ``.db`` backup, keeping its name and time (#414).
+
+    The original is checked first and deleted only once the compressed copy reads back
+    whole, so a failure leaves it as it was. Raises ValueError if it fails its check.
+    """
+    if is_compressed(backup_path):
+        return backup_path
+    if _has_wal(backup_path):
+        raise ValueError(f"{backup_path.name} has a -wal or -journal beside it, left as it is")
+    before = verify_backup(backup_path)
+    if not before["valid"]:
+        raise ValueError(
+            f"{backup_path.name} fails its check, left as it is: "
+            f"{before.get('error', before.get('integrity'))}"
+        )
+    dest = backup_path.with_name(backup_path.name + ZSTD_SUFFIX)
+    if dest.exists():
+        # A run cut short after naming the compressed copy: finish it if that copy
+        # holds the same database, else leave both
+        if not (verify_backup(dest)["valid"] and _same_database(backup_path, dest)):
+            raise FileExistsError(f"a backup named {dest.name} exists already")
+        st = backup_path.stat()
+        os.utime(dest, (st.st_atime, st.st_mtime))
+        _remove_plain(backup_path)
+        return dest
+    partial = _partial_for(dest)
+    try:
+        _compress(backup_path, partial)
+        # Checked before it takes its name, so a cut-short run leaves only a .partial
+        after = _verify_compressed(partial)
+        if not after["valid"] or after["item_count"] != before["item_count"]:
+            raise ValueError(
+                f"the compressed copy of {backup_path.name} did not read back "
+                f"({after.get('error', after.get('integrity'))}); the original is kept"
+            )
+        _link_into_place(partial, dest)
+    finally:
+        partial.unlink(missing_ok=True)
+    # Its old time once it has its name: an old .partial would look stale to a create
+    st = backup_path.stat()
+    os.utime(dest, (st.st_atime, st.st_mtime))
+    _remove_plain(backup_path)
+    return dest
+
+
+def _same_database(plain: Path, compressed: Path) -> bool:
+    """Whether ``compressed`` decompresses to exactly the bytes of ``plain``."""
+    import hashlib
+
+    import zstandard
+
+    want = hashlib.sha256()
+    with plain.open("rb") as f:
+        while chunk := f.read(1 << 20):
+            want.update(chunk)
+    got = hashlib.sha256()
+    with (
+        compressed.open("rb") as f,
+        zstandard.ZstdDecompressor().stream_reader(f, read_across_frames=False) as r,
+    ):
+        while chunk := r.read(1 << 20):
+            got.update(chunk)
+    return want.digest() == got.digest()
+
+
+def _remove_plain(backup_path: Path) -> None:
+    """Delete a plain backup, and any empty sidecar SQLite left beside it."""
+    backup_path.unlink()
+    for sidecar in ("-wal", "-shm", "-journal"):
+        backup_path.with_name(backup_path.name + sidecar).unlink(missing_ok=True)
 
 
 # --------------------------------------------------------------------------- #
