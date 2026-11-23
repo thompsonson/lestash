@@ -64,14 +64,12 @@ So a sidecar value replaces a broken frontmatter value before any check.
 **A sidecar key names no file at the synced commit**, for example after a note moved or was deleted:
 
 - The source's sync stops before changing anything, and reports the key.
-- An entry may also name the note's git blob id, `"blob": "<40 hex>"`. If the file at that path has another blob, the sync stops the same way.
-  This catches a new note at a moved note's old path, which a key alone can't.
-  A reformatter that writes the sidecar should always write `blob`.
 - LeStash doesn't guess where a note went: git's rename detection is a guess, and a wrong guess would move a note's protecting fields to another note.
 - A key for a file the source's settings leave out still names a file, so it is fine.
 
 LeStash trusts the sidecar as it stands at the synced commit. Keeping it current is the notes repository's job.
-Regenerate it in the same commit as any move, deletion or new note at an old path, for example with a pre-commit hook that fails when it is out of date.
+Regenerate it in every commit that changes a note, for example with a pre-commit hook that fails when it is out of date.
+How the source detects an entry left on a reused path is still open in #408.
 
 Every held-back note, ignored field and stopped sync is listed, with the reason, in the source's sync report.
 
@@ -211,14 +209,11 @@ These belong to the source's settings in LeStash's config, not to any note:
 A vocabulary match is a label named `mention:<term>`, of kind `mention`. It says the note uses the term, never that it defines it.
 Only headings of two or more words are matched, because single words mislabel too often.
 
-## Versions and history
+## Versions, moves and history
 
-- Each note is keyed by its path.
-- A move is followed only when it is exact: a path disappears and a new path appears with byte-identical content in the same commit.
-  A move with edits isn't followed: the old item is marked gone, and the note at its new path is a new item.
-- Each commit that changes a note is a version of its text in the item's history.
-- Fields, from frontmatter and sidecar alike, come from the synced commit only. Older commits are never checked, so a past broken sidecar never stops a sync.
-- A note deleted from the repository is marked gone, not deleted from LeStash.
+How the source follows a moved note, and which past versions it keeps, are not part of this schema.
+They are open questions for the source itself, listed in #408.
+This schema covers only the fields read at the synced commit.
 
 ## A full example
 

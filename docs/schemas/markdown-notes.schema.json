@@ -193,11 +193,6 @@
     "replaces_frontmatter": {
       "description": "Sidecar only: the entry stands in for the note's frontmatter, which is then not read.",
       "type": "boolean"
-    },
-    "blob": {
-      "description": "Sidecar only: the git blob id of the note this entry was made for",
-      "type": "string",
-      "pattern": "^[0-9a-f]{40}$"
     }
   }
 }
