@@ -12,7 +12,9 @@ This document says what it reads from each note, and how each field becomes part
 - Every field is optional. A note with no frontmatter still imports, using the fallbacks below.
 - Fields LeStash doesn't know are kept in the item's metadata, uninterpreted.
 - Terms reuse the ontology's item kinds and typed links ([content-and-activity-ontology-design.md](content-and-activity-ontology-design.md)).
-- [`schemas/markdown-notes.schema.json`](schemas/markdown-notes.schema.json) states the same rules as JSON Schema, so a repository can check its notes.
+- Two JSON Schemas state the same rules, so a repository can check its notes:
+  - [`schemas/markdown-notes.schema.json`](schemas/markdown-notes.schema.json) for one note's fields;
+  - [`schemas/markdown-notes-sidecar.schema.json`](schemas/markdown-notes-sidecar.schema.json) for the sidecar file.
 
 ## Where the frontmatter comes from
 
@@ -21,14 +23,15 @@ LeStash reads a note's fields from two places, in this order:
 1. **The note's own YAML frontmatter**, between `---` lines at the top of the file.
 2. **A sidecar file**, `.lestash/notes.json` at the folder's root, keyed by each note's path.
    - It holds fields for notes that should not be edited, such as historic or verbatim ones.
-   - A sidecar field replaces the same field in the note.
+   - A sidecar entry replaces the note's own value field by field, at the top level only.
+     A list or map in the sidecar, such as `tags` or `labels`, replaces the note's whole value; nothing is merged.
    - A reformatter can generate it, so the notes themselves stay untouched.
 
 ```json
 {
   "schema": 1,
   "notes": {
-    "meetings/2026-03_kickoff.md": { "class": "record", "labels": { "project": ["alpha"] } }
+    "meetings/2026-03_kickoff.md": { "note_class": "record-of-exchange", "labels": { "project": ["alpha"] } }
   }
 }
 ```
@@ -42,12 +45,14 @@ LeStash reads a note's fields from two places, in this order:
 | `title` | string | the item's title (`dcterms:title`) | the first `#` heading, then the filename |
 | `date` | `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, or an ISO 8601 date-time | when it was written (`dcterms:created`); the precision is kept | a date in the filename, then the note's first git commit |
 | `summary` | string, one or two sentences | the preview on cards | the first paragraph |
-| `kind` | an item kind: `note` (default), `document`, `transcript` | the item's kind | `note` |
-| `medium` | `typed`, `voice`, `conversation`, `correspondence`, `mixed` | how the note was made | none |
+| `medium` | `typed`, `voice`, `conversation`, `correspondence`, `mixed` | how the note was made, shown as a label | none |
 | `own` | boolean | whether you wrote it (`is_own_content`) | true, or false under `capture` |
 | `author` | string | the item's author, when `own` is false | the repository's owner |
 
+- Every item from this source has the kind `note`; the ontology derives kind from the source.
 - A filename date is either `YYYY-MM-DD` at the start, or a month and year at the end: `_nov2026`.
+- Quote dates: `date: "2026-11-09"`. Most YAML loaders turn an unquoted full date into a date object, which the JSON Schema rejects.
+  LeStash itself accepts either form.
 - A date given to the month is shown as a month, such as "Nov 2026". LeStash never invents a day.
 - The git commit date is the weakest sign: a bulk move or a rename resets it.
 
@@ -55,17 +60,21 @@ LeStash reads a note's fields from two places, in this order:
 
 | Field | Values | Shown as |
 |---|---|---|
-| `class` | `record`, `model`, `proposal` | a label, and a banner on the item's page |
+| `note_class` | `record-of-exchange`, `live-model`, `proposal` | a label, and a banner on the item's page |
 | `status` | a short phrase, such as `draft`, `open` or `confirmed` | a label |
 | `type` | the repository's own word for the note, such as `review` or `position` | a label, as written |
+| `scope` | a sentence: the question the note addresses | a line under the title |
+| `amended` | a list of `{date, summary}` | "Amended N times, last on …" on the item's page |
 | `superseded_by` | a reference (see below) | a banner linking the newer note |
 
 The three classes say how far to trust a note today:
 
-- **`record`**: correct as of its date, and not maintained since. A meeting note, a conversation, a review.
-- **`model`**: maintained as understanding changes. Its current text is meant to be current.
+- **`record-of-exchange`**: correct as of its date, and not maintained since. A meeting note, a conversation, a review.
+- **`live-model`**: maintained as understanding changes. Its current text is meant to be current; `amended` records each change.
 - **`proposal`**: an idea put forward and not yet settled.
-- **No `class`**: shown as "Unclassified". Read it as a record of its date until someone checks it.
+- **No `note_class`**: shown as "Unclassified". Read it as a record of its date until someone checks it.
+
+The field is `note_class`, not `class`, and its values have two words each, because "class", "model" and "record" carry other meanings in many repositories.
 
 `status` and `type` are labels only. Put longer prose about a note's standing in `summary`, not `status`.
 
@@ -94,15 +103,15 @@ A reference is one of these:
 - a web address: `https://arxiv.org/abs/2401.00001`;
 - a LeStash item: `lestash:12345`.
 
-| Field | Becomes a link of kind | Meaning |
-|---|---|---|
-| `related` | `references` | this note points to it |
-| `derived_from` | `derived_from` | this note was built from it, such as a summary of a talk |
-| `alternate_of` | `alternate_of` | the same thing kept elsewhere, such as the voice recording this note transcribes |
-| `revision_of` | `revision_of` | this note is the next version of it |
-| `reply_to` | `in_reply_to` | this note answers it |
-| `part_of` | the item's parent | this note is an excerpt or a section of it |
+| Field | Becomes a link of kind | Meaning | Allowed target |
+|---|---|---|---|
+| `related` | `references` | this note points to it | any item or web address |
+| `derived_from` | `derived_from` | this note was built from it, such as a summary of a talk or a chat | any held item |
+| `alternate_of` | `alternate_of` | the same note kept elsewhere, such as the voice recording it transcribes | another `note` |
+| `revision_of` | `revision_of` | this note is the next version of it | an earlier `note` |
 
+- The allowed ends follow the ontology's link table ([content-and-activity-ontology-design.md](content-and-activity-ontology-design.md#typed-links)).
+- An `alternate_of` whose target is not a note is stored as `derived_from`, and the sync report lists it.
 - Links in the note's body become `references` too. They need no field.
 - `alternate_of` to a LeStash item doesn't make a duplicate. Search shows the two as one result.
 - A reference that resolves to nothing is kept as a plain link, and listed in the source's sync report.
@@ -117,9 +126,9 @@ capture:
   type: verbatim          # verbatim | reference | generated
   url: https://example.org/post
   repo: someone/project   # when the original is a repository file
-  ref: 0123456            # its commit or tag
+  ref: "0123456"          # its commit or tag; quoted, or YAML reads a number
   path: docs/post.md
-  retrieved: 2026-01-15
+  retrieved: "2026-01-15"
   sha1: 0123456789abcdef0123456789abcdef01234567
   upstream_status: no durable upstream; this capture is the record
 ```
@@ -130,7 +139,8 @@ capture:
 | `reference` | a copy kept for reference, possibly trimmed | "Capture · reference" |
 | `generated` | made by a model, not a primary source | "Capture · generated" |
 
-- When `sha1` is given and the body no longer matches it, the sync flags the note rather than updating it silently.
+- `sha1` records the original's checksum, as the capture's source gave it. LeStash stores it and never recomputes it.
+- A `verbatim` capture should never change. When a later commit changes its body, the sync still updates the item, and lists the note in its report.
 
 ### Leaving a note out
 
@@ -161,9 +171,9 @@ Only headings of two or more words are matched, because single words mislabel to
 ```yaml
 ---
 title: Retry budgets for the build agent
-date: 2026-09
+date: "2026-09"
 summary: Why each tool call gets a retry budget, and what spends it.
-class: proposal
+note_class: proposal
 status: draft
 type: position
 medium: typed
@@ -177,11 +187,13 @@ alternate_of: lestash:12345
 ---
 ```
 
-LeStash shows it as a proposal dated Sep 2026, labelled `draft`, `position`, `agents`, `reliability` and `Ch5`.
+Say the note sits in the folder `agents/`.
+LeStash shows it as a proposal dated Sep 2026, labelled `proposal`, `draft`, `position`, `typed`, `agents`, `reliability`, `Ch5` and the folder `agents`.
 It links to one note, one paper and one LeStash item.
 
 ## Versioning this schema
 
 - The sidecar names the schema version it was written for: `"schema": 1`.
+- Version 1 leaves out reply and containment links (`in_reply_to`, `part_of`). A later version can add them.
 - A new field is a minor change. LeStash keeps an unknown field rather than rejecting it.
 - Changing a field's meaning needs a new version number.

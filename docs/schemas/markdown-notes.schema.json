@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/thompsonson/lestash/blob/main/docs/schemas/markdown-notes.schema.json",
+  "$id": "https://raw.githubusercontent.com/thompsonson/lestash/main/docs/schemas/markdown-notes.schema.json",
   "title": "LeStash markdown note frontmatter, version 1",
-  "description": "The fields LeStash reads from a markdown note's YAML frontmatter, or from a sidecar entry. See docs/markdown-notes-schema.md.",
+  "description": "The fields LeStash reads from a markdown note's YAML frontmatter, or from a sidecar entry. See docs/markdown-notes-schema.md. Quote dates in YAML, or a loader turns them into date objects.",
   "type": "object",
   "additionalProperties": true,
   "$defs": {
@@ -17,50 +17,154 @@
     },
     "refs": {
       "oneOf": [
-        { "$ref": "#/$defs/ref" },
-        { "type": "array", "items": { "$ref": "#/$defs/ref" } }
+        {
+          "$ref": "#/$defs/ref"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ref"
+          }
+        }
       ]
     },
-    "strings": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+    "strings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
   },
   "properties": {
-    "title": { "type": "string", "minLength": 1 },
-    "date": { "$ref": "#/$defs/date" },
-    "summary": { "type": "string" },
-    "kind": { "enum": ["note", "document", "transcript"] },
-    "medium": { "enum": ["typed", "voice", "conversation", "correspondence", "mixed"] },
-    "own": { "type": "boolean" },
-    "author": { "type": "string" },
-    "class": { "enum": ["record", "model", "proposal"] },
-    "status": { "type": "string", "maxLength": 40 },
-    "type": { "type": "string", "maxLength": 40 },
-    "superseded_by": { "$ref": "#/$defs/ref" },
-    "tags": { "$ref": "#/$defs/strings" },
-    "labels": {
-      "type": "object",
-      "propertyNames": { "pattern": "^[a-z][a-z0-9_-]*$" },
-      "additionalProperties": { "$ref": "#/$defs/strings" }
+    "title": {
+      "type": "string",
+      "minLength": 1
     },
-    "related": { "$ref": "#/$defs/refs" },
-    "derived_from": { "$ref": "#/$defs/refs" },
-    "alternate_of": { "$ref": "#/$defs/refs" },
-    "revision_of": { "$ref": "#/$defs/refs" },
-    "reply_to": { "$ref": "#/$defs/refs" },
-    "part_of": { "$ref": "#/$defs/ref" },
-    "capture": {
-      "type": "object",
-      "required": ["type"],
-      "properties": {
-        "type": { "enum": ["verbatim", "reference", "generated"] },
-        "url": { "type": "string" },
-        "repo": { "type": "string" },
-        "ref": { "type": "string" },
-        "path": { "type": "string" },
-        "retrieved": { "$ref": "#/$defs/date" },
-        "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "upstream_status": { "type": "string" }
+    "date": {
+      "$ref": "#/$defs/date"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "medium": {
+      "enum": [
+        "typed",
+        "voice",
+        "conversation",
+        "correspondence",
+        "mixed"
+      ]
+    },
+    "own": {
+      "type": "boolean"
+    },
+    "author": {
+      "type": "string"
+    },
+    "note_class": {
+      "enum": [
+        "record-of-exchange",
+        "live-model",
+        "proposal"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "type": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "scope": {
+      "type": "string"
+    },
+    "amended": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "date"
+        ],
+        "properties": {
+          "date": {
+            "$ref": "#/$defs/date"
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
       }
     },
-    "lestash": { "enum": ["skip"] }
+    "superseded_by": {
+      "$ref": "#/$defs/ref"
+    },
+    "tags": {
+      "$ref": "#/$defs/strings"
+    },
+    "labels": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/strings"
+      }
+    },
+    "related": {
+      "$ref": "#/$defs/refs"
+    },
+    "derived_from": {
+      "$ref": "#/$defs/refs"
+    },
+    "alternate_of": {
+      "$ref": "#/$defs/refs"
+    },
+    "revision_of": {
+      "$ref": "#/$defs/refs"
+    },
+    "capture": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "verbatim",
+            "reference",
+            "generated"
+          ]
+        },
+        "url": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "retrieved": {
+          "$ref": "#/$defs/date"
+        },
+        "sha1": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "upstream_status": {
+          "type": "string"
+        }
+      }
+    },
+    "lestash": {
+      "enum": [
+        "skip"
+      ]
+    }
   }
 }
