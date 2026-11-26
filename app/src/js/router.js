@@ -56,9 +56,10 @@ function openDialogs() {
   return document.querySelectorAll('.modal-overlay.open');
 }
 
-// Remember where the page was scrolled, so Back returns to the same place
+// Remember where the page was scrolled, so Back returns to the same place.
+// ``saved`` tells a place you were at, even the top, from an entry never left
 function saveScroll() {
-  const state = { ...(history.state || {}), scrollY: main()?.scrollTop || 0 };
+  const state = { ...(history.state || {}), scrollY: main()?.scrollTop || 0, saved: true };
   history.replaceState(state, '', location.href);
 }
 
@@ -132,14 +133,13 @@ function restoreScroll(y, token) {
   events.forEach((t) => el.addEventListener(t, stop, { passive: true }));
 }
 
-// ``restoring``: Back or Forward drew this page, so its saved place wins over a #fragment
-export async function render({ restoring = false } = {}) {
+export async function render() {
   const url = new URL(location.href);
   const upgraded = upgrade(url);
   if (upgraded) {
     history.replaceState({ depth: depth(), scrollY: 0 }, '', upgraded);
     remember();
-    return render({ restoring });
+    return render();
   }
   // Leaving a page closes its dialogs; drawing the same page again keeps them
   if (drawnPath !== null && drawnPath !== url.pathname) {
@@ -156,9 +156,9 @@ export async function render({ restoring = false } = {}) {
     await found.page(url.pathname.match(found.pattern), url);
   } finally {
     // A later navigation owns the scroll position. An address naming a part of the
-    // page (/collections#themes-title) opens there, unless Back or Forward restores a place
+    // page (/collections#themes-title) opens there, unless it holds a place you left
     let anchor = null;
-    if (!restoring && url.hash) {
+    if (!(history.state && history.state.saved) && url.hash) {
       try {
         anchor = document.getElementById(decodeURIComponent(url.hash.slice(1)));
       } catch {
@@ -210,7 +210,7 @@ function onPop() {
   }
   remember();
   if (samePage && !upgrade(new URL(location.href))) return;  // only the #section changed
-  render({ restoring: true });
+  render();
 }
 
 // Listen from the start, so a dialog opened before the first page is drawn
