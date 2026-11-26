@@ -1,6 +1,6 @@
 # UX Object Model — an ORCA pass over the ontology
 
-Status: decisions taken 11 Nov 2026 (see "Decided"). Tracked in #268 (waypoints U1–U7). ORCA round 2 proposed 11 Nov 2026, closing with your walkthrough. Refs #257, #222.
+Status: decisions taken 11 Nov 2026 (see "Decided"). Tracked in #268 (waypoints U1–U7). ORCA round 2 proposed 11 Nov 2026, closing with your walkthrough. ORCA round 3 (suggested themes) proposed 26 Nov 2026, closing with your walkthrough. Refs #257, #222.
 
 ## Why
 
@@ -591,7 +591,7 @@ Also seen: 44 themed items are already in 9 of your collections, and only 9 them
 | Relationship | From the theme | From the other end | Now |
 |---|---|---|---|
 | Theme holds Items | its page, items by kind, with card faces | item page: "In theme …" | one end, bare links |
-| Theme became a Collection | "Kept as …" with a link | collection page: "From a suggested theme" | neither |
+| Theme became a Collection | "Kept as …" with a link | collection page: its description, "Kept from a suggested theme" | collection end only, as text |
 | Theme overlaps a Collection | "12 of these are in *a collection*" | — | neither |
 | Theme's items link each other | the related links inside it, as the reason | item page Links, as now | neither |
 | Theme and People | the people behind its items, most first | — | neither |
@@ -606,10 +606,10 @@ Also seen: 44 themed items are already in 9 of your collections, and only 9 them
 | See why: shared words, links, sources | theme page | ✗ |
 | Rename before keeping | theme page | ✗ (API ready) |
 | Drop an item before keeping | theme page | ✗ |
-| Keep as a collection | card and page | ✓ |
+| Keep as a collection | card and page | ◐ card only |
 | Add to an existing collection | theme page | ✗ |
 | Split a broad theme | theme page, over 30 items | ✗ |
-| Dismiss | card and page | ✓ |
+| Dismiss | card and page | ◐ card only |
 | Find a theme from an item | item page | ✗ |
 
 ### 4. Attributes and ranking
@@ -626,7 +626,7 @@ Also seen: 44 themed items are already in 9 of your collections, and only 9 them
 
 | Object | Say | Don't say |
 |---|---|---|
-| Theme | Theme; "suggested theme" on first sight | cluster, community, group |
+| Theme | Suggested theme in lists and headings; Theme on its own page | cluster, community, group; "theme" alone in Settings, where it means the colour scheme |
 | Keep | Keep as a collection | save, accept |
 | Dismiss | Dismiss | reject, delete |
 
@@ -641,4 +641,4 @@ Tasks, on the phone then the desktop:
 6. Dismiss one theme, and say why.
 
 Round 3 closes when the walkthrough has confirmed, changed or dropped each proposal above.
-The confirmed changes become build issues, and close #268.
+The confirmed changes become build issues, as the next waypoints in #268.
