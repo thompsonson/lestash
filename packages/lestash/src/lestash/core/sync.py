@@ -130,9 +130,14 @@ class SyncStore:
         ``COMMIT_EVERY``), so no write is open while the plugin fetches. If the plugin
         raises, what it yielded is stored and linked, then the error propagates. A
         ``KeyboardInterrupt`` stores nothing more.
+
+        Every way out takes the same steps: store what is pending, link, then raise the
+        first error. Linking is skipped only when the store's write lock couldn't be had
+        and nothing was stored, as it would only wait out the lock again.
         """
         pending: list[ItemCreate] = []
         first_at = 0.0  # when the oldest pending item came
+        errors: list[Exception] = []
         try:
             for item in items:
                 if isinstance(item, SyncCheckpoint):
@@ -145,18 +150,21 @@ class SyncStore:
                 if len(pending) >= COMMIT_EVERY or time.monotonic() - first_at >= FLUSH_AFTER_S:
                     self._write(pending)
         except Exception as e:
-            if isinstance(e, _LockNotHad) and not (self.committed.added or self.committed.updated):
-                # Nothing stored to link, and writing more would only wait out the lock
-                # again. With items stored, linking them is worth the wait.
-                raise
+            errors.append(e)
+        try:
+            self._write(pending)  # nothing, after a write that failed: it empties pending
+        except Exception as e:
+            errors.append(e)
+        lock_not_had = any(isinstance(e, _LockNotHad) for e in errors)
+        if not lock_not_had or self.committed.added or self.committed.updated:
             try:
-                self._write(pending)
                 self._sweep()
-            except Exception:
-                logger.exception("Storing what a failed %s sync yielded failed", self.source)
-            raise
-        self._write(pending)
-        self._sweep()
+            except Exception as e:
+                errors.append(e)
+        for later in errors[1:]:
+            logger.error("Also failed in the %s sync: %r", self.source, later)
+        if errors:
+            raise errors[0]
 
     def _write(self, pending: list[ItemCreate], checkpoint: SyncCheckpoint | None = None) -> None:
         """Store the pending items, and the checkpoint after them, in one transaction.

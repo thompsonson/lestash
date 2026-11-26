@@ -347,3 +347,52 @@ def test_a_locked_error_from_the_plugin_still_stores_what_it_yielded(test_db, mo
     """Only the store's own lock failure skips storing: not one the plugin raises."""
     assert _sync(test_db, monkeypatch, _PluginLocked()) == 1
     assert _last_sync(test_db) == ("failed", 1)
+
+
+def _lock_on(calls: list[int], n: int):
+    """A begin_write whose n-th call finds the lock taken."""
+    import sqlite3
+
+    real_begin = core_sync.begin_write
+
+    def begin(conn) -> None:
+        calls.append(1)
+        if len(calls) == n:
+            raise sqlite3.OperationalError("database is locked")
+        real_begin(conn)
+
+    return begin
+
+
+def _stored_then(fail: bool) -> Iterator[ItemCreate | SyncCheckpoint]:
+    """Item a, written with a checkpoint; then b, left pending; then the plugin ends."""
+    yield _item("a")
+    yield SyncCheckpoint(key="cursor", value={"last": "a"})
+    yield _item("b")
+    if fail:
+        raise RuntimeError("API went away")
+
+
+@pytest.mark.parametrize(
+    ("items", "error"),
+    [
+        # The last flush, after the plugin ends, finds the lock taken
+        (lambda: _stored_then(fail=False), "locked"),
+        # The plugin fails, then storing what it yielded finds the lock taken
+        (lambda: _stored_then(fail=True), "API went away"),
+    ],
+)
+def test_items_stored_before_a_lock_failure_are_linked(test_db, monkeypatch, items, error) -> None:
+    """#401 review: every way out links what the sync stored."""
+    monkeypatch.setattr(core_sync, "FLUSH_AFTER_S", 60.0)
+    monkeypatch.setattr(core_sync, "begin_write", _lock_on([], 2))
+    linked: list[set[str]] = []
+    monkeypatch.setattr(
+        core_sync, "resolve_parent_source_ids", lambda conn, types: linked.append(types) or 0
+    )
+    with get_connection(test_db) as conn:
+        store = core_sync.SyncStore(conn, "audible")
+        with pytest.raises(Exception, match=error):
+            store.run(items())
+        assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
+    assert linked == [{"audible"}]
