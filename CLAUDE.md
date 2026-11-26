@@ -33,19 +33,20 @@ Run as `uv run lestash <group> <command>` from the main checkout; `--help` on an
   - Data: `items`, `sources`, `pdf`, `media`, `profiles`.
   - Background work: `embeddings`, `enrich`.
   - Admin: `db`, `config`.
-  - One group per source, such as `youtube`, `linkedin`, `gmail` or `kobo`.
+  - Accounts and sources: `google`, and one group per source, such as `youtube`, `linkedin`, `gmail` or `kobo`.
 - **Syncing:** `sources sync <name>` syncs one source; `sources sync --all` is what the timer runs; `sources status` shows the last runs.
-- **Read-only checks:**
+- **Read-only checks:** only these never write:
   - `db status` shows a health dashboard.
   - `db integrity` runs integrity and foreign key checks and finds orphans.
   - `db analyze` reports the largest items, items per source, duplicates, FTS health and embedding coverage.
   - `db backup list` lists backups; `db backup verify` checks one.
-- **Commands that change live data** (take a `db backup create --label pre-<what>` first, and ask first on pop-mini):
-  - `db repair` deletes rows whose item is gone; run it without `--confirm` to see the counts first (#400).
-  - `db history --purge` removes old history rows.
-  - `db optimize` runs VACUUM, rebuilds FTS and checkpoints the WAL.
+  - `--help` on any command, and `--dry-run` where a command has it.
+- **Every other command can change live data.** On pop-mini, ask first and take `db backup create --label pre-<what>` before it, except for syncs and the timers' own jobs. Ones to know:
+  - `db repair` deletes rows whose item is gone; without `--confirm` it shows the counts and asks first (#400).
+  - `db history --purge` removes old history rows; it needs `--before YYYY-MM-DD` or `--keep-days N`.
+  - `db optimize` does nothing without a flag: `--vacuum`, `--fts`, `--checkpoint`, `--stats`, or `--all`.
   - `db link`, `db relate`, `db themes` and `db agents` re-derive links, suggestions and agents.
-- **Backups:** `db backup create | list | verify | extract | prune`; the rules are under Database backups below.
+- **Backups:** `db backup create | list | verify | extract | compress | prune`; the rules are under Database backups below.
 
 ## Key Patterns
 
