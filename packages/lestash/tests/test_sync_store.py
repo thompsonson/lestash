@@ -293,15 +293,17 @@ def test_a_lock_not_had_is_not_waited_for_twice(test_db, monkeypatch) -> None:
     """#401: the error handler doesn't try the same items' write again."""
     import sqlite3
 
-    tries: list[int] = []
+    tries: list[str] = []
 
     def locked(conn) -> None:
-        tries.append(1)
+        tries.append("write")
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(core_sync, "begin_write", locked)
+    # Nor does it go on to link, which writes too
+    monkeypatch.setattr(core_sync, "resolve_parent_source_ids", lambda *a: tries.append("link"))
     with get_connection(test_db) as conn:
         store = core_sync.SyncStore(conn, "audible")
         with pytest.raises(sqlite3.OperationalError):
             store.run(iter([_item("a")]))
-    assert tries == [1]
+    assert tries == ["write"]

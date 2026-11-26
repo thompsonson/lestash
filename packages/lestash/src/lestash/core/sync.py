@@ -144,7 +144,11 @@ class SyncStore:
                 pending.append(item)
                 if len(pending) >= COMMIT_EVERY or time.monotonic() - first_at >= FLUSH_AFTER_S:
                     self._write(pending)
-        except Exception:
+        except Exception as e:
+            if _is_locked(e):
+                # Writing more would only wait out the lock again; the next sync links
+                # what this one stored
+                raise
             try:
                 self._write(pending)
                 self._sweep()
@@ -304,6 +308,11 @@ class SyncStore:
             else:
                 self.unchanged += 1
         return True
+
+
+def _is_locked(error: Exception) -> bool:
+    """Whether the write lock couldn't be had, even after begin_write's retry."""
+    return isinstance(error, sqlite3.OperationalError) and "locked" in str(error)
 
 
 INTERRUPTED = "interrupted"
