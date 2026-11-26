@@ -25,6 +25,28 @@ just deploy                # Deploy systemd services
 cd app && npx tauri dev    # Run desktop app
 ```
 
+## LeStash CLI
+
+Run as `uv run lestash <group> <command>` from the main checkout; `--help` on any group lists the rest.
+
+- **Command groups:**
+  - Data: `items`, `sources`, `pdf`, `media`, `profiles`.
+  - Background work: `embeddings`, `enrich`.
+  - Admin: `db`, `config`.
+  - One group per source, such as `youtube`, `linkedin`, `gmail` or `kobo`.
+- **Syncing:** `sources sync <name>` syncs one source; `sources sync --all` is what the timer runs; `sources status` shows the last runs.
+- **Read-only checks:**
+  - `db status` shows a health dashboard.
+  - `db integrity` runs integrity and foreign key checks and finds orphans.
+  - `db analyze` reports the largest items, items per source, duplicates, FTS health and embedding coverage.
+  - `db backup list` lists backups; `db backup verify` checks one.
+- **Commands that change live data** (take a `db backup create --label pre-<what>` first, and ask first on pop-mini):
+  - `db repair` deletes rows whose item is gone; run it without `--confirm` to see the counts first (#400).
+  - `db history --purge` removes old history rows.
+  - `db optimize` runs VACUUM, rebuilds FTS and checkpoints the WAL.
+  - `db link`, `db relate`, `db themes` and `db agents` re-derive links, suggestions and agents.
+- **Backups:** `db backup create | list | verify | extract | prune`; the rules are under Database backups below.
+
 ## Key Patterns
 
 - Plugins register via `[project.entry-points."lestash.sources"]`
