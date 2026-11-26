@@ -563,7 +563,7 @@ A browser walk first, at desktop and phone width, before reading the code:
 |---|---|---|
 | T1 | Themes sit under More › Collections, below all 26 collections. Nothing on the Timeline, Library or an item page leads to them. | Visibility of system status; recognition over recall |
 | T2 | A theme's items are bare links: 261 of the 746 have no title, so they read "Item 42 bluesky". | Match with the real world; the card faces decided in round 1 |
-| T3 | A name is three words from titles ("Sheet, Design, Grammar"). It doesn't say what joins the items. | Match with the real world |
+| T3 | A name is three words from titles, such as "Word, Word, Word". It doesn't say what joins the items. | Match with the real world |
 | T4 | Sizes are uneven: 9 themes hold over 30 items each (the largest 107); 26 hold 4–6. A large theme is too broad to keep whole. | Aesthetic and minimalist design |
 | T5 | Keep takes every item at once, under the theme's name. You can't rename, or drop an item, first. The API already takes a name; the app doesn't offer it. | User control and freedom |
 | T6 | Nothing says why items belong together: no shared words, no links between them, no scores. | Help users recognise; visibility |
@@ -592,7 +592,7 @@ Also seen: 44 themed items are already in 9 of your collections, and only 9 them
 |---|---|---|---|
 | Theme holds Items | its page, items by kind, with card faces | item page: "In theme …" | one end, bare links |
 | Theme became a Collection | "Kept as …" with a link | collection page: "From a suggested theme" | neither |
-| Theme overlaps a Collection | "12 of these are in *Ontology sources*" | — | neither |
+| Theme overlaps a Collection | "12 of these are in *a collection*" | — | neither |
 | Theme's items link each other | the related links inside it, as the reason | item page Links, as now | neither |
 | Theme and People | the people behind its items, most first | — | neither |
 | Theme and Topic | topics its items share, as a hint | — | neither |
@@ -618,7 +618,7 @@ Also seen: 44 themed items are already in 9 of your collections, and only 9 them
 - **Page leads with:** the reason (shared words; links between its items), then items grouped by kind, then Keep, Rename, Dismiss.
 - **List order:** themes touching what you did lately first (activity on their items in the last 30 days), then by size. Largest-first puts the broad themes on top.
 - **Names:**
-  - Default: keep the TF-IDF words, but show them as "about *reasoning, LLM-as-a-Judge*", with the item count, so they read as a hint, not a title.
+  - Default: keep the TF-IDF words, but show them as "about *word, word, word*", with the item count, so they read as a hint, not a title.
   - Option: a one-line name from an LLM over the item titles. It costs a call per theme per run, and sends titles off the machine. Your call.
 - **Sizes:** a theme over 30 items is offered as split, by running the same community step on its own links. The 4-item minimum stays.
 
