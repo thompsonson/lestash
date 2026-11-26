@@ -60,7 +60,11 @@ export async function loadThemes(toast) {
   try {
     themes = await api('/api/themes');
   } catch {
-    list.innerHTML = '';  // older server, or offline: no suggestions shown
+    // An older server, or offline: no suggestions, and nothing that points at them
+    list.innerHTML = '';
+    document.getElementById('themes-title').style.display = 'none';
+    const jump = document.getElementById('themes-jump');
+    if (jump) jump.hidden = true;
     return;
   }
   document.getElementById('themes-title').style.display = '';
