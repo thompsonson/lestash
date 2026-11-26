@@ -168,8 +168,9 @@ def swap_in_next(conn: sqlite3.Connection) -> int:
         return 0
     if conn.in_transaction:
         conn.commit()
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    from lestash.core.database import write_transaction
+
+    with write_transaction(conn):
         conn.execute(f"DROP TABLE {VEC_TABLE}")
         _create(conn, VEC_TABLE)
         conn.execute(
@@ -178,10 +179,6 @@ def swap_in_next(conn: sqlite3.Connection) -> int:
         )
         conn.execute(f"DROP TABLE {NEXT_TABLE}")
         count = conn.execute(f"SELECT COUNT(*) FROM {VEC_TABLE}").fetchone()[0]
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
     logger.info("Swapped in the %s index: %d vectors", MODEL_NAME, count)
     return count
 
@@ -410,9 +407,10 @@ def store_vectors(
     # would break embedding_meta's foreign key. Its vector is dropped next time.
     if conn.in_transaction:
         conn.commit()
-    conn.execute("BEGIN IMMEDIATE")
+    from lestash.core.database import write_transaction
+
     written = 0
-    try:
+    with write_transaction(conn):
         ids = [item_id for item_id, _, _ in batch]
         marks = ",".join("?" * len(ids))
         present = {
@@ -424,10 +422,6 @@ def store_vectors(
             if item_id in present:
                 upsert_embedding(conn, item_id, vector, text, recipe)
                 written += 1
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
     return written
 
 

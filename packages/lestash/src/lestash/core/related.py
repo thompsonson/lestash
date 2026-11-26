@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 import numpy as np
 
+from lestash.core.database import write_transaction
 from lestash.core.embeddings import VEC_TABLE, building, query_model
 
 KIND = "related"
@@ -200,8 +201,7 @@ def relate(conn: sqlite3.Connection, *, everything: bool = False) -> RelateCount
             best = np.take_along_axis(best, order, axis=1)
             best_scores = np.take_along_axis(best_scores, order, axis=1)
 
-            conn.execute("BEGIN IMMEDIATE")
-            try:
+            with write_transaction(conn):
                 for row_n, n in enumerate(block):
                     item_id = int(ids[n])
                     _unfind(conn, item_id)
@@ -221,10 +221,6 @@ def relate(conn: sqlite3.Connection, *, everything: bool = False) -> RelateCount
                         "model = excluded.model, scanned_at = CURRENT_TIMESTAMP",
                         (item_id, str(rows[n][3]), rows[n][4]),
                     )
-                conn.commit()
-            except BaseException:
-                conn.rollback()
-                raise
             counts.scanned += len(block)
 
     counts.suggested = conn.execute(

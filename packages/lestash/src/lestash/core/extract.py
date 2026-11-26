@@ -380,10 +380,10 @@ def regroup_transcripts(conn: sqlite3.Connection, *, dry_run: bool = False) -> R
     rebuild the items that show them. Needs no recording: only the stored text. With
     ``dry_run``, counts what would change and writes nothing. Call it with no
     transaction open."""
-    from lestash.core.database import mark_recent_history, max_history_id
+    from lestash.core.database import begin_write, mark_recent_history, max_history_id
 
     counts = RegroupCounts()
-    conn.execute("BEGIN IMMEDIATE")
+    begin_write(conn)
     try:
         rows = conn.execute(
             "SELECT sha256, text FROM blob_text WHERE tool = ? AND text LIKE '**Speaker %'",
@@ -918,7 +918,7 @@ def extract_pending(
     or with ``retry_failed``. Failures are only recorded once a file in the run has
     been read: a run whose first reads all fail stops, as the tool is broken.
     """
-    from lestash.core.database import mark_recent_history, max_history_id
+    from lestash.core.database import mark_recent_history, max_history_id, write_transaction
 
     config = config or Config.load()
     _Transcriber.configure(config)
@@ -1081,15 +1081,10 @@ def extract_pending(
         counts.engine_failed = True
         counts.stopped = "; ".join([*unavailable.values(), *filter(None, [counts.stopped])])
     try:
-        conn.execute("BEGIN IMMEDIATE")  # read and write each item under one lock
-        try:
+        with write_transaction(conn):  # read and write each item under one lock
             since = max_history_id(conn)
             changed = [i for i in item_ids if refresh_item(conn, i)]
             mark_recent_history(conn, since, "extract", item_ids=changed)
-        except BaseException:
-            conn.rollback()
-            raise
-        conn.commit()
     except sqlite3.OperationalError as e:
         counts.stopped = "; ".join(filter(None, [counts.stopped, f"database: {e}"]))
         return counts
