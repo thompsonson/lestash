@@ -90,6 +90,18 @@ def list_themes():
         return themes
 
 
+class ThemeCount(BaseModel):
+    suggested: int
+
+
+@router.get("/count", response_model=ThemeCount)
+def count_themes():
+    """How many themes are suggested now, as ``GET /api/themes`` would list."""
+    with get_db() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM themes WHERE status = 'suggested'").fetchone()[0]
+    return ThemeCount(suggested=n)
+
+
 @router.post("/{theme_id}/keep", response_model=ThemeKept, status_code=201)
 def keep_theme(theme_id: int, body: ThemeKeep | None = None):
     """Make a collection of the theme's items. ``404`` if it isn't suggested now."""

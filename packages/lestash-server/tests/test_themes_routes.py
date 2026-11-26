@@ -93,3 +93,11 @@ def test_theme_items_carry_their_kinds_plural(client, theme):
     from lestash.core.kinds import KINDS
 
     assert item["kind_plural"] == KINDS[kind].plural
+
+
+def test_the_count_matches_the_list(client, theme):
+    assert client.get("/api/themes/count").json() == {"suggested": 1}
+    theme_id = client.get("/api/themes").json()[0]["id"]
+    client.post(f"/api/themes/{theme_id}/dismiss")
+
+    assert client.get("/api/themes/count").json() == {"suggested": 0}

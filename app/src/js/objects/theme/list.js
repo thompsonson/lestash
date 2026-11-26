@@ -5,7 +5,6 @@
 import { api } from '../../api.js';
 import { navigate } from '../../router.js';
 import { escHtml } from '../../util.js';
-import { forgetThemeCount } from '../../places/library.js';
 
 const SOURCES_SHOWN = 4;
 const KINDS_SHOWN = 3;
@@ -113,12 +112,10 @@ export async function loadThemes(toast) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name }),
           });
-          forgetThemeCount();
           toast('Kept as a collection', 'ok');
           navigate(`/collections/${kept.collection_id}`);
         } else {
           await api(`/api/themes/${t.id}/dismiss`, { method: 'POST' });
-          forgetThemeCount();
           card.remove();
           left -= 1;
           showCount();

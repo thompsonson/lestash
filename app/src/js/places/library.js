@@ -128,24 +128,22 @@ export function startLibrary(show) {
   route(/^\/library$/, (m, url) => { show('tab-library', 'library'); return drawShelf(url); });
 }
 
-// How many themes are suggested: fetched when a shelf is drawn, and again after a
-// sync, a keep or a dismiss (forgetThemeCount). A failed fetch is retried next time
-let themeCount = null;
+// How many themes are suggested, asked each time the shelves are drawn: a keep,
+// dismiss or sync elsewhere shows next time. Only the latest answer is drawn
+let themeAsk = 0;
 
 async function showThemesLink(link) {
-  if (themeCount === null) {
-    try {
-      themeCount = (await api('/api/themes')).length;
-    } catch {
-      link.hidden = true;  // an older server, or offline: no link
-      return;
-    }
+  const ask = ++themeAsk;
+  let n = 0;
+  try {
+    n = (await api('/api/themes/count')).suggested;
+  } catch {
+    n = 0;  // an older server, or offline: no link
   }
-  link.innerHTML = `Suggested themes <span class="muted">${themeCount}</span>`;
-  link.hidden = !themeCount;
+  if (ask !== themeAsk) return;
+  link.innerHTML = `Suggested themes <span class="muted">${n}</span>`;
+  link.hidden = !n;
 }
 
-export function forgetThemeCount() { themeCount = null; }
-
 // After saving or syncing, counts and lists load again
-export function redrawLibrary() { shelves = null; shown = null; themeCount = null; }
+export function redrawLibrary() { shelves = null; shown = null; }
