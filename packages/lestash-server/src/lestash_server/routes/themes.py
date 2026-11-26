@@ -27,6 +27,7 @@ class ThemeItem(BaseModel):
     source_type: str
     kind: str | None = None
     kind_label: str | None = None
+    kind_plural: str | None = None  # "Replies": for counting items by kind
     title: str | None = None
     excerpt: str | None = None  # the text's start, for an item with no title
 
@@ -70,6 +71,7 @@ def list_themes():
                     source_type=found[i]["source_type"],
                     kind=found[i]["kind"],
                     kind_label=KINDS[k].label if (k := found[i]["kind"]) in KINDS else k,
+                    kind_plural=KINDS[k].plural if k in KINDS else k,
                     title=found[i]["title"],
                     excerpt=None
                     if (found[i]["title"] or "").strip()

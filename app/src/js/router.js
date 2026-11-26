@@ -156,7 +156,14 @@ export async function render() {
   } finally {
     // A later navigation owns the scroll position. An address naming a part of the
     // page (/collections#themes-title) opens there, unless going back restores a place
-    const anchor = !scrollY && url.hash && document.getElementById(decodeURIComponent(url.hash.slice(1)));
+    let anchor = null;
+    if (!scrollY && url.hash) {
+      try {
+        anchor = document.getElementById(decodeURIComponent(url.hash.slice(1)));
+      } catch {
+        anchor = null;  // a malformed #fragment opens at the top
+      }
+    }
     if (rendering === token) {
       if (anchor) anchor.scrollIntoView({ block: 'start' });
       else restoreScroll(scrollY, token);

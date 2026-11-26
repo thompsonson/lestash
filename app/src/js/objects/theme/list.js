@@ -14,27 +14,19 @@ function listed(names, shown) {
     + (names.length > shown ? ` and ${names.length - shown} more` : '');
 }
 
-// "reply" → "replies", "post" → "posts"; a label already plural stays as it is
-function plural(word) {
-  if (word.endsWith('s')) return word;
-  if (/[^aeiou]y$/.test(word)) return word.slice(0, -1) + 'ies';
-  return word + 's';
-}
-
-// Kinds in the theme, most items first, as plural labels ("posts", "chats")
+// Kinds in the theme, most items first, by the server's plural labels ("replies")
 function kindsOf(items) {
   const counts = {};
   items.forEach(i => {
-    const label = (i.kind_label || i.kind || '').toLowerCase();
+    const label = (i.kind_plural || i.kind_label || i.kind || '').toLowerCase();
     if (label) counts[label] = (counts[label] || 0) + 1;
   });
-  return Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b))
-    .map(plural);
+  return Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
 }
 
 // An item with no title shows its text's start, so the list says what it is
 function itemHtml(i) {
-  const label = i.title || i.excerpt || `Item ${i.id}`;
+  const label = (i.title || '').trim() || i.excerpt || `Item ${i.id}`;
   const kind = i.kind_label || i.kind || '';
   const what = [kind, i.source_type].filter(Boolean).join(' · ');
   return `<li><a href="/items/${i.id}">${escHtml(label)}</a> <span class="muted">${escHtml(what)}</span></li>`;
@@ -43,8 +35,9 @@ function itemHtml(i) {
 // The name is three words its items' titles share: a hint, not a title
 function themeHtml(t) {
   const kinds = kindsOf(t.items);
-  const summary = [`${t.items.length} items`, kinds.length ? listed(kinds, KINDS_SHOWN) : '',
-    `from ${listed(t.sources, SOURCES_SHOWN)}`].filter(Boolean).join(' · ');
+  const n = t.items.length;
+  const summary = [`${n} item${n === 1 ? '' : 's'}`, kinds.length ? listed(kinds, KINDS_SHOWN) : '',
+    t.sources.length ? `from ${listed(t.sources, SOURCES_SHOWN)}` : ''].filter(Boolean).join(' · ');
   return `
     <div class="item-card-header"><span class="item-title"><span class="muted">About</span> ${escHtml(t.name)}</span></div>
     <div class="item-footer"><span>${escHtml(summary)}</span></div>

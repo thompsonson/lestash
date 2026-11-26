@@ -73,8 +73,10 @@ async function drawShelf(url) {
     const on = s === current;
     return `<a href="/library?shelf=${s.shelf}" class="${on ? 'on' : ''}" aria-current="${on ? 'page' : 'false'}">${escHtml(s.label)} <span class="muted">${s.count.toLocaleString()}</span></a>`;
   }).join('')
-    // Themes cut across the shelves, so they sit beside them, not among them
-    + '<a href="/collections#themes-title" class="shelf-themes">Suggested themes</a>';
+    // Themes cut across the shelves, so they sit beside them, not among them.
+    // Shown once the server says there are some
+    + '<a href="/collections#themes-title" class="shelf-themes" hidden>Suggested themes</a>';
+  showThemesLink(tab.querySelector('.shelf-themes'));
   const key = current.shelf + '?' + params.toString();
   if (key === shown) return;
   shown = key;
@@ -127,4 +129,18 @@ export function startLibrary(show) {
 }
 
 // After saving or syncing, counts and lists load again
+let themeCount = null;  // fetched once per page load
+
+async function showThemesLink(link) {
+  if (themeCount === null) {
+    try {
+      themeCount = (await api('/api/themes')).length;
+    } catch {
+      themeCount = 0;  // an older server, or offline: no link
+    }
+  }
+  link.innerHTML = `Suggested themes <span class="muted">${themeCount}</span>`;
+  link.hidden = !themeCount;
+}
+
 export function redrawLibrary() { shelves = null; shown = null; }

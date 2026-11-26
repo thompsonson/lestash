@@ -82,3 +82,14 @@ def test_an_untitled_item_is_listed_by_its_text_and_kind(client, theme):
     titled = next(i for i in items if i["id"] == theme[1])
     assert titled["excerpt"] is None
     assert titled["kind_label"]
+
+
+def test_theme_items_carry_their_kinds_plural(client, theme):
+    with deps.get_db() as conn:
+        kind = conn.execute("SELECT kind FROM items WHERE id = ?", (theme[0],)).fetchone()[0]
+
+    item = next(i for i in client.get("/api/themes").json()[0]["items"] if i["id"] == theme[0])
+
+    from lestash.core.kinds import KINDS
+
+    assert item["kind_plural"] == KINDS[kind].plural

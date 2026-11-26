@@ -1031,6 +1031,7 @@ body:has(#tab-timeline.active) main { touch-action: pan-y pinch-zoom; }
 .theme-keep label { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; flex: 1 1 16rem; font-size: 0.85rem; }
 .theme-keep input { flex: 1 1 12rem; min-height: 2.2rem; }
 .switch a.shelf-themes { margin-left: auto; color: var(--accent-text); }
+.switch a[hidden] { display: none; }
 
 /* + Add → File: the files to save, each removable */
 .add-files-list { list-style: none; margin: 0 0 0.5rem; padding: 0; max-height: 200px; overflow-y: auto; }
