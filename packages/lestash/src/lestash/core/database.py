@@ -951,7 +951,7 @@ def _migrate_40(conn: sqlite3.Connection) -> None:
             if isinstance(metadata, dict) and any(k in metadata for k in RETIRED_YOUTUBE_KEYS):
                 for key in RETIRED_YOUTUBE_KEYS:
                     metadata.pop(key, None)
-                updates.append((json.dumps(metadata), item_id))
+                updates.append((json.dumps(metadata) if metadata else None, item_id))
         conn.executemany("UPDATE items SET metadata = ? WHERE id = ?", updates)
         conn.execute(
             "UPDATE item_history SET change_reason = ? WHERE id > ?",

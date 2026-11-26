@@ -405,6 +405,7 @@ def test_migration_40_drops_counts_from_youtube_items_only(test_db) -> None:
     with get_connection(test_db) as conn:
         video = _item(conn, f"history:{VID}", "desc", {"channel_title": "Chan", **counts})
         other = _item(conn, "post-1", "hi", {"like_count": 5}, source_type="bluesky")
+        only_counts = _item(conn, "comment:c1", "hi", {"like_count": 1, "reply_count": 0})
         bad = _item(conn, f"history:{OTHER}", "desc")
         conn.execute("UPDATE items SET metadata = 'not json' WHERE id = ?", (bad,))
         conn.execute("PRAGMA user_version = 39")
@@ -417,3 +418,4 @@ def test_migration_40_drops_counts_from_youtube_items_only(test_db) -> None:
         assert [r[0] for r in reasons] == [MIGRATION_40_REASON]
         assert json.loads(_row(conn, other)["metadata"]) == {"like_count": 5}
         assert _row(conn, bad)["metadata"] == "not json"
+        assert _row(conn, only_counts)["metadata"] is None  # as the sync writes {}
