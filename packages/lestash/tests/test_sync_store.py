@@ -287,3 +287,21 @@ def test_an_interrupt_commits_nothing_more(test_db, monkeypatch) -> None:
         _sync(test_db, monkeypatch, _Interrupted())
     with get_connection(test_db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 0
+
+
+def test_a_lock_not_had_is_not_waited_for_twice(test_db, monkeypatch) -> None:
+    """#401: the error handler doesn't try the same items' write again."""
+    import sqlite3
+
+    tries: list[int] = []
+
+    def locked(conn) -> None:
+        tries.append(1)
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(core_sync, "begin_write", locked)
+    with get_connection(test_db) as conn:
+        store = core_sync.SyncStore(conn, "audible")
+        with pytest.raises(sqlite3.OperationalError):
+            store.run(iter([_item("a")]))
+    assert tries == [1]

@@ -178,14 +178,16 @@ def store_links(conn: sqlite3.Connection, links: Iterable[Link]) -> int:
     were added. The caller commits.
 
     Pass a list found beforehand to keep the write short: ``find_links`` reads every item.
+    A link to an item deleted since it was found is skipped.
     """
-    before = conn.total_changes
-    conn.executemany(
+    # rowcount, not total_changes: reading items can flush FTS5's buffered writes, which
+    # total_changes counts too
+    return conn.executemany(
         "INSERT OR IGNORE INTO item_links (from_id, to_id, kind, evidence, origin, status) "
-        f"VALUES (?, ?, ?, ?, '{ORIGIN}', 'confirmed')",
-        links,
-    )
-    return conn.total_changes - before
+        f"SELECT ?, ?, ?, ?, '{ORIGIN}', 'confirmed' WHERE EXISTS "
+        "(SELECT 1 FROM items WHERE id = ?) AND EXISTS (SELECT 1 FROM items WHERE id = ?)",
+        ((*link, link.from_id, link.to_id) for link in links),
+    ).rowcount
 
 
 def links_of(conn: sqlite3.Connection, item_id: int) -> list[dict[str, Any]]:

@@ -37,8 +37,9 @@ from lestash.models.sync import SyncCheckpoint
 logger = logging.getLogger(__name__)
 
 # A sync gathers what the plugin yields with no write open, then writes it in one short
-# transaction once this many items wait, or once the first has waited FLUSH_AFTER_S. So
-# the write lock is never held while a plugin fetches (#401). Safe: a re-import upserts
+# transaction once this many items wait, or when an item comes after the first has
+# waited FLUSH_AFTER_S (a plugin's fetch is never cut short). So the write lock is never
+# held while a plugin fetches (#401). Safe: a re-import upserts
 # and merges, so items written before their checkpoint are only imported again.
 COMMIT_EVERY = 500
 FLUSH_AFTER_S = 5.0
@@ -161,9 +162,11 @@ class SyncStore:
         """
         if not pending and checkpoint is None:
             return
-        begin_write(self.conn)
-        began = time.monotonic()
         try:
+            # Inside the try: if the lock can't be had, the items are dropped as the
+            # error ends the sync, and not waited for again
+            begin_write(self.conn)
+            began = time.monotonic()
             for item in pending:
                 self._store(item)
             if checkpoint is not None:
