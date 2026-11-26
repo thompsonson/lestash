@@ -5,6 +5,7 @@
 import { api } from '../../api.js';
 import { navigate } from '../../router.js';
 import { escHtml } from '../../util.js';
+import { forgetThemeCount } from '../../places/library.js';
 
 const SOURCES_SHOWN = 4;
 const KINDS_SHOWN = 3;
@@ -64,15 +65,19 @@ export async function loadThemes(toast) {
     return;
   }
   document.getElementById('themes-title').style.display = '';
-  const jump = document.getElementById('themes-jump');
-  if (jump) {
-    jump.textContent = `Suggested themes (${themes.length})`;
-    jump.hidden = !themes.length;
-  }
-  if (!themes.length) {
-    list.innerHTML = '<div class="empty-state muted" style="padding:1rem;text-align:center">No suggested themes now.</div>';
-    return;
-  }
+  let left = themes.length;
+  const showCount = () => {
+    const jump = document.getElementById('themes-jump');
+    if (jump) {
+      jump.textContent = `Suggested themes (${left})`;
+      jump.hidden = !left;
+    }
+    if (!left) {
+      list.innerHTML = '<div class="empty-state muted" style="padding:1rem;text-align:center">No suggested themes now.</div>';
+    }
+  };
+  showCount();
+  if (!left) return;
   list.innerHTML = '';
   themes.forEach(t => {
     const card = document.createElement('div');
@@ -108,11 +113,15 @@ export async function loadThemes(toast) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name }),
           });
+          forgetThemeCount();
           toast('Kept as a collection', 'ok');
           navigate(`/collections/${kept.collection_id}`);
         } else {
           await api(`/api/themes/${t.id}/dismiss`, { method: 'POST' });
+          forgetThemeCount();
           card.remove();
+          left -= 1;
+          showCount();
           toast("Dismissed; it won't be suggested again", 'ok');
         }
       } catch (err) {

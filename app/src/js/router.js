@@ -165,7 +165,8 @@ export async function render() {
       }
     }
     if (rendering === token) {
-      if (anchor) anchor.scrollIntoView({ block: 'start' });
+      // A hidden element can't be scrolled to: open as any other page would
+      if (anchor && anchor.getClientRects().length) anchor.scrollIntoView({ block: 'start' });
       else restoreScroll(scrollY, token);
     }
   }

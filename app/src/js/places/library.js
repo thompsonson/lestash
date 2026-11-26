@@ -128,19 +128,24 @@ export function startLibrary(show) {
   route(/^\/library$/, (m, url) => { show('tab-library', 'library'); return drawShelf(url); });
 }
 
-// After saving or syncing, counts and lists load again
-let themeCount = null;  // fetched once per page load
+// How many themes are suggested: fetched when a shelf is drawn, and again after a
+// sync, a keep or a dismiss (forgetThemeCount). A failed fetch is retried next time
+let themeCount = null;
 
 async function showThemesLink(link) {
   if (themeCount === null) {
     try {
       themeCount = (await api('/api/themes')).length;
     } catch {
-      themeCount = 0;  // an older server, or offline: no link
+      link.hidden = true;  // an older server, or offline: no link
+      return;
     }
   }
   link.innerHTML = `Suggested themes <span class="muted">${themeCount}</span>`;
   link.hidden = !themeCount;
 }
 
-export function redrawLibrary() { shelves = null; shown = null; }
+export function forgetThemeCount() { themeCount = null; }
+
+// After saving or syncing, counts and lists load again
+export function redrawLibrary() { shelves = null; shown = null; themeCount = null; }
