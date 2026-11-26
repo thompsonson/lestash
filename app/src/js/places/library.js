@@ -75,7 +75,8 @@ async function drawShelf(url) {
   }).join('')
     // Themes cut across the shelves, so they sit beside them, not among them.
     // Shown once the server says there are some
-    + '<a href="/collections#themes-title" class="shelf-themes" hidden>Suggested themes</a>';
+    // Drawn with the last count seen, so it doesn't blink on each change; then asked again
+    + `<a href="/collections#themes-title" class="shelf-themes"${lastThemes ? '' : ' hidden'}>Suggested themes <span class="muted">${lastThemes}</span></a>`;
   showThemesLink(tab.querySelector('.shelf-themes'));
   const key = current.shelf + '?' + params.toString();
   if (key === shown) return;
@@ -131,6 +132,7 @@ export function startLibrary(show) {
 // How many themes are suggested, asked each time the shelves are drawn: a keep,
 // dismiss or sync elsewhere shows next time. Only the latest answer is drawn
 let themeAsk = 0;
+let lastThemes = 0;  // only to draw the link before the answer comes
 
 async function showThemesLink(link) {
   const ask = ++themeAsk;
@@ -141,6 +143,7 @@ async function showThemesLink(link) {
     n = 0;  // an older server, or offline: no link
   }
   if (ask !== themeAsk) return;
+  lastThemes = n;
   link.innerHTML = `Suggested themes <span class="muted">${n}</span>`;
   link.hidden = !n;
 }
