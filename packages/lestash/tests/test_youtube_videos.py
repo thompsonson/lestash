@@ -393,3 +393,28 @@ def test_a_place_under_a_copy_not_yet_folded_makes_no_loop(test_db) -> None:
         parents = dict(conn.execute("SELECT id, parent_id FROM items").fetchall())
         assert parents[video] == page
         assert parents[note] == video
+
+
+def test_merge_drops_counts_stored_before_413(test_db) -> None:
+    from lestash.importers import merge_with_stored
+    from lestash.models.item import ItemCreate
+
+    with get_connection(test_db) as conn:
+        _item(
+            conn,
+            f"history:{VID}",
+            "desc",
+            {"channel_title": "Chan", "view_count": 10, "like_count": 2, "comment_count": 1},
+        )
+        item = ItemCreate(
+            source_type="youtube",
+            source_id=f"history:{VID}",
+            content="desc",
+            metadata={"channel_title": "Chan"},
+        )
+        assert merge_with_stored(conn, item)
+
+    metadata = item.metadata or {}
+    assert metadata["channel_title"] == "Chan"
+    for key in ("view_count", "like_count", "comment_count"):
+        assert key not in metadata
