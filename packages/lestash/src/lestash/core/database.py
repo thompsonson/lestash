@@ -13,6 +13,7 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
@@ -1319,6 +1320,49 @@ def init_database(config: Config | None = None) -> None:
 # shorter than a long sync's commit interval, so the server or a second sync would fail
 # with "database is locked".
 BUSY_TIMEOUT_S = 30.0
+
+# A write that still finds the lock taken after BUSY_TIMEOUT_S waits this long, then
+# tries once more (#401)
+LOCK_RETRY_PAUSE_S = 1.0
+
+
+def begin_write(conn: sqlite3.Connection) -> None:
+    """Take the write lock now (``BEGIN IMMEDIATE``), so no write starts and then waits.
+
+    Do slow work (network, files, long scans) before this, never between it and the
+    commit: other writers wait for the lock all that time. If another writer still holds
+    the lock after ``BUSY_TIMEOUT_S``, wait ``LOCK_RETRY_PAUSE_S`` and try once more.
+
+    Raises:
+        RuntimeError: a transaction is already open on ``conn``, so the lock may have
+            been held since an earlier write.
+        sqlite3.OperationalError: the lock is still taken on the second try.
+    """
+    if conn.in_transaction:
+        raise RuntimeError("A write is already open on this connection; commit it first")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as e:
+        if "locked" not in str(e):
+            raise
+        logger.warning("The database stayed locked; trying the write once more")
+        time.sleep(LOCK_RETRY_PAUSE_S)
+        conn.execute("BEGIN IMMEDIATE")
+
+
+@contextmanager
+def write_transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """One short write: take the lock (see ``begin_write``), commit, or roll back on error.
+
+    Prepare everything slow before entering, so only the writes run inside.
+    """
+    begin_write(conn)
+    try:
+        yield conn
+    except BaseException:
+        conn.rollback()
+        raise
+    conn.commit()
 
 
 @contextmanager

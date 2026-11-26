@@ -10,6 +10,7 @@ import typer
 from lestash.cli import sources as sources_cli
 from lestash.core.database import get_connection
 from lestash.models.item import ItemCreate
+from lestash.models.sync import SyncCheckpoint
 
 
 def _item(source_id: str, parent: str | None = None) -> ItemCreate:
@@ -201,6 +202,74 @@ def test_a_long_sync_commits_as_it_goes(test_db, monkeypatch) -> None:
     assert _last_sync(test_db) == ("completed", 5)
 
 
+def _can_write(test_db) -> bool:
+    """Whether another connection takes the write lock within 0.2 s."""
+    import sqlite3
+
+    from lestash.core.database import get_db_path
+
+    other = sqlite3.connect(get_db_path(test_db), timeout=0.2)
+    try:
+        other.execute("BEGIN IMMEDIATE")
+        other.rollback()
+        return True
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        other.close()
+
+
+class _Fetcher:
+    """Checks, while it 'fetches' each next item, that others can still write."""
+
+    def __init__(self, test_db, n: int) -> None:
+        self.test_db, self.n = test_db, n
+        self.could_write: list[bool] = []
+
+    def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:
+        for i in range(self.n):
+            self.could_write.append(_can_write(self.test_db))
+            yield _item(f"i{i}")
+            if i == 1:
+                yield SyncCheckpoint(key="cursor", value={"last": "i1"})
+
+
+def test_no_write_is_open_while_the_plugin_fetches(test_db, monkeypatch) -> None:
+    """#401: a sync held the lock for 2 minutes while its plugin worked."""
+    fetcher = _Fetcher(test_db, 4)
+    assert _sync(test_db, monkeypatch, fetcher) == 0
+    assert fetcher.could_write == [True] * 4
+    assert _last_sync(test_db) == ("completed", 4)
+
+
+def test_a_checkpoint_is_written_with_the_items_before_it(test_db, monkeypatch) -> None:
+    from lestash.core.database import get_checkpoints
+
+    seen: list[int] = []
+
+    class _Checkpoints:
+        def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:
+            yield _item("a")
+            yield _item("b")
+            yield SyncCheckpoint(key="cursor", value={"last": "b"})
+            with get_connection(test_db) as other:
+                seen.append(other.execute("SELECT COUNT(*) FROM items").fetchone()[0])
+                seen.append(len(get_checkpoints(other, "audible")))
+            yield _item("c")
+
+    assert _sync(test_db, monkeypatch, _Checkpoints()) == 0
+    assert seen == [2, 1]
+    assert _last_sync(test_db) == ("completed", 3)
+
+
+def test_a_slow_plugin_has_its_items_written_after_a_while(test_db, monkeypatch) -> None:
+    """Items don't wait unwritten for the batch to fill while a slow plugin works."""
+    monkeypatch.setattr(core_sync, "FLUSH_AFTER_S", 0.0)
+    watcher = _Watcher(test_db, 3)
+    assert _sync(test_db, monkeypatch, watcher) == 0
+    assert watcher.seen == [0, 1, 2]
+
+
 def test_connections_wait_for_the_write_lock(test_db) -> None:
     """SQLite's default 5 s isn't long enough to wait out a sync's write."""
     with get_connection(test_db) as conn:
@@ -218,3 +287,112 @@ def test_an_interrupt_commits_nothing_more(test_db, monkeypatch) -> None:
         _sync(test_db, monkeypatch, _Interrupted())
     with get_connection(test_db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 0
+
+
+def test_a_lock_not_had_is_not_waited_for_twice(test_db, monkeypatch) -> None:
+    """#401: the error handler doesn't try the same items' write again."""
+    import sqlite3
+
+    tries: list[str] = []
+
+    def locked(conn) -> None:
+        tries.append("write")
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(core_sync, "begin_write", locked)
+    # Nor does it go on to link, which writes too
+    monkeypatch.setattr(core_sync, "resolve_parent_source_ids", lambda *a: tries.append("link"))
+    with get_connection(test_db) as conn:
+        store = core_sync.SyncStore(conn, "audible")
+        with pytest.raises(sqlite3.OperationalError):
+            store.run(iter([_item("a")]))
+    assert tries == ["write"]
+
+
+def test_a_lock_not_had_after_items_were_stored_still_links_them(test_db, monkeypatch) -> None:
+    import sqlite3
+
+    real_begin = core_sync.begin_write
+    calls: list[int] = []
+
+    def second_locked(conn) -> None:
+        calls.append(1)
+        if len(calls) == 2:
+            raise sqlite3.OperationalError("database is locked")
+        real_begin(conn)
+
+    monkeypatch.setattr(core_sync, "COMMIT_EVERY", 1)
+    monkeypatch.setattr(core_sync, "begin_write", second_locked)
+    linked: list[set[str]] = []
+    monkeypatch.setattr(
+        core_sync, "resolve_parent_source_ids", lambda conn, types: linked.append(types) or 0
+    )
+    with get_connection(test_db) as conn:
+        store = core_sync.SyncStore(conn, "audible")
+        with pytest.raises(sqlite3.OperationalError):
+            store.run(iter([_item("a"), _item("b")]))
+        assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
+    assert linked == [{"audible"}]
+
+
+class _PluginLocked:
+    def sync(self, config: dict) -> Iterator[ItemCreate]:
+        import sqlite3
+
+        yield _item("a")
+        raise sqlite3.OperationalError("database is locked")
+
+
+def test_a_locked_error_from_the_plugin_still_stores_what_it_yielded(test_db, monkeypatch) -> None:
+    """Only the store's own lock failure skips storing: not one the plugin raises."""
+    assert _sync(test_db, monkeypatch, _PluginLocked()) == 1
+    assert _last_sync(test_db) == ("failed", 1)
+
+
+def _lock_on(calls: list[int], n: int):
+    """A begin_write whose n-th call finds the lock taken."""
+    import sqlite3
+
+    real_begin = core_sync.begin_write
+
+    def begin(conn) -> None:
+        calls.append(1)
+        if len(calls) == n:
+            raise sqlite3.OperationalError("database is locked")
+        real_begin(conn)
+
+    return begin
+
+
+def _stored_then(fail: bool) -> Iterator[ItemCreate | SyncCheckpoint]:
+    """Item a, written with a checkpoint; then b, left pending; then the plugin ends."""
+    yield _item("a")
+    yield SyncCheckpoint(key="cursor", value={"last": "a"})
+    yield _item("b")
+    if fail:
+        raise RuntimeError("API went away")
+
+
+@pytest.mark.parametrize(
+    ("items", "error"),
+    [
+        # The last flush, after the plugin ends, finds the lock taken
+        (lambda: _stored_then(fail=False), "locked"),
+        # The plugin fails, then storing what it yielded finds the lock taken
+        (lambda: _stored_then(fail=True), "API went away"),
+    ],
+)
+def test_items_stored_before_a_lock_failure_are_linked(test_db, monkeypatch, items, error) -> None:
+    """#401 review: every way out links what the sync stored."""
+    monkeypatch.setattr(core_sync, "FLUSH_AFTER_S", 60.0)
+    monkeypatch.setattr(core_sync, "begin_write", _lock_on([], 2))
+    linked: list[set[str]] = []
+    monkeypatch.setattr(
+        core_sync, "resolve_parent_source_ids", lambda conn, types: linked.append(types) or 0
+    )
+    with get_connection(test_db) as conn:
+        store = core_sync.SyncStore(conn, "audible")
+        with pytest.raises(Exception, match=error):
+            store.run(items())
+        assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
+    assert linked == [{"audible"}]

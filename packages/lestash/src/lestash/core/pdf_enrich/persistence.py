@@ -17,7 +17,8 @@ when the same image file comes back, and dropped when it does not. The parent's
 `metadata.pdf_sha256` and `metadata.extractor_version` track which run
 produced the current state.
 
-All work happens in a single transaction.
+Image files are saved first, with no write open; the rows are then written in one
+short transaction, so the write lock is never held for disk work (#401).
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from lestash.core.database import (
     mark_recent_history,
     max_history_id,
     save_media_file,
+    write_transaction,
 )
 
 from .images import apply_images
@@ -80,16 +82,17 @@ def persist_enrichment(
     item_id: int,
     enriched: EnrichedPdf,
 ) -> None:
-    """Write the EnrichedPdf to the database in one transaction."""
-    try:
-        image_replacements = _store_images(conn, config, item_id, enriched.images)
+    """Save the EnrichedPdf's image files, then write its rows in one transaction.
+
+    A file saved for a write that then fails stays on disk; files are named by their
+    content, so a rerun reuses it.
+    """
+    files = _save_image_files(config, item_id, enriched.images)
+    with write_transaction(conn):
+        image_replacements = _store_images(conn, item_id, enriched.images, files)
         rewritten_content = apply_images(enriched.content, image_replacements)
         _upsert_annotations(conn, item_id, enriched.annotations)
         _update_parent_item(conn, item_id, rewritten_content, enriched, status="ok")
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
 
 
 def mark_source_unavailable(conn: sqlite3.Connection, item_id: int) -> None:
@@ -109,13 +112,23 @@ def mark_source_unavailable(conn: sqlite3.Connection, item_id: int) -> None:
 # --- Internal -----------------------------------------------------------
 
 
+def _save_image_files(config: Config, item_id: int, images: list[ExtractedImage]) -> dict[str, str]:
+    """Save each distinct image to media storage. Returns {xref_hash: local_path}."""
+    files: dict[str, str] = {}
+    for image in images:
+        if image.xref_hash not in files:
+            filename = f"{image.xref_hash[:12]}{_ext_for_mime(image.mime_type)}"
+            files[image.xref_hash] = save_media_file(item_id, image.bytes_, filename, config=config)
+    return files
+
+
 def _store_images(
     conn: sqlite3.Connection,
-    config: Config,
     item_id: int,
     images: list[ExtractedImage],
+    files: dict[str, str],
 ) -> dict[int, str]:
-    """Save image bytes to media storage and upsert item_media rows.
+    """Upsert item_media rows for images saved by `_save_image_files` (`files`).
 
     Dedups by `xref_hash`: a header image appearing on N pages becomes one
     media row whose media_id is reused for all N placeholder replacements.
@@ -136,9 +149,7 @@ def _store_images(
         if image.xref_hash in hash_to_media_id:
             media_id = hash_to_media_id[image.xref_hash]
         else:
-            ext = _ext_for_mime(image.mime_type)
-            filename = f"{image.xref_hash[:12]}{ext}"
-            rel_path = save_media_file(item_id, image.bytes_, filename, config=config)
+            rel_path = files[image.xref_hash]
             alt_text = f"PDF image (page {image.page + 1})"
             media_id = add_item_media(
                 conn,

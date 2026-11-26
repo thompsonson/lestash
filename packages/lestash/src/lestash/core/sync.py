@@ -6,6 +6,7 @@ import logging
 import signal
 import sqlite3
 import threading
+import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -19,13 +20,15 @@ from lestash.core.activities import record_activities
 from lestash.core.agents import link_agents
 from lestash.core.database import (
     add_item_media,
+    begin_write,
     resolve_parent_id,
     resolve_parent_source_ids,
     save_checkpoint,
+    write_transaction,
 )
 from lestash.core.extract import content_on_import
 from lestash.core.import_reminders import record_import
-from lestash.core.links import link_items
+from lestash.core.links import find_links, store_links
 from lestash.core.pdfs import link_copies
 from lestash.importers import merge_with_stored
 from lestash.models.item import ItemCreate
@@ -33,10 +36,16 @@ from lestash.models.sync import SyncCheckpoint
 
 logger = logging.getLogger(__name__)
 
-# Commit this often, so a long sync (a Takeout zip takes minutes) doesn't hold the write
-# lock throughout. Safe: a re-import upserts and merges, so items committed before their
-# checkpoint are only imported again.
+# A sync gathers what the plugin yields with no write open, then writes it in one short
+# transaction once this many items wait, or when an item comes after the first has
+# waited FLUSH_AFTER_S (a plugin's fetch is never cut short). So the write lock is never
+# held while a plugin fetches (#401). Safe: a re-import upserts
+# and merges, so items written before their checkpoint are only imported again.
 COMMIT_EVERY = 500
+FLUSH_AFTER_S = 5.0
+# A batch whose write holds the lock longer than this is logged, to show which work
+# inside it is slow
+SLOW_WRITE_S = 2.0
 
 
 @dataclass(frozen=True)
@@ -117,27 +126,79 @@ class SyncStore:
     def run(self, items: Iterable[ItemCreate | SyncCheckpoint]) -> None:
         """Store every item, then link children to parents yielded later.
 
-        If the plugin raises, what was stored is committed and linked, then the error
-        propagates. A ``KeyboardInterrupt`` commits nothing more.
+        Items wait in memory while the plugin works, and are written in batches (see
+        ``COMMIT_EVERY``), so no write is open while the plugin fetches. If the plugin
+        raises, what it yielded is stored and linked, then the error propagates. A
+        ``KeyboardInterrupt`` stores nothing more.
+
+        Every way out takes the same steps: store what is pending, link, then raise the
+        first error. Linking is skipped only when the store's write lock couldn't be had
+        and nothing was stored, as it would only wait out the lock again.
         """
+        pending: list[ItemCreate] = []
+        first_at = 0.0  # when the oldest pending item came
+        errors: list[Exception] = []
         try:
             for item in items:
                 if isinstance(item, SyncCheckpoint):
-                    # Commit the plugin's state with the items yielded before it
-                    save_checkpoint(self.conn, self.source, item.key, item.value)
-                    self._commit()
+                    # The plugin's state is written with the items yielded before it
+                    self._write(pending, item)
                     continue
-                if self._store(item) and self.items % COMMIT_EVERY == 0:
-                    self._commit()
-        except Exception:
-            self._commit()
+                if not pending:
+                    first_at = time.monotonic()
+                pending.append(item)
+                if len(pending) >= COMMIT_EVERY or time.monotonic() - first_at >= FLUSH_AFTER_S:
+                    self._write(pending)
+        except Exception as e:
+            errors.append(e)
+        try:
+            self._write(pending)  # nothing, after a write that failed: it empties pending
+        except Exception as e:
+            errors.append(e)
+        lock_not_had = any(isinstance(e, _LockNotHad) for e in errors)
+        if not lock_not_had or self.committed.added or self.committed.updated:
             try:
                 self._sweep()
-            except Exception:
-                logger.exception("Linking parents failed after a failed %s sync", self.source)
+            except Exception as e:
+                errors.append(e)
+        for later in errors[1:]:
+            logger.error("Also failed in the %s sync", self.source, exc_info=later)
+        if errors:
+            raise errors[0]
+
+    def _write(self, pending: list[ItemCreate], checkpoint: SyncCheckpoint | None = None) -> None:
+        """Store the pending items, and the checkpoint after them, in one transaction.
+
+        Empties ``pending``. If an item fails, what was stored before it is committed and
+        the rest are dropped, as the error ends the sync.
+        """
+        if not pending and checkpoint is None:
+            return
+        try:
+            # Inside the try: if the lock can't be had, the items are dropped as the
+            # error ends the sync, and not waited for again
+            try:
+                begin_write(self.conn)
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e):
+                    raise _LockNotHad(str(e)) from e
+                raise
+            began = time.monotonic()
+            for item in pending:
+                self._store(item)
+            if checkpoint is not None:
+                save_checkpoint(self.conn, self.source, checkpoint.key, checkpoint.value)
+        except Exception:
+            self._commit()
             raise
+        finally:
+            count = len(pending)
+            pending.clear()
         self._commit()
-        self._sweep()
+        if (held := time.monotonic() - began) > SLOW_WRITE_S:
+            logger.warning(
+                "Writing %d %s items held the write lock for %.1f s", count, self.source, held
+            )
 
     def _commit(self) -> None:
         self.conn.commit()
@@ -153,10 +214,11 @@ class SyncStore:
             if self.wrote_notebooks:
                 dedupe_notebooks(self.conn, self.source)
             try:
-                link_items(self.conn)
-                self.conn.commit()
+                # Found before the write: finding reads every item (#401)
+                links = list(find_links(self.conn))
+                with write_transaction(self.conn):
+                    store_links(self.conn, links)
             except Exception:
-                self.conn.rollback()
                 logger.exception("Linking items failed after the %s sync", self.source)
             try:
                 link_agents(self.conn)
@@ -259,6 +321,13 @@ class SyncStore:
             else:
                 self.unchanged += 1
         return True
+
+
+class _LockNotHad(sqlite3.OperationalError):
+    """The store's own write couldn't take the lock, even after begin_write's retry.
+
+    Its own type, so a "locked" error the plugin raises isn't taken for one.
+    """
 
 
 INTERRUPTED = "interrupted"

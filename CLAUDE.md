@@ -32,6 +32,7 @@ cd app && npx tauri dev    # Run desktop app
 - Post-sync hooks resolve parent references (e.g., LinkedIn reactions → parent post)
 - Display helpers in `core/enrichment.py` (shared by CLI + server)
 - SQLite WAL mode for concurrent access
+- No slow work (network, files, long scans) while a write is open: prepare first, then write in `write_transaction(conn)` from `core/database.py` (#401)
 - `datetime(created_at)` in ORDER BY for timezone-safe sorting
 - Default item listings filter `parent_id IS NULL`; children shown in detail view
 - Frontend: plain ES modules, no framework, no build step; one codebase for Tauri and the browser

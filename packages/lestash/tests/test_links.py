@@ -154,14 +154,14 @@ def test_a_linkedin_reaction_or_comment_is_never_a_link_target(test_db) -> None:
 
 
 def test_a_failed_linker_leaves_the_sync_done(test_db, monkeypatch) -> None:
-    def fail(conn):
+    def fail(conn, links):
         conn.execute(
             "INSERT INTO item_links (from_id, to_id, kind, origin, status) "
             "VALUES (1, 1, 'x', 'test', 'confirmed')"
         )
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr("lestash.core.sync.link_items", fail)
+    monkeypatch.setattr("lestash.core.sync.store_links", fail)
     with get_connection(test_db) as conn:
         store = SyncStore(conn, "bluesky")
         store.run(iter([ItemCreate(source_type="bluesky", source_id="b6", content="x")]))
@@ -215,3 +215,19 @@ def test_a_linkedin_cross_post_is_a_syndication(test_db) -> None:
         )
         link_items(conn)
         assert [(r[0], r[1], r[2]) for r in _links(conn)] == [(original, copy, "syndication")]
+
+
+def test_a_link_to_an_item_deleted_since_it_was_found_is_skipped(test_db) -> None:
+    """#401: links are found before the write, so an item can go in between."""
+    from lestash.core.links import find_links, store_links
+
+    with get_connection(test_db) as conn:
+        post = _add(conn, "microblog", "p9", url="https://matt.example/p9")
+        _add(conn, "claude", "c9", content="https://matt.example/p9")
+        other = _add(conn, "microblog", "p10", url="https://matt.example/p10")
+        _add(conn, "claude", "c10", content="https://matt.example/p10")
+        links = list(find_links(conn))
+        assert len(links) == 2
+        conn.execute("DELETE FROM items WHERE id = ?", (post,))
+        assert store_links(conn, links) == 1
+        assert [row[1] for row in _links(conn)] == [other]
