@@ -591,7 +591,7 @@ Also seen: 44 themed items are already in 9 of your collections, and only 9 them
 | Relationship | From the theme | From the other end | Now |
 |---|---|---|---|
 | Theme holds Items | its page, items by kind, with card faces | item page: "In theme …" | one end, bare links |
-| Theme became a Collection | "Kept as …" with a link | collection page: its description, "Kept from a suggested theme" | collection end only, as text |
+| Theme became a Collection | "Kept as …" with a link | collection page: "From the suggested theme …", linked to the theme's page, which stays reachable once kept | collection end only, as plain text with no link |
 | Theme overlaps a Collection | "12 of these are in *a collection*" | — | neither |
 | Theme's items link each other | the related links inside it, as the reason | item page Links, as now | neither |
 | Theme and People | the people behind its items, most first | — | neither |
