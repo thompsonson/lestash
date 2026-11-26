@@ -639,11 +639,18 @@ def link_agents(conn: sqlite3.Connection) -> int:
     """Record the agents of every item whose source names them, and the people it
     mentions. Returns how many item agents and mentions were added; safe to run again.
     The caller commits."""
-    if not conn.in_transaction:
-        # Write-lock first: two passes at once (a sync, an upload) would each make the
-        # people known by name that the other is making
-        conn.execute("BEGIN IMMEDIATE")
     ctx = _context(conn)
+    # Yours first: an account of yours must not be made someone else's because an item
+    # naming it as a recipient came first. Found before the write: it reads every item
+    found = sorted(agents_of(conn, ctx), key=lambda found: not found[2].is_self)
+    if not conn.in_transaction:
+        # Write-lock before reading people: two passes at once (a sync, an upload)
+        # would each make the people known by name that the other is making
+        from lestash.core.database import begin_write
+
+        begin_write(conn)
+    # An item deleted or put away since it was found gets no agents
+    held = {row[0] for row in conn.execute("SELECT id FROM items WHERE held = 1")}
     people = _People(conn)
     people.you(ctx.your_name)
     # An agent known by name only has no account to find it by: its item, role and
@@ -654,11 +661,10 @@ def link_agents(conn: sqlite3.Connection) -> int:
             "SELECT item_id, role, position FROM item_agents WHERE evidence = ?", (NAME,)
         )
     }
-    # Yours first: an account of yours must not be made someone else's because an item
-    # naming it as a recipient came first
-    found = sorted(agents_of(conn, ctx), key=lambda found: not found[2].is_self)
     rows, mentions = [], []
     for item_id, source_type, ref in found:
+        if item_id not in held:
+            continue
         if ref.identifier is None and (item_id, ref.role, ref.position) in named:
             continue
         origin = f"import:{source_type}"

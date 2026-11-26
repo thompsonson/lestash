@@ -774,3 +774,43 @@ def test_your_account_named_by_the_placeholder_handle_is_repaired(test_db) -> No
             ).fetchone()[0]
             == "me.x"
         )
+
+
+def test_agents_are_found_with_no_write_open(test_db, monkeypatch) -> None:
+    """The scan of every item runs before the write lock is taken (#416)."""
+    from lestash.core import agents
+
+    real = agents.agents_of
+    seen: list[bool] = []
+
+    def spy(conn: sqlite3.Connection, ctx: Any = None) -> Any:
+        seen.append(conn.in_transaction)
+        return real(conn, ctx)
+
+    monkeypatch.setattr(agents, "agents_of", spy)
+    with get_connection(test_db) as conn:
+        _item(conn, "youtube", "history:a", "BBC News", {"channel_id": "UC1"})
+        conn.commit()
+        assert link_agents(conn) == 1
+    assert seen == [False]
+
+
+def test_an_item_deleted_after_it_was_found_gets_no_agents(test_db, monkeypatch) -> None:
+    """An item gone by the time of the write is skipped, not a failed insert (#416)."""
+    from lestash.core import agents
+
+    real = agents.agents_of
+
+    def found_then_deleted(conn: sqlite3.Connection, ctx: Any = None) -> Any:
+        found = list(real(conn, ctx))
+        conn.execute("DELETE FROM items WHERE source_id = 'history:gone'")
+        conn.commit()
+        return iter(found)
+
+    monkeypatch.setattr(agents, "agents_of", found_then_deleted)
+    with get_connection(test_db) as conn:
+        kept = _item(conn, "youtube", "history:kept", "BBC News", {"channel_id": "UC1"})
+        _item(conn, "youtube", "history:gone", "BBC News", {"channel_id": "UC1"})
+        conn.commit()
+        assert link_agents(conn) == 1
+        assert _agents(conn, kept) == [("creator", None, "BBC News", "organization", False)]

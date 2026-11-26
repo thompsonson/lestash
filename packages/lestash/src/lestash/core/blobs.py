@@ -333,8 +333,9 @@ def prune_media(
             if ok and delete:
                 # Checked again under the write lock: a writer may have recorded a
                 # new row for this file since the rows were read
-                conn.execute("BEGIN IMMEDIATE")
-                try:
+                from lestash.core.database import write_transaction
+
+                with write_transaction(conn):
                     now = {
                         s
                         for (s,) in conn.execute(
@@ -346,8 +347,6 @@ def prune_media(
                     if ok:
                         size = path.stat().st_size
                         path.unlink()
-                finally:
-                    conn.commit()
             elif ok:
                 size = path.stat().st_size
             if ok:
