@@ -25,6 +25,30 @@ just deploy                # Deploy systemd services
 cd app && npx tauri dev    # Run desktop app
 ```
 
+## LeStash CLI
+
+Run as `uv run lestash <group> <command>` from the main checkout; `--help` on any group lists the rest.
+
+- **Command groups:**
+  - Data: `items`, `sources`, `pdf`, `media`, `profiles`.
+  - Background work: `embeddings`, `enrich`.
+  - Admin: `db`, `config`.
+  - Accounts and sources: `google`, and one group per source, such as `youtube`, `linkedin`, `gmail` or `kobo`.
+- **Syncing:** `sources sync <name>` syncs one source; `sources sync --all` is what the timer runs; `sources status` shows the last runs.
+- **Opening the database migrates it:** any command that opens it, the `db` checks below included, first applies pending migrations to the live file. After a deploy that adds a migration, the first command runs it, so back up before deploying, as the rule below says.
+- **Checks:** these write nothing else:
+  - `db status` shows a health dashboard.
+  - `db integrity` runs integrity and foreign key checks and finds orphans.
+  - `db analyze` reports the largest items, items per source, duplicates, FTS health and embedding coverage.
+  - `db backup list` lists backups; `db backup verify` checks one.
+  - `--help` on any command, and `--dry-run` where a command has it.
+- **Every other command can change live data.** On pop-mini, ask first and take `db backup create --label pre-<what>` before it, except for syncs and the timers' own jobs. Ones to know:
+  - `db repair` deletes rows whose item is gone; without `--confirm` it shows the counts and asks first (#400).
+  - `db history --purge` removes old history rows; it needs `--before YYYY-MM-DD` or `--keep-days N`.
+  - `db optimize` does nothing without a flag: `--vacuum`, `--fts`, `--checkpoint`, `--stats`, or `--all`.
+  - `db link`, `db relate`, `db themes` and `db agents` re-derive links, suggestions and agents.
+- **Backups:** `db backup create | list | verify | extract | compress | prune`; the rules are under Database backups below.
+
 ## Key Patterns
 
 - Plugins register via `[project.entry-points."lestash.sources"]`
