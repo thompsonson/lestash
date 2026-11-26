@@ -131,13 +131,8 @@ def video_to_item(
     if video.get("published_at"):
         metadata["published_at"] = video["published_at"]
 
-    # Add statistics if available
-    if video.get("view_count"):
-        metadata["view_count"] = int(video["view_count"])
-    if video.get("like_count"):
-        metadata["like_count"] = int(video["like_count"])
-    if video.get("comment_count"):
-        metadata["comment_count"] = int(video["comment_count"])
+    # View, like and comment counts are left out: they change on every
+    # sync, and storing them rewrote each video and its history (#413).
 
     # Store action timestamps in metadata
     if video.get("liked_at"):
@@ -391,8 +386,6 @@ def comment_to_item(
             "type": "comment",
             "video_id": video_id,
             "comment_id": comment["id"],
-            "like_count": comment.get("like_count", 0),
-            "reply_count": comment.get("reply_count", 0),
             "_parent_source_id": f"history:{video_id}",
         },
     )

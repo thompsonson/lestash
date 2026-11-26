@@ -115,8 +115,6 @@ For each liked video, the following data is stored:
 | `url` | YouTube watch URL |
 | `created_at` | Video publish date |
 | `metadata.duration_seconds` | Duration in seconds |
-| `metadata.view_count` | Number of views |
-| `metadata.like_count` | Number of likes |
 | `metadata.channel_id` | YouTube channel ID |
 | `metadata.tags` | Video tags |
 | `metadata.thumbnail_url` | Best available thumbnail |
