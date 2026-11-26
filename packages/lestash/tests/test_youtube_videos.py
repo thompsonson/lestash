@@ -6,7 +6,12 @@ import json
 import sqlite3
 from typing import Any
 
-from lestash.core.database import SCHEMA_VERSION, apply_migrations, get_connection
+from lestash.core.database import (
+    MIGRATION_40_REASON,
+    SCHEMA_VERSION,
+    apply_migrations,
+    get_connection,
+)
 
 VID = "DxL2HoqLbyA"
 OTHER = "BgE6TA5iYaQ"
@@ -405,6 +410,10 @@ def test_migration_40_drops_counts_from_youtube_items_only(test_db) -> None:
         conn.execute("PRAGMA user_version = 39")
         assert apply_migrations(conn) == 1
 
-        assert json.loads(_row(conn, video)["metadata"]) == {"channel_title": "Chan"}
+        assert _row(conn, video)["metadata"] == json.dumps({"channel_title": "Chan"})
+        reasons = conn.execute(
+            "SELECT change_reason FROM item_history WHERE item_id = ?", (video,)
+        ).fetchall()
+        assert [r[0] for r in reasons] == [MIGRATION_40_REASON]
         assert json.loads(_row(conn, other)["metadata"]) == {"like_count": 5}
         assert _row(conn, bad)["metadata"] == "not json"
