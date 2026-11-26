@@ -11,6 +11,8 @@ const routes = [];
 const items = new Map();
 const ITEM_CACHE_SIZE = 500;
 let rendering = null;
+let drawing = false;  // a page is being drawn: its scrolling isn't a place you chose
+let scrollTimer = null;
 let drawnPath = null;
 // The entry on screen, to put back when Back only closes a dialog
 let current = null;
@@ -78,7 +80,7 @@ export function navigate(href, { replace = false } = {}) {
   const target = url.pathname + url.search + url.hash;
   const here = location.pathname + location.search + location.hash;
   if (replace) {
-    history.replaceState({ ...(history.state || {}), depth: depth(), scrollY: 0 }, '', target);
+    history.replaceState({ ...(history.state || {}), depth: depth(), scrollY: 0, saved: false }, '', target);
   } else if (target !== here) {
     saveScroll();
     history.pushState({ depth: depth() + 1, scrollY: 0 }, '', target);
@@ -151,6 +153,7 @@ export async function render() {
   if (!found) return navigate('/', { replace: true });
   const token = {};
   rendering = token;
+  drawing = true;
   ready();  // the page is chosen; its content may still be loading
   try {
     await found.page(url.pathname.match(found.pattern), url);
@@ -169,6 +172,7 @@ export async function render() {
       // A hidden element can't be scrolled to: open as any other page would
       if (anchor && anchor.getClientRects().length) anchor.scrollIntoView({ block: 'start' });
       else restoreScroll(scrollY, token);
+      drawing = false;
     }
   }
 }
@@ -218,7 +222,16 @@ function onPop() {
 document.addEventListener('click', onClick);
 window.addEventListener('popstate', onPop);
 
+// Where you scroll is saved as you go, so an entry left by Back or Forward keeps
+// its place too, not only one left by a link
+function onScroll() {
+  if (drawing) return;
+  clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(() => { if (!drawing) saveScroll(); }, 150);
+}
+
 export function startRouter() {
+  main()?.addEventListener('scroll', onScroll, { passive: true });
   if (!history.state || history.state.depth === undefined) {
     history.replaceState({ depth: 0, scrollY: 0 }, '', location.href);
   }
