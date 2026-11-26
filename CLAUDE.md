@@ -35,7 +35,8 @@ Run as `uv run lestash <group> <command>` from the main checkout; `--help` on an
   - Admin: `db`, `config`.
   - Accounts and sources: `google`, and one group per source, such as `youtube`, `linkedin`, `gmail` or `kobo`.
 - **Syncing:** `sources sync <name>` syncs one source; `sources sync --all` is what the timer runs; `sources status` shows the last runs.
-- **Read-only checks:** only these never write:
+- **Opening the database migrates it:** any command, the checks below included, first applies pending migrations to the live file. After a deploy that adds a migration, the first command runs it, so back up before deploying, as the rule below says.
+- **Checks:** these write nothing else:
   - `db status` shows a health dashboard.
   - `db integrity` runs integrity and foreign key checks and finds orphans.
   - `db analyze` reports the largest items, items per source, duplicates, FTS health and embedding coverage.
