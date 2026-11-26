@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple
 from urllib.parse import urlsplit, urlunsplit
@@ -170,11 +170,20 @@ def find_links(conn: sqlite3.Connection) -> Iterator[Link]:
 def link_items(conn: sqlite3.Connection) -> int:
     """Store every link found that isn't stored yet, rejected ones included. Returns how
     many were added. The caller commits."""
+    return store_links(conn, find_links(conn))
+
+
+def store_links(conn: sqlite3.Connection, links: Iterable[Link]) -> int:
+    """Store the links not stored yet; a rejected one stays rejected. Returns how many
+    were added. The caller commits.
+
+    Pass a list found beforehand to keep the write short: ``find_links`` reads every item.
+    """
     before = conn.total_changes
     conn.executemany(
         "INSERT OR IGNORE INTO item_links (from_id, to_id, kind, evidence, origin, status) "
         f"VALUES (?, ?, ?, ?, '{ORIGIN}', 'confirmed')",
-        find_links(conn),
+        links,
     )
     return conn.total_changes - before
 

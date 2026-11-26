@@ -10,6 +10,7 @@ import typer
 from lestash.cli import sources as sources_cli
 from lestash.core.database import get_connection
 from lestash.models.item import ItemCreate
+from lestash.models.sync import SyncCheckpoint
 
 
 def _item(source_id: str, parent: str | None = None) -> ItemCreate:
@@ -199,6 +200,74 @@ def test_a_long_sync_commits_as_it_goes(test_db, monkeypatch) -> None:
     _sync(test_db, monkeypatch, watcher)
     assert watcher.seen == [0, 0, 2, 2, 4]
     assert _last_sync(test_db) == ("completed", 5)
+
+
+def _can_write(test_db) -> bool:
+    """Whether another connection takes the write lock within 0.2 s."""
+    import sqlite3
+
+    from lestash.core.database import get_db_path
+
+    other = sqlite3.connect(get_db_path(test_db), timeout=0.2)
+    try:
+        other.execute("BEGIN IMMEDIATE")
+        other.rollback()
+        return True
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        other.close()
+
+
+class _Fetcher:
+    """Checks, while it 'fetches' each next item, that others can still write."""
+
+    def __init__(self, test_db, n: int) -> None:
+        self.test_db, self.n = test_db, n
+        self.could_write: list[bool] = []
+
+    def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:
+        for i in range(self.n):
+            self.could_write.append(_can_write(self.test_db))
+            yield _item(f"i{i}")
+            if i == 1:
+                yield SyncCheckpoint(key="cursor", value={"last": "i1"})
+
+
+def test_no_write_is_open_while_the_plugin_fetches(test_db, monkeypatch) -> None:
+    """#401: a sync held the lock for 2 minutes while its plugin worked."""
+    fetcher = _Fetcher(test_db, 4)
+    assert _sync(test_db, monkeypatch, fetcher) == 0
+    assert fetcher.could_write == [True] * 4
+    assert _last_sync(test_db) == ("completed", 4)
+
+
+def test_a_checkpoint_is_written_with_the_items_before_it(test_db, monkeypatch) -> None:
+    from lestash.core.database import get_checkpoints
+
+    seen: list[int] = []
+
+    class _Checkpoints:
+        def sync(self, config: dict) -> Iterator[ItemCreate | SyncCheckpoint]:
+            yield _item("a")
+            yield _item("b")
+            yield SyncCheckpoint(key="cursor", value={"last": "b"})
+            with get_connection(test_db) as other:
+                seen.append(other.execute("SELECT COUNT(*) FROM items").fetchone()[0])
+                seen.append(len(get_checkpoints(other, "audible")))
+            yield _item("c")
+
+    assert _sync(test_db, monkeypatch, _Checkpoints()) == 0
+    assert seen == [2, 1]
+    assert _last_sync(test_db) == ("completed", 3)
+
+
+def test_a_slow_plugin_has_its_items_written_after_a_while(test_db, monkeypatch) -> None:
+    """Items don't wait unwritten for the batch to fill while a slow plugin works."""
+    monkeypatch.setattr(core_sync, "FLUSH_AFTER_S", 0.0)
+    watcher = _Watcher(test_db, 3)
+    assert _sync(test_db, monkeypatch, watcher) == 0
+    assert watcher.seen == [0, 1, 2]
 
 
 def test_connections_wait_for_the_write_lock(test_db) -> None:

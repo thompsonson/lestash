@@ -343,6 +343,45 @@ def test_persist_rolls_back_on_failure(config, parent_pdf_item, monkeypatch):
     assert survivors == baseline_count
 
 
+def test_images_are_saved_with_no_write_open(config, parent_pdf_item, monkeypatch):
+    """#401: saving image files inside the write held the lock for 30 s."""
+    import sqlite3
+    from dataclasses import replace
+
+    from lestash.core.database import get_db_path
+    from lestash.core.pdf_enrich import persistence
+
+    could_write: list[bool] = []
+    real_save = persistence.save_media_file
+
+    def save_and_check(*args, **kwargs):
+        other = sqlite3.connect(get_db_path(config), timeout=0.2)
+        try:
+            other.execute("BEGIN IMMEDIATE")
+            other.rollback()
+            could_write.append(True)
+        except sqlite3.OperationalError:
+            could_write.append(False)
+        finally:
+            other.close()
+        return real_save(*args, **kwargs)
+
+    monkeypatch.setattr(persistence, "save_media_file", save_and_check)
+    with get_connection(config) as conn:
+        # Two images: the old code saved the second after writing the first's row
+        second = replace(_image(1), bytes_=b"other-png-bytes", xref_hash="e" * 64)
+        enriched = _enriched(content="<!-- image -->\n<!-- image -->", images=[_image(0), second])
+        persist_enrichment(conn, config, parent_pdf_item, enriched)
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM item_media WHERE item_id = ? AND media_type = 'image'",
+                (parent_pdf_item,),
+            ).fetchone()[0]
+            == 2
+        )
+    assert could_write == [True, True]
+
+
 def _child_ids(conn, parent_id: int) -> dict[str, int]:
     rows = conn.execute(
         "SELECT id, metadata FROM items WHERE parent_id = ? AND source_type = 'pdf_annotation'",
