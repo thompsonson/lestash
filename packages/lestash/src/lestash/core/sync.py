@@ -162,7 +162,7 @@ class SyncStore:
             except Exception as e:
                 errors.append(e)
         for later in errors[1:]:
-            logger.error("Also failed in the %s sync: %r", self.source, later)
+            logger.error("Also failed in the %s sync", self.source, exc_info=later)
         if errors:
             raise errors[0]
 
