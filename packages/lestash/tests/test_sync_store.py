@@ -307,3 +307,43 @@ def test_a_lock_not_had_is_not_waited_for_twice(test_db, monkeypatch) -> None:
         with pytest.raises(sqlite3.OperationalError):
             store.run(iter([_item("a")]))
     assert tries == ["write"]
+
+
+def test_a_lock_not_had_after_items_were_stored_still_links_them(test_db, monkeypatch) -> None:
+    import sqlite3
+
+    real_begin = core_sync.begin_write
+    calls: list[int] = []
+
+    def second_locked(conn) -> None:
+        calls.append(1)
+        if len(calls) == 2:
+            raise sqlite3.OperationalError("database is locked")
+        real_begin(conn)
+
+    monkeypatch.setattr(core_sync, "COMMIT_EVERY", 1)
+    monkeypatch.setattr(core_sync, "begin_write", second_locked)
+    linked: list[set[str]] = []
+    monkeypatch.setattr(
+        core_sync, "resolve_parent_source_ids", lambda conn, types: linked.append(types) or 0
+    )
+    with get_connection(test_db) as conn:
+        store = core_sync.SyncStore(conn, "audible")
+        with pytest.raises(sqlite3.OperationalError):
+            store.run(iter([_item("a"), _item("b")]))
+        assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
+    assert linked == [{"audible"}]
+
+
+class _PluginLocked:
+    def sync(self, config: dict) -> Iterator[ItemCreate]:
+        import sqlite3
+
+        yield _item("a")
+        raise sqlite3.OperationalError("database is locked")
+
+
+def test_a_locked_error_from_the_plugin_still_stores_what_it_yielded(test_db, monkeypatch) -> None:
+    """Only the store's own lock failure skips storing: not one the plugin raises."""
+    assert _sync(test_db, monkeypatch, _PluginLocked()) == 1
+    assert _last_sync(test_db) == ("failed", 1)

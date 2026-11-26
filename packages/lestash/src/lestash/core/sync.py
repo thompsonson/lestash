@@ -145,9 +145,9 @@ class SyncStore:
                 if len(pending) >= COMMIT_EVERY or time.monotonic() - first_at >= FLUSH_AFTER_S:
                     self._write(pending)
         except Exception as e:
-            if _is_locked(e):
-                # Writing more would only wait out the lock again; the next sync links
-                # what this one stored
+            if isinstance(e, _LockNotHad) and not (self.committed.added or self.committed.updated):
+                # Nothing stored to link, and writing more would only wait out the lock
+                # again. With items stored, linking them is worth the wait.
                 raise
             try:
                 self._write(pending)
@@ -169,7 +169,12 @@ class SyncStore:
         try:
             # Inside the try: if the lock can't be had, the items are dropped as the
             # error ends the sync, and not waited for again
-            begin_write(self.conn)
+            try:
+                begin_write(self.conn)
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e):
+                    raise _LockNotHad(str(e)) from e
+                raise
             began = time.monotonic()
             for item in pending:
                 self._store(item)
@@ -310,9 +315,11 @@ class SyncStore:
         return True
 
 
-def _is_locked(error: Exception) -> bool:
-    """Whether the write lock couldn't be had, even after begin_write's retry."""
-    return isinstance(error, sqlite3.OperationalError) and "locked" in str(error)
+class _LockNotHad(sqlite3.OperationalError):
+    """The store's own write couldn't take the lock, even after begin_write's retry.
+
+    Its own type, so a "locked" error the plugin raises isn't taken for one.
+    """
 
 
 INTERRUPTED = "interrupted"
