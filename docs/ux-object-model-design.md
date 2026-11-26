@@ -582,7 +582,7 @@ Also seen: 44 themed items are already in 9 of your collections, and only 9 them
 |---|---|---|---|
 | Topic | you, one tag at a time | no | any items, open-ended |
 | Collection | you, choosing items | yes, a reading order | the items for one question |
-| Theme | LeStash, from related items | by closeness | a suggestion, until kept |
+| Theme | LeStash, from related items | no; grouped by kind on its page | a suggestion, until kept |
 
 - **Address:** `/themes` lists them; `/themes/<id>` is one theme. A theme's id survives a rerun only if its items are the same, so an old address can find no theme; its page then says so and links to the list.
 
