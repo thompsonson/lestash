@@ -547,3 +547,98 @@ You manage collections in LeStash; the Kobo is a reader that shows the ones you 
 - **One reminder at a time:** today's Timeline opens with the most overdue import, with **Import** and **Snooze a week**.
 - **Manual imports only:** a Takeout, a Mistral export, a LinkedIn data export and the Claude export. The Claude export is listed but never due until LeStash can read it (#88).
 - **A sync that keeps failing** shows in red under Sources, so one that stops is noticed.
+
+## ORCA round 3: themes (26 Nov 2026)
+
+Round 3 takes one object, the suggested theme (#266), through the ORCA steps.
+In 9 days, none of the 47 suggested themes was kept or dismissed.
+Everything below is **proposed** until your walkthrough confirms or changes it.
+Counts are from the live DB on 26 Nov 2026, read-only.
+
+### What the walk found
+
+A browser walk first, at desktop and phone width, before reading the code:
+
+| # | Finding | Heuristic |
+|---|---|---|
+| T1 | Themes sit under More › Collections, below all 26 collections. Nothing on the Timeline, Library or an item page leads to them. | Visibility of system status; recognition over recall |
+| T2 | A theme's items are bare links: 261 of the 746 have no title, so they read "Item 42 bluesky". | Match with the real world; the card faces decided in round 1 |
+| T3 | A name is three words from titles ("Sheet, Design, Grammar"). It doesn't say what joins the items. | Match with the real world |
+| T4 | Sizes are uneven: 9 themes hold over 30 items each (the largest 107); 26 hold 4–6. A large theme is too broad to keep whole. | Aesthetic and minimalist design |
+| T5 | Keep takes every item at once, under the theme's name. You can't rename, or drop an item, first. The API already takes a name; the app doesn't offer it. | User control and freedom |
+| T6 | Nothing says why items belong together: no shared words, no links between them, no scores. | Help users recognise; visibility |
+| T7 | An item page doesn't say which theme holds it; the relationship shows from one end only. | Round 2's both-ends rule |
+
+Also seen: 44 themed items are already in 9 of your collections, and only 9 themed items have a topic.
+
+### 1. Objects
+
+- **Theme becomes an object**, with a card and a page, not a row under Collections.
+  - It's a suggestion: made by LeStash, kept or dismissed by you.
+  - Kept, it *becomes* a Collection; the theme is then only its origin.
+- **Three ways to group items, one word each:**
+
+| Object | Made by | Ordered | Holds |
+|---|---|---|---|
+| Topic | you, one tag at a time | no | any items, open-ended |
+| Collection | you, choosing items | yes, a reading order | the items for one question |
+| Theme | LeStash, from related items | by closeness | a suggestion, until kept |
+
+- **Address:** `/themes` lists them; `/themes/<id>` is one theme. A theme's id survives a rerun only if its items are the same, so an old address can find no theme; its page then says so and links to the list.
+
+### 2. Relationships, both ends
+
+| Relationship | From the theme | From the other end | Now |
+|---|---|---|---|
+| Theme holds Items | its page, items by kind, with card faces | item page: "In theme …" | one end, bare links |
+| Theme became a Collection | "Kept as …" with a link | collection page: "From a suggested theme" | neither |
+| Theme overlaps a Collection | "12 of these are in *Ontology sources*" | — | neither |
+| Theme's items link each other | the related links inside it, as the reason | item page Links, as now | neither |
+| Theme and People | the people behind its items, most first | — | neither |
+| Theme and Topic | topics its items share, as a hint | — | neither |
+
+### 3. Actions
+
+| Action | Where | Now |
+|---|---|---|
+| Browse themes | Library, beside the shelves; a link from Collections | ◐ bottom of Collections |
+| Open a theme | its card | ✗ |
+| See why: shared words, links, sources | theme page | ✗ |
+| Rename before keeping | theme page | ✗ (API ready) |
+| Drop an item before keeping | theme page | ✗ |
+| Keep as a collection | card and page | ✓ |
+| Add to an existing collection | theme page | ✗ |
+| Split a broad theme | theme page, over 30 items | ✗ |
+| Dismiss | card and page | ✓ |
+| Find a theme from an item | item page | ✗ |
+
+### 4. Attributes and ranking
+
+- **Card leads with:** the name; then "N items · kinds · sources"; then three item titles, untitled ones by their text's start.
+- **Page leads with:** the reason (shared words; links between its items), then items grouped by kind, then Keep, Rename, Dismiss.
+- **List order:** themes touching what you did lately first (activity on their items in the last 30 days), then by size. Largest-first puts the broad themes on top.
+- **Names:**
+  - Default: keep the TF-IDF words, but show them as "about *reasoning, LLM-as-a-Judge*", with the item count, so they read as a hint, not a title.
+  - Option: a one-line name from an LLM over the item titles. It costs a call per theme per run, and sends titles off the machine. Your call.
+- **Sizes:** a theme over 30 items is offered as split, by running the same community step on its own links. The 4-item minimum stays.
+
+### 5. Object guide
+
+| Object | Say | Don't say |
+|---|---|---|
+| Theme | Theme; "suggested theme" on first sight | cluster, community, group |
+| Keep | Keep as a collection | save, accept |
+| Dismiss | Dismiss | reject, delete |
+
+### 6. Your think-aloud walkthrough
+
+Tasks, on the phone then the desktop:
+1. Find the suggested themes, starting from the Timeline.
+2. Pick a theme about something you're working on now. Say why you think its items belong together.
+3. Keep it as a collection, named your own way, without its least relevant items.
+4. From one item in that collection, find the theme it came from.
+5. Find a theme too broad to keep, and say what you'd split it into.
+6. Dismiss one theme, and say why.
+
+Round 3 closes when the walkthrough has confirmed, changed or dropped each proposal above.
+The confirmed changes become build issues, and close #268.
