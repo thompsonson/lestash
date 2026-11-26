@@ -11,8 +11,6 @@ const routes = [];
 const items = new Map();
 const ITEM_CACHE_SIZE = 500;
 let rendering = null;
-let drawing = false;  // a page is being drawn: its scrolling isn't a place you chose
-let scrollTimer = null;
 let drawnPath = null;
 // The entry on screen, to put back when Back only closes a dialog
 let current = null;
@@ -58,10 +56,9 @@ function openDialogs() {
   return document.querySelectorAll('.modal-overlay.open');
 }
 
-// Remember where the page was scrolled, so Back returns to the same place.
-// ``saved`` tells a place you were at, even the top, from an entry never left
+// Remember where the page was scrolled, so Back returns to the same place
 function saveScroll() {
-  const state = { ...(history.state || {}), scrollY: main()?.scrollTop || 0, saved: true };
+  const state = { ...(history.state || {}), scrollY: main()?.scrollTop || 0 };
   history.replaceState(state, '', location.href);
 }
 
@@ -80,7 +77,7 @@ export function navigate(href, { replace = false } = {}) {
   const target = url.pathname + url.search + url.hash;
   const here = location.pathname + location.search + location.hash;
   if (replace) {
-    history.replaceState({ ...(history.state || {}), depth: depth(), scrollY: 0, saved: false }, '', target);
+    history.replaceState({ ...(history.state || {}), depth: depth(), scrollY: 0 }, '', target);
   } else if (target !== here) {
     saveScroll();
     history.pushState({ depth: depth() + 1, scrollY: 0 }, '', target);
@@ -135,13 +132,14 @@ function restoreScroll(y, token) {
   events.forEach((t) => el.addEventListener(t, stop, { passive: true }));
 }
 
-export async function render() {
+// ``restoring``: Back or Forward drew this page, so its saved place wins over a #fragment
+export async function render({ restoring = false } = {}) {
   const url = new URL(location.href);
   const upgraded = upgrade(url);
   if (upgraded) {
     history.replaceState({ depth: depth(), scrollY: 0 }, '', upgraded);
     remember();
-    return render();
+    return render({ restoring });
   }
   // Leaving a page closes its dialogs; drawing the same page again keeps them
   if (drawnPath !== null && drawnPath !== url.pathname) {
@@ -153,15 +151,14 @@ export async function render() {
   if (!found) return navigate('/', { replace: true });
   const token = {};
   rendering = token;
-  drawing = true;
   ready();  // the page is chosen; its content may still be loading
   try {
     await found.page(url.pathname.match(found.pattern), url);
   } finally {
     // A later navigation owns the scroll position. An address naming a part of the
-    // page (/collections#themes-title) opens there, unless it holds a place you left
+    // page (/collections#themes-title) opens there, unless Back or Forward restores a place
     let anchor = null;
-    if (!(history.state && history.state.saved) && url.hash) {
+    if (!restoring && url.hash) {
       try {
         anchor = document.getElementById(decodeURIComponent(url.hash.slice(1)));
       } catch {
@@ -172,7 +169,6 @@ export async function render() {
       // A hidden element can't be scrolled to: open as any other page would
       if (anchor && anchor.getClientRects().length) anchor.scrollIntoView({ block: 'start' });
       else restoreScroll(scrollY, token);
-      drawing = false;
     }
   }
 }
@@ -214,7 +210,7 @@ function onPop() {
   }
   remember();
   if (samePage && !upgrade(new URL(location.href))) return;  // only the #section changed
-  render();
+  render({ restoring: true });
 }
 
 // Listen from the start, so a dialog opened before the first page is drawn
@@ -222,16 +218,7 @@ function onPop() {
 document.addEventListener('click', onClick);
 window.addEventListener('popstate', onPop);
 
-// Where you scroll is saved as you go, so an entry left by Back or Forward keeps
-// its place too, not only one left by a link
-function onScroll() {
-  if (drawing) return;
-  clearTimeout(scrollTimer);
-  scrollTimer = setTimeout(() => { if (!drawing) saveScroll(); }, 150);
-}
-
 export function startRouter() {
-  main()?.addEventListener('scroll', onScroll, { passive: true });
   if (!history.state || history.state.depth === undefined) {
     history.replaceState({ depth: 0, scrollY: 0 }, '', location.href);
   }
