@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 39
+SCHEMA_VERSION = 40
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -859,6 +859,22 @@ MIGRATIONS = [
             aim_days INTEGER CHECK (aim_days IS NULL OR aim_days >= 0),
             snoozed_until TEXT
         );
+        """,
+    ),
+    (
+        40,
+        "Drop YouTube view, like, comment and reply counts from stored items (#413)",
+        # The sync no longer stores them; the merge would keep the old ones frozen
+        """
+        UPDATE items
+        SET metadata = json_remove(
+            metadata, '$.view_count', '$.like_count', '$.comment_count', '$.reply_count'
+        )
+        WHERE source_type = 'youtube' AND json_valid(metadata)
+          AND (json_type(metadata, '$.view_count') IS NOT NULL
+               OR json_type(metadata, '$.like_count') IS NOT NULL
+               OR json_type(metadata, '$.comment_count') IS NOT NULL
+               OR json_type(metadata, '$.reply_count') IS NOT NULL);
         """,
     ),
 ]

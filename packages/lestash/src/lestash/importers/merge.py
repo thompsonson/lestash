@@ -46,8 +46,6 @@ COUNT_KEYS = {
     "prompted": "prompted_count",
 }
 YOUTUBE_KINDS = ("history", "search", "post")
-# Counts the API sync stored until #413; the merge drops them so none stay frozen
-RETIRED_YOUTUBE_KEYS = ("view_count", "like_count", "comment_count")
 NOTEBOOK_CHILD_TYPES = ("note", "report", "chat")
 
 
@@ -151,8 +149,6 @@ def _merge_youtube(conn: sqlite3.Connection, item: ItemCreate, stored: dict[str,
     new_is_takeout = new.get("source") == "takeout"
     old_is_takeout = old.get("source") == "takeout"
     merged = {**old, **new}
-    for key in RETIRED_YOUTUBE_KEYS:
-        merged.pop(key, None)
     times = _union_times(conn, item, stored, merged)
 
     kind = (item.source_id or "").split(":", 1)[0]

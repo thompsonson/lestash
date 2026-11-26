@@ -395,26 +395,16 @@ def test_a_place_under_a_copy_not_yet_folded_makes_no_loop(test_db) -> None:
         assert parents[note] == video
 
 
-def test_merge_drops_counts_stored_before_413(test_db) -> None:
-    from lestash.importers import merge_with_stored
-    from lestash.models.item import ItemCreate
-
+def test_migration_40_drops_counts_from_youtube_items_only(test_db) -> None:
+    counts = {"view_count": 10, "like_count": 2, "comment_count": 1, "reply_count": 3}
     with get_connection(test_db) as conn:
-        _item(
-            conn,
-            f"history:{VID}",
-            "desc",
-            {"channel_title": "Chan", "view_count": 10, "like_count": 2, "comment_count": 1},
-        )
-        item = ItemCreate(
-            source_type="youtube",
-            source_id=f"history:{VID}",
-            content="desc",
-            metadata={"channel_title": "Chan"},
-        )
-        assert merge_with_stored(conn, item)
+        video = _item(conn, f"history:{VID}", "desc", {"channel_title": "Chan", **counts})
+        other = _item(conn, "post-1", "hi", {"like_count": 5}, source_type="bluesky")
+        bad = _item(conn, f"history:{OTHER}", "desc")
+        conn.execute("UPDATE items SET metadata = 'not json' WHERE id = ?", (bad,))
+        conn.execute("PRAGMA user_version = 39")
+        assert apply_migrations(conn) == 1
 
-    metadata = item.metadata or {}
-    assert metadata["channel_title"] == "Chan"
-    for key in ("view_count", "like_count", "comment_count"):
-        assert key not in metadata
+        assert json.loads(_row(conn, video)["metadata"]) == {"channel_title": "Chan"}
+        assert json.loads(_row(conn, other)["metadata"]) == {"like_count": 5}
+        assert _row(conn, bad)["metadata"] == "not json"
