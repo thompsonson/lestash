@@ -635,22 +635,36 @@ def _your_name(conn: sqlite3.Connection, ctx_self: frozenset[str]) -> str | None
     return str(row[0]) if row else None
 
 
+def _data_version(conn: sqlite3.Connection) -> int:
+    """Changes whenever another connection commits a write to the database."""
+    return int(conn.execute("PRAGMA data_version").fetchone()[0])
+
+
 def link_agents(conn: sqlite3.Connection) -> int:
     """Record the agents of every item whose source names them, and the people it
     mentions. Returns how many item agents and mentions were added; safe to run again.
     The caller commits."""
-    ctx = _context(conn)
-    # Yours first: an account of yours must not be made someone else's because an item
-    # naming it as a recipient came first. Found before the write: it reads every item
-    found = sorted(agents_of(conn, ctx), key=lambda found: not found[2].is_self)
-    if not conn.in_transaction:
+
+    def find() -> tuple[_Context, list[tuple[int, str, AgentRef]]]:
+        ctx = _context(conn)
+        # Yours first: an account of yours must not be made someone else's because an
+        # item naming it as a recipient came first
+        return ctx, sorted(agents_of(conn, ctx), key=lambda found: not found[2].is_self)
+
+    if conn.in_transaction:
+        ctx, found = find()
+    else:
+        # Found before the write, as it reads every item; found again under the lock
+        # only if another connection wrote in between, so nothing found is stale
+        version = _data_version(conn)
+        ctx, found = find()
         # Write-lock before reading people: two passes at once (a sync, an upload)
         # would each make the people known by name that the other is making
         from lestash.core.database import begin_write
 
         begin_write(conn)
-    # An item deleted or put away since it was found gets no agents
-    held = {row[0] for row in conn.execute("SELECT id FROM items WHERE held = 1")}
+        if _data_version(conn) != version:
+            ctx, found = find()
     people = _People(conn)
     people.you(ctx.your_name)
     # An agent known by name only has no account to find it by: its item, role and
@@ -663,8 +677,6 @@ def link_agents(conn: sqlite3.Connection) -> int:
     }
     rows, mentions = [], []
     for item_id, source_type, ref in found:
-        if item_id not in held:
-            continue
         if ref.identifier is None and (item_id, ref.role, ref.position) in named:
             continue
         origin = f"import:{source_type}"
