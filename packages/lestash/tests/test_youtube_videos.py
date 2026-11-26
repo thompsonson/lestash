@@ -6,7 +6,12 @@ import json
 import sqlite3
 from typing import Any
 
-from lestash.core.database import SCHEMA_VERSION, apply_migrations, get_connection
+from lestash.core.database import (
+    MIGRATION_40_REASON,
+    SCHEMA_VERSION,
+    apply_migrations,
+    get_connection,
+)
 
 VID = "DxL2HoqLbyA"
 OTHER = "BgE6TA5iYaQ"
@@ -393,3 +398,24 @@ def test_a_place_under_a_copy_not_yet_folded_makes_no_loop(test_db) -> None:
         parents = dict(conn.execute("SELECT id, parent_id FROM items").fetchall())
         assert parents[video] == page
         assert parents[note] == video
+
+
+def test_migration_40_drops_counts_from_youtube_items_only(test_db) -> None:
+    counts = {"view_count": 10, "like_count": 2, "comment_count": 1, "reply_count": 3}
+    with get_connection(test_db) as conn:
+        video = _item(conn, f"history:{VID}", "desc", {"channel_title": "Chan", **counts})
+        other = _item(conn, "post-1", "hi", {"like_count": 5}, source_type="bluesky")
+        only_counts = _item(conn, "comment:c1", "hi", {"like_count": 1, "reply_count": 0})
+        bad = _item(conn, f"history:{OTHER}", "desc")
+        conn.execute("UPDATE items SET metadata = 'not json' WHERE id = ?", (bad,))
+        conn.execute("PRAGMA user_version = 39")
+        assert apply_migrations(conn) == 1
+
+        assert _row(conn, video)["metadata"] == json.dumps({"channel_title": "Chan"})
+        reasons = conn.execute(
+            "SELECT change_reason FROM item_history WHERE item_id = ?", (video,)
+        ).fetchall()
+        assert [r[0] for r in reasons] == [MIGRATION_40_REASON]
+        assert json.loads(_row(conn, other)["metadata"]) == {"like_count": 5}
+        assert _row(conn, bad)["metadata"] == "not json"
+        assert _row(conn, only_counts)["metadata"] is None  # as the sync writes {}

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 39
+SCHEMA_VERSION = 40
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -861,6 +861,12 @@ MIGRATIONS = [
         );
         """,
     ),
+    (
+        40,
+        "Drop YouTube view, like, comment and reply counts from stored items (#413)",
+        # Run in apply_migrations (_migrate_40): the metadata is rewritten as the sync writes it.
+        "",
+    ),
 ]
 
 
@@ -919,6 +925,39 @@ def _migrate_16(conn: sqlite3.Connection) -> None:
     except BaseException:
         conn.rollback()
         raise
+
+
+MIGRATION_40_REASON = "migration 40: YouTube counts dropped (#413)"
+RETIRED_YOUTUBE_KEYS = ("view_count", "like_count", "comment_count", "reply_count")
+
+
+def _migrate_40(conn: sqlite3.Connection) -> None:
+    """Remove the counts the YouTube sync stored before #413.
+
+    The merge keeps stored keys the sync no longer sends, so they would stay frozen.
+    Metadata is rewritten with ``json.dumps``, as the sync writes it, so the next sync
+    sees no change. item_history keeps the old metadata, tagged MIGRATION_40_REASON.
+    """
+    if conn.in_transaction:
+        conn.commit()
+    with write_transaction(conn):
+        history_before = max_history_id(conn)
+        rows = conn.execute(
+            "SELECT id, metadata FROM items WHERE source_type = 'youtube' AND json_valid(metadata)"
+        ).fetchall()
+        updates = []
+        for item_id, text in rows:
+            metadata = json.loads(text)
+            if isinstance(metadata, dict) and any(k in metadata for k in RETIRED_YOUTUBE_KEYS):
+                for key in RETIRED_YOUTUBE_KEYS:
+                    metadata.pop(key, None)
+                updates.append((json.dumps(metadata) if metadata else None, item_id))
+        conn.executemany("UPDATE items SET metadata = ? WHERE id = ?", updates)
+        conn.execute(
+            "UPDATE item_history SET change_reason = ? WHERE id > ?",
+            (MIGRATION_40_REASON, history_before),
+        )
+        set_schema_version(conn, 40)
 
 
 def _migrate_26(conn: sqlite3.Connection) -> None:
@@ -1250,6 +1289,8 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> int:
                 _migrate_36(conn)  # likewise
             elif version == 37:
                 _migrate_37(conn)  # likewise
+            elif version == 40:
+                _migrate_40(conn)  # likewise
             else:
                 conn.executescript(sql)
                 if version == 22:

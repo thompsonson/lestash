@@ -2,6 +2,7 @@
 
 from lestash.models.item import ItemCreate
 from lestash_youtube.source import (
+    comment_to_item,
     parse_iso8601_duration,
     subscription_to_item,
     video_to_item,
@@ -189,8 +190,8 @@ class TestVideoToItem:
         assert item.metadata["duration_seconds"] == 1 * 3600 + 23 * 60 + 45
         assert item.metadata["duration_iso"] == "PT1H23M45S"
 
-    def test_stores_statistics_in_metadata(self, youtube_video_factory):
-        """Should store view, like, and comment counts."""
+    def test_leaves_counts_out_of_metadata(self, youtube_video_factory):
+        """Counts change on every sync, so they are not stored (#413)."""
         video = youtube_video_factory(
             view_count="1000000",
             like_count="50000",
@@ -199,9 +200,15 @@ class TestVideoToItem:
 
         item = video_to_item(video, "liked")
 
-        assert item.metadata["view_count"] == 1000000
-        assert item.metadata["like_count"] == 50000
-        assert item.metadata["comment_count"] == 5000
+        for key in ("view_count", "like_count", "comment_count"):
+            assert key not in item.metadata
+
+    def test_same_video_with_new_counts_gives_same_item(self, youtube_video_factory):
+        """A video whose counts moved yields an identical item (#413)."""
+        before = video_to_item(youtube_video_factory(view_count="10"), "history")
+        after = video_to_item(youtube_video_factory(view_count="11"), "history")
+
+        assert before == after
 
     def test_stores_channel_info_in_metadata(self, youtube_video_factory):
         """Should store channel ID and title in metadata."""
@@ -317,19 +324,6 @@ class TestVideoToItemEdgeCases:
         assert item.metadata["duration_seconds"] is None
         assert item.metadata["duration_iso"] is None
 
-    def test_handles_missing_statistics(self, youtube_video_factory):
-        """Should handle missing statistics."""
-        video = youtube_video_factory()
-        video["view_count"] = None
-        video["like_count"] = None
-        video["comment_count"] = None
-
-        item = video_to_item(video, "liked")
-
-        assert "view_count" not in item.metadata
-        assert "like_count" not in item.metadata
-        assert "comment_count" not in item.metadata
-
     def test_handles_missing_thumbnails(self, youtube_video_factory):
         """Should handle missing thumbnails."""
         video = youtube_video_factory(thumbnails={})
@@ -440,3 +434,16 @@ class TestSubscriptionToItem:
         item = subscription_to_item(sub)
 
         assert item.content == ""
+
+
+class TestCommentToItem:
+    """Tests for comment_to_item."""
+
+    def test_leaves_counts_out_of_metadata(self):
+        """Comment like and reply counts are not stored (#413)."""
+        comment = {"id": "c1", "text": "hi", "like_count": 3, "reply_count": 1}
+
+        item = comment_to_item(comment, "vid1", "A video")
+
+        assert "like_count" not in item.metadata
+        assert "reply_count" not in item.metadata
