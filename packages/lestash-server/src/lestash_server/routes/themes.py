@@ -4,6 +4,7 @@ collection or dismiss (#266)."""
 import json
 
 from fastapi import APIRouter, HTTPException
+from lestash.core.kinds import KINDS
 from lestash.core.themes import ThemeGone, dismiss, keep, suggested
 from pydantic import BaseModel
 
@@ -11,12 +12,23 @@ from lestash_server.deps import get_db
 
 router = APIRouter(prefix="/api/themes", tags=["themes"])
 
+EXCERPT_CHARS = 90  # an untitled item is shown by its text's start
+
+
+def _excerpt(content: str | None) -> str | None:
+    text = " ".join((content or "").split())
+    if not text:
+        return None
+    return text if len(text) <= EXCERPT_CHARS else text[: EXCERPT_CHARS - 1].rstrip() + "…"
+
 
 class ThemeItem(BaseModel):
     id: int
     source_type: str
     kind: str | None = None
+    kind_label: str | None = None
     title: str | None = None
+    excerpt: str | None = None  # the text's start, for an item with no title
 
 
 class ThemeResponse(BaseModel):
@@ -46,7 +58,8 @@ def list_themes():
             found = {
                 r["id"]: r
                 for r in conn.execute(
-                    "SELECT id, source_type, kind, title FROM items WHERE id IN "
+                    "SELECT id, source_type, kind, title, substr(content, 1, 400) AS content "
+                    "FROM items WHERE id IN "
                     f"({','.join('?' * len(ids))})",
                     ids,
                 )
@@ -56,7 +69,11 @@ def list_themes():
                     id=i,
                     source_type=found[i]["source_type"],
                     kind=found[i]["kind"],
+                    kind_label=KINDS[k].label if (k := found[i]["kind"]) in KINDS else k,
                     title=found[i]["title"],
+                    excerpt=None
+                    if (found[i]["title"] or "").strip()
+                    else _excerpt(found[i]["content"]),
                 )
                 for i in ids
                 if i in found

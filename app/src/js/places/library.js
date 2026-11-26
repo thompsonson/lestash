@@ -72,7 +72,9 @@ async function drawShelf(url) {
   tab.querySelector('.shelves').innerHTML = shelves.map(s => {
     const on = s === current;
     return `<a href="/library?shelf=${s.shelf}" class="${on ? 'on' : ''}" aria-current="${on ? 'page' : 'false'}">${escHtml(s.label)} <span class="muted">${s.count.toLocaleString()}</span></a>`;
-  }).join('');
+  }).join('')
+    // Themes cut across the shelves, so they sit beside them, not among them
+    + '<a href="/collections#themes-title" class="shelf-themes">Suggested themes</a>';
   const key = current.shelf + '?' + params.toString();
   if (key === shown) return;
   shown = key;

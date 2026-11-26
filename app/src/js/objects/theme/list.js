@@ -7,21 +7,57 @@ import { navigate } from '../../router.js';
 import { escHtml } from '../../util.js';
 
 const SOURCES_SHOWN = 4;
+const KINDS_SHOWN = 3;
 
+function listed(names, shown) {
+  return names.slice(0, shown).join(', ')
+    + (names.length > shown ? ` and ${names.length - shown} more` : '');
+}
+
+// "reply" → "replies", "post" → "posts"; a label already plural stays as it is
+function plural(word) {
+  if (word.endsWith('s')) return word;
+  if (/[^aeiou]y$/.test(word)) return word.slice(0, -1) + 'ies';
+  return word + 's';
+}
+
+// Kinds in the theme, most items first, as plural labels ("posts", "chats")
+function kindsOf(items) {
+  const counts = {};
+  items.forEach(i => {
+    const label = (i.kind_label || i.kind || '').toLowerCase();
+    if (label) counts[label] = (counts[label] || 0) + 1;
+  });
+  return Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b))
+    .map(plural);
+}
+
+// An item with no title shows its text's start, so the list says what it is
+function itemHtml(i) {
+  const label = i.title || i.excerpt || `Item ${i.id}`;
+  const kind = i.kind_label || i.kind || '';
+  const what = [kind, i.source_type].filter(Boolean).join(' · ');
+  return `<li><a href="/items/${i.id}">${escHtml(label)}</a> <span class="muted">${escHtml(what)}</span></li>`;
+}
+
+// The name is three words its items' titles share: a hint, not a title
 function themeHtml(t) {
-  const sources = t.sources.slice(0, SOURCES_SHOWN).join(', ')
-    + (t.sources.length > SOURCES_SHOWN ? ` and ${t.sources.length - SOURCES_SHOWN} more` : '');
-  const items = t.items.map(i =>
-    `<li><a href="/items/${i.id}">${escHtml(i.title || `Item ${i.id}`)}</a> <span class="muted">${escHtml(i.source_type)}</span></li>`
-  ).join('');
+  const kinds = kindsOf(t.items);
+  const summary = [`${t.items.length} items`, kinds.length ? listed(kinds, KINDS_SHOWN) : '',
+    `from ${listed(t.sources, SOURCES_SHOWN)}`].filter(Boolean).join(' · ');
   return `
-    <div class="item-card-header"><span class="item-title">${escHtml(t.name)}</span></div>
-    <div class="item-footer"><span>${t.items.length} items from ${escHtml(sources)}</span></div>
-    <details class="theme-items"><summary>Items</summary><ul>${items}</ul></details>
+    <div class="item-card-header"><span class="item-title"><span class="muted">About</span> ${escHtml(t.name)}</span></div>
+    <div class="item-footer"><span>${escHtml(summary)}</span></div>
+    <details class="theme-items"><summary>Items</summary><ul>${t.items.map(itemHtml).join('')}</ul></details>
     <div class="theme-actions">
       <button type="button" class="sync-btn" data-act="keep">Keep as a collection</button>
       <button type="button" class="sync-btn" data-act="dismiss">Dismiss</button>
-    </div>`;
+    </div>
+    <form class="theme-keep" hidden>
+      <label>Collection name <input type="text" name="name" required maxlength="200"></label>
+      <button type="submit" class="sync-btn">Keep</button>
+      <button type="button" class="sync-btn" data-act="cancel">Cancel</button>
+    </form>`;
 }
 
 export async function loadThemes(toast) {
@@ -35,6 +71,11 @@ export async function loadThemes(toast) {
     return;
   }
   document.getElementById('themes-title').style.display = '';
+  const jump = document.getElementById('themes-jump');
+  if (jump) {
+    jump.textContent = `Suggested themes (${themes.length})`;
+    jump.hidden = !themes.length;
+  }
   if (!themes.length) {
     list.innerHTML = '<div class="empty-state muted" style="padding:1rem;text-align:center">No suggested themes now.</div>';
     return;
@@ -44,13 +85,36 @@ export async function loadThemes(toast) {
     const card = document.createElement('div');
     card.className = 'item-card theme-card';
     card.innerHTML = themeHtml(t);
-    card.querySelector('.theme-actions').addEventListener('click', async (e) => {
+    const actions = card.querySelector('.theme-actions');
+    const form = card.querySelector('.theme-keep');
+    const showForm = (on) => {
+      form.hidden = !on;
+      actions.hidden = on;
+      if (on) {
+        form.elements.name.value = t.name;
+        form.elements.name.select();
+      }
+    };
+    form.querySelector('[data-act="cancel"]').addEventListener('click', () => showForm(false));
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      decide('keep', form.elements.name.value.trim() || t.name);
+    });
+    actions.addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-act]');
       if (!btn) return;
-      card.querySelectorAll('.theme-actions button').forEach(b => { b.disabled = true; });
+      if (btn.dataset.act === 'keep') showForm(true);
+      else decide('dismiss');
+    });
+    const decide = async (act, name) => {
+      card.querySelectorAll('button').forEach(b => { b.disabled = true; });
       try {
-        if (btn.dataset.act === 'keep') {
-          const kept = await api(`/api/themes/${t.id}/keep`, { method: 'POST' });
+        if (act === 'keep') {
+          const kept = await api(`/api/themes/${t.id}/keep`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+          });
           toast('Kept as a collection', 'ok');
           navigate(`/collections/${kept.collection_id}`);
         } else {
@@ -65,10 +129,10 @@ export async function loadThemes(toast) {
           loadThemes(toast);
           return;
         }
-        card.querySelectorAll('.theme-actions button').forEach(b => { b.disabled = false; });
+        card.querySelectorAll('button').forEach(b => { b.disabled = false; });
         toast('Failed: ' + err.message, 'error');
       }
-    });
+    };
     list.appendChild(card);
   });
 }

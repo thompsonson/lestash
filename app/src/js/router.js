@@ -154,8 +154,13 @@ export async function render() {
   try {
     await found.page(url.pathname.match(found.pattern), url);
   } finally {
-    // A later navigation owns the scroll position
-    if (rendering === token) restoreScroll(scrollY, token);
+    // A later navigation owns the scroll position. An address naming a part of the
+    // page (/collections#themes-title) opens there, unless going back restores a place
+    const anchor = !scrollY && url.hash && document.getElementById(decodeURIComponent(url.hash.slice(1)));
+    if (rendering === token) {
+      if (anchor) anchor.scrollIntoView({ block: 'start' });
+      else restoreScroll(scrollY, token);
+    }
   }
 }
 
