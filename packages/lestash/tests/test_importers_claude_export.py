@@ -245,7 +245,6 @@ def test_parts_with_nothing_to_import_say_why():
         "#437": {"artifacts/a1/artifact.json": {"id": "a1", "versions": [], "active_version": "v"}},
         "#437 ": {"artifacts/a1/data/documents.json": {"documents": []}},
         "#439": {"claude_code_cloud/routines.json": {"claude_code_cloud": []}},
-        "empty": {"conversations.json": [], "users.json": []},
     }
     for why, files in cases.items():
         with pytest.raises(NothingToImport, match=why.strip()):
@@ -276,13 +275,18 @@ def test_look_alike_folders_from_elsewhere_are_left_to_the_other_importers():
         assert [i.source_id for i in found] == ["n1"]
 
 
-def test_a_malformed_entry_is_skipped_not_the_export():
-    memories = [
-        {"conversations_memory": 42, "project_memories": "not an object"},
-        {"conversations_memory": "Kept.", "project_memories": {}},
-    ]
-    broken = {**CONVERSATION, "uuid": "c2", "name": {"not": "a string"}}
-    items, _ = parse_zip(
-        _part({"conversations.json": [broken, CONVERSATION], "memories.json": memories})
-    )
-    assert [i.source_id for i in items] == [CONV, "m1", "m3", "conversations-memory"]
+def test_a_memories_file_of_the_wrong_shape_imports_nothing_from_it():
+    memories = [{"conversations_memory": 42, "project_memories": "not an object"}]
+    items, _ = parse_zip(_part({"conversations.json": [CONVERSATION], "memories.json": memories}))
+    assert [i.source_id for i in items] == [CONV, "m1", "m3"]
+
+
+def test_an_empty_export_is_an_import_of_nothing():
+    items, kind = parse_zip(_part({"conversations.json": [], "users.json": [{"uuid": "u1"}]}))
+    assert (items, kind) == ([], "claude")
+
+
+def test_an_empty_conversations_file_beside_other_json_is_not_claimed():
+    note = [{"source_type": "note", "source_id": "n1", "content": "kept"}]
+    items, kind = parse_zip(_part({"conversations.json": [], "notes.json": note}))
+    assert kind == "json" and [i.source_id for i in items] == ["n1"]

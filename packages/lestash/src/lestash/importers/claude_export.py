@@ -38,6 +38,9 @@ PROMPT_HEADING = "\n\n---\n\n**Prompt template:**\n"
 
 
 PROJECT_FILE = re.compile(r"^projects/[^/]+\.json$")
+# The single-ZIP export's files; an empty one holds these and nothing else
+LIST_FILES = frozenset({"conversations.json", "projects.json", "memories.json"})
+EXPORT_FILES = LIST_FILES | {"users.json"}
 ARTIFACT_FILE = re.compile(r"^artifacts/[^/]+/(artifact\.json|data/documents\.json)$")
 
 
@@ -47,6 +50,9 @@ class NothingToImport(ValueError):
 
 def detect_claude_zip(names: list[str]) -> bool:
     """Whether the ZIP may be a Claude export, or a part of one, by its file names.
+
+    Only the export as Claude delivers it is read: files where Claude puts them, from the
+    ZIP's root. A re-packed export is not handled, by choice (Matt, 28 Nov 2026, #88).
 
     ``parse_claude_zip`` then checks the content, so a ZIP of the same names from
     elsewhere (a ChatGPT export's conversations.json) is left to the other importers.
@@ -84,31 +90,25 @@ def parse_claude_zip(zf: zipfile.ZipFile) -> list[ItemCreate] | None:
         if "conversations_memory" in m or "project_memories" in m
     ]
     if not (conversations or projects or memories):
+        if names <= EXPORT_FILES and any(_read_json(zf, n) == [] for n in names & LIST_FILES):
+            return []  # an empty export: imported, with nothing in it
         why = _not_imported(zf, names)
         if why:
             raise NothingToImport(why)
         return None
 
     items: list[ItemCreate] = []
-    entries = [
-        *((_conversation, c) for c in conversations),
-        *((_project, p) for p in projects),
-        *((_memories, m) for m in memories),
-    ]
-    for convert, entry in entries:
-        # One malformed entry is skipped, never the whole export
-        try:
-            items.extend(convert(entry))
-        except (ValueError, TypeError, AttributeError):
-            logger.warning("Skipping a malformed entry in the Claude export", exc_info=True)
+    for conversation in conversations:
+        items.extend(_conversation(conversation))
+    for project in projects:
+        items.extend(_project(project))
+    for memory in memories:
+        items.extend(_memories(memory))
     return items
 
 
 def _not_imported(zf: zipfile.ZipFile, names: set[str]) -> str | None:
-    """Why a Claude export, or a part of one, imports nothing, if it is one."""
-    lists = [n for n in ("conversations.json", "projects.json", "memories.json") if n in names]
-    if lists and all(_read_json(zf, n) == [] for n in lists):
-        return "This Claude export is empty: it holds no conversations, projects or memories."
+    """Why a part of a split Claude export imports nothing, if it is one."""
     if "users.json" in names and "login_history.json" in names:
         history = _read_dict(zf, "login_history.json")
         if history is not None and "login_events" in history:
