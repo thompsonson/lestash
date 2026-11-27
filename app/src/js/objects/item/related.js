@@ -66,13 +66,15 @@ export async function loadRelated(item, toast, onLinked) {
   // The similar search can be slow (it may load a model), so it runs alongside but
   // nothing else waits for it. Without vectors or the model there are none similar
   const similarLoad = api(`/api/embeddings/similar/${item.id}?limit=${SHOWN * 2}`).catch(() => []);
+  const linksLoad = api(`/api/items/${item.id}/links`).catch(() => null);
   let related = {}, linkData = null;
   try {
     [related, linkData] = await Promise.all([
       api(`/api/items/${item.id}/related?limit=${SHOWN}`),
-      api(`/api/items/${item.id}/links`).catch(() => null),
+      linksLoad,
     ]);
   } catch {
+    linkData = await linksLoad;  // fetched already: Links needn't fetch it again
     if (!current()) return;
     document.getElementById('related-list').innerHTML = '<span class="muted" style="font-size:0.8rem">Unavailable</span>';
     // Rows from an earlier draw would still act on stale suggestions
