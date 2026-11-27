@@ -1,7 +1,8 @@
-// An item's related items (#219): suggestions from other sources, by their vectors,
-// each with "Related" and "Not related"; then "Also similar", the nearest items from
-// any source, with the same two buttons. A confirmed pair becomes one of the item's
-// links; a rejected one is never suggested again, nor listed as similar.
+// An item's related items (#219): first the ones you confirmed, each with "Not
+// related" (#424); then suggestions from other sources, by their vectors, each with
+// "Related" and "Not related"; then "Also similar", the nearest items from any source,
+// with the same two buttons. A confirmed pair moves to the top of the section; a
+// rejected one is never suggested again, nor listed as similar.
 
 import { api } from '../../api.js';
 import { renderCard } from './card.js';
@@ -19,16 +20,16 @@ export function relatedSectionHtml(item) {
   </div>`;
 }
 
-function row(item, other, { score = null, onDecided, toast }) {
+function row(item, other, { score = null, confirmed = false, onDecided, toast }) {
   const li = document.createElement('div');
   li.className = 'collection-item related-item';
   li.appendChild(renderCard(other));
   const actions = document.createElement('div');
   actions.className = 'collection-moves';
   const match = score === null ? '' : ` (match ${Math.round(score * 100)}%)`;
-  actions.innerHTML = `
-    <button type="button" data-status="confirmed" title="Related${match}" aria-label="Related: keep as a link">✓</button>
-    <button type="button" data-status="rejected" title="Not related" aria-label="Not related: don't suggest again">✕</button>`;
+  actions.innerHTML = (confirmed ? '' : `
+    <button type="button" data-status="confirmed" title="Related${match}" aria-label="Related: keep as a link">✓</button>`) + `
+    <button type="button" data-status="rejected" title="Not related" aria-label="Not related: ${confirmed ? 'remove it, and' : ''} don't suggest again">✕</button>`;
   actions.addEventListener('click', async (e) => {
     const btn = e.target.closest('button[data-status]');
     if (!btn) return;
@@ -40,7 +41,8 @@ function row(item, other, { score = null, onDecided, toast }) {
         body: JSON.stringify({ status: btn.dataset.status }),
       });
       li.remove();
-      toast(btn.dataset.status === 'confirmed' ? 'Kept as related' : "Won't be suggested again", 'ok');
+      toast(btn.dataset.status === 'confirmed' ? 'Kept as related'
+        : confirmed ? 'No longer related' : "Won't be suggested again", 'ok');
       onDecided(btn.dataset.status);
     } catch (err) {
       actions.querySelectorAll('button').forEach(b => { b.disabled = false; });
@@ -51,16 +53,17 @@ function row(item, other, { score = null, onDecided, toast }) {
   return li;
 }
 
-// onLinked: reload the item's links, where a confirmed pair now shows
+// onLinked: reload the item's links after a decision changes one
 export async function loadRelated(item, toast, onLinked) {
   const section = document.getElementById('related-section');
   if (!section) return;
   const current = () => section.isConnected && section.dataset.itemId === String(item.id);
-  let suggestions = [], similar = [], links = [];
+  let related = {}, similar = [], links = [];
   try {
-    [suggestions, similar, links] = await Promise.all([
-      api(`/api/items/${item.id}/related?limit=${SHOWN}`).then(d => d.suggestions).catch(() => []),
-      api(`/api/embeddings/similar/${item.id}?limit=${SHOWN * 2}`),
+    [related, similar, links] = await Promise.all([
+      api(`/api/items/${item.id}/related?limit=${SHOWN}`).catch(() => ({})),
+      // Without vectors (or the model) there are none similar; the rest still shows
+      api(`/api/embeddings/similar/${item.id}?limit=${SHOWN * 2}`).catch(() => []),
       api(`/api/items/${item.id}/links`).then(d => d.links).catch(() => []),
     ]);
   } catch {
@@ -68,16 +71,29 @@ export async function loadRelated(item, toast, onLinked) {
     return;
   }
   if (!current()) return;
-  const onDecided = (status) => { if (status === 'confirmed') onLinked(); };
+  const suggestions = related.suggestions || [];
+  const confirmed = related.confirmed || [];  // an older server sends none
+  // Any decision redraws the section, so a confirmed item moves to the top
+  const onDecided = () => { onLinked(); loadRelated(item, toast, onLinked); };
   const list = document.getElementById('related-list');
   list.innerHTML = '';
-  if (!suggestions.length) {
-    list.innerHTML = '<span class="muted" style="font-size:0.8rem">No suggestions from other sources</span>';
+  if (!suggestions.length && !confirmed.length) {
+    list.innerHTML = '<span class="muted" style="font-size:0.8rem">No related items yet</span>';
+  }
+  confirmed.forEach(other => list.appendChild(row(item, other, { confirmed: true, onDecided, toast })));
+  if (confirmed.length && suggestions.length) {
+    // Tell the kept ones from the ones still waiting for a decision
+    const label = document.createElement('div');
+    label.className = 'muted';
+    label.style.cssText = 'font-size:0.8rem;margin-top:0.5rem';
+    label.textContent = 'Suggested from other sources';
+    list.appendChild(label);
   }
   suggestions.forEach(s => list.appendChild(row(item, s.item, { score: s.score, onDecided, toast })));
 
-  // Similar items not suggested above, and not linked already
-  const shown = new Set([...suggestions.map(s => s.item.id), ...links.map(l => l.item.id)]);
+  // Similar items not listed above, and not linked already
+  const shown = new Set([...suggestions.map(s => s.item.id), ...confirmed.map(c => c.id),
+    ...links.map(l => l.item.id)]);
   const rest = similar.filter(s => !shown.has(s.id)).slice(0, SHOWN);
   const simList = document.getElementById('similar-list');
   simList.innerHTML = '';

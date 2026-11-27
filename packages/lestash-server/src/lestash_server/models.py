@@ -321,9 +321,10 @@ class RelatedSuggestion(BaseModel):
 
 
 class RelatedSuggestionsResponse(BaseModel):
-    """An item's suggested related items, best first."""
+    """An item's suggested related items, best first, and the ones you confirmed."""
 
     suggestions: list[RelatedSuggestion]
+    confirmed: list[ItemResponse] = []  # latest decision first (#424)
 
 
 class RelatedDecision(BaseModel):

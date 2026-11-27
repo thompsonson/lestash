@@ -282,14 +282,15 @@ Returns `{"status": "rejected"}`.
 
 ### `GET /api/items/{item_id}/related`
 
-Items from other sources suggested as related, by their vectors (#219), best first. Confirmed ones are links, listed by `GET /links`. `404` if the item doesn't exist.
+Items from other sources suggested as related, by their vectors (#219), best first, and every item you confirmed as related, latest decision first (#424). Confirmed ones are also links, listed by `GET /links`. `404` if the item doesn't exist.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `limit` | int | 5 | At most this many, 1–50 |
 
 ```json
-{"suggestions": [{"item": {"id": 42, "source_type": "arxiv", "title": "...", "...": "..."}, "score": 0.71}]}
+{"suggestions": [{"item": {"id": 42, "source_type": "arxiv", "title": "...", "...": "..."}, "score": 0.71}],
+ "confirmed": [{"id": 7, "source_type": "youtube", "title": "...", "...": "..."}]}
 ```
 
 ---

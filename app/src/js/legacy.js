@@ -1222,14 +1222,16 @@ async function loadLinks(itemId) {
   const section = document.getElementById('links-section');
   // The view may have moved on to another item while this loaded
   if (!section || section.dataset.itemId !== String(itemId)) return;
-  if (!data.links.length) {
-    section.style.display = 'none';
-    return;
-  }
   // A top-level reply's post is known by its reply link: its main action goes there
   const answered = data.links.find(l => l.kind === 'in_reply_to' && l.direction === 'outgoing');
   if (answered) setAnsweredPost(answered.item.id);
-  const rows = data.links.map(l => {
+  // Related items are listed under Related, with their cards (#424)
+  const shown = data.links.filter(l => l.kind !== 'related');
+  if (!shown.length) {
+    section.style.display = 'none';
+    return;
+  }
+  const rows = shown.map(l => {
     const labels = LINK_LABELS[l.kind] || [l.kind, `${l.kind} (from)`];
     const label = labels[l.direction === 'outgoing' ? 0 : 1];
     // A comment has no title, and its address is its post's: its text tells it apart
@@ -1243,7 +1245,7 @@ async function loadLinks(itemId) {
         data-other="${l.item.id}" data-kind="${escHtml(l.kind)}" data-direction="${l.direction}">&times;</span>
     </div>`;
   }).join('');
-  document.getElementById('links-title').textContent = `Links (${data.links.length})`;
+  document.getElementById('links-title').textContent = `Links (${shown.length})`;
   document.getElementById('links-list').innerHTML = rows;
   section.style.display = '';
 }
