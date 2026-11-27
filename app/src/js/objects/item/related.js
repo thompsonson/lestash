@@ -29,7 +29,8 @@ function row(item, other, { score = null, confirmed = false, onDecided, toast })
   const match = score === null ? '' : ` (match ${Math.round(score * 100)}%)`;
   actions.innerHTML = (confirmed ? '' : `
     <button type="button" data-status="confirmed" title="Related${match}" aria-label="Related: keep as a link">✓</button>`) + `
-    <button type="button" data-status="rejected" title="Not related" aria-label="Not related: ${confirmed ? 'remove it, and' : ''} don't suggest again">✕</button>`;
+    <button type="button" data-status="rejected" title="Not related" aria-label="${confirmed
+      ? "Not related: remove it, and don't suggest it again" : "Not related: don't suggest again"}">✕</button>`;
   actions.addEventListener('click', async (e) => {
     const btn = e.target.closest('button[data-status]');
     if (!btn) return;
@@ -57,11 +58,15 @@ function row(item, other, { score = null, confirmed = false, onDecided, toast })
 export async function loadRelated(item, toast, onLinked) {
   const section = document.getElementById('related-section');
   if (!section) return;
-  const current = () => section.isConnected && section.dataset.itemId === String(item.id);
+  // Only the latest load draws: decisions start new ones before older ones finish
+  const load = String(Number(section.dataset.load || 0) + 1);
+  section.dataset.load = load;
+  const current = () => section.isConnected && section.dataset.itemId === String(item.id)
+    && section.dataset.load === load;
   let related = {}, similar = [], links = [];
   try {
     [related, similar, links] = await Promise.all([
-      api(`/api/items/${item.id}/related?limit=${SHOWN}`).catch(() => ({})),
+      api(`/api/items/${item.id}/related?limit=${SHOWN}`),
       // Without vectors (or the model) there are none similar; the rest still shows
       api(`/api/embeddings/similar/${item.id}?limit=${SHOWN * 2}`).catch(() => []),
       api(`/api/items/${item.id}/links`).then(d => d.links).catch(() => []),
@@ -97,7 +102,7 @@ export async function loadRelated(item, toast, onLinked) {
   const rest = similar.filter(s => !shown.has(s.id)).slice(0, SHOWN);
   const simList = document.getElementById('similar-list');
   simList.innerHTML = '';
+  document.getElementById('similar-title').style.display = rest.length ? '' : 'none';
   if (!rest.length) return;
-  document.getElementById('similar-title').style.display = '';
   rest.forEach(s => simList.appendChild(row(item, s, { onDecided, toast })));
 }
