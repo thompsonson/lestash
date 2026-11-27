@@ -33,7 +33,8 @@ run() { # module name expected kind check overrides...
   st=$(grep -oE '[0-9,]+ distinct states found' <<<"$out" | head -1)
   local ok=ok; [[ $r == "$e" ]] || { ok=UNEXPECTED; fail=1; }
   printf '%-28s %-9s %-11s %s\n' "$n" "$r" "$ok" "$st"
-  [[ $r == error || $r == other ]] && echo "$out" | grep -E "is violated|^Error" | head -5
+  [[ $r == error ]] && echo "$out" | tail -20
+  [[ $r == other ]] && echo "$out" | grep -E "is violated" | head -5
   [[ -n "${TRACE:-}" && $r == violated ]] && echo "$out" | sed -n '/violated/,/distinct states/p' | head -80
   rm -rf "$w"
 }
