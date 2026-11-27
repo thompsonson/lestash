@@ -13,6 +13,7 @@ import {
 import { renderCard } from './objects/item/card.js';
 import { personName } from './objects/item/kinds.js';
 import { openAddFiles } from './objects/item/add-files.js';
+import { openShareFile } from './objects/item/share-file.js';
 import { koboSectionHtml, loadKobo } from './objects/item/kobo.js';
 import { relatedSectionHtml, loadRelated } from './objects/item/related.js';
 import { renderCollectionCard } from './objects/collection/card.js';
@@ -2473,6 +2474,9 @@ function openHtmlImportDialog(fileOrData, htmlText) {
   document.getElementById('html-import-type').value = detected === 'unknown' ? 'auto' : detected;
   document.getElementById('html-import-url').value = '';
   document.getElementById('html-import-notes').value = '';
+  document.querySelector('input[name="html-import-mode"][value="new"]').checked = true;
+  document.getElementById('html-import-attach-section').style.display = 'none';
+  attachPickerReset('html-import');
   document.getElementById('html-import-modal').classList.add('open');
 }
 
@@ -2482,6 +2486,10 @@ function closeHtmlImportDialog() {
 }
 
 async function saveHtmlImport() {
+  // Attached to an item, a single page goes under it (#114)
+  const attach = document.querySelector('input[name="html-import-mode"]:checked').value === 'attach';
+  const parentId = attach ? attachPickerGetId('html-import') : null;
+  if (attach && !parentId) { showToast('Select an item to attach to', 'error'); return; }
   const btn = document.getElementById('html-import-save-btn');
   btn.disabled = true;
   btn.textContent = 'Importing...';
@@ -2501,11 +2509,16 @@ async function saveHtmlImport() {
     if (sourceUrl) formData.append('source_url', sourceUrl);
     const notes = document.getElementById('html-import-notes').value.trim();
     if (notes) formData.append('notes', notes);
+    if (parentId) formData.append('parent_id', String(parentId));
 
     const res = await fetch(`${getApiBase()}/api/import`, { method: 'POST', body: formData });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.status);
-    showToast(`Imported ${data.items_added} items from ${data.source_type}`, 'ok');
+    // A page the server could read nothing from comes back 200 with no item
+    if (parentId && !data.item_id) throw new Error((data.errors || []).join('; ') || 'nothing found in it');
+    showToast(!parentId ? `Imported ${data.items_added} items from ${data.source_type}`
+      : data.items_held && !data.items_added ? 'Already in LeStash, left where it is'
+      : `Attached ${data.items_added} item${data.items_added === 1 ? '' : 's'}`, 'ok');
     closeHtmlImportDialog();
     refreshTimeline();
     loadRecent();
@@ -2764,25 +2777,7 @@ async function handlePendingShare() {
       for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
       const file = new File([bytes], fileData.fileName, { type: fileData.mimeType });
       addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
-
-      // Switch to Notes tab and show transcription UI
-      navigate('/notes');
-      const uploadBtn = document.getElementById('upload-btn');
-      const recordStatus = document.getElementById('record-status');
-      if (uploadBtn) { uploadBtn.style.pointerEvents = 'none'; uploadBtn.style.opacity = '0.5'; uploadBtn.innerText = 'Transcribing...'; }
-      if (recordStatus) recordStatus.textContent = `Uploading ${file.name}...`;
-      try {
-        const data = await transcribeAudioFile(file);
-        if (data) {
-          if (recordStatus) recordStatus.textContent = `${data.text.split(' ').length} words transcribed`;
-          showToast(`Saved: ${data.title}`, 'ok');
-          loadSavedNotes();
-          refreshTimeline();
-          loadRecent();
-        }
-      } finally {
-        if (uploadBtn) { uploadBtn.style.pointerEvents = ''; uploadBtn.style.opacity = ''; uploadBtn.innerText = 'Upload File'; }
-      }
+      openShareFile(file, { audio: true, saveNew: transcribeSharedAudio, saved: refreshAfterShare });
     } else if (share.mimeType && share.mimeType.startsWith('image/') && share.filePaths && share.filePaths.length) {
       addDebugLog('SHARE', 'read_shared_files', 'START', null, `count: ${share.filePaths.length}`);
       const settled = await Promise.allSettled(share.filePaths.map(async (filePath, i) => {
@@ -2841,8 +2836,10 @@ async function handlePendingShare() {
       for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
       const file = new File([bytes], fileData.fileName, { type: share.mimeType });
       addDebugLog('SHARE', 'read_shared_file', 'OK', null, `${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
-      navigate('/settings/sources');
-      await uploadImport(file);
+      openShareFile(file, {
+        saveNew: f => { navigate('/settings/sources'); uploadImport(f); },
+        saved: refreshAfterShare,
+      });
     } else if (share.text) {
       openCaptureDialog(share);
     }
@@ -2851,6 +2848,35 @@ async function handlePendingShare() {
     showToast('Share failed: ' + e, 'error');
     const btn = document.getElementById('upload-btn');
     if (btn) { btn.style.pointerEvents = ''; btn.style.opacity = ''; btn.innerText = 'Upload File'; }
+  }
+}
+
+function refreshAfterShare() {
+  refreshTimeline();
+  loadRecent();
+}
+
+// A shared recording saved as a new note: transcribed on the Notes tab
+async function transcribeSharedAudio(file) {
+  navigate('/notes');
+  const uploadBtn = document.getElementById('upload-btn');
+  const recordStatus = document.getElementById('record-status');
+  if (uploadBtn) { uploadBtn.style.pointerEvents = 'none'; uploadBtn.style.opacity = '0.5'; uploadBtn.innerText = 'Transcribing...'; }
+  if (recordStatus) recordStatus.textContent = `Uploading ${file.name}...`;
+  try {
+    const data = await transcribeAudioFile(file);
+    if (data) {
+      if (recordStatus) recordStatus.textContent = `${data.text.split(' ').length} words transcribed`;
+      showToast(`Saved: ${data.title}`, 'ok');
+      loadSavedNotes();
+      refreshAfterShare();
+    }
+  } catch (e) {
+    addDebugLog('SHARE', 'transcribe', 'ERR', null, String(e));
+    showToast('Transcription failed: ' + e.message, 'error');
+    if (recordStatus) recordStatus.textContent = '';
+  } finally {
+    if (uploadBtn) { uploadBtn.style.pointerEvents = ''; uploadBtn.style.opacity = ''; uploadBtn.innerText = 'Upload File'; }
   }
 }
 

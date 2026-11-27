@@ -104,10 +104,13 @@ async def transcribe_audio(
     file: UploadFile,
     model: str = Form("base.en"),
     title: str | None = Form(None),
+    parent_id: int | None = Form(None),
 ):
     """Upload an audio file, transcribe via Whisper, and save as a voice note.
 
-    Accepts m4a, mp3, wav, ogg, flac, or webm files (max 50MB).
+    Accepts m4a, mp3, wav, ogg, flac, or webm files (max 50MB). With ``parent_id``
+    the note goes under that item (#114). If the item is deleted while the audio is
+    transcribed, the note is saved on its own, and the response's ``parent_id`` is None.
     """
     from lestash.core.database import upsert_item
     from lestash.models.item import ItemCreate
@@ -129,6 +132,11 @@ async def transcribe_audio(
     data = await file.read()
     if len(data) > 50 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large (max 50MB)")
+
+    if parent_id is not None:
+        with get_db() as conn:
+            if not _item_exists(conn, parent_id):
+                raise HTTPException(status_code=404, detail=f"Item {parent_id} not found")
 
     # Save to temp file for transcription
     cache_dir = paths.voice_cache_dir()
@@ -168,6 +176,9 @@ async def transcribe_audio(
     )
 
     with get_db() as conn:
+        # Transcribing takes a while: the item may have been deleted since
+        if parent_id is not None and _item_exists(conn, parent_id):
+            item.parent_id = parent_id
         item_id = upsert_item(conn, item)
 
     return TranscribeResponse(
@@ -177,4 +188,9 @@ async def transcribe_audio(
         model=result.model,
         item_id=item_id,
         title=note_title,
+        parent_id=item.parent_id,
     )
+
+
+def _item_exists(conn, item_id: int) -> bool:
+    return conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is not None

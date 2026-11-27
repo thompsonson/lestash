@@ -437,6 +437,10 @@ a.item-card { display: block; color: inherit; text-decoration: none; }
   padding: 0.4rem 0.6rem; margin-bottom: 0.75rem;
 }
 .modal input:focus { outline: none; border-color: var(--accent); }
+/* A choice keeps its own size, beside its words */
+.modal input[type="radio"], .modal input[type="checkbox"] {
+  width: auto; padding: 0; margin: 0; accent-color: var(--accent);
+}
 .modal-actions {
   display: flex; gap: 0.5rem; justify-content: flex-end;
   margin-top: 0.5rem;
