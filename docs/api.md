@@ -496,7 +496,11 @@ Suggested themes (#266): groups of related items across sources, found by `lesta
 
 ### `GET /api/themes`
 
-The suggested themes, largest first: `id`, `name`, `sources` (most items first) and `items` (`id`, `source_type`, `kind`, `title`), in the theme's order. Items deleted since are left out.
+The suggested themes, largest first: `id`, `name`, `sources` (most items first) and `items` (`id`, `source_type`, `kind`, `kind_label`, `kind_plural`, `title`, and `excerpt`: the text's first 90 characters when the item has no title), in the theme's order. Items deleted since are left out.
+
+### `GET /api/themes/count`
+
+`{"suggested": N}`: how many themes `GET /api/themes` lists now.
 
 ### `POST /api/themes/{theme_id}/keep`
 

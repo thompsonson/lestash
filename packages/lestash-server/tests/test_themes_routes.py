@@ -64,3 +64,40 @@ def test_dismissing_a_theme_hides_it(client, theme):
     with deps.get_db() as conn:
         status = conn.execute("SELECT status FROM themes WHERE id = ?", (theme_id,)).fetchone()[0]
     assert status == "dismissed"
+
+
+def test_an_untitled_item_is_listed_by_its_text_and_kind(client, theme):
+    long_text = "First words of a post\n  that runs on " + "and on " * 20
+    with deps.get_db() as conn:
+        conn.execute(
+            "UPDATE items SET title = NULL, content = ? WHERE id = ?", (long_text, theme[0])
+        )
+        conn.commit()
+
+    items = client.get("/api/themes").json()[0]["items"]
+
+    untitled = next(i for i in items if i["id"] == theme[0])
+    assert untitled["excerpt"].startswith("First words of a post that runs on")
+    assert untitled["excerpt"].endswith("…") and len(untitled["excerpt"]) <= 90
+    titled = next(i for i in items if i["id"] == theme[1])
+    assert titled["excerpt"] is None
+    assert titled["kind_label"]
+
+
+def test_theme_items_carry_their_kinds_plural(client, theme):
+    with deps.get_db() as conn:
+        kind = conn.execute("SELECT kind FROM items WHERE id = ?", (theme[0],)).fetchone()[0]
+
+    item = next(i for i in client.get("/api/themes").json()[0]["items"] if i["id"] == theme[0])
+
+    from lestash.core.kinds import KINDS
+
+    assert item["kind_plural"] == KINDS[kind].plural
+
+
+def test_the_count_matches_the_list(client, theme):
+    assert client.get("/api/themes/count").json() == {"suggested": 1}
+    theme_id = client.get("/api/themes").json()[0]["id"]
+    client.post(f"/api/themes/{theme_id}/dismiss")
+
+    assert client.get("/api/themes/count").json() == {"suggested": 0}

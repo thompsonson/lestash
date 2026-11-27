@@ -132,13 +132,14 @@ function restoreScroll(y, token) {
   events.forEach((t) => el.addEventListener(t, stop, { passive: true }));
 }
 
-export async function render() {
+// ``restoring``: Back or Forward drew this page, so its saved place wins over a #fragment
+export async function render({ restoring = false } = {}) {
   const url = new URL(location.href);
   const upgraded = upgrade(url);
   if (upgraded) {
     history.replaceState({ depth: depth(), scrollY: 0 }, '', upgraded);
     remember();
-    return render();
+    return render({ restoring });
   }
   // Leaving a page closes its dialogs; drawing the same page again keeps them
   if (drawnPath !== null && drawnPath !== url.pathname) {
@@ -154,8 +155,21 @@ export async function render() {
   try {
     await found.page(url.pathname.match(found.pattern), url);
   } finally {
-    // A later navigation owns the scroll position
-    if (rendering === token) restoreScroll(scrollY, token);
+    // A later navigation owns the scroll position. An address naming a part of the
+    // page (/collections#themes-title) opens there, unless Back or Forward restores a place
+    let anchor = null;
+    if (!restoring && url.hash) {
+      try {
+        anchor = document.getElementById(decodeURIComponent(url.hash.slice(1)));
+      } catch {
+        anchor = null;  // a malformed #fragment opens at the top
+      }
+    }
+    if (rendering === token) {
+      // A hidden element can't be scrolled to: open as any other page would
+      if (anchor && anchor.getClientRects().length) anchor.scrollIntoView({ block: 'start' });
+      else restoreScroll(scrollY, token);
+    }
   }
 }
 
@@ -196,7 +210,7 @@ function onPop() {
   }
   remember();
   if (samePage && !upgrade(new URL(location.href))) return;  // only the #section changed
-  render();
+  render({ restoring: true });
 }
 
 // Listen from the start, so a dialog opened before the first page is drawn
