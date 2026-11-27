@@ -1,15 +1,8 @@
 """Google integration CLI commands — auth, doctor, Drive download, and folder sync."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 import typer
 from rich.console import Console
 from rich.table import Table
-
-if TYPE_CHECKING:
-    from lestash.core.config import Config
 
 app = typer.Typer(help="Google account integration (Drive, Docs).", no_args_is_help=True)
 console = Console()
@@ -251,8 +244,8 @@ def pictures(
 
     Finds Drive items whose content still has empty `<!-- image -->` markers and
     links none of the pictures saved for it, imports each one again from Drive, and saves its
-    pictures in their places. A document read but with nothing to fill is marked and
-    skipped after; one Drive won't give is listed and tried again on the next run.
+    pictures in their places. A document it can't fill is listed, and tried again
+    on the next run: it keeps no record of documents it gave up on.
     """
     import json
 
@@ -278,8 +271,6 @@ def pictures(
                   WHERE m.item_id = items.id AND m.source_origin = ?
                     AND instr(items.content, '](/api/media/' || m.id || ')') > 0
               )
-              -- Read before, with no marker it could fill; a re-sync clears the mark
-              AND json_extract(metadata, '$.pictures_unfilled') IS NULL
             ORDER BY id
             """,
             [*word_types, PICTURE_ORIGIN],
@@ -297,15 +288,10 @@ def pictures(
     for row in rows:
         try:
             drive_file = sync_single_file(row["source_id"])
-            if not drive_file.downloaded:
-                # Drive didn't give the file. That may pass (network, sign-in) or not
-                # (deleted, unshared); it is listed, and tried again on the next run
-                errors.append(f"item {row['id']}: Drive file could not be downloaded")
-                continue
-            if drive_file.pictures is None:
-                # Given, but Docling couldn't read it: keep the item, don't fetch it again
-                _mark_unfilled(config, row["id"])
-                errors.append(f"item {row['id']}: Docling could not read the file")
+            found = drive_file.pictures or []
+            if not any(found) or not count_placeholders(drive_file.item.content):
+                # Unreadable now, or its pictures are gone: leave the item as it is
+                errors.append(f"item {row['id']}: no pictures found when fetched again")
                 continue
             # Fetched alone, a file doesn't know the folder a folder sync found it in
             held = json.loads(row["metadata"] or "{}")
@@ -316,15 +302,10 @@ def pictures(
             drive_file.item.metadata = metadata
             with get_connection(config) as conn, write_transaction(conn):
                 upsert_item(conn, drive_file.item)
-            count = attach_pictures(row["id"], drive_file.pictures, config=config)
+            count = attach_pictures(row["id"], found, config=config)
             if count:
                 filled += 1
                 saved += count
-            elif count_placeholders(drive_file.item.content):
-                # Read, but no marker could be filled: don't fetch it again. A re-sync
-                # replaces the metadata, so the mark goes with it
-                _mark_unfilled(config, row["id"])
-                errors.append(f"item {row['id']}: none of its pictures could be filled")
         except Exception as e:
             errors.append(f"item {row['id']}: {e}")
 
@@ -333,29 +314,3 @@ def pictures(
         console.print(f"[yellow]  {len(errors)} errors:[/yellow]")
         for err in errors:
             console.print(f"    • {err}")
-
-
-def _mark_unfilled(config: Config, item_id: int) -> None:
-    """Mark a document `google pictures` read but could fill nothing in.
-
-    It is then skipped; a re-sync replaces the metadata, so the mark goes with it.
-    """
-    _set_metadata(config, item_id, "'$.pictures_unfilled', json('true')")
-
-
-def _set_metadata(config: Config, item_id: int, path_and_value: str) -> None:
-    from lestash.core.database import (
-        get_connection,
-        mark_recent_history,
-        max_history_id,
-        write_transaction,
-    )
-
-    with get_connection(config) as conn, write_transaction(conn):
-        pre_max = max_history_id(conn)
-        conn.execute(
-            f"UPDATE items SET metadata = json_set(COALESCE(metadata, '{{}}'), {path_and_value})"
-            " WHERE id = ?",
-            (item_id,),
-        )
-        mark_recent_history(conn, pre_max, "sync", item_ids=[item_id])

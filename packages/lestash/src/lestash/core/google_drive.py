@@ -236,8 +236,6 @@ class DriveFile(NamedTuple):
     pdf_bytes: bytes | None
     filename: str
     pictures: list[DocPicture | None] | None
-    # False when the file couldn't be downloaded or exported, which may pass
-    downloaded: bool = True
 
 
 def _process_file(service, file_meta: dict) -> DriveFile:
@@ -258,7 +256,6 @@ def _process_file(service, file_meta: dict) -> DriveFile:
     content = ""
     pdf_bytes: bytes | None = None
     pictures: list[DocPicture | None] | None = None
-    downloaded = False
     try:
         # Google Workspace files need export, not download
         if mime_type in EXPORTABLE_MIMES:
@@ -267,7 +264,6 @@ def _process_file(service, file_meta: dict) -> DriveFile:
         else:
             path = _download_file(service, file_id, name)
             export_mime = mime_type
-        downloaded = True
 
         try:
             if export_mime in DOCX_MIME_TYPES:
@@ -284,7 +280,7 @@ def _process_file(service, file_meta: dict) -> DriveFile:
     except Exception:
         logger.exception("Failed to download/extract %s", name)
 
-    return DriveFile(file_to_item(file_meta, content), pdf_bytes, name, pictures, downloaded)
+    return DriveFile(file_to_item(file_meta, content), pdf_bytes, name, pictures)
 
 
 def _filter_syncable(files: list[dict]) -> list[dict]:
