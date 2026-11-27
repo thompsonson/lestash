@@ -895,6 +895,12 @@ A **Theme** is a subject you are working through. It is an object in its own rig
   - Suggested themes come from the related-items graph (#266). Each is a candidate concept, as ISO 25964 calls a concept not yet approved.
   - Keep approves it, under the name you give. It creates nothing else, and never a Collection.
   - Dismiss rejects it, as now.
+- **Ways back:** no decision on a theme is final.
+  - **Reconsider** returns a dismissed theme to suggested. It stays until you decide again; a rerun doesn't replace it.
+  - **Set aside** archives a kept theme. It keeps its name, items, view, questions, positions and collections, and leaves the main list.
+  - **Resume** returns an archived theme to kept.
+  - **Drop** dismisses a kept theme, only while nothing of yours hangs off it: no view, question, position or collection. Otherwise the app offers Set aside, so your thinking is never lost.
+  - An archived or dismissed theme still holds its items, so a rerun doesn't suggest them again as a new theme.
 - **A theme has:**
   - a name (`skos:prefLabel`); the words it was suggested under stay as `skos:altLabel`;
   - what it covers (`skos:scopeNote`);
@@ -934,7 +940,7 @@ Theme (skos:Concept)
 
 ### What changes
 
-- `themes` stays the store. `kept` means approved; its single `collection_id` gives way to links to any number of collections.
+- `themes` stays the store. Its statuses become `suggested`, `kept` (approved), `archived` and `dismissed`. `kept` means approved; its single `collection_id` gives way to links to any number of collections.
 - A kept theme stores your name apart from the words it was suggested under, so a rerun never renames it.
 - Items you add to or drop from a kept theme are kept, and a rerun of `lestash db themes` never changes them. A suggestion that overlaps a kept theme by half or more is still left out, as now.
 - Views, questions, positions and evidence need tables; none is built yet.
@@ -1009,7 +1015,7 @@ Open from the data: #245, rows that point at deleted items.
 - Data from the Kobo is read, never written back, except the collections you mark in LeStash. Highlights, notes, pen notes on PDFs and notebooks become items; opening, reading and finishing books become activities (`read`, #201).
 - A book that leaves the Kobo stays an item, marked `removed_from_device` with when it was first seen gone (#314). Its highlights stay with it.
 - A Collection's order and notes belong to the membership, not the item, so one item has a different place in each collection (14 Nov 2026, #317). Collections map to `prov:Collection` and the Collections Ontology's `co:List`; Topics stay SKOS concepts.
-- A Theme is its own object, not a Collection: kept themes are approved SKOS concepts with your view, questions (IBIS Issues), positions and collections. Views and positions cite items with CiTO, and are versioned, never kept in step (27 Nov 2026, #340).
+- A Theme is its own object, not a Collection: kept themes are approved SKOS concepts with your view, questions (IBIS Issues), positions and collections. Views and positions cite items with CiTO, and are versioned, never kept in step (27 Nov 2026, #340) No decision on a theme is final: a dismissed one can be reconsidered, and a kept one set aside or, while it holds nothing of yours, dropped.
 
 ## References
 
