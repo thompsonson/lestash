@@ -105,7 +105,10 @@ def parse_claude_zip(zf: zipfile.ZipFile) -> list[ItemCreate] | None:
 
 
 def _not_imported(zf: zipfile.ZipFile, names: set[str]) -> str | None:
-    """Why a part of a split Claude export imports nothing, if it is one."""
+    """Why a Claude export, or a part of one, imports nothing, if it is one."""
+    lists = [n for n in ("conversations.json", "projects.json", "memories.json") if n in names]
+    if lists and all(_read_json(zf, n) == [] for n in lists):
+        return "This Claude export is empty: it holds no conversations, projects or memories."
     if "users.json" in names and "login_history.json" in names:
         history = _read_dict(zf, "login_history.json")
         if history is not None and "login_events" in history:

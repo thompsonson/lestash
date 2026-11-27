@@ -245,6 +245,7 @@ def test_parts_with_nothing_to_import_say_why():
         "#437": {"artifacts/a1/artifact.json": {"id": "a1", "versions": [], "active_version": "v"}},
         "#437 ": {"artifacts/a1/data/documents.json": {"documents": []}},
         "#439": {"claude_code_cloud/routines.json": {"claude_code_cloud": []}},
+        "empty": {"conversations.json": [], "users.json": []},
     }
     for why, files in cases.items():
         with pytest.raises(NothingToImport, match=why.strip()):
