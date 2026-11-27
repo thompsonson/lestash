@@ -744,7 +744,7 @@ Upload raw audio to cache (no transcription). Max 50MB.
 
 ### `POST /api/import`
 
-Import from an uploaded file (multipart/form-data, max 50MB).
+Import from an uploaded file (multipart/form-data, max 50MB; a ZIP up to 512 MB).
 
 **Supported formats:**
 - `.json` — JSON array of items
