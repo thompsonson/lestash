@@ -956,7 +956,8 @@ Theme (skos:Concept)
 - A rerun skips reconsidered themes: today it deletes every suggestion it doesn't find again.
 - Overlap is measured both ways: a group is left out when half or more of it, or of a decided or reconsidered theme, is in the other. Today only the share of the new group counts.
 - Views, questions, positions and evidence need tables; none is built yet.
-- A TLA+ model checks these rules: [`models/themes/`](models/themes/README.md). Change it with them.
+- [`models/themes/`](models/themes/README.md) holds the atomicguard session's TLA+ model of this design at `1545b88`, exactly as it ran it. Its findings led to the rules above, so it models the design before them.
+  - A model of the rules as they now read is pending (thompsonson/atomicguard#657).
 - The rule "a kept theme is a collection per question" in [`ux-object-model-design.md`](ux-object-model-design.md) is replaced.
 - Keep in the app (#422) still asks for a name, but will approve the theme instead of making a collection.
 

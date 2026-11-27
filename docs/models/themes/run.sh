@@ -1,22 +1,16 @@
 #!/usr/bin/env bash
-# Runs each case of Themes.tla and Statement.tla with TLC 2.19.
-# "designed" is the model as the doc now reads, and must pass. Each other
-# case switches one fix off, or checks a state is reachable, and must be
-# violated. One line per case: name, outcome, expected. TRACE=1 prints
-# the trace of each violated case. "other" means a property other than the
-# one named was violated; its TLC error is printed. TLA2TOOLS overrides
-# the jar's path.
+# Runs each case of Themes.tla and Statement.tla with the TLC build
+# atomicguard's models.lock pins. One line per case: name, outcome, states.
+# TRACE=1 prints the trace of each violated case.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-jar="${TLA2TOOLS:-$HOME/.cache/tla2tools-936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88.jar}"
-[[ -f $jar ]] || { echo "TLC jar not found: $jar (set TLA2TOOLS)"; exit 2; }
-fail=0
+jar="$HOME/.cache/tla2tools-936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88.jar"
 declare -A defs
-defs[Themes]="Items={1,2,3} Slots={1,2} PinReconsidered=TRUE OverlapCoversPinned=TRUE WithdrawnBlocksDrop=TRUE KeepOneItem=TRUE BothWays=TRUE ReconsiderClears=TRUE"
-defs[Statement]="MaxVer=3 TwoFields=TRUE DoubtAnyStep=TRUE RestartAfterWithdraw=TRUE"
+defs[Themes]="Items={1,2,3} Slots={1,2} PinReconsidered=TRUE OverlapCoversPinned=FALSE WithdrawnBlocksDrop=TRUE KeepOneItem=FALSE"
+defs[Statement]="MaxVer=3 AllowDoubt=TRUE RefineMakesVersion=FALSE RestartAfterWithdraw=TRUE"
 
-run() { # module name expected kind check overrides...
-  local m=$1 n=$2 e=$3 k=$4 c=$5; shift 5
+run() { # module name kind check overrides...
+  local m=$1 n=$2 k=$3 c=$4; shift 4
   local w; w=$(mktemp -d); cp "$here/$m.tla" "$w/"
   declare -A val; local kv
   for kv in ${defs[$m]} "$@"; do val[${kv%%=*}]=${kv#*=}; done
@@ -26,40 +20,32 @@ run() { # module name expected kind check overrides...
   local out r st
   out=$(cd "$w" && java -XX:+UseParallelGC -cp "$jar" tlc2.TLC -deadlock -workers auto "$m" 2>&1)
   if grep -q "No error has been found" <<<"$out"; then r=pass
-  elif [[ $k == ALL ]] && grep -q "is violated" <<<"$out"; then r=violated
-  elif grep -qE "(Invariant|property) $c is violated" <<<"$out"; then r=violated
-  elif grep -q "is violated" <<<"$out"; then r=other
-  else r=error; fi
+  elif grep -qi "is violated" <<<"$out"; then r=violated; else r=error; fi
   st=$(grep -oE '[0-9,]+ distinct states found' <<<"$out" | head -1)
-  local ok=ok; [[ $r == "$e" ]] || { ok=UNEXPECTED; fail=1; }
-  printf '%-28s %-9s %-11s %s\n' "$n" "$r" "$ok" "$st"
+  printf '%-28s %-9s %s\n' "$n" "$r" "$st"
   [[ $r == error ]] && echo "$out" | tail -20
-  [[ $r == other ]] && echo "$out" | grep -E "is violated" | head -5
   [[ -n "${TRACE:-}" && $r == violated ]] && echo "$out" | sed -n '/violated/,/distinct states/p' | head -80
   rm -rf "$w"
 }
 
 ALLT="INVARIANT ThinkingKept OverlapHolds NoTwinSuggestions DecidedHoldItems
 PROPERTY RerunLeavesAlone"
-ALLS="INVARIANT OneCurrent
-PROPERTY HistoryKept EndKeepsStance"
+ALLS="INVARIANT OneCurrent HistoryReadable"
 
-if [[ $# -gt 0 ]]; then run "$@"; exit $fail; fi
-#        module    case                    expect   kind      check
-run Themes    designed                pass     ALL       "$ALLT"
-run Themes    rerun-deletes-reconsidered violated PROPERTY RerunLeavesAlone PinReconsidered=FALSE
-run Themes    withdrawn-unblocks-drop violated INVARIANT ThinkingKept       WithdrawnBlocksDrop=FALSE
-run Themes    empty-kept-theme        violated INVARIANT DecidedHoldItems   KeepOneItem=FALSE
-run Themes    rerun-ignores-reconsidered violated INVARIANT NoTwinSuggestions OverlapCoversPinned=FALSE
-run Themes    reconsider-keeps-twins  violated INVARIANT NoTwinSuggestions  ReconsiderClears=FALSE
-run Themes    overlap-one-way         violated INVARIANT OverlapHolds       BothWays=FALSE
-run Themes    reach-drop-reconsider   violated INVARIANT NeverDroppedThenReconsidered
-run Themes    reach-archived-coll     violated INVARIANT NeverArchivedCollOnArchivedTheme
-run Statement designed                pass     ALL       "$ALLS"
-run Statement one-status-field        violated PROPERTY  EndKeepsStance     TwoFields=FALSE
-run Statement reach-formal            violated INVARIANT NeverFormal
-run Statement reach-reopened          violated INVARIANT NeverReopened
-run Statement reach-doubted-decided   violated PROPERTY  NeverDoubtedDecided
-run Statement no-restart              pass     INVARIANT NeverReopened      RestartAfterWithdraw=FALSE
-run Statement held-only-doubt         pass     PROPERTY  NeverDoubtedDecided DoubtAnyStep=FALSE
-exit $fail
+if [[ $# -gt 0 ]]; then run "$@"; exit; fi
+run Themes designed               ALL       "$ALLT"
+run Themes code-today-rerun       PROPERTY  RerunLeavesAlone PinReconsidered=FALSE
+run Themes code-today-lost        INVARIANT ThinkingKept     PinReconsidered=FALSE
+run Themes withdrawn-unblocks     INVARIANT ThinkingKept     WithdrawnBlocksDrop=FALSE
+run Themes twins                  INVARIANT NoTwinSuggestions
+run Themes twins-pinned-overlap   INVARIANT NoTwinSuggestions OverlapCoversPinned=TRUE
+run Themes empty-decided          INVARIANT DecidedHoldItems
+run Themes keep-one-item          INVARIANT DecidedHoldItems KeepOneItem=TRUE
+run Themes overlap                INVARIANT OverlapHolds
+run Themes reach-drop-reconsider  INVARIANT NeverDroppedThenReconsidered
+run Themes reach-archived-coll    INVARIANT NeverArchivedCollOnArchivedTheme
+run Statement designed            INVARIANT OneCurrent
+run Statement history             INVARIANT HistoryReadable
+run Statement reach-formal        INVARIANT NeverFormal
+run Statement reach-reopened      INVARIANT NeverReopened
+run Statement no-restart          INVARIANT NeverReopened    RestartAfterWithdraw=FALSE
