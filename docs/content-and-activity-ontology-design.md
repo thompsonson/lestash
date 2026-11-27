@@ -12,6 +12,7 @@ This proposal separates them into vocabularies that meet at the item.
 - **People** says who made, voiced or received each item: a channel, an author, Gemini.
 - All three reuse published terms, so LeStash composes an ontology rather than inventing one.
 - **Topics** (`tags`) already exist. They are SKOS concepts, one concept scheme per tag kind.
+- **Themes** are subjects you work through, with your views, questions and positions over time (#340).
 - Every term maps to a published one: see "Canonical sources" below.
 
 ## Why now
@@ -837,7 +838,7 @@ Each tag kind (`ad-hoc`, `category`) is a `skos:ConceptScheme`, and each tag is 
 
 ## Collections (14 Nov 2026, #315, #317)
 
-A **Collection** is a set of items you put together for a purpose: a reading list, a theme to study, a queue.
+A **Collection** is a set of items you put together for a purpose: a reading list or a queue. A theme to study is a Theme, which can have several collections (27 Nov 2026, below).
 
 - **Not a Topic.** A Topic says what an item is about (`schema:about`, a SKOS concept). A Collection says what you gathered it for.
   - Nor is it a `skos:Collection`, which groups concepts, not items.
@@ -881,6 +882,83 @@ CREATE TABLE collection_places (    -- where a collection is shown: bookkeeping
 
 - A collection deleted in LeStash keeps its place row, with `collection_id` null, until the next write takes it off the Kobo.
 - The write at each plug-in: `packages/lestash-kobo/README.md`, "Collections on the Kobo".
+
+## Themes, questions and positions (27 Nov 2026, #340)
+
+A **Theme** is a subject you are working through. It is an object in its own right, not a Collection and not a Topic.
+
+- **What each object is for:**
+  - A Topic is a label you put on items, one at a time.
+  - A Collection is a reading list: what you gathered, in what order, for which device.
+  - A Theme is what you are trying to understand. It holds questions, collections and your views, and they change as you learn.
+- **Suggested and kept themes:**
+  - Suggested themes come from the related-items graph (#266). Each is a candidate concept, as ISO 25964 calls a concept not yet approved.
+  - Keep approves it, under the name you give. It creates nothing else, and never a Collection.
+  - Dismiss rejects it, as now.
+- **Ways back:** no decision on a theme is final.
+  - **Reconsider** returns a dismissed theme to suggested, marked as reconsidered. It stays until you decide again: a rerun neither deletes nor renames it.
+    - It removes any other suggestion that overlaps it by half or more, so two suggestions never cover the same items.
+    - It waits while another reconsidered theme overlaps it.
+  - **Set aside** archives a kept theme. It keeps its name, items, view, questions, positions and collections, and leaves the main list.
+  - **Resume** returns an archived theme to kept.
+  - **Drop** dismisses a kept theme, only while nothing of yours hangs off it: no view, question, position or collection, current or not. Otherwise the app offers Set aside, so your thinking is never lost.
+  - An archived theme is read-only until you resume it.
+  - A kept theme keeps at least one item; dropping the last is refused.
+  - A kept, archived, dismissed or reconsidered theme still holds its items, so a rerun doesn't suggest them again as a new theme.
+- **A theme has:**
+  - a name (`skos:prefLabel`); the words it was suggested under stay as `skos:altLabel`;
+  - what it covers (`skos:scopeNote`);
+  - its items, the pool it was suggested from, which you can add to or drop from, down to one;
+  - your view of it, kept over time;
+  - any number of questions;
+  - any number of collections; one collection can belong to several themes.
+- **Your view of a theme:** what you think about it as a whole, in your words, with a stance.
+  - Each version has two fields: its **stance** (below) and its **state**: current, superseded or withdrawn. Ending a version never changes its stance, so old versions still say what you held.
+  - **Refine** moves the current version's stance up a step; **doubt** moves it back a step, from any stance.
+  - **Revise** changes the answer: the old version becomes superseded, and the new one starts at its stance.
+  - **Withdraw** ends the current version. You can write a new view afterwards; it starts at hunch, as a first view does.
+  - A version records the one it replaces in its own row, not as an item link: `revision_of` joins items, and a view is not one.
+- **Questions:** narrower things you want answered within a theme. Published term: an IBIS Issue.
+  - A question can be narrower than another (IBIS "specializes").
+  - Each question has your positions, kept over time: an IBIS Position, versioned like a view.
+  - A question is never deleted. You can withdraw it, and it stays with its positions.
+- **Views and positions are not kept in step.**
+  - A theme's view and its questions' positions can disagree.
+  - At one time, a difference shows where more thinking is needed.
+  - Over time, it shows what you learned.
+  - The theme's page shows them side by side, with their dates.
+- **Evidence:** a view or a position points to the items it rests on, with a CiTO property for why:
+  - for: `cito:supports`, `cito:confirms`, `cito:agreesWith`, `cito:extends`;
+  - background: `cito:citesAsEvidence`, `cito:discusses`, `cito:usesMethodIn`, `cito:obtainsBackgroundFrom`;
+  - against: `cito:disputes`, `cito:refutes`, `cito:disagreesWith`, `cito:critiques`.
+  - IBIS Arguments, a separate node for or against a position, are left out: the CiTO property on each evidence link does that job.
+  - CiTO's citing end is a document; here it is a view or a position, as in micropublications.
+- **Statuses (proposed):** each is a small SKOS concept scheme of LeStash's own, as `note_class` is.
+  - View and position stance: hunch, to verify, held, decided, formally stated.
+  - View and position state: current, superseded, withdrawn.
+  - Collection: current, reference, archived. Published term: `schema:creativeWorkStatus`.
+- **Not in this layer:** an agent's statements are never recorded as your view or position (#340).
+
+```
+Theme (skos:Concept)
+ ├── items ─────────── the pool it was suggested from, edited by you
+ ├── view ──────────── yours, over time ── evidence (CiTO) ──▶ items
+ ├── questions ─────── IBIS Issues (many)
+ │     └── positions ── yours, over time ── evidence (CiTO) ──▶ items
+ └── collections ───── reading lists for it (many)
+```
+
+### What changes
+
+- `themes` stays the store. Its statuses become `suggested`, `kept` (approved), `archived` and `dismissed`. A kept theme's single `collection_id` gives way to links to any number of collections.
+- A kept theme stores your name apart from the words it was suggested under, so a rerun never renames it.
+- Items you add to or drop from a kept theme are kept, and a rerun of `lestash db themes` never changes them.
+- A rerun skips reconsidered themes: today it deletes every suggestion it doesn't find again.
+- Overlap is measured both ways: a group is left out when half or more of it, or of a decided or reconsidered theme, is in the other. Today only the share of the new group counts.
+- Views, questions, positions and evidence need tables; none is built yet.
+- A TLA+ model checks these rules: [`models/themes/`](models/themes/README.md). Change it with them.
+- The rule "a kept theme is a collection per question" in [`ux-object-model-design.md`](ux-object-model-design.md) is replaced.
+- Keep in the app (#422) still asks for a name, but will approve the theme instead of making a collection.
 
 ## Plan
 
@@ -950,6 +1028,7 @@ Open from the data: #245, rows that point at deleted items.
 - Data from the Kobo is read, never written back, except the collections you mark in LeStash. Highlights, notes, pen notes on PDFs and notebooks become items; opening, reading and finishing books become activities (`read`, #201).
 - A book that leaves the Kobo stays an item, marked `removed_from_device` with when it was first seen gone (#314). Its highlights stay with it.
 - A Collection's order and notes belong to the membership, not the item, so one item has a different place in each collection (14 Nov 2026, #317). Collections map to `prov:Collection` and the Collections Ontology's `co:List`; Topics stay SKOS concepts.
+- A Theme is its own object, not a Collection: kept themes are approved SKOS concepts with your view, questions (IBIS Issues), positions and collections. Views and positions cite items with CiTO, and are versioned, never kept in step (27 Nov 2026, #340) No decision on a theme is final: a dismissed one can be reconsidered, and a kept one set aside or, while it holds nothing of yours, dropped.
 
 ## References
 
@@ -961,6 +1040,10 @@ Open from the data: #245, rows that point at deleted items.
 - [FOAF OnlineAccount](http://xmlns.com/foaf/spec/#term_OnlineAccount)
 - [microformats h-entry](https://microformats.org/wiki/h-entry)
 - [SKOS](https://www.w3.org/TR/skos-reference/)
+- ISO 25964-1:2011, thesauri for information retrieval: candidate concepts
+- Kunz and Rittel, *Issues as Elements of Information Systems* (1970): IBIS Issues, Positions and Arguments
+- [CiTO, the Citation Typing Ontology](http://purl.org/spar/cito) (`cito:`; Peroni and Shotton, Journal of Web Semantics 17, 2012)
+- Clark, Ciccarese and Goble, *Micropublications* (Journal of Biomedical Semantics 5, 2014)
 - [DoCO, the Document Components Ontology](http://purl.org/spar/doco) (`doco:`)
 - [Collections Ontology](http://purl.org/co/) (`co:`; Ciccarese & Peroni, Semantic Web 5(6), 2014), [schema.org ItemList](https://schema.org/ItemList)
 - [DCAT 3](https://www.w3.org/TR/vocab-dcat-3/): Dataset and Distribution

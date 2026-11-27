@@ -295,7 +295,7 @@ Left for separate work: search ranking of near-empty sessions; speaker splits in
   - `lestash db themes` runs after `lestash db relate`. Each run replaces the suggestions; a theme found again with the same items keeps its id. A group with half or more of its items in a kept or dismissed theme is left out.
   - Collections and themes lists your collections, then Suggested themes, each with its items, "Keep as a collection" and "Dismiss".
   - On a copy of the live database: 45 themes from 983 related items, in about 2 s. Among them "LLMs, reasoning, In-context" (95 items), "Zero-RL, Reinforcement, LUFFY" (51) and "Reliable, Dual, Dual-State" (41).
-  - A kept theme is a collection per question, step 2 of the reading loop (#338, #340).
+  - ~~A kept theme is a collection per question, step 2 of the reading loop (#338, #340).~~ Replaced on 27 Nov 2026: a kept theme is its own object, with your view, questions, positions and any number of collections. See "Themes, questions and positions" in [`content-and-activity-ontology-design.md`](content-and-activity-ontology-design.md).
 
 ### Channels
 - A channel is its own object on screen: **Channel**, beside Person and AI.
@@ -555,6 +555,12 @@ In 9 days, none of the 47 suggested themes was kept or dismissed.
 Everything below is **proposed** until your walkthrough confirms or changes it.
 Counts are from the live DB on 26 Nov 2026, read-only.
 
+**Changed on 27 Nov 2026 (#340):** a kept theme is its own object, not a Collection.
+Keep approves the theme under your name; a theme then holds your view, questions, positions and any number of collections.
+Wherever this round has Keep make a collection, or a theme become one, that model replaces it: in the findings, tables, object guide and walkthrough tasks alike.
+The model: "Themes, questions and positions" in [`content-and-activity-ontology-design.md`](content-and-activity-ontology-design.md).
+The build changes that follow this round are planned around it.
+
 ### What the walk found
 
 A browser walk first, at desktop and phone width, before reading the code:
@@ -581,7 +587,7 @@ Also seen: 44 themed items are already in 9 of your collections, and only 9 them
 | Object | Made by | Ordered | Holds |
 |---|---|---|---|
 | Topic | you, one tag at a time | no | any items, open-ended |
-| Collection | you, choosing items | yes, a reading order | the items for one question |
+| Collection | you, choosing items | yes, a reading order | a reading list, for a theme or none |
 | Theme | LeStash, from related items | no; grouped by kind on its page | a suggestion, until kept |
 
 - **Address:** `/themes` lists them; `/themes/<id>` is one theme. A theme's id survives a rerun only if its items are the same, so an old address can find no theme; its page then says so and links to the list.
