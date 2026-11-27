@@ -54,7 +54,7 @@ function row(item, other, { score = null, confirmed = false, onDecided, toast })
   return li;
 }
 
-// onLinked: reload the item's links after a decision changes one
+// onLinked(data): redraw the item's links, from data as fetched here (null: fetch them)
 export async function loadRelated(item, toast, onLinked) {
   const section = document.getElementById('related-section');
   if (!section) return;
@@ -63,29 +63,33 @@ export async function loadRelated(item, toast, onLinked) {
   section.dataset.load = load;
   const current = () => section.isConnected && section.dataset.itemId === String(item.id)
     && section.dataset.load === load;
-  let related = {}, similar = [], links = [];
+  let related = {}, similar = [], linkData = null;
   try {
-    [related, similar, links] = await Promise.all([
+    [related, similar, linkData] = await Promise.all([
       api(`/api/items/${item.id}/related?limit=${SHOWN}`),
       // Without vectors (or the model) there are none similar; the rest still shows
       api(`/api/embeddings/similar/${item.id}?limit=${SHOWN * 2}`).catch(() => []),
-      api(`/api/items/${item.id}/links`).then(d => d.links).catch(() => []),
+      api(`/api/items/${item.id}/links`).catch(() => null),
     ]);
   } catch {
     if (!current()) return;
     document.getElementById('related-list').innerHTML = '<span class="muted" style="font-size:0.8rem">Unavailable</span>';
+    // Rows from an earlier draw would still act on stale suggestions
+    document.getElementById('similar-list').innerHTML = '';
+    document.getElementById('similar-title').style.display = 'none';
     // Links lists the related ones, since this section can't
     section.dataset.listsConfirmed = '';
-    onLinked();
+    onLinked(linkData);
     return;
   }
+  const links = linkData ? linkData.links : [];
   if (!current()) return;
   const suggestions = related.suggestions || [];
   const confirmed = related.confirmed || [];  // an older server sends none
   // Links leaves related ones out only once this section lists them (#424); an
   // older server sends no confirmed list
   section.dataset.listsConfirmed = Array.isArray(related.confirmed) ? '1' : '';
-  onLinked();
+  onLinked(linkData);
   // Any decision redraws the section, so a confirmed item moves to the top
   const onDecided = () => loadRelated(item, toast, onLinked);
   const list = document.getElementById('related-list');

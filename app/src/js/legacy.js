@@ -1107,11 +1107,12 @@ function renderItemView(item) {
 
   loadActivities(item.id);
   loadPeople(item.id, item.source_type);
-  loadLinks(item.id);
+  // Related reloads the links once it has drawn (#424); without it, load them here
+  if (!document.getElementById('related-section')) loadLinks(item.id);
   loadKobo(item, showToast);
 
   // Related and similar items, each with "Related" and "Not related" (#219)
-  loadRelated(item, showToast, () => loadLinks(item.id));
+  loadRelated(item, showToast, (data) => loadLinks(item.id, data));
 }
 
 const ACTIVITY_SHOWN = 20;
@@ -1212,12 +1213,14 @@ async function loadAllChildren(parentId, query = '') {
   }
 }
 
-async function loadLinks(itemId) {
-  let data;
-  try {
-    data = await api(`/api/items/${itemId}/links`);
-  } catch {
-    return;  // older server, or offline: the section stays hidden
+// data: the links as Related already fetched them, so they aren't fetched twice
+async function loadLinks(itemId, data = null) {
+  if (!data) {
+    try {
+      data = await api(`/api/items/${itemId}/links`);
+    } catch {
+      return;  // older server, or offline: the section stays hidden
+    }
   }
   const section = document.getElementById('links-section');
   // The view may have moved on to another item while this loaded
