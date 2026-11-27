@@ -958,6 +958,7 @@ Theme (skos:Concept)
 - Views, questions, positions and evidence need tables; none is built yet.
 - [`models/themes/`](models/themes/README.md) holds the atomicguard session's TLA+ model of this design at `1545b88`, exactly as it ran it. Its findings led to the rules above, so it models the design before them.
   - A model of the rules as they now read is pending (thompsonson/atomicguard#657).
+  - It is kept unchanged. Faults found in it are filed for the next model, not fixed here: its "Drop then Reconsider" check doesn't require a Drop (thompsonson/atomicguard#659).
 - The rule "a kept theme is a collection per question" in [`ux-object-model-design.md`](ux-object-model-design.md) is replaced.
 - Keep in the app (#422) still asks for a name, but will approve the theme instead of making a collection.
 
