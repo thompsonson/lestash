@@ -90,12 +90,17 @@ def parse_claude_zip(zf: zipfile.ZipFile) -> list[ItemCreate] | None:
         return None
 
     items: list[ItemCreate] = []
-    for conversation in conversations:
-        items.extend(_conversation(conversation))
-    for project in projects:
-        items.extend(_project(project))
-    for memory in memories:
-        items.extend(_memories(memory))
+    entries = [
+        *((_conversation, c) for c in conversations),
+        *((_project, p) for p in projects),
+        *((_memories, m) for m in memories),
+    ]
+    for convert, entry in entries:
+        # One malformed entry is skipped, never the whole export
+        try:
+            items.extend(convert(entry))
+        except (ValueError, TypeError, AttributeError):
+            logger.warning("Skipping a malformed entry in the Claude export", exc_info=True)
     return items
 
 
@@ -264,19 +269,21 @@ def _memories(memory: dict) -> list[ItemCreate]:
     """Memories carry no date, so they are dated when imported."""
     now = datetime.now(UTC)
     items = []
-    if (memory.get("conversations_memory") or "").strip():
+    account = memory.get("conversations_memory")
+    if isinstance(account, str) and account.strip():
         items.append(
             ItemCreate(
                 source_type="claude-memory",
                 source_id="conversations-memory",
                 title="Conversation Memory",
-                content=memory["conversations_memory"],
+                content=account,
                 created_at=now,
                 is_own_content=True,
                 metadata={"source": "export", "type": "conversations"},
             )
         )
-    for project_uuid, text in (memory.get("project_memories") or {}).items():
+    projects = memory.get("project_memories")
+    for project_uuid, text in (projects if isinstance(projects, dict) else {}).items():
         if not isinstance(text, str) or not text.strip():
             continue
         items.append(

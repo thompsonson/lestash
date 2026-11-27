@@ -273,3 +273,15 @@ def test_look_alike_folders_from_elsewhere_are_left_to_the_other_importers():
         found, kind = parse_zip(_part({name: items}))
         assert kind == "json", name
         assert [i.source_id for i in found] == ["n1"]
+
+
+def test_a_malformed_entry_is_skipped_not_the_export():
+    memories = [
+        {"conversations_memory": 42, "project_memories": "not an object"},
+        {"conversations_memory": "Kept.", "project_memories": {}},
+    ]
+    broken = {**CONVERSATION, "uuid": "c2", "name": {"not": "a string"}}
+    items, _ = parse_zip(
+        _part({"conversations.json": [broken, CONVERSATION], "memories.json": memories})
+    )
+    assert [i.source_id for i in items] == [CONV, "m1", "m3", "conversations-memory"]
