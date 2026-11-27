@@ -65,7 +65,7 @@ function close() {
 }
 
 // One file's error, in words: the server's detail when it gives one
-function reason(e) {
+export function errorReason(e) {
   const m = /^\d+: (.*)$/s.exec(e.message || '');
   if (!m) return e.message;
   try { return JSON.parse(m[1]).detail || m[1]; } catch { return m[1]; }
@@ -97,7 +97,7 @@ async function save() {
       if (res.items_held) held++; else added++;
     } catch (e) {
       failed.push(f);
-      errors.push(`${f.name}: ${reason(e)}`);
+      errors.push(`${f.name}: ${errorReason(e)}`);
     }
   }
   saving = false;

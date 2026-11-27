@@ -1210,6 +1210,72 @@ class TestVoiceTranscribe:
         )
         assert resp.status_code == 413
 
+    @staticmethod
+    def _speech(text="A note about the paper."):
+        result = MagicMock()
+        result.text, result.language, result.duration_seconds, result.model = (
+            text,
+            "en",
+            4.0,
+            "base.en",
+        )
+        return result
+
+    @staticmethod
+    def _li1(test_config):
+        with get_connection(test_config) as conn:
+            return conn.execute("SELECT id FROM items WHERE source_id = 'li-1'").fetchone()[0]
+
+    def test_transcribe_under_an_item(self, client, test_config, monkeypatch, tmp_path):
+        """A shared recording attached to an item is saved under it (#114)."""
+        monkeypatch.setattr("lestash_server.routes.voice.Path.home", lambda: tmp_path)
+        parent = self._li1(test_config)
+        with patch("lestash_voice.transcribe.transcribe_file", return_value=self._speech()):
+            resp = client.post(
+                "/api/voice/transcribe",
+                files={"file": ("memo.m4a", io.BytesIO(b"fake m4a"), "audio/mp4")},
+                data={"parent_id": str(parent)},
+            )
+        assert resp.status_code == 201
+        assert resp.json()["parent_id"] == parent
+        child = client.get(f"/api/items/{resp.json()['item_id']}").json()
+        assert child["parent_id"] == parent
+
+    def test_transcribe_under_a_missing_item(self, client, monkeypatch, tmp_path):
+        """An unknown item is refused before any transcribing."""
+        monkeypatch.setattr("lestash_server.routes.voice.Path.home", lambda: tmp_path)
+        with patch("lestash_voice.transcribe.transcribe_file") as transcribe:
+            resp = client.post(
+                "/api/voice/transcribe",
+                files={"file": ("memo.m4a", io.BytesIO(b"fake m4a"), "audio/mp4")},
+                data={"parent_id": "999999"},
+            )
+        assert resp.status_code == 404
+        transcribe.assert_not_called()
+
+    def test_transcribe_when_the_item_goes_meanwhile(
+        self, client, test_config, monkeypatch, tmp_path
+    ):
+        """An item deleted while the audio is transcribed: the note is kept on its own."""
+        monkeypatch.setattr("lestash_server.routes.voice.Path.home", lambda: tmp_path)
+        parent = self._li1(test_config)
+
+        def transcribe_and_delete(*_args, **_kwargs):
+            with get_connection(test_config) as conn:
+                conn.execute("DELETE FROM items WHERE id = ?", (parent,))
+                conn.commit()
+            return self._speech()
+
+        with patch("lestash_voice.transcribe.transcribe_file", side_effect=transcribe_and_delete):
+            resp = client.post(
+                "/api/voice/transcribe",
+                files={"file": ("memo.m4a", io.BytesIO(b"fake m4a"), "audio/mp4")},
+                data={"parent_id": str(parent)},
+            )
+        assert resp.status_code == 201
+        assert resp.json()["parent_id"] is None
+        assert client.get(f"/api/items/{resp.json()['item_id']}").json()["parent_id"] is None
+
 
 class TestTags:
     """Test tag endpoints."""

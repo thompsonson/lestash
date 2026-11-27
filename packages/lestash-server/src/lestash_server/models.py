@@ -505,6 +505,7 @@ class TranscribeResponse(BaseModel):
     model: str
     item_id: int
     title: str
+    parent_id: int | None = None  # the item the note went under, if any
 
 
 class TagInfo(BaseModel):

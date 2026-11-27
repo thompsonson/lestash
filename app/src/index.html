@@ -363,6 +363,20 @@
       <input type="url" id="html-import-url" placeholder="https://gemini.google.com/share/..." style="margin-bottom:0.75rem">
       <label for="html-import-notes">Notes (optional)</label>
       <textarea id="html-import-notes" style="width:100%;min-height:60px;font-family:inherit;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.6rem;resize:vertical;margin-bottom:0.75rem" placeholder="Your annotations..."></textarea>
+      <div style="margin-bottom:0.75rem">
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer;margin-bottom:0.25rem">
+          <input type="radio" name="html-import-mode" value="new" checked onchange="toggleAttachMode('html-import')"> Save as new item
+        </label>
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer">
+          <input type="radio" name="html-import-mode" value="attach" onchange="toggleAttachMode('html-import')"> Attach to existing item
+        </label>
+      </div>
+      <div id="html-import-attach-section" style="display:none;margin-bottom:0.75rem">
+        <label for="html-import-search">Search items</label>
+        <input type="text" id="html-import-search" placeholder="Search items…" oninput="attachPickerSearch('html-import', this.value)">
+        <div id="html-import-results" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
+        <div id="html-import-selected" style="display:none;font-size:0.8rem;color:var(--accent-text);margin-top:0.25rem"></div>
+      </div>
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeHtmlImportDialog()">Cancel</button>
         <button class="btn-save" id="html-import-save-btn" onclick="saveHtmlImport()">Import</button>
@@ -413,6 +427,33 @@
       <div class="modal-actions">
         <button class="btn-cancel" id="add-files-cancel">Cancel</button>
         <button class="btn-save" id="add-files-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- A shared recording, PDF, text or Markdown file: a new item, or under one (#114) -->
+  <div class="modal-overlay" id="share-file-modal">
+    <div class="modal" style="max-width:500px">
+      <h2 id="share-file-heading">Save Shared File</h2>
+      <div id="share-file-name" style="font-size:0.85rem;margin-bottom:0.25rem;overflow-wrap:anywhere"></div>
+      <div id="share-file-hint" style="font-size:0.75rem;color:var(--muted);margin-bottom:0.75rem"></div>
+      <div style="margin-bottom:0.75rem">
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer;margin-bottom:0.25rem">
+          <input type="radio" name="share-file-mode" value="new" checked onchange="toggleAttachMode('share-file')"> Save as new item
+        </label>
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer">
+          <input type="radio" name="share-file-mode" value="attach" onchange="toggleAttachMode('share-file')"> Attach to existing item
+        </label>
+      </div>
+      <div id="share-file-attach-section" style="display:none;margin-bottom:0.75rem">
+        <label for="share-file-search">Search items</label>
+        <input type="text" id="share-file-search" placeholder="Search items…" oninput="attachPickerSearch('share-file', this.value)">
+        <div id="share-file-results" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;display:none"></div>
+        <div id="share-file-selected" style="display:none;font-size:0.8rem;color:var(--accent-text);margin-top:0.25rem"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-cancel" id="share-file-cancel">Cancel</button>
+        <button class="btn-save" id="share-file-save">Save</button>
       </div>
     </div>
   </div>
