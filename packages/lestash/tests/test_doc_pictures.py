@@ -282,3 +282,10 @@ def test_the_pictures_command_fills_held_documents(config, monkeypatch, tmp_path
         conn.commit()
     again = CliRunner().invoke(app, ["google", "pictures", "--dry-run"])
     assert "0 Drive documents" in again.output
+
+    # A re-sync that wrote the markers back, with no pictures attached again: picked
+    with get_connection(config) as conn:
+        conn.execute("UPDATE items SET content = 'old <!-- image -->' WHERE id = ?", (held,))
+        conn.commit()
+    resynced = CliRunner().invoke(app, ["google", "pictures", "--dry-run"])
+    assert "1 Drive documents" in resynced.output

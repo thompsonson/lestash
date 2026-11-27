@@ -243,7 +243,7 @@ def pictures(
     """Fetch Drive Word files and Google Docs again to fill their pictures (#394).
 
     Finds Drive items whose content still has empty `<!-- image -->` markers and
-    no pictures saved yet, imports each one again from Drive, and saves its
+    links none of the pictures saved for it, imports each one again from Drive, and saves its
     pictures in their places.
     """
     import json
@@ -263,10 +263,12 @@ def pictures(
             SELECT id, source_id, title, metadata FROM items
             WHERE source_type = 'google-drive' AND content LIKE '%<!-- image -->%'
               AND json_extract(metadata, '$.mime_type') IN ({",".join("?" * len(word_types))})
-              -- One filled before keeps a marker only for a picture Docling couldn't read
+              -- Filled, if its content links a picture saved for it: then a marker left
+              -- is one Docling couldn't read. A re-sync writes all the markers back.
               AND NOT EXISTS (
                   SELECT 1 FROM item_media m
                   WHERE m.item_id = items.id AND m.source_origin = ?
+                    AND instr(items.content, '](/api/media/' || m.id || ')') > 0
               )
             ORDER BY id
             """,
