@@ -176,31 +176,44 @@ def sync(
             console.print(f"  {name}  [dim]({size_str})[/dim]")
         return
 
+    from lestash.core.doc_pictures import attach_pictures
     from lestash.core.pdf_enrich import attach_source_pdf_and_enrich
+    from lestash.core.text_extract import DocPicture
 
     config = Config.load()
     added = 0
     enriched = 0
+    pictured = 0
     errors: list[str] = []
     pdf_followups: list[tuple[int, bytes, str, str | None]] = []
+    picture_followups: list[tuple[int, list[DocPicture | None]]] = []
 
     with (
         console.status("[bold]Syncing Google Drive folder...[/bold]") as status,
         get_connection(config) as conn,
     ):
-        for item, pdf_bytes, filename in sync_drive_folder(
-            folder_id, since=since, recursive=recursive
-        ):
+        for drive_file in sync_drive_folder(folder_id, since=since, recursive=recursive):
+            item = drive_file.item
             status.update(f"Processing: {item.title or 'unknown'}")
             try:
                 item_id = store_folder_file(conn, item)
                 added += 1
-                if pdf_bytes:
+                if drive_file.pdf_bytes:
                     drive_url = (item.metadata or {}).get("drive_web_link")
-                    pdf_followups.append((item_id, pdf_bytes, filename, drive_url))
+                    pdf_followups.append(
+                        (item_id, drive_file.pdf_bytes, drive_file.filename, drive_url)
+                    )
+                if drive_file.pictures:
+                    picture_followups.append((item_id, drive_file.pictures))
             except Exception as e:
                 errors.append(f"{item.title}: {e}")
         conn.commit()
+
+    for item_id, pictures in picture_followups:
+        try:
+            pictured += attach_pictures(item_id, pictures, config=config)
+        except Exception as e:
+            errors.append(f"pictures for item {item_id}: {e}")
 
     for item_id, pdf_bytes, filename, drive_url in pdf_followups:
         try:
@@ -215,6 +228,69 @@ def sync(
     console.print(f"\n[green]✓[/green] Imported {added} items from Google Drive")
     if enriched:
         console.print(f"[green]✓[/green] Enriched {enriched} PDFs")
+    if pictured:
+        console.print(f"[green]✓[/green] Saved {pictured} pictures from documents")
+    if errors:
+        console.print(f"[yellow]  {len(errors)} errors:[/yellow]")
+        for err in errors:
+            console.print(f"    • {err}")
+
+
+@app.command()
+def pictures(
+    dry_run: bool = typer.Option(False, "--dry-run", help="List the items without fetching them"),
+) -> None:
+    """Fetch Drive Word files and Google Docs again to fill their pictures (#394).
+
+    Finds Drive items whose content still has empty `<!-- image -->` markers,
+    imports each one again from Drive, and saves its pictures in their places.
+    """
+    from lestash.core.config import Config
+    from lestash.core.database import get_connection, upsert_item, write_transaction
+    from lestash.core.doc_pictures import attach_pictures
+    from lestash.core.google_drive import GOOGLE_DOC_MIME, sync_single_file
+    from lestash.core.pdf_enrich.images import count_placeholders
+    from lestash.core.text_extract import DOCX_MIME_TYPES
+
+    config = Config.load()
+    word_types = sorted({GOOGLE_DOC_MIME, *DOCX_MIME_TYPES})
+    with get_connection(config) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, source_id, title FROM items
+            WHERE source_type = 'google-drive' AND content LIKE '%<!-- image -->%'
+              AND json_extract(metadata, '$.mime_type') IN ({",".join("?" * len(word_types))})
+            ORDER BY id
+            """,
+            word_types,
+        ).fetchall()
+
+    console.print(f"[bold]{len(rows)}[/bold] Drive documents have empty picture markers")
+    if dry_run:
+        for row in rows:
+            console.print(f"  {row['id']}  {row['title']}")
+        return
+
+    filled = 0
+    saved = 0
+    errors: list[str] = []
+    for row in rows:
+        try:
+            drive_file = sync_single_file(row["source_id"])
+            if not drive_file.pictures or not count_placeholders(drive_file.item.content):
+                # Unreadable now, or its pictures are gone: leave the item as it is
+                errors.append(f"item {row['id']}: no pictures found when fetched again")
+                continue
+            with get_connection(config) as conn, write_transaction(conn):
+                upsert_item(conn, drive_file.item)
+            count = attach_pictures(row["id"], drive_file.pictures, config=config)
+            if count:
+                filled += 1
+                saved += count
+        except Exception as e:
+            errors.append(f"item {row['id']}: {e}")
+
+    console.print(f"[green]✓[/green] Saved {saved} pictures in {filled} documents")
     if errors:
         console.print(f"[yellow]  {len(errors)} errors:[/yellow]")
         for err in errors:

@@ -522,6 +522,7 @@ def sync_from_drive(body: DriveSyncRequest):
     Files are downloaded, converted to markdown, and stored as items.
     """
     from lestash.core.database import upsert_item
+    from lestash.core.doc_pictures import attach_pictures
     from lestash.core.google_drive import (
         classify_drive_url,
         store_folder_file,
@@ -529,12 +530,14 @@ def sync_from_drive(body: DriveSyncRequest):
         sync_single_file,
     )
     from lestash.core.pdf_enrich import attach_source_pdf_and_enrich
+    from lestash.core.text_extract import DocPicture
 
     items_added = 0
     items_skipped = 0
     items_held = 0
     errors: list[str] = []
     pdf_followups: list[tuple[int, bytes, str, str | None]] = []
+    picture_followups: list[tuple[int, list[DocPicture | None]]] = []
 
     for url in body.urls:
         try:
@@ -542,18 +545,23 @@ def sync_from_drive(body: DriveSyncRequest):
 
             if url_type == "folder":
                 with get_db() as conn:
-                    for item, pdf_bytes, filename in sync_drive_folder(file_id, recursive=True):
+                    for drive_file in sync_drive_folder(file_id, recursive=True):
+                        item = drive_file.item
                         try:
                             item_id = store_folder_file(conn, item)
                             items_added += 1
-                            if pdf_bytes:
+                            if drive_file.pdf_bytes:
                                 drive_url = (item.metadata or {}).get("drive_web_link")
-                                pdf_followups.append((item_id, pdf_bytes, filename, drive_url))
+                                pdf_followups.append(
+                                    (item_id, drive_file.pdf_bytes, drive_file.filename, drive_url)
+                                )
+                            if drive_file.pictures:
+                                picture_followups.append((item_id, drive_file.pictures))
                         except Exception as e:
                             errors.append(f"{item.title}: {e}")
                     conn.commit()
             elif url_type == "file":
-                item, pdf_bytes, filename = sync_single_file(file_id)
+                item, pdf_bytes, filename, pictures = sync_single_file(file_id)
                 with get_db() as conn:
                     if body.parent_id is not None:
                         # A file already held stays where it is; a new one goes under
@@ -575,12 +583,21 @@ def sync_from_drive(body: DriveSyncRequest):
                 if pdf_bytes:
                     drive_url = (item.metadata or {}).get("drive_web_link")
                     pdf_followups.append((item_id, pdf_bytes, filename, drive_url))
+                if pictures:
+                    picture_followups.append((item_id, pictures))
             else:
                 errors.append(f"Could not parse URL: {url}")
                 items_skipped += 1
         except Exception as e:
             logger.exception("Failed to sync %s", url)
             errors.append(f"{url}: {e}")
+
+    for item_id, pictures in picture_followups:
+        try:
+            attach_pictures(item_id, pictures, config=get_config())
+        except Exception as e:
+            logger.exception("Failed to save the pictures of item %d", item_id)
+            errors.append(f"pictures for item {item_id}: {e}")
 
     for item_id, pdf_bytes, filename, drive_url in pdf_followups:
         try:
