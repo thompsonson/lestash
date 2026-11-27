@@ -1,84 +1,72 @@
 --------------------------- MODULE Statement ---------------------------
 (* One theme's view, or one question's position, over its versions, as
-   "Themes, questions and positions" designs them (#340, #425).
+   lestash PR #425 proposes its statuses. The transitions are those in
+   lestash-14's summary of 27 Nov 2026; the doc lists only the statuses.
 
-   Each version has two fields:
-   - stance: hunch, to verify, held, decided, formally stated;
-   - state: current, superseded or withdrawn.
-   First written by the atomicguard session with a single status field; the
-   fixes its findings led to are switched on by the constants below, and
-   run.sh switches each off in turn. *)
+   #425 gives one scheme: hunch, to verify, held, decided, formally stated;
+   then withdrawn or superseded. Each version here has that one `status`,
+   and a ghost `stance`: the last of the first five it held. *)
 EXTENDS Naturals, Sequences
 
 CONSTANTS MaxVer,
-          TwoFields,           \* ending a version keeps its stance
-          DoubtAnyStep,        \* step back one level from any stance
+          AllowDoubt,          \* held -> to verify
+          RefineMakesVersion,  \* #425: "each change is a new version"
           RestartAfterWithdraw \* a new view after a withdrawn one
 
-VARIABLES v   \* a sequence of [state, stance], oldest first
+VARIABLES v   \* a sequence of [status, stance], oldest first
 vars == <<v>>
 
-Stances == {"hunch", "toverify", "held", "decided", "formal"}
-States  == {"current", "superseded", "withdrawn"}
-Up      == [hunch |-> "toverify", toverify |-> "held",
-            held |-> "decided", decided |-> "formal"]
-Down    == [toverify |-> "hunch", held |-> "toverify",
-            decided |-> "held", formal |-> "decided"]
+Live  == {"hunch", "toverify", "held", "decided", "formal"}
+Ended == {"withdrawn", "superseded"}
+Up    == [hunch |-> "toverify", toverify |-> "held",
+          held |-> "decided", decided |-> "formal"]
 
-Ver(s)    == [state |-> "current", stance |-> s]
-Last      == v[Len(v)]
-IsCurrent == Len(v) > 0 /\ Last.state = "current"
-Room      == Len(v) < MaxVer
+Ver(s) == [status |-> s, stance |-> s]
+Last   == v[Len(v)]
+IsLive == Len(v) > 0 /\ Last.status \in Live
+Room   == Len(v) < MaxVer
 
 Init == v = <<>>
 
-\* End the current version. With one field, as first designed, the ended
-\* state took the stance's place; here that is a lost stance ("hunch").
-End(s) == [v EXCEPT ![Len(v)] =
-             [state |-> s, stance |-> IF TwoFields THEN @.stance ELSE "hunch"]]
+\* Replace the current version's status with an ended one.
+End(s) == [v EXCEPT ![Len(v)] = [@ EXCEPT !.status = s]]
 
-\* A new view starts at hunch: the first, or one after a withdrawn view.
+\* The first view, or one after a withdrawn view. #425 doesn't say which
+\* status a new view starts at, so any.
 Start == /\ Room
          /\ \/ Len(v) = 0
-            \/ RestartAfterWithdraw /\ Len(v) > 0 /\ Last.state = "withdrawn"
-         /\ v' = Append(v, Ver("hunch"))
+            \/ RestartAfterWithdraw /\ Len(v) > 0 /\ Last.status = "withdrawn"
+         /\ \E s \in Live : v' = Append(v, Ver(s))
 
-\* Refine and doubt change the current version's stance in place.
-SetStance(s) == v' = [v EXCEPT ![Len(v)] = [@ EXCEPT !.stance = s]]
-Refine == IsCurrent /\ Last.stance \in DOMAIN Up /\ SetStance(Up[Last.stance])
-Doubt  == IsCurrent /\ Last.stance \in DOMAIN Down
-          /\ (DoubtAnyStep \/ Last.stance = "held")
-          /\ SetStance(Down[Last.stance])
+\* Move the status one step, in place or as a new version.
+Step(s) == IF RefineMakesVersion
+           THEN Room /\ v' = Append(End("superseded"), Ver(s))
+           ELSE v' = [v EXCEPT ![Len(v)] = Ver(s)]
 
-\* Revise: a new version that replaces the old. It starts at the old one's
-\* stance, which refine and doubt then change.
-Revise == IsCurrent /\ Room
-          /\ v' = Append(End("superseded"), Ver(Last.stance))
-Withdraw == IsCurrent /\ v' = End("withdrawn")
+Refine == IsLive /\ Last.status \in DOMAIN Up /\ Step(Up[Last.status])
+Doubt  == AllowDoubt /\ IsLive /\ Last.status = "held" /\ Step("toverify")
+
+\* Revise: a new version, linked to the old by revision_of. #425 doesn't say
+\* which status the new version starts at, so any.
+Revise == IsLive /\ Room
+          /\ \E s \in Live : v' = Append(End("superseded"), Ver(s))
+Withdraw == IsLive /\ v' = End("withdrawn")
 
 Next == Start \/ Refine \/ Doubt \/ Revise \/ Withdraw
 Spec == Init /\ [][Next]_vars
 
 ----------------------------------------------------------------------------
-TypeOK == v \in Seq([state : States, stance : Stances])
+TypeOK == v \in Seq([status : Live \cup Ended, stance : Live])
 
 \* At most one version is current, and only the last one.
-OneCurrent == \A i \in 1..Len(v) : v[i].state = "current" => i = Len(v)
+OneCurrent == \A i \in 1..Len(v) : v[i].status \in Live => i = Len(v)
 
-\* An ended version never changes, so it still says what it held.
-HistoryKept == [][\A i \in 1..Len(v) :
-                    v[i].state # "current" => v'[i] = v[i]]_vars
-\* Ending a version keeps the stance it had.
-EndKeepsStance == [][IsCurrent /\ Len(v') >= Len(v)
-                     /\ v'[Len(v)].state # "current"
-                       => v'[Len(v)].stance = Last.stance]_vars
+\* An old version still says what it held when it ended.
+HistoryReadable == \A i \in 1..Len(v) : v[i].status \in Ended =>
+                     v[i].status = v[i].stance
 
 \* Reachability: each is expected to be violated.
-NeverFormal    == \A i \in 1..Len(v) : v[i].stance # "formal"
-NeverReopened  == ~(Len(v) > 1 /\ \E i \in 1..Len(v) - 1 :
-                      v[i].state = "withdrawn")
-\* A decided view is never doubted back to held (an action property).
-NeverDoubtedDecided == [][~(IsCurrent /\ Last.stance = "decided"
-                            /\ Len(v') = Len(v)
-                            /\ v'[Len(v)].stance = "held")]_vars
+NeverFormal   == \A i \in 1..Len(v) : v[i].stance # "formal"
+NeverReopened == ~(Len(v) > 1 /\ \E i \in 1..Len(v) - 1 :
+                     v[i].status = "withdrawn")
 =============================================================================

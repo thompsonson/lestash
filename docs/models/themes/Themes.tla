@@ -1,8 +1,6 @@
 ---------------------------- MODULE Themes ----------------------------
-(* LeStash themes, as designed in "Themes, questions and positions",
-   docs/content-and-activity-ontology-design.md (#340, #425). First written by
-   the atomicguard session against 1545b88; the fixes its findings led to are
-   switched on by the constants below, and run.sh switches each off in turn.
+(* LeStash themes, as lestash PR #425 designs them ("Themes, questions and
+   positions", docs/content-and-activity-ontology-design.md at 1545b88).
 
    Abstractions:
    - A rerun of `lestash db themes` finds at most one group of items. Groups
@@ -19,9 +17,7 @@ CONSTANTS Items, Slots,
           PinReconsidered,     \* doc: a rerun leaves a reconsidered theme alone
           OverlapCoversPinned, \* the overlap rule also counts reconsidered themes
           WithdrawnBlocksDrop, \* a withdrawn view still counts as "a view"
-          KeepOneItem,         \* a kept theme can't drop its last item
-          BothWays,            \* overlap counts as a share of either group
-          ReconsiderClears     \* Reconsider removes suggestions it overlaps
+          KeepOneItem          \* a kept theme can't drop its last item
 
 VARIABLES st, its, pin, view, q, coll, ran, lost
 vars == <<st, its, pin, view, q, coll, ran, lost>>
@@ -32,10 +28,6 @@ CollSt   == {"none", "current", "reference", "archived"}
 
 \* The share of g that d holds too (themes.py _overlap): at least half?
 Half(g, d) == g # {} /\ 2 * Cardinality(g \cap d) >= Cardinality(g)
-\* The overlap the rules use: one way as themes.py does today, or both ways.
-Overlaps(g, d) == Half(g, d) \/ (BothWays /\ Half(d, g))
-\* The overlap the promises check: always both ways.
-Clash(g, d) == Half(g, d) \/ Half(d, g)
 
 Thought(t) == \/ view[t] = "live"
               \/ view[t] = "withdrawn" /\ WithdrawnBlocksDrop
@@ -71,7 +63,7 @@ Blockers == {t \in Slots : st[t] \in Decided
                            \/ (OverlapCoversPinned /\ Protected(t))}
 
 Rerun(g) ==
-  LET skip  == g = {} \/ \E d \in Blockers : Overlaps(g, its[d])
+  LET skip  == g = {} \/ \E d \in Blockers : Half(g, its[d])
       same  == {t \in Slots : st[t] = "suggested" /\ its[t] = g}
       found == IF skip THEN {} ELSE same
       gone  == {t \in Slots : st[t] = "suggested" /\ t \notin found
@@ -98,21 +90,9 @@ Keep(t)       == st[t] = "suggested" /\ Move(t, "kept")
 Dismiss(t)    == st[t] = "suggested" /\ Move(t, "dismissed")
                  /\ pin' = [pin EXCEPT ![t] = FALSE]
                  /\ UNCHANGED <<its, view, q, coll>>
-\* Reconsider: back to suggested, marked so a rerun leaves it alone. With
-\* ReconsiderClears, it removes the ordinary suggestions it overlaps, and
-\* waits while another reconsidered one overlaps it.
-Reconsider(t) ==
-  LET clash == {u \in Slots : u # t /\ st[u] = "suggested"
-                              /\ Clash(its[u], its[t])}
-      clear == IF ReconsiderClears THEN {u \in clash : ~pin[u]} ELSE {}
-  IN /\ st[t] = "dismissed"
-     /\ ReconsiderClears => \A u \in clash : ~pin[u]
-     /\ st' = [u \in Slots |-> IF u = t THEN "suggested"
-                              ELSE IF u \in clear THEN "none" ELSE st[u]]
-     /\ its' = [u \in Slots |-> IF u \in clear THEN {} ELSE its[u]]
-     /\ pin' = [pin EXCEPT ![t] = TRUE]
-     /\ lost' = (lost \/ \E u \in clear : AnyThought(u))
-     /\ UNCHANGED <<view, q, coll>>
+Reconsider(t) == st[t] = "dismissed" /\ Move(t, "suggested")
+                 /\ pin' = [pin EXCEPT ![t] = TRUE]
+                 /\ UNCHANGED <<its, view, q, coll>>
 SetAside(t)   == st[t] = "kept" /\ Move(t, "archived")
                  /\ UNCHANGED <<its, pin, view, q, coll>>
 Resume(t)     == st[t] = "archived" /\ Move(t, "kept")
@@ -177,12 +157,12 @@ ThinkingKept == ~lost
 \* After a rerun, no ordinary suggestion overlaps a decided theme by half.
 OverlapHolds == ran => \A s, d \in Slots :
                   (st[s] = "suggested" /\ ~pin[s] /\ st[d] \in Decided)
-                    => ~Clash(its[s], its[d])
+                    => ~Half(its[s], its[d])
 
 \* No two suggestions offered at once cover the same items by half.
 NoTwinSuggestions == \A s, u \in Slots :
                        (s # u /\ st[s] = "suggested" /\ st[u] = "suggested")
-                         => ~Clash(its[s], its[u])
+                         => ~Half(its[s], its[u])
 
 \* A decided theme holds items, so it keeps a rerun from suggesting them.
 DecidedHoldItems == \A t \in Slots : st[t] \in Decided => its[t] # {}
