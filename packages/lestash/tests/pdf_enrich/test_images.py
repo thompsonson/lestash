@@ -243,6 +243,29 @@ def test_a_photo_running_off_the_page_is_measured_by_its_part_on_the_page(tmp_pa
     assert images[0].mime_type == "image/jpeg"
 
 
+def test_a_photo_cropped_by_a_clipping_path_keeps_its_resolution(tmp_path):
+    """Only 50 x 50 points of a 400-point photo show: measured by what shows (#393)."""
+    import pymupdf
+    from lestash.core.pdf_enrich.images import extract_pictures
+    from lestash.core.text_extract import PictureRegion
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    # 1,600 pixels over 400 points is 288 dpi; nearly all of it lies outside the clip
+    page.insert_image(pymupdf.Rect(0, 0, 400, 400), stream=_photo_jpeg(1600))
+    drawn = page.read_contents().decode()
+    # The clip is 100..150 points from the top-left, written in PDF's bottom-up frame
+    clip = "q 100 642 50 50 re W n\n"
+    doc.update_stream(page.get_contents()[0], (clip + drawn + "\nQ").encode())
+    try:
+        images = extract_pictures(doc, [PictureRegion(0, (100.0, 100.0, 150.0, 150.0))])
+    finally:
+        doc.close()
+
+    assert images[0].mime_type == "image/jpeg"
+    assert pymupdf.Pixmap(images[0].bytes_).width == 200  # 50 points at 288 dpi
+
+
 def test_an_unevenly_scaled_photo_takes_its_finer_axis(tmp_path):
     """400 x 400 pixels squeezed into 100 x 200 points: 288 dpi across, 144 down."""
     import pymupdf
