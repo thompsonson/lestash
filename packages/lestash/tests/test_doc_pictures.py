@@ -141,9 +141,7 @@ class TestAttachPictures:
         attach_pictures(item_id, [jpeg], config=config)
 
         assert _rows(config, item_id) == first[:1]
-        media = get_media_dir(config)
-        assert (media / first[0][3]).exists()
-        assert not (media / first[1][3]).exists()
+        assert (get_media_dir(config) / first[0][3]).exists()
 
     def test_a_document_now_without_pictures_loses_their_rows(self, config):
         item_id = _item(config, "<!-- image -->")
@@ -156,7 +154,6 @@ class TestAttachPictures:
         assert attach_pictures(item_id, [], config=config) == 0
 
         assert _rows(config, item_id) == []
-        assert not (get_media_dir(config) / row[3]).exists()
         assert _content(config, item_id) == "no pictures now"
 
     def test_content_with_other_markers_is_left_alone(self, config):
@@ -276,3 +273,12 @@ def test_the_pictures_command_fills_held_documents(config, monkeypatch, tmp_path
     with get_connection(config) as conn:
         (metadata,) = conn.execute("SELECT metadata FROM items WHERE id = ?", (held,)).fetchone()
     assert '"folder_path": "Course/Week 1"' in metadata
+
+    # Filled once, it isn't fetched again, even with a marker Docling couldn't fill
+    with get_connection(config) as conn:
+        conn.execute(
+            "UPDATE items SET content = content || ' <!-- image -->' WHERE id = ?", (held,)
+        )
+        conn.commit()
+    again = CliRunner().invoke(app, ["google", "pictures", "--dry-run"])
+    assert "0 Drive documents" in again.output

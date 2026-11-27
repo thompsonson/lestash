@@ -242,14 +242,15 @@ def pictures(
 ) -> None:
     """Fetch Drive Word files and Google Docs again to fill their pictures (#394).
 
-    Finds Drive items whose content still has empty `<!-- image -->` markers,
-    imports each one again from Drive, and saves its pictures in their places.
+    Finds Drive items whose content still has empty `<!-- image -->` markers and
+    no pictures saved yet, imports each one again from Drive, and saves its
+    pictures in their places.
     """
     import json
 
     from lestash.core.config import Config
     from lestash.core.database import get_connection, upsert_item, write_transaction
-    from lestash.core.doc_pictures import attach_pictures
+    from lestash.core.doc_pictures import PICTURE_ORIGIN, attach_pictures
     from lestash.core.google_drive import GOOGLE_DOC_MIME, sync_single_file
     from lestash.core.pdf_enrich.images import count_placeholders
     from lestash.core.text_extract import DOCX_MIME_TYPES
@@ -262,9 +263,14 @@ def pictures(
             SELECT id, source_id, title, metadata FROM items
             WHERE source_type = 'google-drive' AND content LIKE '%<!-- image -->%'
               AND json_extract(metadata, '$.mime_type') IN ({",".join("?" * len(word_types))})
+              -- One filled before keeps a marker only for a picture Docling couldn't read
+              AND NOT EXISTS (
+                  SELECT 1 FROM item_media m
+                  WHERE m.item_id = items.id AND m.source_origin = ?
+              )
             ORDER BY id
             """,
-            word_types,
+            [*word_types, PICTURE_ORIGIN],
         ).fetchall()
 
     console.print(f"[bold]{len(rows)}[/bold] Drive documents have empty picture markers")
@@ -279,7 +285,8 @@ def pictures(
     for row in rows:
         try:
             drive_file = sync_single_file(row["source_id"])
-            if not drive_file.pictures or not count_placeholders(drive_file.item.content):
+            found = drive_file.pictures or []
+            if not any(found) or not count_placeholders(drive_file.item.content):
                 # Unreadable now, or its pictures are gone: leave the item as it is
                 errors.append(f"item {row['id']}: no pictures found when fetched again")
                 continue
@@ -292,7 +299,7 @@ def pictures(
             drive_file.item.metadata = metadata
             with get_connection(config) as conn, write_transaction(conn):
                 upsert_item(conn, drive_file.item)
-            count = attach_pictures(row["id"], drive_file.pictures, config=config)
+            count = attach_pictures(row["id"], found, config=config)
             if count:
                 filled += 1
                 saved += count

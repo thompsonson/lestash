@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import sqlite3
+from pathlib import Path
 
 from lestash.core.config import Config
 from lestash.core.database import (
@@ -54,25 +55,28 @@ def attach_pictures(
         if not _fits(conn, item_id, pictures):
             return 0
 
+    media_dir = get_media_dir(config)
     files: dict[str, str] = {}
+    created: list[str] = []
     for picture in pictures:
         if picture is None:
             continue
         digest = hashlib.sha256(picture.data).hexdigest()
         if digest not in files:
             name = f"{digest[:12]}{_EXTENSIONS.get(picture.mime_type, '.png')}"
+            existed = (media_dir / str(item_id) / name).exists()
             files[digest] = save_media_file(item_id, picture.data, name, config=config)
+            if not existed:
+                created.append(files[digest])
 
-    dropped: list[str] = []
     with get_connection(config) as conn:
         try:
             with write_transaction(conn):
-                if _fits(conn, item_id, pictures):
-                    count, dropped = _write(conn, item_id, pictures, files)
-                else:
-                    count = 0
+                count = (
+                    _write(conn, item_id, pictures, files) if _fits(conn, item_id, pictures) else 0
+                )
         finally:
-            _remove_unused_files(conn, config, [*files.values(), *dropped])
+            _remove_unrecorded(conn, media_dir, created)
     return count
 
 
@@ -97,8 +101,8 @@ def _write(
     item_id: int,
     pictures: list[DocPicture | None],
     files: dict[str, str],
-) -> tuple[int, list[str]]:
-    """Write the rows and the content; returns the count and the dropped rows' files."""
+) -> int:
+    """Write the rows and the content; returns how many markers were filled."""
     content = conn.execute("SELECT content FROM items WHERE id = ?", (item_id,)).fetchone()[0]
     replacements: dict[int, str] = {}
     kept: list[int] = []
@@ -127,13 +131,12 @@ def _write(
             kept.append(media_id)
         replacements[index] = f"![{alt_text}](/api/media/{media_id})"
 
-    stale = (
-        "FROM item_media WHERE item_id = ? AND source_origin = ? AND media_type = ?"
-        f" AND id NOT IN ({','.join('?' * len(kept))})"
+    # A dropped row's file stays, as the PDF enricher's do (#430)
+    conn.execute(
+        "DELETE FROM item_media WHERE item_id = ? AND source_origin = ? AND media_type = ?"
+        f" AND id NOT IN ({','.join('?' * len(kept))})",
+        (item_id, PICTURE_ORIGIN, "image", *kept),
     )
-    stale_args = (item_id, PICTURE_ORIGIN, "image", *kept)
-    dropped = [row[0] for row in conn.execute(f"SELECT local_path {stale}", stale_args) if row[0]]
-    conn.execute(f"DELETE {stale}", stale_args)
     if replacements:
         pre_max = max_history_id(conn)
         conn.execute(
@@ -141,13 +144,16 @@ def _write(
             (apply_images(content, replacements), item_id),
         )
         mark_recent_history(conn, pre_max, "sync", item_ids=[item_id])
-    return len(replacements), dropped
+    return len(replacements)
 
 
-def _remove_unused_files(conn: sqlite3.Connection, config: Config, paths: list[str]) -> None:
-    """Delete those of these files (saved or dropped by this run) that no row names."""
-    media_dir = get_media_dir(config)
-    for rel_path in set(paths):
+def _remove_unrecorded(conn: sqlite3.Connection, media_dir: Path, created: list[str]) -> None:
+    """Delete the files this run created that no row ended up naming.
+
+    Only files that did not exist before this run, so no other row or database
+    can be relying on one.
+    """
+    for rel_path in created:
         named = conn.execute(
             "SELECT 1 FROM item_media WHERE local_path = ? LIMIT 1", (rel_path,)
         ).fetchone()
