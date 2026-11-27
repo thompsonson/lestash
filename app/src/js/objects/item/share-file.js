@@ -17,7 +17,11 @@ const $ = id => document.getElementById(id);
 const size = n => n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`;
 
 // `saveNew(file)` saves it as a new item, the way a share did before; `saved()` runs
-// once it is saved under an item
+// once it is saved under an item.
+//
+// One share at a time, by design: a newer share replaces the one open, as the text and
+// image share dialogs do, even while that one saves. What a share arriving meanwhile
+// should do is undecided and out of scope for #114; it is #436, under the model gate.
 export function openShareFile(file, { audio = false, saveNew, saved }) {
   wire();
   pending = { file, audio, saveNew, saved };
