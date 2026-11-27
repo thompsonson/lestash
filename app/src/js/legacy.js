@@ -1225,9 +1225,9 @@ async function loadLinks(itemId) {
   // A top-level reply's post is known by its reply link: its main action goes there
   const answered = data.links.find(l => l.kind === 'in_reply_to' && l.direction === 'outgoing');
   if (answered) setAnsweredPost(answered.item.id);
-  // Related items are listed under Related, with their cards (#424). Parts and
-  // stubs have no Related section, so theirs stay here
-  const underRelated = !!document.getElementById('related-section');
+  // Related items are listed under Related, with their cards (#424), once it has
+  // loaded them. Parts and stubs have no Related section, so theirs stay here
+  const underRelated = document.getElementById('related-section')?.dataset.listsConfirmed === '1';
   const shown = data.links.filter(l => !(underRelated && l.kind === 'related'));
   if (!shown.length) {
     section.style.display = 'none';

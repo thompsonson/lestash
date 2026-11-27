@@ -72,14 +72,22 @@ export async function loadRelated(item, toast, onLinked) {
       api(`/api/items/${item.id}/links`).then(d => d.links).catch(() => []),
     ]);
   } catch {
-    if (current()) document.getElementById('related-list').innerHTML = '<span class="muted" style="font-size:0.8rem">Unavailable</span>';
+    if (!current()) return;
+    document.getElementById('related-list').innerHTML = '<span class="muted" style="font-size:0.8rem">Unavailable</span>';
+    // Links lists the related ones, since this section can't
+    section.dataset.listsConfirmed = '';
+    onLinked();
     return;
   }
   if (!current()) return;
   const suggestions = related.suggestions || [];
   const confirmed = related.confirmed || [];  // an older server sends none
+  // Links leaves related ones out only once this section lists them (#424); an
+  // older server sends no confirmed list
+  section.dataset.listsConfirmed = Array.isArray(related.confirmed) ? '1' : '';
+  onLinked();
   // Any decision redraws the section, so a confirmed item moves to the top
-  const onDecided = () => { onLinked(); loadRelated(item, toast, onLinked); };
+  const onDecided = () => loadRelated(item, toast, onLinked);
   const list = document.getElementById('related-list');
   list.innerHTML = '';
   if (!suggestions.length && !confirmed.length) {

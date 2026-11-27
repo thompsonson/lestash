@@ -286,7 +286,7 @@ Items from other sources suggested as related, by their vectors (#219), best fir
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `limit` | int | 5 | At most this many, 1–50 |
+| `limit` | int | 5 | At most this many suggestions, 1–50; `confirmed` lists every one |
 
 ```json
 {"suggestions": [{"item": {"id": 42, "source_type": "arxiv", "title": "...", "...": "..."}, "score": 0.71}],
