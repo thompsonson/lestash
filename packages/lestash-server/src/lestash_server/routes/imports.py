@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["import"])
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+# A ZIP may be bigger: one part of a Claude export alone can pass 100 MB (#88)
+MAX_ZIP_SIZE = 512 * 1024 * 1024
 
 
 @router.post("/api/import", response_model=ImportResponse)
@@ -57,12 +59,14 @@ async def import_file(
     - source_url: original URL of the page
     - notes: user annotations
     """
-    data = await file.read()
-    if len(data) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File too large (max 50MB)")
-
     filename = file.filename or ""
     name = filename.lower()  # suffixes match in any case: PAGE.HTML is a page
+    data = await file.read()
+    if name.endswith(".zip"):
+        if len(data) > MAX_ZIP_SIZE:
+            raise HTTPException(status_code=413, detail="ZIP file too large (max 512 MB)")
+    elif len(data) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large (max 50MB)")
     if parent_id is not None:
         with get_db() as conn:
             if not conn.execute("SELECT 1 FROM items WHERE id = ?", (parent_id,)).fetchone():

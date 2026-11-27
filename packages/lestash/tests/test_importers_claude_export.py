@@ -4,8 +4,10 @@ import io
 import json
 import zipfile
 
+import pytest
 from lestash.core.database import get_connection
 from lestash.importers import parse_zip
+from lestash.importers.claude_export import NothingToImport
 
 CONV = "c0000000-0000-4000-8000-000000000001"
 PROJECT = "p0000000-0000-4000-8000-000000000001"
@@ -209,3 +211,50 @@ def test_importing_an_export_again_adds_no_copies(test_db):
             " WHERE i.source_type = 'claude' ORDER BY i.id"
         ).fetchall()
     assert [tuple(r) for r in rows] == [(CONV, None), ("m1", CONV), ("m3", CONV)]
+
+
+# ── The split export (November 2026): one ZIP per part ─────────────────────────
+
+
+def _part(files: dict[str, object]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, data in files.items():
+            zf.writestr(name, json.dumps(data))
+    return buf.getvalue()
+
+
+def test_a_conversations_part_alone():
+    items, kind = parse_zip(_part({"conversations.json": [CONVERSATION]}))
+    assert kind == "claude"
+    assert [i.source_id for i in items] == [CONV, "m1", "m3"]
+
+
+def test_a_projects_part_holds_one_file_per_project():
+    project = {"uuid": PROJECT, "name": "Thesis", "description": "Writing up.", "docs": []}
+    items, kind = parse_zip(_part({f"projects/{PROJECT}.json": project}))
+    assert kind == "claude"
+    assert [(i.source_type, i.source_id, i.title) for i in items] == [
+        ("claude-project", PROJECT, "Thesis")
+    ]
+
+
+def test_parts_with_nothing_to_import_say_why():
+    cases = {
+        "login history": {"users.json": [], "login_history.json": {"login_events": []}},
+        "#437": {"artifacts/a1/artifact.json": {"id": "a1", "versions": []}},
+        "#437 ": {"artifacts/a1/data/documents.json": {"documents": []}},
+        "#439": {"claude_code_cloud/routines.json": {"claude_code_cloud": []}},
+    }
+    for why, files in cases.items():
+        with pytest.raises(NothingToImport, match=why.strip()):
+            parse_zip(_part(files))
+
+
+def test_a_chatgpt_conversations_file_alone_is_not_a_claude_export():
+    data = _part({"conversations.json": [{"title": "x", "mapping": {}}]})
+    try:
+        _items, kind = parse_zip(data)
+    except ValueError:
+        kind = None
+    assert kind != "claude"

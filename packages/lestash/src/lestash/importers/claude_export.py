@@ -1,8 +1,17 @@
 """Parse a Claude data export ZIP (claude.ai: Settings → Privacy → Export data) (#88).
 
 - conversations.json: a `claude` item per conversation, with its messages as children.
-- projects.json: a `claude-project` item per project, with its documents as children.
+- projects: a `claude-project` item per project, with its documents as children.
 - memories.json: `claude-memory` items, the account's memory and each project's.
+
+Two layouts:
+- One ZIP holding conversations.json, users.json, projects.json and memories.json
+  (the export until 2026).
+- A manifest of ZIPs, one per part (from November 2026): `conversations-000.zip` holds
+  conversations.json alone; `projects-000.zip` holds `projects/<uuid>.json`, one project
+  each. The other parts import nothing here and say why: `light_metadata` (account and
+  login history), `frames` and `artifact_data` (Artifacts, #437) and `claude_code_cloud`
+  (routines, #439).
 
 Items keep the source ids and fields the first import of an export stored, so a newer
 export updates those items rather than adding copies.
@@ -11,6 +20,7 @@ export updates those items rather than adding copies.
 import contextlib
 import json
 import logging
+import re
 import zipfile
 from datetime import UTC, datetime
 
@@ -27,39 +37,99 @@ NO_DESCRIPTION = "(no description)"
 PROMPT_HEADING = "\n\n---\n\n**Prompt template:**\n"
 
 
+PROJECT_FILE = re.compile(r"^projects/[^/]+\.json$")
+
+
+class NothingToImport(ValueError):
+    """A part of a Claude export that LeStash reads nothing from (yet)."""
+
+
+# The parts of a split export that import nothing, by a file only they hold
+_NOT_IMPORTED = (
+    (
+        lambda names: "login_history.json" in names,
+        "This part of the Claude export holds account details and login history only;"
+        " nothing in it is imported.",
+    ),
+    (
+        lambda names: any(
+            n.startswith("artifacts/") and n.endswith(("/artifact.json", "/data/documents.json"))
+            for n in names
+        ),
+        "Artifacts from the Claude export aren't imported yet (#437).",
+    ),
+    (
+        lambda names: "claude_code_cloud/routines.json" in names,
+        "Claude Code routines from the Claude export aren't imported yet (#439).",
+    ),
+)
+
+
 def detect_claude_zip(names: list[str]) -> bool:
-    """A Claude export holds conversations.json and users.json at its root.
+    """Whether the ZIP may be a Claude export, or a part of one, by its file names.
 
-    A ChatGPT export also has conversations.json, but user.json, not users.json.
+    conversations.json alone may be ChatGPT's: ``parse_claude_zip`` checks its content.
     """
-    return "conversations.json" in names and "users.json" in names
+    found = set(names)
+    return (
+        "conversations.json" in found
+        or any(PROJECT_FILE.match(n) for n in found)
+        or any(test(found) for test, _ in _NOT_IMPORTED)
+    )
 
 
-def parse_claude_zip(zf: zipfile.ZipFile) -> list[ItemCreate]:
-    """Every conversation, project and memory in the export, parents before children."""
+def parse_claude_zip(zf: zipfile.ZipFile) -> list[ItemCreate] | None:
+    """Every conversation, project and memory in the export, parents before children.
+
+    None if it isn't a Claude export after all (a ChatGPT export's conversations.json).
+    Raises NothingToImport for a part LeStash reads nothing from.
+    """
     names = set(zf.namelist())
+    project_files = sorted(n for n in names if PROJECT_FILE.match(n))
+    if "conversations.json" not in names and not project_files:
+        for test, why in _NOT_IMPORTED:
+            if test(names):
+                raise NothingToImport(why)
+        return None
+
     items: list[ItemCreate] = []
-    for conversation in _read_list(zf, "conversations.json"):
-        items.extend(_conversation(conversation))
-    if "projects.json" in names:
-        for project in _read_list(zf, "projects.json"):
-            items.extend(_project(project))
+    if "conversations.json" in names:
+        conversations = _read_list(zf, "conversations.json")
+        # A ChatGPT export's conversations have a `mapping`, not `chat_messages`
+        if conversations and "chat_messages" not in conversations[0]:
+            return None
+        for conversation in conversations:
+            items.extend(_conversation(conversation))
+    projects = _read_list(zf, "projects.json") if "projects.json" in names else []
+    projects += [p for name in project_files if (p := _read_dict(zf, name))]
+    for project in projects:
+        items.extend(_project(project))
     if "memories.json" in names:
         for memory in _read_list(zf, "memories.json"):
             items.extend(_memories(memory))
     return items
 
 
-def _read_list(zf: zipfile.ZipFile, name: str) -> list[dict]:
+def _read_json(zf: zipfile.ZipFile, name: str) -> object:
     try:
-        data = json.loads(zf.read(name))
+        return json.loads(zf.read(name))
     except (json.JSONDecodeError, UnicodeDecodeError, KeyError):
         logger.warning("Could not read %s in the Claude export", name)
-        return []
+        return None
+
+
+def _read_list(zf: zipfile.ZipFile, name: str) -> list[dict]:
+    data = _read_json(zf, name)
     if not isinstance(data, list):
-        logger.warning("%s in the Claude export is not a list", name)
+        if data is not None:
+            logger.warning("%s in the Claude export is not a list", name)
         return []
     return [entry for entry in data if isinstance(entry, dict)]
+
+
+def _read_dict(zf: zipfile.ZipFile, name: str) -> dict | None:
+    data = _read_json(zf, name)
+    return data if isinstance(data, dict) else None
 
 
 def _when(value: object) -> datetime | None:

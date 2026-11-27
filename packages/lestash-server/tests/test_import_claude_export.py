@@ -81,3 +81,39 @@ def test_an_export_uploaded_twice(client, test_config) -> None:
     ]
     # Each upload counts for the Claude export's reminder (#403)
     assert [r[0] for r in imports] == ["claude", "claude"]
+
+
+def test_a_zip_may_pass_50_mb_but_other_files_may_not(client, monkeypatch) -> None:
+    """A Claude export's parts pass 50 MB (#88); the limits are lowered to test them."""
+    from lestash_server.routes import imports
+
+    monkeypatch.setattr(imports, "MAX_FILE_SIZE", 10)
+    monkeypatch.setattr(imports, "MAX_ZIP_SIZE", 10_000)
+    resp = client.post(
+        "/api/import",
+        files={"file": ("conversations-000.zip", io.BytesIO(_export()), "application/zip")},
+    )
+    assert resp.status_code == 200, resp.text
+    too_big = client.post(
+        "/api/import", files={"file": ("notes.md", io.BytesIO(b"x" * 11), "text/markdown")}
+    )
+    assert too_big.status_code == 413
+    monkeypatch.setattr(imports, "MAX_ZIP_SIZE", 10)
+    resp = client.post(
+        "/api/import",
+        files={"file": ("conversations-000.zip", io.BytesIO(_export()), "application/zip")},
+    )
+    assert resp.status_code == 413
+    assert "512 MB" in resp.json()["detail"]
+
+
+def test_a_part_with_nothing_to_import_says_why(client) -> None:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("artifacts/a1/artifact.json", json.dumps({"id": "a1", "versions": []}))
+    resp = client.post(
+        "/api/import",
+        files={"file": ("frames-000.zip", io.BytesIO(buf.getvalue()), "application/zip")},
+    )
+    assert resp.status_code == 400
+    assert "#437" in resp.json()["detail"]

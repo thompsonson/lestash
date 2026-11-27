@@ -81,7 +81,9 @@ def parse_zip(data: bytes | Path):
 
             # Claude data export: before the generic JSON below, which would misread it
             if detect_claude_zip(names):
-                return parse_claude_zip(zf), "claude"
+                claude = parse_claude_zip(zf)
+                if claude is not None:
+                    return claude, "claude"
 
             # Detect Mistral Le Chat export
             if detect_mistral_zip(names):
