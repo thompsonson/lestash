@@ -3,7 +3,9 @@
 # "designed" is the model as the doc now reads, and must pass. Each other
 # case switches one fix off, or checks a state is reachable, and must be
 # violated. One line per case: name, outcome, expected. TRACE=1 prints
-# the trace of each violated case. TLA2TOOLS overrides the jar's path.
+# the trace of each violated case. "other" means a property other than the
+# one named was violated; its TLC error is printed. TLA2TOOLS overrides
+# the jar's path.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 jar="${TLA2TOOLS:-$HOME/.cache/tla2tools-936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88.jar}"
@@ -26,12 +28,12 @@ run() { # module name expected kind check overrides...
   if grep -q "No error has been found" <<<"$out"; then r=pass
   elif [[ $k == ALL ]] && grep -q "is violated" <<<"$out"; then r=violated
   elif grep -qE "(Invariant|property) $c is violated" <<<"$out"; then r=violated
-  elif grep -q "is violated" <<<"$out"; then r=other-violated
+  elif grep -q "is violated" <<<"$out"; then r=other
   else r=error; fi
   st=$(grep -oE '[0-9,]+ distinct states found' <<<"$out" | head -1)
   local ok=ok; [[ $r == "$e" ]] || { ok=UNEXPECTED; fail=1; }
   printf '%-28s %-9s %-11s %s\n' "$n" "$r" "$ok" "$st"
-  [[ $r == error ]] && echo "$out" | tail -20
+  [[ $r == error || $r == other ]] && echo "$out" | grep -E "is violated|^Error" | head -5
   [[ -n "${TRACE:-}" && $r == violated ]] && echo "$out" | sed -n '/violated/,/distinct states/p' | head -80
   rm -rf "$w"
 }
