@@ -557,9 +557,9 @@ Counts are from the live DB on 26 Nov 2026, read-only.
 
 **Changed on 27 Nov 2026 (#340):** a kept theme is its own object, not a Collection.
 Keep approves the theme under your name; a theme then holds your view, questions, positions and any number of collections.
-Rows below that say "Keep as a collection" or "Theme became a Collection" are replaced by that model.
+Wherever this round has Keep make a collection, or a theme become one, that model replaces it: in the findings, tables, object guide and walkthrough tasks alike.
 The model: "Themes, questions and positions" in [`content-and-activity-ontology-design.md`](content-and-activity-ontology-design.md).
-Steps 2–3 are re-planned around it.
+The build changes that follow this round are planned around it.
 
 ### What the walk found
 
