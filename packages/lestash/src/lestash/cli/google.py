@@ -203,7 +203,7 @@ def sync(
                     pdf_followups.append(
                         (item_id, drive_file.pdf_bytes, drive_file.filename, drive_url)
                     )
-                if drive_file.pictures:
+                if drive_file.pictures is not None:
                     picture_followups.append((item_id, drive_file.pictures))
             except Exception as e:
                 errors.append(f"{item.title}: {e}")
@@ -245,6 +245,8 @@ def pictures(
     Finds Drive items whose content still has empty `<!-- image -->` markers,
     imports each one again from Drive, and saves its pictures in their places.
     """
+    import json
+
     from lestash.core.config import Config
     from lestash.core.database import get_connection, upsert_item, write_transaction
     from lestash.core.doc_pictures import attach_pictures
@@ -257,7 +259,7 @@ def pictures(
     with get_connection(config) as conn:
         rows = conn.execute(
             f"""
-            SELECT id, source_id, title FROM items
+            SELECT id, source_id, title, metadata FROM items
             WHERE source_type = 'google-drive' AND content LIKE '%<!-- image -->%'
               AND json_extract(metadata, '$.mime_type') IN ({",".join("?" * len(word_types))})
             ORDER BY id
@@ -281,6 +283,13 @@ def pictures(
                 # Unreadable now, or its pictures are gone: leave the item as it is
                 errors.append(f"item {row['id']}: no pictures found when fetched again")
                 continue
+            # Fetched alone, a file doesn't know the folder a folder sync found it in
+            held = json.loads(row["metadata"] or "{}")
+            metadata = dict(drive_file.item.metadata or {})
+            for key in ("folder_path", "categories"):
+                if key in held and key not in metadata:
+                    metadata[key] = held[key]
+            drive_file.item.metadata = metadata
             with get_connection(config) as conn, write_transaction(conn):
                 upsert_item(conn, drive_file.item)
             count = attach_pictures(row["id"], drive_file.pictures, config=config)

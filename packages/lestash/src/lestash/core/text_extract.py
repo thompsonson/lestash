@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from docling_core.types.doc import DoclingDocument
+    from docling_core.types.doc import DoclingDocument, PictureItem
     from PIL.Image import Image as PILImage
 
 logger = logging.getLogger(__name__)
@@ -107,6 +107,9 @@ class DocPicture:
     mime_type: str
 
 
+# A picture's pixels: its mode, size and a hash of its bytes
+_PixelsKey = tuple[str, tuple[int, int], str]
+
 # Picture files a browser shows; any other kind (EMF, TIFF...) is saved as Docling's PNG
 _WEB_IMAGE_TYPES = {
     "JPEG": "image/jpeg",
@@ -116,11 +119,12 @@ _WEB_IMAGE_TYPES = {
 }
 
 
-def convert_docx(path: Path) -> tuple[str, list[DocPicture | None]]:
+def convert_docx(path: Path) -> tuple[str, list[DocPicture | None] | None]:
     """Convert a Word file to markdown, with the file of each picture Docling found.
 
     The i-th picture belongs to the i-th `<!-- image -->` placeholder; one Docling
-    could not read is None. On failure the markdown is empty.
+    could not read is None. On failure the markdown is empty and the pictures are
+    None: not known, as against a document with none.
     """
     from docling.document_converter import DocumentConverter
 
@@ -129,12 +133,12 @@ def convert_docx(path: Path) -> tuple[str, list[DocPicture | None]]:
         markdown = document.export_to_markdown()
     except Exception:
         logger.exception("Docling conversion failed for %s", path.name)
-        return "", []
+        return "", None
     try:
         pictures = docx_pictures(path, document)
     except Exception:
         logger.exception("Could not read the pictures in %s", path.name)
-        pictures = []
+        return markdown, None
     return markdown, pictures
 
 
@@ -143,6 +147,7 @@ def docx_pictures(path: Path, document: DoclingDocument) -> list[DocPicture | No
 
     Docling keeps each picture as a PNG it re-encoded. Where those pixels match a
     file in the Word file, that original is kept instead, so a photo stays a JPEG.
+    A picture that can't be read is None; the others are still returned.
     """
     from docling_core.types.doc import PictureItem
 
@@ -151,48 +156,61 @@ def docx_pictures(path: Path, document: DoclingDocument) -> list[DocPicture | No
     for item, _level in document.iterate_items():
         if not isinstance(item, PictureItem):
             continue
-        image = item.image.pil_image if item.image else None
-        if image is None:
+        try:
+            pictures.append(_picture_file(item, originals))
+        except Exception:
+            logger.exception("Could not read picture %d in %s", len(pictures) + 1, path.name)
             pictures.append(None)
-            continue
-        original = originals.get(_pixels_key(image))
-        if original is not None:
-            pictures.append(original)
-            continue
-        uri = str(item.image.uri) if item.image else ""
-        if uri.startswith("data:image/png;base64,"):
-            data = base64.b64decode(uri.split(",", 1)[1])
-        else:
-            buffer = io.BytesIO()
-            image.save(buffer, format="PNG")
-            data = buffer.getvalue()
-        pictures.append(DocPicture(data, "image/png"))
     return pictures
 
 
-def _docx_originals(path: Path) -> dict[tuple[str, tuple[int, int], str], DocPicture]:
-    """The Word file's own picture files a browser can show, by their pixels."""
-    from PIL import Image, UnidentifiedImageError
+def _picture_file(item: PictureItem, originals: dict[_PixelsKey, DocPicture]) -> DocPicture | None:
+    image = item.image.pil_image if item.image else None
+    if image is None:
+        return None
+    original = originals.get(_pixels_key(image))
+    if original is not None:
+        return original
+    uri = str(item.image.uri) if item.image else ""
+    if uri.startswith("data:image/png;base64,"):
+        return DocPicture(base64.b64decode(uri.split(",", 1)[1]), "image/png")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return DocPicture(buffer.getvalue(), "image/png")
 
-    originals: dict[tuple[str, tuple[int, int], str], DocPicture] = {}
-    with zipfile.ZipFile(path) as archive:
+
+def _docx_originals(path: Path) -> dict[_PixelsKey, DocPicture]:
+    """The Word file's own picture files a browser can show, by their pixels.
+
+    A file that can't be read is skipped; its picture then keeps Docling's PNG.
+    """
+    from PIL import Image
+
+    originals: dict[_PixelsKey, DocPicture] = {}
+    try:
+        archive = zipfile.ZipFile(path)
+    except (zipfile.BadZipFile, OSError):
+        logger.warning("%s is not a zip file; its pictures keep Docling's PNG", path.name)
+        return originals
+    with archive:
         for name in archive.namelist():
             if not name.startswith("word/media/"):
                 continue
-            data = archive.read(name)
             try:
+                data = archive.read(name)
                 with Image.open(io.BytesIO(data)) as image:
                     mime_type = _WEB_IMAGE_TYPES.get(image.format or "")
                     if mime_type is None:
                         continue
                     image.load()
                     originals.setdefault(_pixels_key(image), DocPicture(data, mime_type))
-            except (UnidentifiedImageError, OSError, ValueError):
+            except Exception:  # an odd or oversized file, or a decompression bomb
+                logger.warning("Could not read %s in %s", name, path.name)
                 continue
     return originals
 
 
-def _pixels_key(image: PILImage) -> tuple[str, tuple[int, int], str]:
+def _pixels_key(image: PILImage) -> _PixelsKey:
     return image.mode, image.size, hashlib.sha256(image.tobytes()).hexdigest()
 
 

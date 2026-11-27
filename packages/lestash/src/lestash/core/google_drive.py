@@ -228,13 +228,14 @@ class DriveFile(NamedTuple):
 
     The caller stores `item`, then attaches what came with it: the source PDF
     (`pdf_bytes`, enriched as before) or a Word file's pictures (`pictures`, one
-    per `<!-- image -->` in the content, #394).
+    per `<!-- image -->` in the content, #394). `pictures` is None for any other
+    file, or when the Word file couldn't be read; [] means it has none.
     """
 
     item: ItemCreate
     pdf_bytes: bytes | None
     filename: str
-    pictures: list[DocPicture | None]
+    pictures: list[DocPicture | None] | None
 
 
 def _process_file(service, file_meta: dict) -> DriveFile:
@@ -254,7 +255,7 @@ def _process_file(service, file_meta: dict) -> DriveFile:
 
     content = ""
     pdf_bytes: bytes | None = None
-    pictures: list[DocPicture | None] = []
+    pictures: list[DocPicture | None] | None = None
     try:
         # Google Workspace files need export, not download
         if mime_type in EXPORTABLE_MIMES:

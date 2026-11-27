@@ -555,7 +555,7 @@ def sync_from_drive(body: DriveSyncRequest):
                                 pdf_followups.append(
                                     (item_id, drive_file.pdf_bytes, drive_file.filename, drive_url)
                                 )
-                            if drive_file.pictures:
+                            if drive_file.pictures is not None:
                                 picture_followups.append((item_id, drive_file.pictures))
                         except Exception as e:
                             errors.append(f"{item.title}: {e}")
@@ -583,7 +583,7 @@ def sync_from_drive(body: DriveSyncRequest):
                 if pdf_bytes:
                     drive_url = (item.metadata or {}).get("drive_web_link")
                     pdf_followups.append((item_id, pdf_bytes, filename, drive_url))
-                if pictures:
+                if pictures is not None:
                     picture_followups.append((item_id, pictures))
             else:
                 errors.append(f"Could not parse URL: {url}")
