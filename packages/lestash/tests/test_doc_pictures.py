@@ -235,6 +235,7 @@ def test_a_google_doc_brings_its_pictures(tmp_path, monkeypatch):
     assert drive_file.item.content.count("<!-- image -->") == 1
     assert drive_file.pictures == [DocPicture(jpeg, "image/jpeg")]
     assert drive_file.pdf_bytes is None
+    assert drive_file.downloaded is True
 
 
 def test_the_pictures_command_fills_held_documents(config, monkeypatch, tmp_path):
@@ -398,6 +399,41 @@ def test_a_document_drive_could_not_give_is_tried_again(config, monkeypatch):
 
     def fetch(file_id: str) -> google_drive.DriveFile:
         item = ItemCreate(source_type="google-drive", source_id=file_id, title="Doc", content="")
+        return google_drive.DriveFile(item, None, "Doc", None, downloaded=False)
+
+    monkeypatch.setattr("lestash.core.config.Config.load", lambda: config)
+    monkeypatch.setattr(google_drive, "sync_single_file", fetch)
+
+    first = CliRunner().invoke(app, ["google", "pictures"])
+    again = CliRunner().invoke(app, ["google", "pictures", "--dry-run"])
+
+    assert "could not be downloaded" in first.output
+    assert "1 Drive documents" in again.output
+    assert _content(config, held) == "old <!-- image -->"
+
+
+def test_a_file_docling_cannot_read_is_fetched_once(config, monkeypatch):
+    from lestash.cli.main import app
+    from lestash.core import google_drive
+    from typer.testing import CliRunner
+
+    with get_connection(config) as conn:
+        held = upsert_item(
+            conn,
+            ItemCreate(
+                source_type="google-drive",
+                source_id="G5",
+                title="Doc",
+                content="old <!-- image -->",
+                metadata={"mime_type": "application/vnd.google-apps.document"},
+            ),
+        )
+        conn.commit()
+    fetched: list[str] = []
+
+    def fetch(file_id: str) -> google_drive.DriveFile:
+        fetched.append(file_id)
+        item = ItemCreate(source_type="google-drive", source_id=file_id, title="Doc", content="")
         return google_drive.DriveFile(item, None, "Doc", None)
 
     monkeypatch.setattr("lestash.core.config.Config.load", lambda: config)
@@ -406,6 +442,22 @@ def test_a_document_drive_could_not_give_is_tried_again(config, monkeypatch):
     first = CliRunner().invoke(app, ["google", "pictures"])
     again = CliRunner().invoke(app, ["google", "pictures", "--dry-run"])
 
-    assert "could not be read" in first.output
-    assert "1 Drive documents" in again.output
+    assert "Docling could not read the file" in first.output
+    assert "0 Drive documents" in again.output
+    assert fetched == ["G5"]
     assert _content(config, held) == "old <!-- image -->"
+
+
+def test_a_drive_file_that_fails_to_download_says_so(tmp_path, monkeypatch):
+    from lestash.core import google_drive
+
+    def fail(*args, **kwargs):
+        raise OSError("network down")
+
+    monkeypatch.setattr(google_drive, "_export_google_file", fail)
+    meta = {"id": "G6", "name": "Doc", "mimeType": "application/vnd.google-apps.document"}
+
+    drive_file = google_drive._process_file(object(), meta)
+
+    assert drive_file.downloaded is False
+    assert drive_file.pictures is None

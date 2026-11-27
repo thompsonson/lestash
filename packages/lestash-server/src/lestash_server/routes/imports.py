@@ -561,7 +561,7 @@ def sync_from_drive(body: DriveSyncRequest):
                             errors.append(f"{item.title}: {e}")
                     conn.commit()
             elif url_type == "file":
-                item, pdf_bytes, filename, pictures = sync_single_file(file_id)
+                item, pdf_bytes, filename, pictures, _downloaded = sync_single_file(file_id)
                 with get_db() as conn:
                     if body.parent_id is not None:
                         # A file already held stays where it is; a new one goes under
