@@ -45,6 +45,23 @@ def test_confirming_makes_a_link_and_ends_the_suggestion(client, three):
     assert [(link["kind"], link["item"]["id"]) for link in links] == [("related", b)]
 
 
+def test_confirmed_items_are_listed_from_both_ends_until_rejected(client, three):
+    """#424: a confirmed item shows under Related, not only under Links."""
+    a, b, c = three
+    assert client.get(f"/api/items/{a}/related").json()["confirmed"] == []
+    client.put(f"/api/items/{a}/related/{b}", json={"status": "confirmed"})
+    client.put(f"/api/items/{c}/related/{a}", json={"status": "confirmed"})
+    for item, others in ((a, {b, c}), (b, {a}), (c, {a})):
+        data = client.get(f"/api/items/{item}/related").json()
+        assert {other["id"] for other in data["confirmed"]} == others
+        assert data["suggestions"] == []
+    first = client.get(f"/api/items/{a}/related").json()["confirmed"][0]
+    assert first["title"] and first["source_type"]  # a whole item, for its card
+
+    client.put(f"/api/items/{a}/related/{b}", json={"status": "rejected"})
+    assert [o["id"] for o in client.get(f"/api/items/{a}/related").json()["confirmed"]] == [c]
+
+
 def test_a_pair_never_suggested_can_be_decided(client, three):
     a, _, c = three
     assert client.put(f"/api/items/{a}/related/{c}", json={"status": "rejected"}).is_success

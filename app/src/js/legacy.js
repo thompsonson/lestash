@@ -1107,11 +1107,12 @@ function renderItemView(item) {
 
   loadActivities(item.id);
   loadPeople(item.id, item.source_type);
-  loadLinks(item.id);
+  // Related reloads the links once it has drawn (#424); without it, load them here
+  if (!document.getElementById('related-section')) loadLinks(item.id);
   loadKobo(item, showToast);
 
   // Related and similar items, each with "Related" and "Not related" (#219)
-  loadRelated(item, showToast, () => loadLinks(item.id));
+  loadRelated(item, showToast, (data) => loadLinks(item.id, data));
 }
 
 const ACTIVITY_SHOWN = 20;
@@ -1212,24 +1213,30 @@ async function loadAllChildren(parentId, query = '') {
   }
 }
 
-async function loadLinks(itemId) {
-  let data;
-  try {
-    data = await api(`/api/items/${itemId}/links`);
-  } catch {
-    return;  // older server, or offline: the section stays hidden
+// data: the links as Related already fetched them, so they aren't fetched twice
+async function loadLinks(itemId, data = null) {
+  if (!data) {
+    try {
+      data = await api(`/api/items/${itemId}/links`);
+    } catch {
+      return;  // older server, or offline: the section stays hidden
+    }
   }
   const section = document.getElementById('links-section');
   // The view may have moved on to another item while this loaded
   if (!section || section.dataset.itemId !== String(itemId)) return;
-  if (!data.links.length) {
-    section.style.display = 'none';
-    return;
-  }
   // A top-level reply's post is known by its reply link: its main action goes there
   const answered = data.links.find(l => l.kind === 'in_reply_to' && l.direction === 'outgoing');
   if (answered) setAnsweredPost(answered.item.id);
-  const rows = data.links.map(l => {
+  // Related items are listed under Related, with their cards (#424), once it has
+  // loaded them. Parts and stubs have no Related section, so theirs stay here
+  const underRelated = document.getElementById('related-section')?.dataset.listsConfirmed === '1';
+  const shown = data.links.filter(l => !(underRelated && l.kind === 'related'));
+  if (!shown.length) {
+    section.style.display = 'none';
+    return;
+  }
+  const rows = shown.map(l => {
     const labels = LINK_LABELS[l.kind] || [l.kind, `${l.kind} (from)`];
     const label = labels[l.direction === 'outgoing' ? 0 : 1];
     // A comment has no title, and its address is its post's: its text tells it apart
@@ -1243,7 +1250,7 @@ async function loadLinks(itemId) {
         data-other="${l.item.id}" data-kind="${escHtml(l.kind)}" data-direction="${l.direction}">&times;</span>
     </div>`;
   }).join('');
-  document.getElementById('links-title').textContent = `Links (${data.links.length})`;
+  document.getElementById('links-title').textContent = `Links (${shown.length})`;
   document.getElementById('links-list').innerHTML = rows;
   section.style.display = '';
 }

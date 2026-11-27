@@ -255,6 +255,19 @@ def suggestions_for(conn: sqlite3.Connection, item_id: int, limit: int = PER_ITE
     ]
 
 
+def confirmed_for(conn: sqlite3.Connection, item_id: int) -> list[Any]:
+    """The items you confirmed as related to this one, latest decision first (#424)."""
+    return conn.execute(
+        """
+        SELECT i.* FROM item_links l
+        JOIN items i ON i.id = CASE WHEN l.from_id = :id THEN l.to_id ELSE l.from_id END
+        WHERE (l.from_id = :id OR l.to_id = :id) AND l.kind = :kind AND l.status = 'confirmed'
+        ORDER BY l.decided_at DESC, i.id
+        """,
+        {"id": item_id, "kind": KIND},
+    ).fetchall()
+
+
 def rejected_with(conn: sqlite3.Connection, item_id: int) -> set[int]:
     """The items whose relation to this one was rejected."""
     return {

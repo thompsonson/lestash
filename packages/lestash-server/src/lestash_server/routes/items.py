@@ -760,9 +760,9 @@ def list_item_links(item_id: int):
 
 @router.get("/{item_id}/related", response_model=RelatedSuggestionsResponse)
 def list_related_suggestions(item_id: int, limit: int = Query(5, ge=1, le=50)):
-    """Items from other sources suggested as related, by their vectors (#219).
-    Confirmed ones are links, listed by ``/links``."""
-    from lestash.core.related import suggestions_for
+    """Items from other sources suggested as related, by their vectors (#219), and
+    the items you confirmed as related (#424)."""
+    from lestash.core.related import confirmed_for, suggestions_for
 
     with get_db() as conn:
         if not conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
@@ -771,7 +771,10 @@ def list_related_suggestions(item_id: int, limit: int = Query(5, ge=1, le=50)):
             suggestions=[
                 RelatedSuggestion(item=enrich_item(conn, Item.from_row(row)), score=score)
                 for row, score in suggestions_for(conn, item_id, limit)
-            ]
+            ],
+            confirmed=[
+                enrich_item(conn, Item.from_row(row)) for row in confirmed_for(conn, item_id)
+            ],
         )
 
 
