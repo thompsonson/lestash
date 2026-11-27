@@ -249,7 +249,13 @@ def pictures(
     import json
 
     from lestash.core.config import Config
-    from lestash.core.database import get_connection, upsert_item, write_transaction
+    from lestash.core.database import (
+        get_connection,
+        mark_recent_history,
+        max_history_id,
+        upsert_item,
+        write_transaction,
+    )
     from lestash.core.doc_pictures import PICTURE_ORIGIN, attach_pictures
     from lestash.core.google_drive import GOOGLE_DOC_MIME, sync_single_file
     from lestash.core.pdf_enrich.images import count_placeholders
@@ -270,6 +276,8 @@ def pictures(
                   WHERE m.item_id = items.id AND m.source_origin = ?
                     AND instr(items.content, '](/api/media/' || m.id || ')') > 0
               )
+              -- Read before, with no picture Docling could read; a re-sync clears it
+              AND json_extract(metadata, '$.pictures_unreadable') IS NULL
             ORDER BY id
             """,
             [*word_types, PICTURE_ORIGIN],
@@ -288,7 +296,19 @@ def pictures(
         try:
             drive_file = sync_single_file(row["source_id"])
             found = drive_file.pictures or []
-            if not any(found) or not count_placeholders(drive_file.item.content):
+            if found and not any(found):
+                # Read, but Docling could read none of its pictures: don't fetch it again
+                with get_connection(config) as conn, write_transaction(conn):
+                    pre_max = max_history_id(conn)
+                    conn.execute(
+                        "UPDATE items SET metadata = json_set(COALESCE(metadata, '{}'),"
+                        " '$.pictures_unreadable', json('true')) WHERE id = ?",
+                        (row["id"],),
+                    )
+                    mark_recent_history(conn, pre_max, "sync", item_ids=[row["id"]])
+                errors.append(f"item {row['id']}: none of its pictures could be read")
+                continue
+            if not found or not count_placeholders(drive_file.item.content):
                 # Unreadable now, or its pictures are gone: leave the item as it is
                 errors.append(f"item {row['id']}: no pictures found when fetched again")
                 continue
