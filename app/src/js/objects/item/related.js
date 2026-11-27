@@ -63,12 +63,13 @@ export async function loadRelated(item, toast, onLinked) {
   section.dataset.load = load;
   const current = () => section.isConnected && section.dataset.itemId === String(item.id)
     && section.dataset.load === load;
-  let related = {}, similar = [], linkData = null;
+  // The similar search can be slow (it may load a model), so it runs alongside but
+  // nothing else waits for it. Without vectors or the model there are none similar
+  const similarLoad = api(`/api/embeddings/similar/${item.id}?limit=${SHOWN * 2}`).catch(() => []);
+  let related = {}, linkData = null;
   try {
-    [related, similar, linkData] = await Promise.all([
+    [related, linkData] = await Promise.all([
       api(`/api/items/${item.id}/related?limit=${SHOWN}`),
-      // Without vectors (or the model) there are none similar; the rest still shows
-      api(`/api/embeddings/similar/${item.id}?limit=${SHOWN * 2}`).catch(() => []),
       api(`/api/items/${item.id}/links`).catch(() => null),
     ]);
   } catch {
@@ -109,6 +110,8 @@ export async function loadRelated(item, toast, onLinked) {
   suggestions.forEach(s => list.appendChild(row(item, s.item, { score: s.score, onDecided, toast })));
 
   // Similar items not listed above, and not linked already
+  const similar = await similarLoad;
+  if (!current()) return;
   const shown = new Set([...suggestions.map(s => s.item.id), ...confirmed.map(c => c.id),
     ...links.map(l => l.item.id)]);
   const rest = similar.filter(s => !shown.has(s.id)).slice(0, SHOWN);
