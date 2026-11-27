@@ -20,11 +20,6 @@ const size = n => n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(
 // once it is saved under an item
 export function openShareFile(file, { audio = false, saveNew, saved }) {
   wire();
-  // One at a time: a file shared while another is open is refused, not swapped in
-  if (pending) {
-    showToast(`Finish with ${pending.file.name} first, then share ${file.name} again`, 'error');
-    return;
-  }
   pending = { file, audio, saveNew, saved };
   $('share-file-heading').textContent = audio ? 'Save Shared Recording' : 'Save Shared File';
   $('share-file-name').textContent = `${file.name} · ${size(file.size)}`;
