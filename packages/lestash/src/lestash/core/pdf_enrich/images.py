@@ -161,8 +161,9 @@ def _images_in(blocks: list[dict], page: pymupdf.Page, clip: pymupdf.Rect) -> tu
     together all reach, or 0 if they cover less. An image is part of the picture
     when most of its part on the page lies inside the region, so a page background
     doesn't count. Areas are of the images' union, so tiles of one photo add up and
-    overlaps count once. An image cropped by a clipping path is measured by its
-    whole placement, which PyMuPDF reports; see #393.
+    overlaps count once. An image cropped by a clipping path is measured by the
+    part that shows: PyMuPDF's image blocks give that box, where `get_image_rects`
+    gives the whole placement (#393).
     """
     import pymupdf
 
