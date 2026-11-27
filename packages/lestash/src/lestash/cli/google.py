@@ -251,7 +251,8 @@ def pictures(
 
     Finds Drive items whose content still has empty `<!-- image -->` markers and
     links none of the pictures saved for it, imports each one again from Drive, and saves its
-    pictures in their places.
+    pictures in their places. A document read but with nothing to fill is marked and
+    skipped after; one Drive won't give is listed and tried again on the next run.
     """
     import json
 
@@ -279,11 +280,9 @@ def pictures(
               )
               -- Read before, with no marker it could fill; a re-sync clears the mark
               AND json_extract(metadata, '$.pictures_unfilled') IS NULL
-              -- Drive refused it this many times: deleted, no access, or too big
-              AND COALESCE(json_extract(metadata, '$.pictures_tries'), 0) < ?
             ORDER BY id
             """,
-            [*word_types, PICTURE_ORIGIN, PICTURE_TRIES],
+            [*word_types, PICTURE_ORIGIN],
         ).fetchall()
 
     console.print(f"[bold]{len(rows)}[/bold] Drive documents have empty picture markers")
@@ -299,8 +298,8 @@ def pictures(
         try:
             drive_file = sync_single_file(row["source_id"])
             if not drive_file.downloaded:
-                # Drive didn't give the file, which may pass: try again, up to PICTURE_TRIES
-                _count_try(config, row["id"])
+                # Drive didn't give the file. That may pass (network, sign-in) or not
+                # (deleted, unshared); it is listed, and tried again on the next run
                 errors.append(f"item {row['id']}: Drive file could not be downloaded")
                 continue
             if drive_file.pictures is None:
@@ -327,8 +326,6 @@ def pictures(
                 _mark_unfilled(config, row["id"])
                 errors.append(f"item {row['id']}: none of its pictures could be filled")
         except Exception as e:
-            # files().get raises for a file deleted or no longer shared
-            _count_try(config, row["id"])
             errors.append(f"item {row['id']}: {e}")
 
     console.print(f"[green]✓[/green] Saved {saved} pictures in {filled} documents")
@@ -338,25 +335,12 @@ def pictures(
             console.print(f"    • {err}")
 
 
-# Fetches `google pictures` makes of a file Drive won't give before it stops
-PICTURE_TRIES = 3
-
-
 def _mark_unfilled(config: Config, item_id: int) -> None:
     """Mark a document `google pictures` read but could fill nothing in.
 
     It is then skipped; a re-sync replaces the metadata, so the mark goes with it.
     """
     _set_metadata(config, item_id, "'$.pictures_unfilled', json('true')")
-
-
-def _count_try(config: Config, item_id: int) -> None:
-    """Count a fetch Drive refused; at PICTURE_TRIES the document is skipped."""
-    _set_metadata(
-        config,
-        item_id,
-        "'$.pictures_tries', COALESCE(json_extract(metadata, '$.pictures_tries'), 0) + 1",
-    )
 
 
 def _set_metadata(config: Config, item_id: int, path_and_value: str) -> None:

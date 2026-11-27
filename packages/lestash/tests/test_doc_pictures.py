@@ -411,44 +411,6 @@ def test_a_document_drive_could_not_give_is_tried_again(config, monkeypatch):
     assert "1 Drive documents" in again.output
     assert _content(config, held) == "old <!-- image -->"
 
-    # Refused three times, as a deleted or unshared file always is: then skipped
-    CliRunner().invoke(app, ["google", "pictures"])
-    CliRunner().invoke(app, ["google", "pictures"])
-    last = CliRunner().invoke(app, ["google", "pictures", "--dry-run"])
-    assert "0 Drive documents" in last.output
-
-
-def test_a_file_drive_no_longer_has_is_skipped_after_three_tries(config, monkeypatch):
-    from lestash.cli.main import app
-    from lestash.core import google_drive
-    from typer.testing import CliRunner
-
-    with get_connection(config) as conn:
-        upsert_item(
-            conn,
-            ItemCreate(
-                source_type="google-drive",
-                source_id="G7",
-                title="Doc",
-                content="old <!-- image -->",
-                metadata={"mime_type": "application/vnd.google-apps.document"},
-            ),
-        )
-        conn.commit()
-    fetched: list[str] = []
-
-    def gone(file_id: str) -> google_drive.DriveFile:
-        fetched.append(file_id)
-        raise RuntimeError("File not found: 404")
-
-    monkeypatch.setattr("lestash.core.config.Config.load", lambda: config)
-    monkeypatch.setattr(google_drive, "sync_single_file", gone)
-
-    for _ in range(4):
-        CliRunner().invoke(app, ["google", "pictures"])
-
-    assert fetched == ["G7"] * 3
-
 
 def test_a_file_docling_cannot_read_is_fetched_once(config, monkeypatch):
     from lestash.cli.main import app
