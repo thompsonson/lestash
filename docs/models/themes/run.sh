@@ -24,7 +24,10 @@ run() { # module name expected kind check overrides...
   local out r st
   out=$(cd "$w" && java -XX:+UseParallelGC -cp "$jar" tlc2.TLC -deadlock -workers auto "$m" 2>&1)
   if grep -q "No error has been found" <<<"$out"; then r=pass
-  elif grep -qi "is violated" <<<"$out"; then r=violated; else r=error; fi
+  elif [[ $k == ALL ]] && grep -q "is violated" <<<"$out"; then r=violated
+  elif grep -qE "(Invariant|property) $c is violated" <<<"$out"; then r=violated
+  elif grep -q "is violated" <<<"$out"; then r=other-violated
+  else r=error; fi
   st=$(grep -oE '[0-9,]+ distinct states found' <<<"$out" | head -1)
   local ok=ok; [[ $r == "$e" ]] || { ok=UNEXPECTED; fail=1; }
   printf '%-28s %-9s %-11s %s\n' "$n" "$r" "$ok" "$st"
@@ -38,7 +41,7 @@ PROPERTY RerunLeavesAlone"
 ALLS="INVARIANT OneCurrent
 PROPERTY HistoryKept EndKeepsStance"
 
-if [[ $# -gt 0 ]]; then run "$@"; exit; fi
+if [[ $# -gt 0 ]]; then run "$@"; exit $fail; fi
 #        module    case                    expect   kind      check
 run Themes    designed                pass     ALL       "$ALLT"
 run Themes    rerun-deletes-reconsidered violated PROPERTY RerunLeavesAlone PinReconsidered=FALSE

@@ -914,8 +914,8 @@ A **Theme** is a subject you are working through. It is an object in its own rig
   - any number of collections; one collection can belong to several themes.
 - **Your view of a theme:** what you think about it as a whole, in your words, with a stance.
   - Each version has two fields: its **stance** (below) and its **state**: current, superseded or withdrawn. Ending a version never changes its stance, so old versions still say what you held.
-  - **Refine** moves the current version's stance up a step; **doubt** moves it back a step, from any stance.
-  - **Revise** changes the answer: the old version becomes superseded, and the new one starts at its stance.
+  - **Refine** moves the current version's stance up a step; **doubt** moves it back a step, from any stance above hunch.
+  - **Revise** changes the answer: the old version becomes superseded, and the new one starts at the old one's stance.
   - **Withdraw** ends the current version. You can write a new view afterwards; it starts at hunch, as a first view does.
   - A version records the one it replaces in its own row, not as an item link: `revision_of` joins items, and a view is not one.
 - **Questions:** narrower things you want answered within a theme. Published term: an IBIS Issue.
@@ -1028,7 +1028,7 @@ Open from the data: #245, rows that point at deleted items.
 - Data from the Kobo is read, never written back, except the collections you mark in LeStash. Highlights, notes, pen notes on PDFs and notebooks become items; opening, reading and finishing books become activities (`read`, #201).
 - A book that leaves the Kobo stays an item, marked `removed_from_device` with when it was first seen gone (#314). Its highlights stay with it.
 - A Collection's order and notes belong to the membership, not the item, so one item has a different place in each collection (14 Nov 2026, #317). Collections map to `prov:Collection` and the Collections Ontology's `co:List`; Topics stay SKOS concepts.
-- A Theme is its own object, not a Collection: kept themes are approved SKOS concepts with your view, questions (IBIS Issues), positions and collections. Views and positions cite items with CiTO, and are versioned, never kept in step (27 Nov 2026, #340) No decision on a theme is final: a dismissed one can be reconsidered, and a kept one set aside or, while it holds nothing of yours, dropped.
+- A Theme is its own object, not a Collection: kept themes are approved SKOS concepts with your view, questions (IBIS Issues), positions and collections. Views and positions cite items with CiTO, and are versioned, never kept in step. No decision on a theme is final: a dismissed one can be reconsidered, and a kept one set aside or, while it holds nothing of yours, dropped (27 Nov 2026, #340).
 
 ## References
 
