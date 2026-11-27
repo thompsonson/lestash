@@ -896,23 +896,32 @@ A **Theme** is a subject you are working through. It is an object in its own rig
   - Keep approves it, under the name you give. It creates nothing else, and never a Collection.
   - Dismiss rejects it, as now.
 - **Ways back:** no decision on a theme is final.
-  - **Reconsider** returns a dismissed theme to suggested. It stays until you decide again; a rerun doesn't replace it.
+  - **Reconsider** returns a dismissed theme to suggested, marked as reconsidered. It stays until you decide again: a rerun neither deletes nor renames it.
+    - It removes any other suggestion that overlaps it by half or more, so two suggestions never cover the same items.
+    - It waits while another reconsidered theme overlaps it.
   - **Set aside** archives a kept theme. It keeps its name, items, view, questions, positions and collections, and leaves the main list.
   - **Resume** returns an archived theme to kept.
-  - **Drop** dismisses a kept theme, only while nothing of yours hangs off it: no view, question, position or collection. Otherwise the app offers Set aside, so your thinking is never lost.
-  - An archived or dismissed theme still holds its items, so a rerun doesn't suggest them again as a new theme.
+  - **Drop** dismisses a kept theme, only while nothing of yours hangs off it: no view, question, position or collection, current or not. Otherwise the app offers Set aside, so your thinking is never lost.
+  - An archived theme is read-only until you resume it.
+  - A kept theme keeps at least one item; dropping the last is refused.
+  - A kept, archived, dismissed or reconsidered theme still holds its items, so a rerun doesn't suggest them again as a new theme.
 - **A theme has:**
   - a name (`skos:prefLabel`); the words it was suggested under stay as `skos:altLabel`;
   - what it covers (`skos:scopeNote`);
-  - its items, the pool it was suggested from, which you can add to or drop from;
+  - its items, the pool it was suggested from, which you can add to or drop from, down to one;
   - your view of it, kept over time;
   - any number of questions;
-  - any number of collections.
-- **Your view of a theme:** what you think about it as a whole, in your words, with a status.
-  - Each change is a new version linked to the one before; old views are kept.
+  - any number of collections; one collection can belong to several themes.
+- **Your view of a theme:** what you think about it as a whole, in your words, with a stance.
+  - Each version has two fields: its **stance** (below) and its **state**: current, superseded or withdrawn. Ending a version never changes its stance, so old versions still say what you held.
+  - **Refine** moves the current version's stance up a step; **doubt** moves it back a step, from any stance.
+  - **Revise** changes the answer: the old version becomes superseded, and the new one starts at its stance.
+  - **Withdraw** ends the current version. You can write a new view afterwards; it starts at hunch, as a first view does.
+  - A version records the one it replaces in its own row, not as an item link: `revision_of` joins items, and a view is not one.
 - **Questions:** narrower things you want answered within a theme. Published term: an IBIS Issue.
   - A question can be narrower than another (IBIS "specializes").
-  - Each question has your positions, kept over time: an IBIS Position, with a status.
+  - Each question has your positions, kept over time: an IBIS Position, versioned like a view.
+  - A question is never deleted. You can withdraw it, and it stays with its positions.
 - **Views and positions are not kept in step.**
   - A theme's view and its questions' positions can disagree.
   - At one time, a difference shows where more thinking is needed.
@@ -925,7 +934,8 @@ A **Theme** is a subject you are working through. It is an object in its own rig
   - IBIS Arguments, a separate node for or against a position, are left out: the CiTO property on each evidence link does that job.
   - CiTO's citing end is a document; here it is a view or a position, as in micropublications.
 - **Statuses (proposed):** each is a small SKOS concept scheme of LeStash's own, as `note_class` is.
-  - View and position: hunch, to verify, held, decided, formally stated; then withdrawn or superseded.
+  - View and position stance: hunch, to verify, held, decided, formally stated.
+  - View and position state: current, superseded, withdrawn.
   - Collection: current, reference, archived. Published term: `schema:creativeWorkStatus`.
 - **Not in this layer:** an agent's statements are never recorded as your view or position (#340).
 
@@ -942,8 +952,11 @@ Theme (skos:Concept)
 
 - `themes` stays the store. Its statuses become `suggested`, `kept` (approved), `archived` and `dismissed`. A kept theme's single `collection_id` gives way to links to any number of collections.
 - A kept theme stores your name apart from the words it was suggested under, so a rerun never renames it.
-- Items you add to or drop from a kept theme are kept, and a rerun of `lestash db themes` never changes them. A suggestion that overlaps a kept, archived or dismissed theme by half or more is still left out.
+- Items you add to or drop from a kept theme are kept, and a rerun of `lestash db themes` never changes them.
+- A rerun skips reconsidered themes: today it deletes every suggestion it doesn't find again.
+- Overlap is measured both ways: a group is left out when half or more of it, or of a decided or reconsidered theme, is in the other. Today only the share of the new group counts.
 - Views, questions, positions and evidence need tables; none is built yet.
+- A TLA+ model checks these rules: [`models/themes/`](models/themes/README.md). Change it with them.
 - The rule "a kept theme is a collection per question" in [`ux-object-model-design.md`](ux-object-model-design.md) is replaced.
 - Keep in the app (#422) still asks for a name, but will approve the theme instead of making a collection.
 
