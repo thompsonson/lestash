@@ -7,8 +7,10 @@ import sqlite3
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from lestash.core import paths
+from lestash.core.text_extract import DocPicture
 from lestash.models.item import ItemCreate
 
 logger = logging.getLogger(__name__)
@@ -221,16 +223,29 @@ def file_to_item(file_meta: dict, content: str) -> ItemCreate:
     )
 
 
-def _process_file(service, file_meta: dict) -> tuple[ItemCreate, bytes | None, str]:
-    """Download/export a single file, convert to markdown, return the
-    ItemCreate together with the source PDF bytes (if applicable) and the
-    original filename.
+class DriveFile(NamedTuple):
+    """A Drive file read for import.
 
-    PDF bytes are retained so the caller can persist them as a `source_pdf`
-    media row and run the enrichment pipeline. For non-PDF inputs the second
-    return value is `None`.
+    The caller stores `item`, then attaches what came with it: the source PDF
+    (`pdf_bytes`, enriched as before) or a Word file's pictures (`pictures`, one
+    per `<!-- image -->` in the content, #394). `pictures` is None for any other
+    file, or when the Word file couldn't be read; [] means it has none.
     """
-    from lestash.core.text_extract import extract_content
+
+    item: ItemCreate
+    pdf_bytes: bytes | None
+    filename: str
+    pictures: list[DocPicture | None] | None
+
+
+def _process_file(service, file_meta: dict) -> DriveFile:
+    """Download or export a single file and convert it to markdown.
+
+    PDF bytes are kept so the caller can store them as a `source_pdf` media row
+    and run the enrichment pipeline. A Word file, or a Google Doc exported as one,
+    brings its pictures instead.
+    """
+    from lestash.core.text_extract import DOCX_MIME_TYPES, convert_docx, extract_content
 
     file_id = file_meta["id"]
     name = file_meta["name"]
@@ -240,6 +255,7 @@ def _process_file(service, file_meta: dict) -> tuple[ItemCreate, bytes | None, s
 
     content = ""
     pdf_bytes: bytes | None = None
+    pictures: list[DocPicture | None] | None = None
     try:
         # Google Workspace files need export, not download
         if mime_type in EXPORTABLE_MIMES:
@@ -250,7 +266,10 @@ def _process_file(service, file_meta: dict) -> tuple[ItemCreate, bytes | None, s
             export_mime = mime_type
 
         try:
-            content = extract_content(path, export_mime)
+            if export_mime in DOCX_MIME_TYPES:
+                content, pictures = convert_docx(path)
+            else:
+                content = extract_content(path, export_mime)
             if export_mime == "application/pdf":
                 try:
                     pdf_bytes = path.read_bytes()
@@ -261,7 +280,7 @@ def _process_file(service, file_meta: dict) -> tuple[ItemCreate, bytes | None, s
     except Exception:
         logger.exception("Failed to download/extract %s", name)
 
-    return file_to_item(file_meta, content), pdf_bytes, name
+    return DriveFile(file_to_item(file_meta, content), pdf_bytes, name, pictures)
 
 
 def _filter_syncable(files: list[dict]) -> list[dict]:
@@ -278,13 +297,8 @@ def sync_drive_folder(
     folder_id: str,
     since: str | None = None,
     recursive: bool = False,
-) -> Iterator[tuple[ItemCreate, bytes | None, str]]:
-    """Sync files from a Google Drive folder.
-
-    Yields `(ItemCreate, pdf_bytes_or_None, filename)` tuples. PDF bytes are
-    surfaced so the caller can attach the source PDF as a media row and
-    trigger enrichment after upsert.
-    """
+) -> Iterator[DriveFile]:
+    """Sync files from a Google Drive folder, yielding each as a `DriveFile`."""
     from lestash.core.google_auth import get_drive_service
 
     folder_id = extract_folder_id(folder_id)
@@ -296,11 +310,8 @@ def sync_drive_folder(
         yield _process_file(service, file_meta)
 
 
-def sync_single_file(file_id: str) -> tuple[ItemCreate, bytes | None, str]:
-    """Download/export a single Drive file.
-
-    Returns `(ItemCreate, pdf_bytes_or_None, filename)`.
-    """
+def sync_single_file(file_id: str) -> DriveFile:
+    """Download or export a single Drive file."""
     from lestash.core.google_auth import get_drive_service
 
     service = get_drive_service()

@@ -1513,12 +1513,13 @@ def test_a_drive_file_goes_under_the_item_it_was_added_to(client, test_config, m
     monkeypatch.setattr(
         gd,
         "sync_single_file",
-        lambda file_id: (
+        lambda file_id: gd.DriveFile(
             ItemCreate(
                 source_type="google-drive", source_id="drive:F1", title="A doc", content="text"
             ),
             None,
-            None,
+            "doc",
+            [],
         ),
     )
     with get_connection(test_config) as conn:
@@ -1548,12 +1549,13 @@ def _drive_file(monkeypatch, file_id: str) -> None:
     monkeypatch.setattr(
         gd,
         "sync_single_file",
-        lambda fid: (
+        lambda fid: gd.DriveFile(
             ItemCreate(
                 source_type="google-drive", source_id=f"drive:{fid}", title="Doc", content="t"
             ),
             None,
-            None,
+            "doc",
+            [],
         ),
     )
 
@@ -1580,12 +1582,13 @@ def test_a_drive_folder_saves_only_its_new_files(client, test_config, monkeypatc
 
     def folder(folder_id, recursive=True):
         for fid in ("D1", "D2"):
-            yield (
+            yield gd.DriveFile(
                 ItemCreate(
                     source_type="google-drive", source_id=f"drive:{fid}", title=fid, content="t"
                 ),
                 None,
-                None,
+                fid,
+                [],
             )
 
     monkeypatch.setattr(gd, "classify_drive_url", lambda url: ("folder", "FOLDER"))
@@ -1606,6 +1609,46 @@ def test_a_drive_folder_saves_only_its_new_files(client, test_config, monkeypatc
     assert _saved(test_config, held) == 0
 
 
+def test_a_drive_word_file_gets_its_pictures(client, test_config, monkeypatch):
+    """A Google Doc's pictures are saved and fill its markers (#394)."""
+    import io
+
+    import lestash.core.google_drive as gd
+    from lestash.core.database import get_connection
+    from lestash.core.text_extract import DocPicture
+    from lestash.models.item import ItemCreate
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(buffer, "JPEG")
+    monkeypatch.setattr(gd, "classify_drive_url", lambda url: ("file", "F4"))
+    monkeypatch.setattr(
+        gd,
+        "sync_single_file",
+        lambda file_id: gd.DriveFile(
+            ItemCreate(
+                source_type="google-drive",
+                source_id="drive:F4",
+                title="Doc",
+                content="see <!-- image -->",
+            ),
+            None,
+            "doc",
+            [DocPicture(buffer.getvalue(), "image/jpeg")],
+        ),
+    )
+    url = {"urls": ["https://docs.google.com/document/d/F4/edit"]}
+    assert client.post("/api/import/drive/sync", json=url).status_code == 200
+    with get_connection(test_config) as conn:
+        (item_id, content) = conn.execute(
+            "SELECT id, content FROM items WHERE source_id = 'drive:F4'"
+        ).fetchone()
+        (media_id,) = conn.execute(
+            "SELECT id FROM item_media WHERE item_id = ? AND media_type = 'image'", (item_id,)
+        ).fetchone()
+    assert content == f"see ![Picture 1](/api/media/{media_id})"
+
+
 def test_a_drive_file_already_held_is_not_moved(client, test_config, monkeypatch):
     import lestash.core.google_drive as gd
     from lestash.core.database import get_connection
@@ -1615,10 +1658,11 @@ def test_a_drive_file_already_held_is_not_moved(client, test_config, monkeypatch
     monkeypatch.setattr(
         gd,
         "sync_single_file",
-        lambda file_id: (
+        lambda file_id: gd.DriveFile(
             ItemCreate(source_type="google-drive", source_id="drive:F2", title="Held", content="t"),
             None,
-            None,
+            "doc",
+            [],
         ),
     )
     with get_connection(test_config) as conn:
