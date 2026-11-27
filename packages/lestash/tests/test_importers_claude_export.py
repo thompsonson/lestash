@@ -242,7 +242,7 @@ def test_a_projects_part_holds_one_file_per_project():
 def test_parts_with_nothing_to_import_say_why():
     cases = {
         "login history": {"users.json": [], "login_history.json": {"login_events": []}},
-        "#437": {"artifacts/a1/artifact.json": {"id": "a1", "versions": []}},
+        "#437": {"artifacts/a1/artifact.json": {"id": "a1", "versions": [], "active_version": "v"}},
         "#437 ": {"artifacts/a1/data/documents.json": {"documents": []}},
         "#439": {"claude_code_cloud/routines.json": {"claude_code_cloud": []}},
     }
@@ -258,3 +258,18 @@ def test_a_chatgpt_conversations_file_alone_is_not_a_claude_export():
     except ValueError:
         kind = None
     assert kind != "claude"
+
+
+def test_a_memories_part_alone():
+    memories = [{"conversations_memory": "Prefers short answers.", "project_memories": {}}]
+    items, kind = parse_zip(_part({"memories.json": memories}))
+    assert (kind, [i.source_id for i in items]) == ("claude", ["conversations-memory"])
+
+
+def test_look_alike_folders_from_elsewhere_are_left_to_the_other_importers():
+    """A projects/ or artifacts/ folder of JSON that isn't Claude's is not claimed."""
+    items = [{"source_type": "note", "source_id": "n1", "content": "kept"}]
+    for name in ("projects/notes.json", "artifacts/a1/artifact.json"):
+        found, kind = parse_zip(_part({name: items}))
+        assert kind == "json", name
+        assert [i.source_id for i in found] == ["n1"]

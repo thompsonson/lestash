@@ -30,7 +30,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["import"])
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
-# A ZIP may be bigger: one part of a Claude export alone can pass 100 MB (#88)
+# A ZIP may be bigger: one part of a Claude export alone can pass 100 MB (#88). By choice
+# (Matt, 27 Nov 2026), the upload and the JSON inside it are read in memory: a 67 MB part
+# peaks near 1 GB, and the server is reached only over the tailnet.
 MAX_ZIP_SIZE = 512 * 1024 * 1024
 
 

@@ -110,7 +110,10 @@ def test_a_zip_may_pass_50_mb_but_other_files_may_not(client, monkeypatch) -> No
 def test_a_part_with_nothing_to_import_says_why(client) -> None:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("artifacts/a1/artifact.json", json.dumps({"id": "a1", "versions": []}))
+        zf.writestr(
+            "artifacts/a1/artifact.json",
+            json.dumps({"id": "a1", "versions": [], "active_version": "v1"}),
+        )
     resp = client.post(
         "/api/import",
         files={"file": ("frames-000.zip", io.BytesIO(buf.getvalue()), "application/zip")},
