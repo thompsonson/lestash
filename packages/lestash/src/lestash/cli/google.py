@@ -279,9 +279,11 @@ def pictures(
               )
               -- Read before, with no marker it could fill; a re-sync clears the mark
               AND json_extract(metadata, '$.pictures_unfilled') IS NULL
+              -- Drive refused it this many times: deleted, no access, or too big
+              AND COALESCE(json_extract(metadata, '$.pictures_tries'), 0) < ?
             ORDER BY id
             """,
-            [*word_types, PICTURE_ORIGIN],
+            [*word_types, PICTURE_ORIGIN, PICTURE_TRIES],
         ).fetchall()
 
     console.print(f"[bold]{len(rows)}[/bold] Drive documents have empty picture markers")
@@ -297,7 +299,8 @@ def pictures(
         try:
             drive_file = sync_single_file(row["source_id"])
             if not drive_file.downloaded:
-                # Drive didn't give the file, which may pass: try again next run
+                # Drive didn't give the file, which may pass: try again, up to PICTURE_TRIES
+                _count_try(config, row["id"])
                 errors.append(f"item {row['id']}: Drive file could not be downloaded")
                 continue
             if drive_file.pictures is None:
@@ -324,6 +327,8 @@ def pictures(
                 _mark_unfilled(config, row["id"])
                 errors.append(f"item {row['id']}: none of its pictures could be filled")
         except Exception as e:
+            # files().get raises for a file deleted or no longer shared
+            _count_try(config, row["id"])
             errors.append(f"item {row['id']}: {e}")
 
     console.print(f"[green]✓[/green] Saved {saved} pictures in {filled} documents")
@@ -333,11 +338,28 @@ def pictures(
             console.print(f"    • {err}")
 
 
+# Fetches `google pictures` makes of a file Drive won't give before it stops
+PICTURE_TRIES = 3
+
+
 def _mark_unfilled(config: Config, item_id: int) -> None:
     """Mark a document `google pictures` read but could fill nothing in.
 
     It is then skipped; a re-sync replaces the metadata, so the mark goes with it.
     """
+    _set_metadata(config, item_id, "'$.pictures_unfilled', json('true')")
+
+
+def _count_try(config: Config, item_id: int) -> None:
+    """Count a fetch Drive refused; at PICTURE_TRIES the document is skipped."""
+    _set_metadata(
+        config,
+        item_id,
+        "'$.pictures_tries', COALESCE(json_extract(metadata, '$.pictures_tries'), 0) + 1",
+    )
+
+
+def _set_metadata(config: Config, item_id: int, path_and_value: str) -> None:
     from lestash.core.database import (
         get_connection,
         mark_recent_history,
@@ -348,8 +370,8 @@ def _mark_unfilled(config: Config, item_id: int) -> None:
     with get_connection(config) as conn, write_transaction(conn):
         pre_max = max_history_id(conn)
         conn.execute(
-            "UPDATE items SET metadata = json_set(COALESCE(metadata, '{}'),"
-            " '$.pictures_unfilled', json('true')) WHERE id = ?",
+            f"UPDATE items SET metadata = json_set(COALESCE(metadata, '{{}}'), {path_and_value})"
+            " WHERE id = ?",
             (item_id,),
         )
         mark_recent_history(conn, pre_max, "sync", item_ids=[item_id])
