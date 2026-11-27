@@ -29,15 +29,25 @@ def test_nothing_imported_yet_is_due(test_db) -> None:
     assert set(state) == {s.key for s in r.MANUAL_SOURCES}
     assert all(s.last_import is None and s.days is None for s in state.values())
     due = {k for k, s in state.items() if s.due}
-    assert due == {"google-takeout", "mistral", "linkedin-export"}
+    assert due == {"google-takeout", "mistral", "linkedin-export", "claude"}
 
 
-def test_an_import_lestash_cant_read_is_never_due(test_db) -> None:
-    # The Claude export has no importer yet (#88): a reminder would ask the impossible
+def test_the_claude_export_is_due_once_its_aim_passes(test_db) -> None:
+    # LeStash reads it now (#88)
     with get_connection(test_db) as conn:
         _item(conn, "claude", NOW - timedelta(days=237))
         claude = _by_key(conn)["claude"]
-    assert (claude.days, claude.aim_days, claude.due) == (237, 30, False)
+    assert (claude.days, claude.aim_days, claude.due) == (237, 30, True)
+
+
+def test_an_import_lestash_cant_read_is_never_due(test_db, monkeypatch) -> None:
+    # A reminder would ask the impossible
+    unread = r.ManualSource("unread", "Unread export", 30, item_sources=("unread",), how=None)
+    monkeypatch.setattr(r, "MANUAL_SOURCES", (unread,))
+    with get_connection(test_db) as conn:
+        _item(conn, "unread", NOW - timedelta(days=237))
+        status = _by_key(conn)["unread"]
+    assert (status.days, status.due) == (237, False)
 
 
 def test_an_import_is_logged_as_an_activity_even_adding_nothing(test_db) -> None:
@@ -150,8 +160,8 @@ def test_due_ones_come_first_then_the_longest_since(test_db) -> None:
         _item(conn, "claude", NOW - timedelta(days=200))
         _item(conn, "google-keep", NOW - timedelta(days=70))
         order = [s.source.key for s in r.statuses(conn, NOW)]
-    # due: google-takeout 70, linkedin-export never; then claude 200 (unreadable), mistral 5
-    assert order == ["google-takeout", "linkedin-export", "claude", "mistral"]
+    # due: claude 200, google-takeout 70, linkedin-export never; then mistral 5
+    assert order == ["claude", "google-takeout", "linkedin-export", "mistral"]
 
 
 def test_unknown_keys_are_refused(test_db) -> None:

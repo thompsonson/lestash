@@ -29,10 +29,9 @@ const SOURCES = [
   ['Claude', 'An export you ask for', `
     <ol>
       <li>In ${link('https://claude.ai/settings/data-privacy-controls', 'Claude → Settings → Privacy')}, choose <b>Export data</b>.</li>
-      <li>Claude emails a download link.</li>
-    </ol>
-    <p class="muted">Uploading this zip isn't read yet; a parser for it is
-      ${link('https://github.com/thompsonson/lestash/issues/88', 'issue #88')}.</p>`],
+      <li>Claude emails a download link, which expires in 24 hours.</li>
+      <li>Upload the zip in <a href="/settings/sources">Sources → Import</a>. Conversations, projects and memories already held are updated, not copied.</li>
+    </ol>`],
   ['Claude Code', 'Read from this machine', `
     <p>Sessions are read from <code>~/.claude</code> on pop-mini; other machines' sessions are copied in first.</p>`],
   ['Gemini', 'Takeout, or the Chrome extension', `

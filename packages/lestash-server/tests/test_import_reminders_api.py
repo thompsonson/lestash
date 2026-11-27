@@ -26,7 +26,7 @@ def test_every_manual_import_is_listed(client) -> None:
     imports = _imports(client)
     assert {"google-takeout", "mistral", "linkedin-export", "claude"} <= set(imports)
     claude = imports["claude"]
-    assert claude["how"] is None  # LeStash can't read it yet
+    assert claude["how"] == "upload"  # read since #88
     assert claude["aim_days"] == claude["default_aim_days"] == 30
     # A Takeout is read from Drive by the takeout sync, not uploaded (parts are GBs)
     assert (imports["google-takeout"]["how"], imports["google-takeout"]["sync"]) == (

@@ -545,7 +545,7 @@ You manage collections in LeStash; the Kobo is a reader that shows the ones you 
 - **Source stays configuration.** "Last import" is its attribute and **Import** its action, in Settings › Sources.
 - **An import is an Activity:** the verb `imported`, shown on the Timeline on its day, with what it added.
 - **One reminder at a time:** today's Timeline opens with the most overdue import, with **Import** and **Snooze a week**.
-- **Manual imports only:** a Takeout, a Mistral export, a LinkedIn data export and the Claude export. The Claude export is listed but never due until LeStash can read it (#88).
+- **Manual imports only:** a Takeout, a Mistral export, a LinkedIn data export and the Claude export. An export LeStash can't read is listed but never due; the Claude export is read since #88.
 - **A sync that keeps failing** shows in red under Sources, so one that stops is noticed.
 
 ## ORCA round 3: themes (26 Nov 2026)

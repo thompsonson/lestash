@@ -1,4 +1,5 @@
-"""Zip importers: Google Takeout (Keep, Gemini, NotebookLM, YouTube history), Mistral, JSON.
+"""Zip importers: Google Takeout (Keep, Gemini, NotebookLM, YouTube history), Claude, Mistral,
+JSON.
 
 Shared by the server's import routes and the Takeout source plugin.
 """
@@ -12,6 +13,7 @@ from datetime import UTC
 from io import BytesIO
 from pathlib import Path
 
+from lestash.importers.claude_export import detect_claude_zip, parse_claude_zip
 from lestash.importers.gemini_activity import parse_gemini_activity
 from lestash.importers.json_items import parse_json_items
 from lestash.importers.mistral import detect_mistral_zip, parse_mistral_zip
@@ -24,6 +26,9 @@ logger = logging.getLogger(__name__)
 #   2: + YouTube watch/search history; several Takeout products per zip
 #   3: + Gemini Apps activity (chats with prompt and reply turns, Canvas documents)
 #   4: + YouTube activity (My Activity: watches, searches, likes, dislikes, shares)
+# The Claude data export (#88) needed no bump: the Takeout sync reads only Drive files
+# named takeout-*, so no zip it found nothing in can be one, and a bump would download
+# every unrecognised Takeout part again.
 IMPORTER_VERSION = 4
 
 
@@ -73,6 +78,10 @@ def parse_zip(data: bytes | Path):
                 all_items = [item for _, items in found for item in items]
                 kinds = {kind for kind, _ in found}
                 return all_items, kinds.pop() if len(kinds) == 1 else "takeout"
+
+            # Claude data export: before the generic JSON below, which would misread it
+            if detect_claude_zip(names):
+                return parse_claude_zip(zf), "claude"
 
             # Detect Mistral Le Chat export
             if detect_mistral_zip(names):

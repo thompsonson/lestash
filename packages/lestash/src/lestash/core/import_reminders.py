@@ -84,8 +84,7 @@ MANUAL_SOURCES: Final[tuple[ManualSource, ...]] = (
         30,
         item_sources=("claude", "claude-project", "claude-memory"),
         export_url="https://claude.ai/settings/data-privacy-controls",
-        how=None,
-        note="LeStash can't read this export yet (#88)",
+        note="Conversations, projects and memories",
     ),
 )
 BY_KEY: Final[Mapping[str, ManualSource]] = {s.key: s for s in MANUAL_SOURCES}
@@ -99,6 +98,7 @@ IMPORT_KINDS: Final[Mapping[str, str]] = {
     "youtube": "google-takeout",  # a zip with YouTube history is a Takeout
     "mistral": "mistral",
     "linkedin-export": "linkedin-export",
+    "claude": "claude",
 }
 
 
