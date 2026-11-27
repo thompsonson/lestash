@@ -940,9 +940,9 @@ Theme (skos:Concept)
 
 ### What changes
 
-- `themes` stays the store. Its statuses become `suggested`, `kept` (approved), `archived` and `dismissed`. `kept` means approved; its single `collection_id` gives way to links to any number of collections.
+- `themes` stays the store. Its statuses become `suggested`, `kept` (approved), `archived` and `dismissed`. A kept theme's single `collection_id` gives way to links to any number of collections.
 - A kept theme stores your name apart from the words it was suggested under, so a rerun never renames it.
-- Items you add to or drop from a kept theme are kept, and a rerun of `lestash db themes` never changes them. A suggestion that overlaps a kept theme by half or more is still left out, as now.
+- Items you add to or drop from a kept theme are kept, and a rerun of `lestash db themes` never changes them. A suggestion that overlaps a kept, archived or dismissed theme by half or more is still left out.
 - Views, questions, positions and evidence need tables; none is built yet.
 - The rule "a kept theme is a collection per question" in [`ux-object-model-design.md`](ux-object-model-design.md) is replaced.
 - Keep in the app (#422) still asks for a name, but will approve the theme instead of making a collection.
