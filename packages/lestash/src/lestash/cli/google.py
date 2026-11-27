@@ -276,8 +276,8 @@ def pictures(
                   WHERE m.item_id = items.id AND m.source_origin = ?
                     AND instr(items.content, '](/api/media/' || m.id || ')') > 0
               )
-              -- Read before, with no picture Docling could read; a re-sync clears it
-              AND json_extract(metadata, '$.pictures_unreadable') IS NULL
+              -- Read before, with no marker it could fill; a re-sync clears the mark
+              AND json_extract(metadata, '$.pictures_unfilled') IS NULL
             ORDER BY id
             """,
             [*word_types, PICTURE_ORIGIN],
@@ -295,22 +295,9 @@ def pictures(
     for row in rows:
         try:
             drive_file = sync_single_file(row["source_id"])
-            found = drive_file.pictures or []
-            if found and not any(found):
-                # Read, but Docling could read none of its pictures: don't fetch it again
-                with get_connection(config) as conn, write_transaction(conn):
-                    pre_max = max_history_id(conn)
-                    conn.execute(
-                        "UPDATE items SET metadata = json_set(COALESCE(metadata, '{}'),"
-                        " '$.pictures_unreadable', json('true')) WHERE id = ?",
-                        (row["id"],),
-                    )
-                    mark_recent_history(conn, pre_max, "sync", item_ids=[row["id"]])
-                errors.append(f"item {row['id']}: none of its pictures could be read")
-                continue
-            if not found or not count_placeholders(drive_file.item.content):
-                # Unreadable now, or its pictures are gone: leave the item as it is
-                errors.append(f"item {row['id']}: no pictures found when fetched again")
+            if drive_file.pictures is None:
+                # Not downloaded or not converted: keep the item, try again next run
+                errors.append(f"item {row['id']}: Drive file could not be read")
                 continue
             # Fetched alone, a file doesn't know the folder a folder sync found it in
             held = json.loads(row["metadata"] or "{}")
@@ -321,10 +308,22 @@ def pictures(
             drive_file.item.metadata = metadata
             with get_connection(config) as conn, write_transaction(conn):
                 upsert_item(conn, drive_file.item)
-            count = attach_pictures(row["id"], found, config=config)
+            count = attach_pictures(row["id"], drive_file.pictures, config=config)
             if count:
                 filled += 1
                 saved += count
+            elif count_placeholders(drive_file.item.content):
+                # Read, but no marker could be filled: don't fetch it again. A re-sync
+                # replaces the metadata, so the mark goes with it
+                with get_connection(config) as conn, write_transaction(conn):
+                    pre_max = max_history_id(conn)
+                    conn.execute(
+                        "UPDATE items SET metadata = json_set(COALESCE(metadata, '{}'),"
+                        " '$.pictures_unfilled', json('true')) WHERE id = ?",
+                        (row["id"],),
+                    )
+                    mark_recent_history(conn, pre_max, "sync", item_ids=[row["id"]])
+                errors.append(f"item {row['id']}: none of its pictures could be filled")
         except Exception as e:
             errors.append(f"item {row['id']}: {e}")
 
