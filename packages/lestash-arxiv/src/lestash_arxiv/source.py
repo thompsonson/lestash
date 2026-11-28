@@ -8,6 +8,7 @@ from typing import Annotated, NamedTuple
 
 import typer
 from lestash.core.config import as_list
+from lestash.core.database import dump_metadata
 from lestash.models.item import ItemCreate, MediaCreate
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
@@ -212,7 +213,7 @@ class ArxivSource(SourcePlugin):
             config = Config.load()
 
             with get_connection(config) as conn:
-                metadata_json = json.dumps(item.metadata) if item.metadata else None
+                metadata_json = dump_metadata(item.metadata) if item.metadata else None
                 conn.execute(
                     """
                     INSERT INTO items (
@@ -379,7 +380,7 @@ class ArxivSource(SourcePlugin):
                     paper = get_paper(value)
                     if paper:
                         item = paper_to_item(paper)
-                        metadata_json = json.dumps(item.metadata) if item.metadata else None
+                        metadata_json = dump_metadata(item.metadata) if item.metadata else None
                         conn.execute(
                             """
                             INSERT INTO items (

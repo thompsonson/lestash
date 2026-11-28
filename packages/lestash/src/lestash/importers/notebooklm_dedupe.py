@@ -43,7 +43,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
-from lestash.core.database import mark_recent_history, max_history_id
+from lestash.core.database import dump_metadata, mark_recent_history, max_history_id
 from lestash.core.stubs import merge_item
 
 logger = logging.getLogger(__name__)
@@ -272,7 +272,7 @@ def _remember_folders(conn: sqlite3.Connection, old_id: int, current_id: int) ->
         if isinstance(folder, str) and folder not in folders:
             folders.append(folder)
     current["folders"] = folders
-    conn.execute("UPDATE items SET metadata = ? WHERE id = ?", (json.dumps(current), current_id))
+    conn.execute("UPDATE items SET metadata = ? WHERE id = ?", (dump_metadata(current), current_id))
 
 
 def dedupe_notebooklm(conn: sqlite3.Connection) -> list[Duplicate]:

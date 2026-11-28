@@ -1,13 +1,12 @@
 """File import endpoint."""
 
-import json
 import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile
 from lestash.core.activities import record_activities, record_saved
 from lestash.core.agents import link_agents
-from lestash.core.database import resolve_parent_id
+from lestash.core.database import dump_metadata, resolve_parent_id
 from lestash.core.import_reminders import record_import
 from lestash.core.links import link_items
 from lestash.core.sync import dedupe_notebooks
@@ -182,7 +181,7 @@ def _upsert_item(conn, item, parent_id=None):
     metadata = dict(item.metadata) if item.metadata else {}
     if parent_id or item.parent_id:
         metadata.pop("_parent_source_id", None)
-    metadata_json = json.dumps(metadata) if metadata else None
+    metadata_json = dump_metadata(metadata) if metadata else None
     source_id = item.source_id or item.url
 
     if not source_id:

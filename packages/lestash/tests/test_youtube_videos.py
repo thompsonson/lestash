@@ -409,7 +409,7 @@ def test_migration_40_drops_counts_from_youtube_items_only(test_db) -> None:
         bad = _item(conn, f"history:{OTHER}", "desc")
         conn.execute("UPDATE items SET metadata = 'not json' WHERE id = ?", (bad,))
         conn.execute("PRAGMA user_version = 39")
-        assert apply_migrations(conn) == 1
+        assert apply_migrations(conn) == SCHEMA_VERSION - 39
 
         assert _row(conn, video)["metadata"] == json.dumps({"channel_title": "Chan"})
         reasons = conn.execute(

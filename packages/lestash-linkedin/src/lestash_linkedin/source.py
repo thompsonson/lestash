@@ -17,7 +17,7 @@ from typing import Annotated, Any
 import httpx
 import typer
 from lestash.core.config import get_config_dir
-from lestash.core.database import mark_recent_history, max_history_id
+from lestash.core.database import dump_metadata, mark_recent_history, max_history_id
 from lestash.core.logging import get_plugin_logger
 from lestash.models.item import ItemCreate
 from lestash.plugins.base import SourcePlugin
@@ -582,7 +582,9 @@ class LinkedInSource(SourcePlugin):
 
                         with get_connection(config) as conn:
                             for item in changelog_to_items(events):
-                                metadata_json = json.dumps(item.metadata) if item.metadata else None
+                                metadata_json = (
+                                    dump_metadata(item.metadata) if item.metadata else None
+                                )
                                 cursor = conn.execute(
                                     """
                                     INSERT INTO items (
@@ -643,7 +645,7 @@ class LinkedInSource(SourcePlugin):
                             with get_connection(config) as conn:
                                 for item in snapshot_to_items(dom, data):
                                     metadata_json = (
-                                        json.dumps(item.metadata) if item.metadata else None
+                                        dump_metadata(item.metadata) if item.metadata else None
                                     )
                                     cursor = conn.execute(
                                         """
@@ -1531,7 +1533,7 @@ class LinkedInSource(SourcePlugin):
                             meta["snowflake_ts"] = ts
                             conn.execute(
                                 "UPDATE items SET metadata = ? WHERE id = ?",
-                                (json.dumps(meta), row_id),
+                                (dump_metadata(meta), row_id),
                             )
                             ts_count += 1
                     if ts_count:
@@ -1557,7 +1559,7 @@ class LinkedInSource(SourcePlugin):
                                 meta["target_snowflake_ts"] = ts
                                 conn.execute(
                                     "UPDATE items SET metadata = ? WHERE id = ?",
-                                    (json.dumps(meta), row_id),
+                                    (dump_metadata(meta), row_id),
                                 )
                     mark_recent_history(conn, backfill_pre_max, "sync")
                     conn.commit()
@@ -1766,7 +1768,7 @@ class LinkedInSource(SourcePlugin):
                         None,
                         datetime.now(UTC).isoformat(),
                         True,
-                        json.dumps(metadata),
+                        dump_metadata(metadata),
                     ),
                 )
                 conn.commit()

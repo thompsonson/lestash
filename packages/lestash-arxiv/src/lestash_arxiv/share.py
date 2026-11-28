@@ -17,7 +17,7 @@ from typing import Any
 
 from lestash.core.activities import record_saved
 from lestash.core.config import Config
-from lestash.core.database import upsert_item
+from lestash.core.database import dump_metadata, upsert_item
 
 from lestash_arxiv.client import Paper, canonical_id, get_paper
 from lestash_arxiv.source import SOURCE_TYPE, paper_to_item, rekey_old_style
@@ -149,7 +149,7 @@ def _add_text(conn: sqlite3.Connection, item_id: int, key: str, text: str) -> No
     if held and text in held:
         return
     meta[key] = f"{held}\n\n{text}" if held else text
-    conn.execute("UPDATE items SET metadata = ? WHERE id = ?", (json.dumps(meta), item_id))
+    conn.execute("UPDATE items SET metadata = ? WHERE id = ?", (dump_metadata(meta), item_id))
 
 
 def import_paper(

@@ -46,6 +46,7 @@ from lestash.core import paths
 from lestash.core import transcribe_worker as _worker
 from lestash.core.blobs import BlobStore, store_root
 from lestash.core.config import Config
+from lestash.core.database import dump_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -846,7 +847,7 @@ def refresh_item(conn: sqlite3.Connection, item_id: int) -> bool:
         return False
     conn.execute(
         "UPDATE items SET content = ?, metadata = ? WHERE id = ?",
-        (new, json.dumps(new_metadata) if new_metadata else None, item_id),
+        (new, dump_metadata(new_metadata) if new_metadata else None, item_id),
     )
     return True
 

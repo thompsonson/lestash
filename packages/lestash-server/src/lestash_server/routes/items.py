@@ -16,6 +16,7 @@ from lestash.core.blobs import adopt_media
 from lestash.core.database import (
     add_item_media,
     add_tag,
+    dump_metadata,
     list_tags,
     mark_recent_history,
     max_history_id,
@@ -529,7 +530,7 @@ SAVED_SOURCES = ("share", "image")
 @router.post("", response_model=ItemResponse, status_code=201)
 def create_item(body: ItemCreateRequest):
     """Create a single item."""
-    metadata_json = json.dumps(body.metadata) if body.metadata else None
+    metadata_json = dump_metadata(body.metadata) if body.metadata else None
     source_id = body.source_id or body.url
     created_at = body.created_at or datetime.now(UTC)
 
@@ -1002,7 +1003,7 @@ def restore_item_history_version(
                     snapshot["content_old"],
                     snapshot["author_old"],
                     snapshot["url_old"],
-                    snapshot["metadata_old"],
+                    _sorted_metadata(snapshot["metadata_old"]),
                     snapshot["is_own_content_old"],
                     snapshot["parent_id_old"],
                     item_id,
@@ -1023,7 +1024,7 @@ def restore_item_history_version(
                     snapshot["content_old"],
                     snapshot["author_old"],
                     snapshot["url_old"],
-                    snapshot["metadata_old"],
+                    _sorted_metadata(snapshot["metadata_old"]),
                     snapshot["is_own_content_old"],
                     item_id,
                 ),
@@ -1063,7 +1064,7 @@ def _insert_copy(
             "Screenshot" if source_type == "image" else None,
             post_author,
             datetime.now(UTC),
-            json.dumps(metadata),
+            dump_metadata(metadata),
             stub["id"],
         ),
     ).fetchone()[0]
@@ -1169,3 +1170,11 @@ def remove_item_tag(item_id: int, tag_name: str):
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
         remove_tag(conn, item_id, tag_name)
         return enrich_item(conn, Item.from_row(row))
+
+
+def _sorted_metadata(text: str | None) -> str | None:
+    """A restored version's metadata, with its keys sorted as every write stores it (#441)."""
+    try:
+        return dump_metadata(json.loads(text)) if text else text
+    except ValueError:
+        return text  # not JSON: restored as it was

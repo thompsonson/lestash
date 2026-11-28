@@ -1,6 +1,5 @@
 """LinkedIn posting and authentication endpoints."""
 
-import json
 import logging
 import secrets
 import tempfile
@@ -9,6 +8,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse
+from lestash.core.database import dump_metadata
 from pydantic import BaseModel
 
 from lestash_server.deps import get_db
@@ -207,7 +207,7 @@ def _save_item(
                 None,
                 datetime.now(UTC).isoformat(),
                 True,
-                json.dumps(metadata),
+                dump_metadata(metadata),
             ),
         )
         conn.commit()

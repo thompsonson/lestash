@@ -106,10 +106,14 @@ def test_an_unchanged_item_is_not_written_again(test_db, monkeypatch) -> None:
 
 
 def test_a_changed_item_is_counted_as_its_history_records_it(test_db, monkeypatch) -> None:
-    """The count and item_history agree: both compare the stored text."""
+    """The count and item_history agree: both compare the stored text, whose keys are
+    sorted, so the same metadata in another order is no change to either (#441)."""
     assert _sync(test_db, monkeypatch, _Yields(_with_metadata("a", {"x": 1, "y": 2}))) == 0
     history = _history_rows(test_db)
     assert _sync(test_db, monkeypatch, _Yields(_with_metadata("a", {"y": 2, "x": 1}))) == 0
+    assert _last_counts(test_db) == (0, 0)
+    assert _history_rows(test_db) == history
+    assert _sync(test_db, monkeypatch, _Yields(_with_metadata("a", {"y": 2, "x": 3}))) == 0
     assert _last_counts(test_db) == (0, 1)
     assert _history_rows(test_db) == history + 1
 

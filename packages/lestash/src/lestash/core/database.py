@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Current schema version - increment when adding migrations
-SCHEMA_VERSION = 40
+SCHEMA_VERSION = 41
 
 # Base schema (version 0) - applied to new databases
 SCHEMA = """
@@ -71,7 +71,8 @@ CREATE TRIGGER IF NOT EXISTS items_ad AFTER DELETE ON items BEGIN
     VALUES ('delete', old.id, old.title, old.content, old.author);
 END;
 
-CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE ON items BEGIN
+-- Only the indexed columns: a metadata-only update leaves the index alone (#441)
+CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE OF title, content, author ON items BEGIN
     INSERT INTO items_fts(items_fts, rowid, title, content, author)
     VALUES ('delete', old.id, old.title, old.content, old.author);
     INSERT INTO items_fts(rowid, title, content, author)
@@ -867,7 +868,23 @@ MIGRATIONS = [
         # Run in apply_migrations (_migrate_40): the metadata is rewritten as the sync writes it.
         "",
     ),
+    (
+        41,
+        "Store item metadata with its keys sorted (#441)",
+        # Run in apply_migrations (_migrate_41): see dump_metadata.
+        "",
+    ),
 ]
+
+
+def dump_metadata(metadata: object) -> str:
+    """Item metadata as stored: JSON with its keys sorted (#441).
+
+    The history trigger compares metadata as text, so the same metadata must always be
+    the same text, whatever order a writer built it in. Every write of items.metadata
+    goes through here.
+    """
+    return json.dumps(metadata, sort_keys=True)
 
 
 def get_db_path(config: Config | None = None) -> Path:
@@ -915,7 +932,7 @@ def _migrate_16(conn: sqlite3.Connection) -> None:
             metadata = json.loads(text)
             for key in ACTIVITY_VERBS:
                 metadata.pop(key, None)
-            updates.append((json.dumps(metadata) if metadata else None, item_id))
+            updates.append((dump_metadata(metadata) if metadata else None, item_id))
         conn.executemany("UPDATE items SET metadata = ? WHERE id = ?", updates)
         conn.execute(
             "UPDATE item_history SET change_reason = ? WHERE id > ?",
@@ -925,6 +942,45 @@ def _migrate_16(conn: sqlite3.Connection) -> None:
     except BaseException:
         conn.rollback()
         raise
+
+
+ITEMS_AU_TRIGGER = """
+CREATE TRIGGER items_au AFTER UPDATE OF title, content, author ON items BEGIN
+    INSERT INTO items_fts(items_fts, rowid, title, content, author)
+    VALUES ('delete', old.id, old.title, old.content, old.author);
+    INSERT INTO items_fts(rowid, title, content, author)
+    VALUES (new.id, new.title, new.content, new.author);
+END
+"""
+
+
+def _migrate_41(conn: sqlite3.Connection) -> None:
+    """Rewrite each item's metadata with sorted keys (#441), as every writer now does.
+
+    Only the text's key order changes, never the metadata, so the history rows the
+    rewrite triggers record nothing: they are removed in the same transaction. The search
+    index's update trigger first narrows to the columns it indexes.
+    """
+    if conn.in_transaction:
+        conn.commit()
+    with write_transaction(conn):
+        # The search index covers title, content and author: rewriting metadata must not
+        # re-index every item, here or in any later metadata-only update
+        conn.execute("DROP TRIGGER IF EXISTS items_au")
+        conn.execute(ITEMS_AU_TRIGGER)
+        history_before = max_history_id(conn)
+        updates = []
+        rows = conn.execute(
+            "SELECT id, metadata FROM items WHERE metadata IS NOT NULL AND json_valid(metadata)"
+        )
+        for item_id, text in rows:
+            ordered = dump_metadata(json.loads(text))
+            if ordered != text:
+                updates.append((ordered, item_id))
+        conn.executemany("UPDATE items SET metadata = ? WHERE id = ?", updates)
+        conn.execute("DELETE FROM item_history WHERE id > ?", (history_before,))
+        logger.info(f"Migration 41: sorted the metadata keys of {len(updates)} items")
+        set_schema_version(conn, 41)
 
 
 MIGRATION_40_REASON = "migration 40: YouTube counts dropped (#413)"
@@ -951,7 +1007,7 @@ def _migrate_40(conn: sqlite3.Connection) -> None:
             if isinstance(metadata, dict) and any(k in metadata for k in RETIRED_YOUTUBE_KEYS):
                 for key in RETIRED_YOUTUBE_KEYS:
                     metadata.pop(key, None)
-                updates.append((json.dumps(metadata) if metadata else None, item_id))
+                updates.append((dump_metadata(metadata) if metadata else None, item_id))
         conn.executemany("UPDATE items SET metadata = ? WHERE id = ?", updates)
         conn.execute(
             "UPDATE item_history SET change_reason = ? WHERE id > ?",
@@ -1291,6 +1347,8 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> int:
                 _migrate_37(conn)  # likewise
             elif version == 40:
                 _migrate_40(conn)  # likewise
+            elif version == 41:
+                _migrate_41(conn)  # likewise
             else:
                 conn.executescript(sql)
                 if version == 22:
@@ -1627,9 +1685,8 @@ def upsert_item(conn: sqlite3.Connection, item: ItemCreate) -> int:
     Returns:
         The item ID of the inserted or updated row.
     """
-    import json
 
-    metadata_json = json.dumps(item.metadata) if item.metadata else None
+    metadata_json = dump_metadata(item.metadata) if item.metadata else None
     created_at = item.created_at or datetime.now(UTC)
     pre_max = max_history_id(conn)
     conn.execute(

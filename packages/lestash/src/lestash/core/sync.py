@@ -1,7 +1,6 @@
 """Run a source plugin's sync and store what it yields. Shared by the CLI and the server."""
 
 import fcntl
-import json
 import logging
 import signal
 import sqlite3
@@ -21,6 +20,7 @@ from lestash.core.agents import link_agents
 from lestash.core.database import (
     add_item_media,
     begin_write,
+    dump_metadata,
     resolve_parent_id,
     resolve_parent_source_ids,
     save_checkpoint,
@@ -272,7 +272,7 @@ class SyncStore:
                 item.author,
                 item.created_at,
                 item.is_own_content,
-                json.dumps(item.metadata) if item.metadata else None,
+                dump_metadata(item.metadata) if item.metadata else None,
                 item.parent_id,
             ),
         ).fetchall()

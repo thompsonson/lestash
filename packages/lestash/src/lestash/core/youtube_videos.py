@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from lestash.core.activities import record_activities, stored_times
+from lestash.core.database import dump_metadata
 from lestash.core.stubs import merge_item
 from lestash.models.item import ActivityCreate
 
@@ -127,7 +128,7 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
             content = video_content(title or "", metadata.get("channel_title"), times, description)
         conn.execute(
             "UPDATE items SET source_id = ?, title = ?, content = ?, metadata = ? WHERE id = ?",
-            (VIDEO + video_id, title, content, json.dumps(metadata), kept_id),
+            (VIDEO + video_id, title, content, dump_metadata(metadata), kept_id),
         )
         _record_like(conn, kept_id, liked_at)
     _drop_stale_markers(conn)
@@ -182,15 +183,18 @@ def _drop_stale_markers(conn: sqlite3.Connection) -> None:
     """Takeout's videos named their ``liked:`` copy as parent; transcripts and comments
     did too. The video's marker goes; a child's names the ``history:`` item."""
     marker = "json_extract(metadata, '$._parent_source_id')"
-    stale = (
-        f"source_type = 'youtube' AND json_valid(metadata) "
-        f"AND ({marker} GLOB 'liked:*' OR {marker} GLOB 'shared:*')"
-    )
-    conn.execute(
-        f"UPDATE items SET metadata = json_remove(metadata, '$._parent_source_id') "
-        f"WHERE source_id GLOB 'history:*' AND {stale}"
-    )
-    conn.execute(
-        f"UPDATE items SET metadata = json_set(metadata, '$._parent_source_id', "
-        f"'history:' || substr({marker}, instr({marker}, ':') + 1)) WHERE {stale}"
-    )
+    rows = conn.execute(
+        "SELECT id, source_id, metadata FROM items WHERE source_type = 'youtube' "
+        f"AND json_valid(metadata) AND ({marker} GLOB 'liked:*' OR {marker} GLOB 'shared:*')"
+    ).fetchall()
+    updates = []
+    for item_id, source_id, text in rows:
+        metadata = json.loads(text)
+        if (source_id or "").startswith("history:"):  # as GLOB: no id is a child
+            del metadata["_parent_source_id"]
+        else:
+            video = metadata["_parent_source_id"].split(":", 1)[1]
+            metadata["_parent_source_id"] = f"history:{video}"
+        # Written as every writer stores metadata, keys sorted (#441)
+        updates.append((dump_metadata(metadata), item_id))
+    conn.executemany("UPDATE items SET metadata = ? WHERE id = ?", updates)

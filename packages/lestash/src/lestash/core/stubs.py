@@ -13,11 +13,12 @@ as your comment on a LinkedIn post it never imported, the other end is a stub:
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from contextlib import suppress
 from datetime import datetime
 from typing import Any
+
+from lestash.core.database import dump_metadata
 
 STUB_PREFIX = "stub:"
 
@@ -42,7 +43,7 @@ def make_stub(
             source_id,
             url,
             created_at.isoformat() if created_at else None,
-            json.dumps(metadata) if metadata else None,
+            dump_metadata(metadata) if metadata else None,
         ),
     )
     row = conn.execute(
