@@ -190,7 +190,7 @@ def _drop_stale_markers(conn: sqlite3.Connection) -> None:
     updates = []
     for item_id, source_id, text in rows:
         metadata = json.loads(text)
-        if source_id.startswith("history:"):
+        if (source_id or "").startswith("history:"):  # as GLOB: no id is a child
             del metadata["_parent_source_id"]
         else:
             video = metadata["_parent_source_id"].split(":", 1)[1]
