@@ -1,12 +1,12 @@
 """Bluesky source plugin implementation."""
 
-import json
 from collections.abc import Iterator
 from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated
 
 import typer
+from lestash.core.database import dump_metadata
 from lestash.core.logging import get_plugin_logger
 from lestash.models.item import ItemCreate, MediaCreate
 from lestash.plugins.base import SourcePlugin
@@ -294,7 +294,7 @@ class BlueskySource(SourcePlugin):
                     for post in posts:
                         try:
                             item = post_to_item(post, handle)
-                            metadata_json = json.dumps(item.metadata) if item.metadata else None
+                            metadata_json = dump_metadata(item.metadata) if item.metadata else None
 
                             cursor = conn.execute(
                                 """

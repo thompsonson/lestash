@@ -1,6 +1,5 @@
 """YouTube source plugin implementation."""
 
-import json
 import re
 import sqlite3
 from collections.abc import Iterator
@@ -10,7 +9,7 @@ from typing import Annotated, Any
 
 import typer
 from lestash.core.config import as_bool
-from lestash.core.database import mark_recent_history, max_history_id
+from lestash.core.database import dump_metadata, mark_recent_history, max_history_id
 from lestash.core.google_auth import (
     get_client_secrets_path,
     get_credentials_path,
@@ -868,7 +867,7 @@ def _store_item(conn, item: ItemCreate) -> int:
     # Keep fields another writer stored, e.g. Takeout watch times on history items
     if not merge_with_stored(conn, item):
         return 0
-    metadata_json = json.dumps(item.metadata) if item.metadata else None
+    metadata_json = dump_metadata(item.metadata) if item.metadata else None
 
     cursor = conn.execute(
         """

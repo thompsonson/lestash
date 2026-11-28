@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from lestash.core.config import Config
-from lestash.core.database import get_connection, mark_recent_history, max_history_id
+from lestash.core.database import dump_metadata, get_connection, mark_recent_history, max_history_id
 from lestash.core.pdf_enrich.persistence import (
     OCR_TARGET_KINDS,
     REMOVED_KEY,
@@ -109,7 +109,7 @@ def ocr_annotation(child_id: int, *, config: Config | None = None) -> OcrResult:
         pre_max = max_history_id(conn)
         conn.execute(
             "UPDATE items SET content = ?, metadata = ? WHERE id = ?",
-            (text or row["content"] or UNREADABLE_CONTENT, json.dumps(meta), child_id),
+            (text or row["content"] or UNREADABLE_CONTENT, dump_metadata(meta), child_id),
         )
         mark_recent_history(conn, pre_max, "enricher", item_ids=[child_id])
         conn.commit()

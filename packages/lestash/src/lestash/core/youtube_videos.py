@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from lestash.core.activities import record_activities, stored_times
+from lestash.core.database import dump_metadata
 from lestash.core.stubs import merge_item
 from lestash.models.item import ActivityCreate
 
@@ -127,7 +128,7 @@ def fold_video_copies(conn: sqlite3.Connection) -> int:
             content = video_content(title or "", metadata.get("channel_title"), times, description)
         conn.execute(
             "UPDATE items SET source_id = ?, title = ?, content = ?, metadata = ? WHERE id = ?",
-            (VIDEO + video_id, title, content, json.dumps(metadata), kept_id),
+            (VIDEO + video_id, title, content, dump_metadata(metadata), kept_id),
         )
         _record_like(conn, kept_id, liked_at)
     _drop_stale_markers(conn)

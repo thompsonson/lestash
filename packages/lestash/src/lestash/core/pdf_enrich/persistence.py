@@ -33,6 +33,7 @@ from lestash.core.blobs import media_file
 from lestash.core.config import Config
 from lestash.core.database import (
     add_item_media,
+    dump_metadata,
     mark_recent_history,
     max_history_id,
     save_media_file,
@@ -104,7 +105,7 @@ def mark_source_unavailable(conn: sqlite3.Connection, item_id: int) -> None:
     meta["enrichment_status"] = "source_unavailable"
     meta["enriched_at"] = _now_iso()
     pre_max = max_history_id(conn)
-    conn.execute("UPDATE items SET metadata = ? WHERE id = ?", (json.dumps(meta), item_id))
+    conn.execute("UPDATE items SET metadata = ? WHERE id = ?", (dump_metadata(meta), item_id))
     mark_recent_history(conn, pre_max, "enricher", item_ids=[item_id])
     conn.commit()
 
@@ -317,7 +318,7 @@ def _upsert_annotations(
             (
                 f"{parent_key}:removed:{child_id}",
                 f"{REMOVED_TITLE_PREFIX}{child.title or ''}",
-                json.dumps({**child.meta, REMOVED_KEY: removed_at}),
+                dump_metadata({**child.meta, REMOVED_KEY: removed_at}),
                 child_id,
             ),
         )
@@ -380,7 +381,7 @@ def _upsert_annotations(
                     title,
                     content,
                     ann.created_at,
-                    json.dumps(meta),
+                    dump_metadata(meta),
                     parent_id,
                 ),
             )
@@ -416,13 +417,13 @@ def _upsert_annotations(
                 title,
                 content,
                 ann.created_at,
-                json.dumps(meta),
+                dump_metadata(meta),
                 match,
                 source_id,
                 title,
                 content,
                 ann.created_at,
-                json.dumps(meta),
+                dump_metadata(meta),
             ),
         )
         if cur.rowcount:
@@ -616,7 +617,7 @@ def _update_parent_item(
     pre_max = max_history_id(conn)
     conn.execute(
         "UPDATE items SET content = ?, metadata = ? WHERE id = ?",
-        (content, json.dumps(meta), item_id),
+        (content, dump_metadata(meta), item_id),
     )
     mark_recent_history(conn, pre_max, "enricher", item_ids=[item_id])
 

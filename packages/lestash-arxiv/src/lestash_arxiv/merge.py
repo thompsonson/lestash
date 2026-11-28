@@ -17,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from lestash.core.config import Config
+from lestash.core.database import dump_metadata
 
 from lestash_arxiv.client import Paper, get_paper
 from lestash_arxiv.share import (
@@ -228,7 +229,9 @@ def merge_link(
     paper_meta = _metadata(conn, paper_id)
     merged = [m for m in paper_meta.get("merged_from", []) if m.get("item_id") != link.item_id]
     paper_meta["merged_from"] = [*merged, record]
-    conn.execute("UPDATE items SET metadata = ? WHERE id = ?", (json.dumps(paper_meta), paper_id))
+    conn.execute(
+        "UPDATE items SET metadata = ? WHERE id = ?", (dump_metadata(paper_meta), paper_id)
+    )
     # Links, activities, children, tags, collections, people, mentions; then the link
     # and its embedding are deleted
     merge_item(conn, link.item_id, paper_id)

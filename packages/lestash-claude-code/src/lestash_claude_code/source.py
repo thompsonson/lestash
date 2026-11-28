@@ -1,6 +1,5 @@
 """Claude Code session source plugin implementation."""
 
-import json
 import os
 import socket
 from collections.abc import Iterator
@@ -8,6 +7,7 @@ from datetime import datetime
 from typing import Annotated, Any
 
 import typer
+from lestash.core.database import dump_metadata
 from lestash.models.item import ItemCreate
 from lestash.plugins.base import SourcePlugin
 from rich.console import Console
@@ -232,7 +232,7 @@ class ClaudeCodeSource(SourcePlugin):
                         first_msg = extract_first_substantive_message(summary.path)
                         item = session_to_item(summary, detail, first_msg)
 
-                        metadata_json = json.dumps(item.metadata) if item.metadata else None
+                        metadata_json = dump_metadata(item.metadata) if item.metadata else None
                         conn.execute(
                             """
                             INSERT INTO items (

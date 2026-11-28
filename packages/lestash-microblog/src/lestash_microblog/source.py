@@ -1,6 +1,5 @@
 """Micro.blog source plugin implementation."""
 
-import json
 from collections.abc import Iterator
 from contextlib import suppress
 from datetime import datetime
@@ -8,6 +7,7 @@ from typing import Annotated, Any
 
 import typer
 from lestash.core.config import as_bool
+from lestash.core.database import dump_metadata
 from lestash.core.logging import get_plugin_logger
 from lestash.models.item import ItemCreate, MediaCreate
 from lestash.plugins.base import SourcePlugin
@@ -275,7 +275,7 @@ def _upsert_item(conn, item: ItemCreate) -> int:
     Returns:
         1 if a row was affected, 0 otherwise.
     """
-    metadata_json = json.dumps(item.metadata) if item.metadata else None
+    metadata_json = dump_metadata(item.metadata) if item.metadata else None
     cursor = conn.execute(
         """
         INSERT INTO items (
